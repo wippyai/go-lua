@@ -3,7 +3,7 @@ package formal
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/engine/operand"
+	"github.com/wippyai/go-lua/analysis/engine/execution"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
@@ -34,7 +34,7 @@ type opaqueDispatchLawFixture struct {
 	contract  *targetcontract.Contract
 	mounted   calldomain.MountedCall
 	key       calldomain.Key
-	cells     []operand.MemberCell[valuedomain.Value]
+	cells     []execution.MemberCell[valuedomain.Value]
 }
 
 var (
@@ -172,12 +172,12 @@ func TestOpaqueCallDispatchRejectsForeignAndMalformedFacts(t *testing.T) {
 		name  string
 		calls *calldomain.Algebra
 		fact  calldomain.Value
-		cells []operand.MemberCell[valuedomain.Value]
+		cells []execution.MemberCell[valuedomain.Value]
 	}{
 		{name: "foreign-call-top", calls: local.calls, fact: foreign.calls.Top(), cells: local.cells},
 		{name: "zero-call-fact", calls: local.calls, fact: calldomain.Value{}, cells: local.cells},
-		{name: "missing-observation", calls: local.calls, fact: open, cells: append([]operand.MemberCell[valuedomain.Value](nil), local.cells...)},
-		{name: "foreign-value-observation", calls: local.calls, fact: open, cells: append([]operand.MemberCell[valuedomain.Value](nil), local.cells...)},
+		{name: "missing-observation", calls: local.calls, fact: open, cells: append([]execution.MemberCell[valuedomain.Value](nil), local.cells...)},
+		{name: "foreign-value-observation", calls: local.calls, fact: open, cells: append([]execution.MemberCell[valuedomain.Value](nil), local.cells...)},
 	}
 	tests[2].cells = tests[2].cells[:0]
 	if len(tests[3].cells) == 0 {
@@ -271,7 +271,7 @@ func newOpaqueDispatchLawFixture(t testing.TB, name string) opaqueDispatchLawFix
 	}
 	var mounted calldomain.MountedCall
 	var key calldomain.Key
-	var cells []operand.MemberCell[valuedomain.Value]
+	var cells []execution.MemberCell[valuedomain.Value]
 	found := false
 	for index := 0; index < calls.MountedCallCount(); index++ {
 		candidate, candidateOK := calls.MountedCallAtHandle(index)
@@ -282,9 +282,9 @@ func newOpaqueDispatchLawFixture(t testing.TB, name string) opaqueDispatchLawFix
 			continue
 		}
 		mounted, key = candidate, candidateKey
-		cells = make([]operand.MemberCell[valuedomain.Value], actual.ActualCount())
+		cells = make([]execution.MemberCell[valuedomain.Value], actual.ActualCount())
 		for index := range cells {
-			cells[index] = operand.MemberCell[valuedomain.Value]{Value: values.Bottom(), Present: true}
+			cells[index] = execution.MemberCell[valuedomain.Value]{Value: values.Bottom(), Present: true}
 		}
 		found = true
 		break
@@ -298,9 +298,9 @@ func newOpaqueDispatchLawFixture(t testing.TB, name string) opaqueDispatchLawFix
 // formalActuals views a fixture's own member cells as the whole vector the
 // declaration delivers. A vector is a view over caller-owned cells, so a law
 // that varies one cell copies the slice and views the copy.
-func formalActuals(t testing.TB, cells []operand.MemberCell[valuedomain.Value]) operand.SummaryVector[valuedomain.Value] {
+func formalActuals(t testing.TB, cells []execution.MemberCell[valuedomain.Value]) execution.SummaryVector[valuedomain.Value] {
 	t.Helper()
-	vector, ok := operand.NewMemberVector(cells)
+	vector, ok := execution.NewMemberVector(cells)
 	if !ok {
 		t.Fatal("mounted actual member vector")
 	}

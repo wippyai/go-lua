@@ -189,7 +189,7 @@ func declareMountedProgram(rowsWorkspace *programRows, mounts []sealedProgramMou
 		if row.admit == nil || !rows.hasMountedSite(row.Mount, row.Point) {
 			return topologyDeclaration{}, artifactRowFailure(programArtifactRowFailurePoint, uint32(ordinal)), ProgramAdmissionQuery, false
 		}
-		query, summaries, ok := row.admit.declareMountedQuery(state, authority, row.Context, row.ID, row.Mount, row.Point, exactQueryPointWrites{members: declaration.members})
+		query, summaries, ok := row.admit.declareMountedQuery(state, authority, row.Context, row.ID, row.Mount, row.Point)
 		if !ok {
 			return topologyDeclaration{}, programSealFailure{phase: programSealFailureQueryBatch, ordinal: uint32(ordinal)}, ProgramAdmissionQuery, false
 		}

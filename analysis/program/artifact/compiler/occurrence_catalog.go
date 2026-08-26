@@ -246,9 +246,9 @@ func (compiler *compiler) occurrenceNilSource(span identity.ContentID) bool {
 	return false
 }
 
-func (compiler *compiler) occurrenceRuntimeCallForSpan(span identity.ContentID) (identity.ContentID, identity.ContentID, identity.ContentID, bool) {
+func (compiler *compiler) occurrenceRuntimeCallForSpan(span identity.ContentID) (identity.ContentID, identity.ContentID, bool) {
 	if compiler == nil || !span.Available() {
-		return identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, false
+		return identity.ContentID{}, identity.ContentID{}, false
 	}
 	for _, call := range compiler.publication.Calls {
 		if !call.Available() || call.Form() != programschema.CallFormPlain || call.ArgumentCount() != 1 || call.SpanID() != span {
@@ -266,14 +266,10 @@ func (compiler *compiler) occurrenceRuntimeCallForSpan(span identity.ContentID) 
 		}
 		argument := compiler.publication.CallArguments[argumentOffset]
 		if argument.Available() && argument.CallID() == call.ID() && argument.Index() == 0 {
-			// MemberID is the argument's value identity, which authenticates
-			// the predicate against this call. SpanID is the same argument as
-			// the operand space storage reads are keyed by, which is how the
-			// cell behind it is found.
-			return call.ID(), argument.MemberID(), argument.SpanID(), true
+			return call.ID(), argument.MemberID(), true
 		}
 	}
-	return identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, false
+	return identity.ContentID{}, identity.ContentID{}, false
 }
 
 func (compiler *compiler) occurrenceBodyForPoint(point identity.ContentID) (identity.ContentID, bool, bool) {
@@ -446,23 +442,13 @@ func (compiler *compiler) deriveOperationPredicateRefinementsFailure() CompileFa
 		if !equalityOK {
 			continue
 		}
-		callID, subject, subjectSpan, leftCall := compiler.occurrenceRuntimeCallForSpan(left)
+		callID, subject, leftCall := compiler.occurrenceRuntimeCallForSpan(left)
 		operand := right
 		if !leftCall {
-			callID, subject, subjectSpan, leftCall = compiler.occurrenceRuntimeCallForSpan(right)
+			callID, subject, leftCall = compiler.occurrenceRuntimeCallForSpan(right)
 			operand = left
 		}
 		if !leftCall || !subject.Available() || !operand.Available() {
-			continue
-		}
-		// The predicate proves a property of the value the subject's storage
-		// holds, not of the temporary the call was handed, so the row carries
-		// that cell the way a presence refinement does. A subject with no
-		// persistent storage - a call result, a literal - remains a valid
-		// comparison with nothing later Reads could observe, so it narrows
-		// nothing and is skipped rather than narrowing a temporary.
-		cell, cellOK := compiler.occurrenceStorageOrigin(subjectSpan)
-		if !cellOK || !cell.Available() {
 			continue
 		}
 		for armIndex, selected := range compiler.occurrenceBranchEdges(binary.ID()) {
@@ -478,7 +464,7 @@ func (compiler *compiler) deriveOperationPredicateRefinementsFailure() CompileFa
 				return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, armIndex, CompileReasonOccurrenceUnavailable)
 			}
 			code, codeOK := programschema.OccurrenceOperationPredicateCode(op, truth)
-			inputs := []identity.ContentID{callID, subject, operand, routeID, cell}
+			inputs := []identity.ContentID{callID, subject, operand, routeID}
 			appended := codeOK && compiler.appendOccurrence(programschema.OccurrenceOperationPredicateRefinement, id, bodyID, []identity.ContentID{selected.To()}, inputs, code)
 			if !appended ||
 				!compiler.recordOccurrencePredecessor(programschema.OccurrenceOperationPredicateRefinement, id, routeID, []identity.ContentID{selected.To()}) {

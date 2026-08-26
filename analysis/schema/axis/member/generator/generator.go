@@ -91,15 +91,10 @@ type RelationBinding struct {
 	// foreign owner-qualified provider. Foreign providers intentionally have
 	// no local ordinal: composition resolves their axis/member pair once.
 	CandidateProviderLocal bool
-	// Derivation is the relation's whole declared derivation, carried across
-	// resolution unchanged. It is the declaration itself rather than a chosen
-	// subset of it: a relation states EITHER the declared form the emitter
-	// writes the construction from or the authored quartet the scheduled-death
-	// ledger still admits, and metadata that published only one of the two
-	// would answer an empty derivation for every relation stating the other.
-	// It is metadata only; the generated RelationOwner deliberately does not
-	// retain or execute it.
-	Derivation definition.RelationDerivation
+	// Derivation is the optional direct composition call that materializes the
+	// dependent relation subject from its explicit inputs. It is metadata only;
+	// the generated RelationOwner deliberately does not retain or execute it.
+	Derivation RelationDerivationBinding
 	// MemberSet is the resolved nested ordered member set this relation
 	// declares, present exactly when it declares one. It survives resolution
 	// because a CHILD Program consumes it: the parent and the ordinal carrier
@@ -122,6 +117,17 @@ type MemberSetBinding struct {
 	Ordinal definition.GoType
 	Count   definition.GoSymbol
 	At      definition.GoSymbol
+}
+
+// RelationDerivationBinding is the resolved, callback-free source form for a
+// dependent relation's direct Build/Count/At calls. StaticAxes remain in
+// authored order for rule codegen to resolve against the sealed roster.
+type RelationDerivationBinding struct {
+	State      definition.GoType
+	Build      definition.GoSymbol
+	Count      definition.GoSymbol
+	At         definition.GoSymbol
+	StaticAxes []schema.EntryReference
 }
 
 // ProjectionBinding is typed metadata for exactly one projection declaration.
@@ -240,14 +246,12 @@ func Resolve(source definition.Definition) (Metadata, error) {
 			CandidateResolver: relation.CandidateResolver, CandidateOrdinal: relation.CandidateOrdinal,
 			CandidateAt: relation.CandidateAt, CandidateCount: relation.CandidateCount,
 			CandidateIdentityAt: relation.CandidateIdentityAt,
-			Derivation:          relation.Derivation,
+			Derivation: RelationDerivationBinding{
+				State: relation.Derivation.State, Build: relation.Derivation.Build,
+				Count: relation.Derivation.Count, At: relation.Derivation.At,
+				StaticAxes: append([]schema.EntryReference(nil), relation.Derivation.StaticAxes...),
+			},
 		}
-		// The declaration's own slices stay the declaration's: metadata that
-		// shared them would let a consumer reorder the axes a relation
-		// resolves against.
-		relations[index].Derivation.StaticAxes = append([]schema.EntryReference(nil), relation.Derivation.StaticAxes...)
-		relations[index].Derivation.Source = append([]definition.EnumerationRef(nil), relation.Derivation.Source...)
-		relations[index].Derivation.Widen.Source = append([]definition.EnumerationRef(nil), relation.Derivation.Widen.Source...)
 		if relation.MemberParent.Available() {
 			ordinal, ordinalOK := carriers[relation.MemberOrdinal]
 			if !ordinalOK {
@@ -1480,18 +1484,6 @@ func relationImportAliases(packageName string, source definition.Definition, met
 		aliases[path] = alias
 	}
 	add(source.Binding.Key.Normalizer.PackagePath)
-	// The axis's fact type is spelled in every read handle this file
-	// publishes, and the package that declares it is not necessarily the one
-	// the vocabulary is generated into: an axis whose judgment kernel declares
-	// no row generates its vocabulary into the package that owns its
-	// coordinates instead. The fact is therefore imported like any other
-	// foreign type rather than assumed local.
-	for _, carrier := range source.Carriers {
-		if carrier.Name == source.Signature.Fact {
-			add(carrier.Type.PackagePath)
-			break
-		}
-	}
 	for _, relation := range source.Relations {
 		add(relation.CandidateResolver.PackagePath)
 		add(relation.CandidateOrdinal.PackagePath)

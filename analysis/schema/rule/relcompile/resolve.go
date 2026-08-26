@@ -9,7 +9,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
 	"github.com/wippyai/go-lua/analysis/schema/rule"
 	ruleprogram "github.com/wippyai/go-lua/analysis/schema/rule/program"
-	"github.com/wippyai/go-lua/analysis/schema/rule/relinput"
 )
 
 // Placement is the composition-supplied decision scope of one rule: the scope
@@ -21,28 +20,6 @@ type Placement struct {
 	Ports     []Name
 }
 
-// Resolution is one authored rule declaration lowered: the relational rules
-// the compiler consumes, and the decision scopes the composition placed the
-// rule at, resolved to the identities their owner issued.
-//
-// The placement travels with the rules because resolving it is what this pass
-// did. It is not recoverable from the rules: one declared read lowers into
-// several join specs, a selected read lowers into a producing rule of its
-// own, and a carry states its port on a spec of a third kind, so the scope a
-// port observes is spread over three shapes and no shape carries the port
-// ordinal it answers for. Reading the ordered vector back out of them would
-// be a second derivation of what this pass already resolved.
-type Resolution struct {
-	Rules []Rule
-	// Placed is the rule's placement resolved to issued identities: the
-	// candidate scope, and one scope per declared input port in the rule's
-	// own port order.
-	Placed relinput.Placement
-}
-
-// Available reports whether the resolution carries a placed candidate scope.
-func (resolution Resolution) Available() bool { return resolution.Placed.Candidate.Available() }
-
 // Resolve lowers one authored rule declaration into the resolved relational
 // rules the compiler consumes. Every authored reference resolves through the
 // one canonical identity registry; a name no owner installed refuses with the
@@ -51,110 +28,83 @@ func (resolution Resolution) Available() bool { return resolution.Placed.Candida
 // One publication is one dependency, so a fold that publishes several output
 // columns resolves to one rule per column, each named by the column key its
 // owner authored.
-//
-// Every declared input port is resolved once, in declaration order, before
-// any join is lowered. The port column is the rule's own, so it is built from
-// the ports the rule declared rather than from the reads that name them, and
-// a read then observes its port by reading that column.
-func Resolve(registry *Registry, spec rule.Spec, placement Placement) (Resolution, error) {
+func Resolve(registry *Registry, spec rule.Spec, placement Placement) ([]Rule, error) {
 	if registry == nil {
-		return Resolution{}, refuse(Site{Path: "registry"}, Name{}, KindOwner, ReasonUnavailable)
+		return nil, refuse(Site{Path: "registry"}, Name{}, KindOwner, ReasonUnavailable)
 	}
 	entry := schema.EntryReference{Surface: schema.SurfaceKindRule, Key: spec.Key}
 	if !spec.Key.Available() {
-		return Resolution{}, refuse(Site{Path: "key"}, Name{Entry: entry}, KindDependency, ReasonUnavailable)
+		return nil, refuse(Site{Path: "key"}, Name{Entry: entry}, KindDependency, ReasonUnavailable)
 	}
 	program := spec.Program
 	if !program.Available() {
-		return Resolution{}, refuse(Site{Rule: spec.Key, Path: "program"}, Name{Entry: entry}, KindExpression, ReasonUndeclared)
+		return nil, refuse(Site{Rule: spec.Key, Path: "program"}, Name{Entry: entry}, KindExpression, ReasonUndeclared)
 	}
 	if program.InputCount() != len(placement.Ports) {
-		return Resolution{}, refuse(Site{Rule: spec.Key, Path: "program.inputs"}, Name{Entry: entry}, KindScope, ReasonUndeclared)
+		return nil, refuse(Site{Rule: spec.Key, Path: "program.inputs"}, Name{Entry: entry}, KindScope, ReasonUndeclared)
 	}
 
 	producers := make([]Rule, 0, program.JoinCount())
-	resolver := ruleResolver{registry: registry, rule: spec.Key, entry: entry, producers: &producers}
+	resolver := ruleResolver{registry: registry, rule: spec.Key, entry: entry, placement: placement, producers: &producers}
 	candidate, err := resolver.candidateRelation(program.Candidate)
 	if err != nil {
-		return Resolution{}, err
+		return nil, err
 	}
 	scope, err := registry.Scope(resolver.site("scope"), placement.Candidate)
 	if err != nil {
-		return Resolution{}, err
-	}
-	resolver.placed.Candidate = scope
-	for port := 0; port < len(placement.Ports); port++ {
-		observed, err := registry.Scope(resolver.site(fmt.Sprintf("program.inputs[%d]", port)), placement.Ports[port])
-		if err != nil {
-			return Resolution{}, err
-		}
-		resolver.placed.Ports = append(resolver.placed.Ports, observed)
+		return nil, err
 	}
 
 	joins := make([]JoinSpec, 0, program.JoinCount())
-	reads := make([]model.ColumnID, 0, program.JoinCount())
 	relations := []Name{candidate}
 	for index := 0; index < program.JoinCount(); index++ {
 		declaration, ok := program.JoinAt(index)
 		if !ok {
-			return Resolution{}, refuse(resolver.site(fmt.Sprintf("program.joins[%d]", index)), Name{Entry: entry}, KindRelation, ReasonUndeclared)
+			return nil, refuse(resolver.site(fmt.Sprintf("program.joins[%d]", index)), Name{Entry: entry}, KindRelation, ReasonUndeclared)
 		}
 		lowered, joined, err := resolver.join(index, declaration, relations)
 		if err != nil {
-			return Resolution{}, err
+			return nil, err
 		}
 		joins = append(joins, lowered...)
-		if len(lowered) != 0 && len(lowered[0].RightColumns) != 0 {
-			// The operand row has one column per read, fed by the column that
-			// read is taken at, not by every equijoin the read expands into.
-			reads = append(reads, lowered[0].RightColumns[0])
-		}
 		relations = append(relations, joined)
 	}
 
 	if err := resolver.structural(program); err != nil {
-		return Resolution{}, err
+		return nil, err
 	}
 
 	operation, err := resolver.operation(program.Fold)
 	if err != nil {
-		return Resolution{}, err
+		return nil, err
 	}
 
 	if len(program.Fold.Outputs) == 0 {
-		return Resolution{}, refuse(resolver.site("program.fold.outputs"), Name{Entry: entry}, KindPublicationKey, ReasonUndeclared)
-	}
-	candidateID, err := registry.Relation(resolver.site("program.candidate"), candidate)
-	if err != nil {
-		return Resolution{}, err
-	}
-	operandRow, err := resolver.operand(NewName(program.Fold.Reducer.Axis, program.Fold.Reducer.Member), reads, candidateID)
-	if err != nil {
-		return Resolution{}, err
+		return nil, refuse(resolver.site("program.fold.outputs"), Name{Entry: entry}, KindPublicationKey, ReasonUndeclared)
 	}
 	rules := make([]Rule, 0, len(program.Fold.Outputs)+len(producers))
 	rules = append(rules, producers...)
 	for index, output := range program.Fold.Outputs {
 		published, err := resolver.publication(index, output)
 		if err != nil {
-			return Resolution{}, err
+			return nil, err
 		}
 		carry, err := resolver.carry(program.Carry, published.Relation)
 		if err != nil {
-			return Resolution{}, err
+			return nil, err
 		}
 		name := NewName(entry, output.Column.Key)
 		dependency, err := registry.Dependency(resolver.site(fmt.Sprintf("program.fold.outputs[%d].column", index)), name)
 		if err != nil {
-			return Resolution{}, err
+			return nil, err
 		}
 		expression, err := registry.Expression(resolver.site(fmt.Sprintf("program.fold.outputs[%d].column", index)), name)
 		if err != nil {
-			return Resolution{}, err
+			return nil, err
 		}
 		candidateID, err := registry.Relation(resolver.site("program.candidate"), candidate)
 		if err != nil {
-			return Resolution{}, err
+			return nil, err
 		}
 		rules = append(rules, Rule{
 			ID:         dependency,
@@ -162,24 +112,20 @@ func Resolve(registry *Registry, spec rule.Spec, placement Placement) (Resolutio
 			Candidate:  candidateID,
 			Joins:      joins,
 			Scope:      scope,
-			Operand:    operandRow,
 			Apply:      operation,
 			Carry:      carry,
 			Publish:    &published,
 		})
 	}
-	return Resolution{Rules: rules, Placed: resolver.placed}, nil
+	return rules, nil
 }
 
 // ruleResolver carries the rule identity every refusal names.
 type ruleResolver struct {
-	registry *Registry
-	rule     schema.Key
-	entry    schema.EntryReference
-	// placed is the rule's placement resolved to issued identities. It is
-	// filled before any join is lowered, so a read resolves the scope of the
-	// port it names by reading the port column rather than the registry.
-	placed relinput.Placement
+	registry  *Registry
+	rule      schema.Key
+	entry     schema.EntryReference
+	placement Placement
 	// produced collects the dependencies that publish the rows this rule's
 	// selected reads consume. They are rules like any other and are returned
 	// beside the reading rule.
@@ -233,7 +179,7 @@ func (resolver ruleResolver) join(index int, declaration ruleprogram.JoinDecl, r
 	if err != nil {
 		return nil, Name{}, err
 	}
-	completion, err := resolver.completion(path, declaration.Read.Contract, joined)
+	completion, err := resolver.completion(path, declaration.Read.Contract)
 	if err != nil {
 		return nil, Name{}, err
 	}
@@ -445,69 +391,15 @@ func (resolver ruleResolver) selection(index int, declaration ruleprogram.JoinDe
 	if err != nil {
 		return Rule{}, err
 	}
-	producerReads := make([]model.ColumnID, 0, len(joins))
-	for _, spec := range joins {
-		if len(spec.RightColumns) != 0 {
-			producerReads = append(producerReads, spec.RightColumns[0])
-		}
-	}
-	operandRow, err := resolver.operand(name, producerReads, candidate)
-	if err != nil {
-		return Rule{}, err
-	}
 	return Rule{
 		ID:         dependency,
 		Expression: expression,
 		Candidate:  candidate,
 		Joins:      joins,
 		Scope:      portScope,
-		Operand:    operandRow,
 		Apply:      operation,
 		Publish:    &Publication{Relation: joinedID, Key: key},
 	}, nil
-}
-
-// operand projects the joined row onto the relation the operation reads.
-//
-// The signature names that relation and the columns it takes, in order, and a
-// rule's reads are ordered too, so the column an operation reads at position i
-// is fed by the read at position i. Every column of the operand relation is
-// defined exactly once, which is what makes the projection a typed row
-// construction rather than a partial map.
-func (resolver ruleResolver) operand(reducer Name, reads []model.ColumnID, candidate model.RelationID) (*Operand, error) {
-	site := resolver.site("program.fold.reducer")
-	sealed, err := resolver.registry.SealedSignature(site, reducer)
-	if err != nil {
-		return nil, err
-	}
-	inputs := sealed.Inputs()
-	// A rule that reads nothing applies its operation to the candidate row,
-	// which is already a relation: there is no joined row to project.
-	if len(inputs) == 0 || len(reads) == 0 {
-		return nil, nil
-	}
-	relation := inputs[0].Relation
-	// An operation whose signature names the candidate relation reads the
-	// spine the joins preserve, so there is no separate row to build.
-	if relation == candidate {
-		return nil, nil
-	}
-	key, err := resolver.registry.RelationKeyOf(site, relation)
-	if err != nil {
-		return nil, err
-	}
-	targets, err := resolver.registry.RelationColumns(site, relation)
-	if err != nil {
-		return nil, err
-	}
-	if len(targets) != len(reads) {
-		return nil, refuse(site, Name{Entry: resolver.entry}, KindSignature, ReasonUndeclared)
-	}
-	mappings := make([]ColumnMapping, 0, len(targets))
-	for index, target := range targets {
-		mappings = append(mappings, ColumnMapping{Source: reads[index], Target: target})
-	}
-	return &Operand{Relation: relation, Key: key, Columns: mappings}, nil
 }
 
 func (resolver ruleResolver) sourceRelation(path string, source ruleprogram.SourceRef, relations []Name) (Name, error) {
@@ -521,49 +413,26 @@ func (resolver ruleResolver) sourceRelation(path string, source ruleprogram.Sour
 	return relations[position+1], nil
 }
 
-// portScope is the decision scope the read at one declared input port
-// observes. Every declared port was resolved before the first join lowered,
-// so this reads the resolved port column and never resolves a second time: a
-// read and the placement can therefore not disagree about a port's scope.
 func (resolver ruleResolver) portScope(path string, port ruleprogram.InputRef) (model.ScopeID, error) {
 	index := int(port.Uint64())
-	if index < 0 || index >= len(resolver.placed.Ports) {
+	if index < 0 || index >= len(resolver.placement.Ports) {
 		return model.ScopeID{}, refuse(resolver.site(path+".input"), Name{Entry: resolver.entry}, KindScope, ReasonUndeclared)
 	}
-	return resolver.placed.Ports[index], nil
+	return resolver.registry.Scope(resolver.site(path+".input"), resolver.placement.Ports[index])
 }
 
 // completion maps the authored sparse disposition onto explicit completion.
 // An explicitly sparse read closes over nothing and therefore completes
 // nothing; a default or dense read closes over its authored denominator.
-// completion closes a read against the universe of the rows it reads.
-//
-// The authored contract names the coordinate space the read materializes an
-// absent coordinate through, and one such space denominates many relations, so
-// it is resolved to prove the space is declared and never used as the closure
-// itself. What a read closes over is the relation it reads: completing it
-// against another relation's rows would count a different universe.
-func (resolver ruleResolver) completion(path string, contract ruleprogram.ReadContract, joined Name) (*model.DenominatorRef, error) {
+func (resolver ruleResolver) completion(path string, contract ruleprogram.ReadContract) (*model.DenominatorRef, error) {
 	switch contract.Sparse {
 	case ruleprogram.SparseExplicit:
 		return nil, nil
 	case ruleprogram.SparseDefault, ruleprogram.SparseDense:
-		site := resolver.site(path + ".read.contract.denominator")
-		space := Name{Entry: schema.EntryReference(contract.DenominatorRef)}
-		if _, err := resolver.registry.Denominator(site, space); err != nil {
-			return nil, err
-		}
-		relation, err := resolver.registry.Relation(site, joined)
+		name := Name{Entry: schema.EntryReference(contract.DenominatorRef)}
+		reference, err := resolver.registry.Denominator(resolver.site(path+".read.contract.denominator"), name)
 		if err != nil {
 			return nil, err
-		}
-		key, err := resolver.registry.RelationPublicationKey(site, joined)
-		if err != nil {
-			return nil, err
-		}
-		reference, ok := model.NewDenominatorRef(relation, key)
-		if !ok {
-			return nil, refuse(site, joined, KindDenominator, ReasonForeign)
 		}
 		return &reference, nil
 	default:
@@ -644,22 +513,14 @@ func (resolver ruleResolver) publication(index int, output ruleprogram.OutputDec
 	if !output.Available() {
 		return Publication{}, refuse(resolver.site(path), Name{Entry: resolver.entry}, KindColumn, ReasonUndeclared)
 	}
-	// The published Factor is the axis output column the fold writes. The
-	// destination projection names the coordinate within that Factor a routed
-	// row lands at, and a routed coordinate is a column of the route relation
-	// that produced it, so it is not the relation the rows are published into.
-	published := NewName(output.Column.Axis, output.Column.Key)
-	relation, err := resolver.registry.Relation(resolver.site(path+".column"), published)
+	destination := NewName(output.Destination.Axis, output.Destination.Member)
+	column, err := resolver.registry.Column(resolver.site(path+".destination"), destination)
 	if err != nil {
 		return Publication{}, err
 	}
-	if _, err := resolver.registry.Column(resolver.site(path+".destination"),
-		NewName(output.Destination.Axis, output.Destination.Member)); err != nil {
-		return Publication{}, err
-	}
-	key, err := resolver.registry.RelationPublicationKey(resolver.site(path+".column"), published)
+	key, err := resolver.registry.PublicationKey(resolver.site(path+".destination"), destination)
 	if err != nil {
 		return Publication{}, err
 	}
-	return Publication{Relation: relation, Key: key}, nil
+	return Publication{Relation: column.Relation(), Key: key}, nil
 }

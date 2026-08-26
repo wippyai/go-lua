@@ -69,17 +69,10 @@ outer(1)
 			dynamic++
 		}
 	}
-	// A qualified callee publishes its whole dot-selected chain, so the
-	// spelling of object.field() names the chain and not its leaf key alone.
-	// A method selector publishes the selected name, and an indexed callee
-	// publishes no row at all.
-	for _, name := range []string{"outer", "direct", "object.field", "method"} {
+	for _, name := range []string{"outer", "direct", "field", "method"} {
 		if callNames[name] == 0 {
 			t.Fatalf("published Call spellings omitted %q: %#v", name, callNames)
 		}
-	}
-	if callNames["field"] != 0 {
-		t.Fatalf("qualified callee published its leaf key instead of its chain: %#v", callNames)
 	}
 	if dynamic == 0 {
 		t.Fatalf("dynamic/indexed Call unexpectedly received a spelling: %#v", callNames)

@@ -7,11 +7,10 @@ import (
 )
 
 // TestPlacementSuspensionBindHotAdmitsAnEmptyMountedCatalog exercises the
-// mounted binding path for the suspension consumers themselves. A scalar-only
+// Link binding path for the suspension consumers themselves. A scalar-only
 // mounted artifact has no subject-liveness rows, so this isolates schema/owner
 // admission from catalog contents while still requiring both the class and
-// evidence BindHot implementations to install their Call gate and
-// selected-read surfaces.
+// evidence BindHot implementations to install their selected-read surfaces.
 func TestPlacementSuspensionBindHotAdmitsAnEmptyMountedCatalog(t *testing.T) {
 	record := mountedRecord(t, "placement-suspension-bind", "return 1")
 	compilation, compilationOK := Build()
@@ -29,13 +28,16 @@ func TestPlacementSuspensionBindHotAdmitsAnEmptyMountedCatalog(t *testing.T) {
 	for _, key := range []schema.Key{"placement-suspension", "placement-suspension-evidence"} {
 		cell, cellOK := rules.cellByKey(key)
 		capability, capabilityOK := rules.CapabilityByKey(key)
-		if !cellOK || !cell.Available() || !capabilityOK || !capability.Mounted() {
-			t.Fatalf("%q did not publish its sealed canonical mounted cell and capability", key)
+		if !cellOK || !cell.Available() || !capabilityOK || !capability.Link() {
+			t.Fatalf("%q did not publish its sealed canonical Link cell and capability", key)
 		}
-		// A mounted consumer is issued its operands by Program, so it publishes
-		// no Link occurrence inventory of its own.
-		if catalog, catalogOK := rules.OccurrenceCatalogByKey(key); catalogOK || catalog != nil {
-			t.Fatalf("%q published a Link occurrence catalog = %v/%t, want none", key, catalog, catalogOK)
+		catalog, catalogOK := rules.OccurrenceCatalogByKey(key)
+		if !catalogOK || catalog == nil || catalog.Count() != 0 {
+			count := -1
+			if catalog != nil {
+				count = catalog.Count()
+			}
+			t.Fatalf("%q Link catalog = %v/%t count=%d, want an empty sealed catalog", key, catalog, catalogOK, count)
 		}
 	}
 }

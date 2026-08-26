@@ -13,26 +13,26 @@ func generatedMutations() []FieldMutation {
 		{Production: "prefixexp#4", Edit: Edit{
 			Kind: EditKind(1),
 			Guard: Guard{Atoms: []GuardAtom{
-				{Kind: GuardAtomKind(4), Negated: false, Term: ActionTermID(337), Constant: ActionSymbolID(0), SetStart: 3, SetCount: 1, ParseClass: NumberParseClass(0)},
+				{Kind: GuardAtomKind(4), Negated: false, Term: ActionTermID(377), Constant: ActionSymbolID(0), SetStart: 3, SetCount: 1, ParseClass: NumberParseClass(0)},
 			}},
 			Place: Place{Scope: ActionScopeID(151), Root: PlaceRoot(3), Slot: 0, StepStart: 7, StepCount: 1},
-			Value: ActionTermID(338),
+			Value: ActionTermID(378),
 		}},
 		{Production: "typeexpr#2", Edit: Edit{
 			Kind: EditKind(2),
 			Guard: Guard{Atoms: []GuardAtom{
-				{Kind: GuardAtomKind(4), Negated: false, Term: ActionTermID(521), Constant: ActionSymbolID(0), SetStart: 5, SetCount: 1, ParseClass: NumberParseClass(0)},
+				{Kind: GuardAtomKind(4), Negated: false, Term: ActionTermID(567), Constant: ActionSymbolID(0), SetStart: 5, SetCount: 1, ParseClass: NumberParseClass(0)},
 			}},
 			Place: Place{Scope: ActionScopeID(237), Root: PlaceRoot(3), Slot: 0, StepStart: 8, StepCount: 1},
-			Value: ActionTermID(525),
+			Value: ActionTermID(571),
 		}},
 		{Production: "typeexpr#3", Edit: Edit{
 			Kind: EditKind(2),
 			Guard: Guard{Atoms: []GuardAtom{
-				{Kind: GuardAtomKind(4), Negated: false, Term: ActionTermID(527), Constant: ActionSymbolID(0), SetStart: 6, SetCount: 1, ParseClass: NumberParseClass(0)},
+				{Kind: GuardAtomKind(4), Negated: false, Term: ActionTermID(573), Constant: ActionSymbolID(0), SetStart: 6, SetCount: 1, ParseClass: NumberParseClass(0)},
 			}},
 			Place: Place{Scope: ActionScopeID(238), Root: PlaceRoot(3), Slot: 0, StepStart: 9, StepCount: 1},
-			Value: ActionTermID(531),
+			Value: ActionTermID(577),
 		}},
 	}
 }

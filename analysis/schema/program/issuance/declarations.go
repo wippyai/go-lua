@@ -52,24 +52,15 @@ const (
 	InputCallDispatchStage   schema.Key = "program-input/call-dispatch-stage"
 	InputCallSummaryStage    schema.Key = "program-input/call-summary-stage"
 	InputPredecessorGeometry schema.Key = "program-input/predecessor-geometry"
-	// InputRouteArrival is the state a routed stage's own route carries into
-	// it. A stage that stands on a route reads what the route delivers, not
-	// what the stage before it at the same point holds.
-	InputRouteArrival schema.Key = "program-input/route-arrival"
 
-	StageBase        schema.Key = "program-stage/base"
-	StageLocal       schema.Key = "program-stage/local"
-	StageSuccessor   schema.Key = "program-stage/local-successor"
-	StageComputation schema.Key = "program-stage/computation"
-	StagePredecessor schema.Key = "program-stage/local-predecessor"
-	// StageRoutePredecessor carries a fact its route proves. It stands between
-	// that route and the point the route lands on, so the point assembles the
-	// fact with the rest of what arrives instead of publishing it past its own
-	// readers.
-	StageRoutePredecessor schema.Key = "program-stage/route-predecessor"
-	StageCallDispatch     schema.Key = "program-stage/call-dispatch"
-	StageCallSummary      schema.Key = "program-stage/call-summary"
-	StageCallEffect       schema.Key = "program-stage/call-effect"
+	StageBase         schema.Key = "program-stage/base"
+	StageLocal        schema.Key = "program-stage/local"
+	StageSuccessor    schema.Key = "program-stage/local-successor"
+	StageComputation  schema.Key = "program-stage/computation"
+	StagePredecessor  schema.Key = "program-stage/local-predecessor"
+	StageCallDispatch schema.Key = "program-stage/call-dispatch"
+	StageCallSummary  schema.Key = "program-stage/call-summary"
+	StageCallEffect   schema.Key = "program-stage/call-effect"
 
 	FormBaseNone           schema.Key = "program-form/base-none"
 	FormBaseNoneAllowEmpty schema.Key = "program-form/base-none-allow-empty"
@@ -78,7 +69,6 @@ const (
 	FormLocalSuccessor     schema.Key = "program-form/local-successor"
 	FormComputation        schema.Key = "program-form/computation"
 	FormLocalPredecessor   schema.Key = "program-form/local-predecessor"
-	FormRoutePredecessor   schema.Key = "program-form/route-predecessor"
 	FormCallDispatch       schema.Key = "program-form/call-dispatch"
 	FormCallSummary        schema.Key = "program-form/call-summary"
 	FormCallEffect         schema.Key = "program-form/call-effect"
@@ -467,7 +457,6 @@ func inputDeclarations() []schemaissuance.Spec {
 		{Key: InputPreviousStage, Kind: schemaissuance.KindInput, Ordinal: 4, Input: schemaissuance.InputFinish, InputSource: schemaissuance.InputSourcePrevious, Selection: schemaissuance.InputSelectionPrevious},
 		{Key: InputCallDispatchStage, Kind: schemaissuance.KindInput, Ordinal: 5, Input: schemaissuance.InputFinish, InputSource: schemaissuance.InputSourceStage, Selection: schemaissuance.InputSelectionStage, Source: StageCallDispatch},
 		{Key: InputCallSummaryStage, Kind: schemaissuance.KindInput, Ordinal: 6, Input: schemaissuance.InputFinish, InputSource: schemaissuance.InputSourceStage, Selection: schemaissuance.InputSelectionStage, Source: StageCallSummary},
-		{Key: InputRouteArrival, Kind: schemaissuance.KindInput, Ordinal: 8, Input: schemaissuance.InputPredecessor, InputSource: schemaissuance.InputSourceRoute, Selection: schemaissuance.InputSelectionRoute},
 		{Key: InputPredecessorGeometry, Kind: schemaissuance.KindInput, Ordinal: 7, Input: schemaissuance.InputPredecessor, InputSource: schemaissuance.InputSourceRelation, Selection: schemaissuance.InputSelectionOnly, Source: RelationOccurrencePredecessor},
 	}
 }
@@ -505,17 +494,6 @@ func stageDeclarations() []schemaissuance.Spec {
 			Identity: []uint16{1, 2},
 			Order:    3, Predecessors: []schema.Key{StageLocal}, Edges: []schemaissuance.StageEdge{{Source: schemaissuance.StageEdgeSourcePrevious, Transport: exceptTarget, Framing: "analysis/program-artifact/local-predecessor-transfer"}},
 			Framing: "analysis/program-artifact/local-predecessor-stage", InputCount: 1},
-		// A route-proved fact stands on its route, not in its point's chain.
-		// The route is part of the identity because two arms of one branch, and
-		// two routes reconverging on one destination, prove different things
-		// about the same coordinate: without it they would collapse onto one
-		// stage and compose instead of staying separate.
-		{Key: StageRoutePredecessor, Kind: schemaissuance.KindStage, Ordinal: 9,
-			Constructor: schemaissuance.StageConstructorFramed,
-			Parameters:  []schemaissuance.DataType{pointOne, schemaissuance.IdentityType(schemaissuance.TypeAxisKey), schemaissuance.IdentityType(schemaissuance.TypeRouteIdentity)}, Base: 1,
-			Identity: []uint16{1, 2, 3},
-			Order:    9, Predecessors: []schema.Key{StageBase}, Edges: []schemaissuance.StageEdge{{Source: schemaissuance.StageEdgeSourceRoute, Transport: exceptTarget, Framing: "analysis/program-artifact/route-predecessor-transfer"}},
-			Framing: "analysis/program-artifact/route-predecessor-stage", InputCount: 1},
 		{Key: StageCallDispatch, Kind: schemaissuance.KindStage, Ordinal: 6,
 			Constructor: schemaissuance.StageConstructorFramed, Parameters: []schemaissuance.DataType{pointMany}, Base: 1, Identity: []uint16{1},
 			Order: 6, Predecessors: []schema.Key{StageBase}, Edges: []schemaissuance.StageEdge{{Source: schemaissuance.StageEdgeSourcePrevious, Transport: exceptTarget, Framing: "analysis/program-artifact/call-base-dispatch-transfer"}},
@@ -532,7 +510,7 @@ func stageDeclarations() []schemaissuance.Spec {
 			Constructor: schemaissuance.StageConstructorFramed, Parameters: []schemaissuance.DataType{pointMany}, Base: 1, Identity: []uint16{1},
 			Order: 8, Predecessors: []schema.Key{StageCallSummary},
 			Edges: []schemaissuance.StageEdge{
-				{Source: schemaissuance.StageEdgeSourceStage, Stage: StageCallSummary, Transport: all, Framing: "analysis/program-artifact/call-summary-effect-transfer"},
+				{Source: schemaissuance.StageEdgeSourceStage, Stage: StageCallSummary, Transport: exceptTarget, Framing: "analysis/program-artifact/call-summary-effect-transfer"},
 			},
 			Framing: "analysis/program-artifact/call-effect-stage", Native: true, InputCount: 1},
 	}
@@ -547,7 +525,6 @@ func formDeclarations() []schemaissuance.Spec {
 		successorForm(),
 		computationForm(),
 		predecessorForm(),
-		routePredecessorForm(),
 		callForm(FormCallDispatch, 8, StageCallDispatch, InputPreviousStage),
 		callForm(FormCallSummary, 9, StageCallSummary, InputCallDispatchStage),
 		callForm(FormCallEffect, 10, StageCallEffect, InputCallSummaryStage),
@@ -639,30 +616,6 @@ func predecessorForm() schemaissuance.Spec {
 			{Op: schemaissuance.OpWritesKey, Out: 9},
 			{Op: schemaissuance.OpInput, Out: 10, Ref: InputPreviousStage},
 			{Op: schemaissuance.OpRequestStage, Out: 11, Args: [6]uint16{6, 9, 10}, Ref: StagePredecessor},
-			{Op: schemaissuance.OpEmit, Out: 12, Args: [6]uint16{11, 8}},
-		}, Emissions: []uint16{12}}
-}
-
-// routePredecessorForm mounts an occurrence on the route that proves it. It
-// reads the same routed-predecessor relation as the local-predecessor form -
-// the route and the point it lands on - but requests the routed stage, whose
-// input and transfer both come from the route rather than from the chain at
-// that point.
-func routePredecessorForm() schemaissuance.Spec {
-	return schemaissuance.Spec{Key: FormRoutePredecessor, Kind: schemaissuance.KindForm, Ordinal: 11, Empty: schemaissuance.EmptyRefuse,
-		Subject: OutputOccurrence, Requires: []schema.Key{OutputOccurrence},
-		Program: schemaissuance.Program{
-			{Op: schemaissuance.OpSelection, Out: 1, Ref: OutputOccurrence},
-			{Op: schemaissuance.OpFollow, Out: 2, Args: [6]uint16{1}, Ref: RelationOccurrencePredecessor},
-			{Op: schemaissuance.OpExactlyOne, Out: 3, Args: [6]uint16{2}},
-			{Op: schemaissuance.OpOnly, Out: 4, Args: [6]uint16{2, 3}},
-			{Op: schemaissuance.OpRead, Out: 5, Args: [6]uint16{4}, Ref: FieldPredecessorPointID},
-			{Op: schemaissuance.OpPoint, Out: 6, Args: [6]uint16{5}},
-			{Op: schemaissuance.OpRead, Out: 7, Args: [6]uint16{4}, Ref: FieldPredecessorRouteID},
-			{Op: schemaissuance.OpRoute, Out: 8, Args: [6]uint16{7}},
-			{Op: schemaissuance.OpWritesKey, Out: 9},
-			{Op: schemaissuance.OpInput, Out: 10, Ref: InputRouteArrival},
-			{Op: schemaissuance.OpRequestStage, Out: 11, Args: [6]uint16{6, 9, 7, 10}, Ref: StageRoutePredecessor},
 			{Op: schemaissuance.OpEmit, Out: 12, Args: [6]uint16{11, 8}},
 		}, Emissions: []uint16{12}}
 }

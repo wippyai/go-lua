@@ -415,10 +415,7 @@ return guard
 	continuation := false
 	for index := 0; index < edgeCount; index++ {
 		edge, ok := programschema.EnvironmentEdgeFamily().At(&program.Frozen, catalog, index)
-		// From names where the route came from and never moves; Departure is
-		// where its state actually leaves, which is the source's terminal
-		// stage once that point has been staged.
-		continuation = continuation || ok && edge.Departure() == orderPoint
+		continuation = continuation || ok && edge.From() == orderPoint
 	}
 	if !continuation {
 		t.Fatal("Program continuation did not depart the terminal computation stage")

@@ -46,7 +46,7 @@ func Apply(prog *program.Program) []Application {
 	for index := 0; index < calls.Count(); index++ {
 		call, callOK := calls.At(index)
 		_, callee, receiver, actuals, rowOK := calls.Get(call)
-		if !callOK || !rowOK || !isChannelModuleSelect(prog, callee, receiver) {
+		if !callOK || !rowOK || !isChannelModuleSelect(prog, call, callee, receiver) {
 			continue
 		}
 		identities, siteOK := prog.CallIdentityAt(index)
@@ -67,11 +67,12 @@ func Apply(prog *program.Program) []Application {
 	return apps
 }
 
-// isChannelModuleSelect names the call by the exact member the callee selects.
-// The selected name is the authored Lens key, so a qualified callee spelling
-// and a debug spelling are both outside this admission.
-func isChannelModuleSelect(prog *program.Program, callee, receiver keyspace.Term) bool {
+func isChannelModuleSelect(prog *program.Program, call, callee, receiver keyspace.Term) bool {
 	if receiver != 0 {
+		return false
+	}
+	name, named := prog.Source().Spellings().CallName(call)
+	if !named || name != selectMethod {
 		return false
 	}
 	if keyspace.TermFamily(callee) != keyspace.FamilyRead {
@@ -81,12 +82,8 @@ func isChannelModuleSelect(prog *program.Program, callee, receiver keyspace.Term
 	if !readOK || keyspace.TermFamily(source) != keyspace.FamilyLensExact {
 		return false
 	}
-	_, base, key, fieldKind, lensOK := prog.Flow().Authored().Access().Exact().Get(source)
-	if !lensOK || fieldKind != flowkind.FieldName {
-		return false
-	}
-	_, member, _, memberOK := prog.Source().Keys().Name(key)
-	if !memberOK || member != selectMethod {
+	_, base, _, _, lensOK := prog.Flow().Authored().Access().Exact().Get(source)
+	if !lensOK {
 		return false
 	}
 	cell, cellOK := cellOf(prog, base, 0)

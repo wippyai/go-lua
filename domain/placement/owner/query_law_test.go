@@ -71,10 +71,9 @@ func TestPlacementSummaryQueryDeclaresAndBindsItsHeterogeneousForm(t *testing.T)
 		"placement-suspension-evidence": axis.NewCell(evidenceFragment),
 	})
 	queryFragment, queryOK := placementquery.DeclareQuery(builder, query.Declaration{
-		Semantic:   semantic,
-		Freezer:    freezer,
-		Population: query.PopulationKindSelectedPoint,
-		Subjects:   coldSubjects,
+		Semantic: semantic,
+		Freezer:  freezer,
+		Subjects: coldSubjects,
 	})
 	if !queryOK || queryFragment == nil || !queryFragment.Available() {
 		t.Fatal("placement query declaration")
@@ -141,10 +140,9 @@ func TestPlacementSummaryQueryRequiresItsPlacementAndHeapSubjects(t *testing.T) 
 		t.Fatal("suspension evidence factor declaration")
 	}
 	if declared, declaredOK := placementquery.DeclareQuery(builder, query.Declaration{
-		Semantic:   semantic,
-		Freezer:    freezer,
-		Population: query.PopulationKindSelectedPoint,
-		Subjects:   query.NewSubjects(nil),
+		Semantic: semantic,
+		Freezer:  freezer,
+		Subjects: query.NewSubjects(nil),
 	}); declaredOK || declared != nil {
 		t.Fatal("placement query admitted without its declared subject")
 	}

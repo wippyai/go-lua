@@ -429,10 +429,7 @@ func assert2HostManifest() *manifestwire.Manifest {
 // The two state machines are stated in full, each with the member that creates
 // its resource, the member that moves it to its final state, and the members
 // that read one without moving it: query and begin both demand an open
-// connection and leave it open. detach states the third disposition a member
-// has toward a governed resource: it hands the connection to a subsystem this
-// analysis does not follow, so every proof about that connection is
-// discharged and no successor state is stated for it.
+// connection and leave it open.
 func resourceHostManifest() *manifestwire.Manifest {
 	declaration := manifestwire.New("resource")
 	connectionType := typ.NewInterface("resource.Connection", nil)
@@ -461,7 +458,6 @@ func resourceHostManifest() *manifestwire.Manifest {
 	queryType := typ.Func().Param("connection", connectionType).Build()
 	beginType := typ.Func().Param("connection", connectionType).Returns(transactionType).Build()
 	commitType := typ.Func().Param("transaction", transactionType).Build()
-	detachType := typ.Func().Param("connection", connectionType).Build()
 
 	declaration.DefineFunctionSignature("connect", signature.Function{Type: connectType})
 	// An acquired resource is a newly allocated host value, so the acquiring
@@ -512,15 +508,6 @@ func resourceHostManifest() *manifestwire.Manifest {
 			Target: effect.ParamRef{Index: 0}, Protocol: "transaction", From: "active", To: "committed",
 		}),
 	})
-	// detach hands the connection out of the analysis. An escape states no
-	// arrival state because there is none to state: the resource leaves, and
-	// what happens to it afterwards is not this program's to prove.
-	declaration.DefineFunctionSignature("detach", signature.Function{
-		Type: detachType,
-		Effect: effect.Empty.With(lifecycle.Escape{
-			Target: effect.ParamRef{Index: 0}, Protocol: "connection",
-		}),
-	})
 
 	declaration.SetExport(typetable.NewRecord().
 		Field("connect", connectType).
@@ -528,7 +515,6 @@ func resourceHostManifest() *manifestwire.Manifest {
 		Field("query", queryType).
 		Field("begin", beginType).
 		Field("commit", commitType).
-		Field("detach", detachType).
 		Build())
 	return declaration
 }

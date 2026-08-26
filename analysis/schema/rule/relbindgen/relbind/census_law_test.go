@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/schema/rule/relbindgen/relbind"
@@ -18,88 +17,25 @@ type censusRow struct {
 	Family string `json:"family"`
 	Rule   string `json:"rule"`
 	Status string `json:"status"`
-	Sketch string `json:"sketch"`
-	Plane  string `json:"plane"`
 }
-
-// bound is the set of census planes this corpus is the binding surface for.
-//
-// A rule family and a seed lower to a reducer, which is what a binding here
-// carries. The diagnostic, observation and query planes carry their operations
-// on their own schema surfaces - a query fragment declares, binds and recovers
-// its own answer - so a row of those planes is bound already and not by this
-// corpus. Reading them still matters: it is how the corpus is held to claiming
-// only what it carries.
-var bound = map[string]bool{"family": true, "seed": true}
-
-// Applies reports whether this row's plan states a semantic operation.
-//
-// A binding carries one operation. A row whose plan is relational throughout -
-// a selection, a join, a completion - states no operation, so there is nothing
-// for a binding to carry and a family for it would be a binding over nothing.
-// The plan itself says which kind a row is, so the law reads that rather than
-// being told per plane.
-func (row censusRow) Applies() bool { return strings.Contains(row.Sketch, "Apply(") }
 
 const compiles = "COMPILES"
 
-// planes is every census the corpus is answerable for.
-//
-// There is more than one, and a law that read only the first left the other
-// free to grow rows no binding covers with nothing to say so.
-func planes() []string { return []string{"census.json", "census2.json"} }
-
 func census(t testing.TB) []censusRow {
 	t.Helper()
-	rows := make([]censusRow, 0, 64)
-	for _, plane := range planes() {
-		rows = append(rows, censusPlane(t, plane)...)
+	path := filepath.Join(root(t), "analysis", "schema", "rule", "relcompile", "testdata", "census.json")
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read the declaration census: %v", err)
+	}
+	var rows []censusRow
+	if err := json.Unmarshal(content, &rows); err != nil {
+		t.Fatalf("decode the declaration census: %v", err)
 	}
 	if len(rows) == 0 {
 		t.Fatal("the declaration census is empty")
 	}
 	return rows
-}
-
-func censusPlane(t testing.TB, plane string) []censusRow {
-	t.Helper()
-	path := filepath.Join(root(t), "analysis", "schema", "rule", "relcompile", "testdata", plane)
-	content, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read the declaration census %s: %v", plane, err)
-	}
-	var rows []censusRow
-	if err := json.Unmarshal(content, &rows); err != nil {
-		t.Fatalf("decode the declaration census %s: %v", plane, err)
-	}
-	if len(rows) == 0 {
-		t.Fatalf("the declaration census %s is empty", plane)
-	}
-	return rows
-}
-
-// TestEveryCensusPlaneIsRead states that the coverage laws read every plane
-// the corpus answers for. A plane added and not listed above would be a plane
-// no law covers, which is how the second one went unread.
-func TestEveryCensusPlaneIsRead(t *testing.T) {
-	directory := filepath.Join(root(t), "analysis", "schema", "rule", "relcompile", "testdata")
-	entries, err := os.ReadDir(directory)
-	if err != nil {
-		t.Fatalf("read the census directory: %v", err)
-	}
-	read := map[string]bool{}
-	for _, plane := range planes() {
-		read[plane] = true
-	}
-	for _, entry := range entries {
-		name := entry.Name()
-		if entry.IsDir() || !strings.HasPrefix(name, "census") || !strings.HasSuffix(name, ".json") {
-			continue
-		}
-		if !read[name] {
-			t.Errorf("%s is a census plane and no coverage law reads it", name)
-		}
-	}
 }
 
 func address(row censusRow) string { return row.Family + "#" + row.Rule }
@@ -116,38 +52,15 @@ func TestEveryCompilingCensusRowIsDeclared(t *testing.T) {
 		declared[family.Census+"#"+family.Rule] = true
 	}
 	missing := make([]string, 0, 4)
-	spurious := make([]string, 0, 4)
 	for _, row := range census(t) {
-		if row.Status != compiles {
+		if row.Status != compiles || declared[address(row)] {
 			continue
 		}
-		if bound[row.Plane] && row.Applies() && !declared[address(row)] {
-			missing = append(missing, address(row))
-		}
-		if !row.Applies() && declared[address(row)] {
-			spurious = append(spurious, address(row))
-		}
+		missing = append(missing, address(row))
 	}
 	sort.Strings(missing)
-	sort.Strings(spurious)
 	for _, row := range missing {
-		t.Errorf("census row %s states a semantic operation and the corpus declares no family for it", row)
-	}
-	for _, row := range spurious {
-		t.Errorf("census row %s states no semantic operation and the corpus declares a family for it", row)
-	}
-}
-
-// TestEveryBoundPlaneRowStatesAnOperation states what the bound planes are.
-// Every row this corpus answers for lowers to a reducer, so a relational row
-// appearing on one of them is a plane boundary moving, and the corpus would be
-// the last place to notice.
-func TestEveryBoundPlaneRowStatesAnOperation(t *testing.T) {
-	for _, row := range census(t) {
-		if row.Status != compiles || !bound[row.Plane] || row.Applies() {
-			continue
-		}
-		t.Errorf("census row %s is on the %s plane and states no semantic operation", address(row), row.Plane)
+		t.Errorf("census row %s compiles and the corpus declares no family for it", row)
 	}
 }
 

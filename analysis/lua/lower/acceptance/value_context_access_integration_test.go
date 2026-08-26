@@ -169,17 +169,17 @@ func TestSourceValuesBracketLensesKeepDistinctEvaluationPaths(t *testing.T) {
 	if base, ok := flow.Ports().Entry(dynamic); !ok || base != dynamicBase {
 		t.Fatalf("dynamic Lens base entry = %v/%v, want %v", base, ok, dynamicBase)
 	}
-	if next := unconditionalSuccessor(t, p, exactBase); next != exactSource {
-		t.Fatalf("exact bracket base successor = %v, want key occurrence %v", next, exactSource)
+	if next, ok := flow.Ports().Finish(exactBase); !ok || next != exactSource {
+		t.Fatalf("exact bracket base successor = %v/%v, want key occurrence %v", next, ok, exactSource)
 	}
-	if next := unconditionalSuccessor(t, p, exactSource); next != exact {
-		t.Fatalf("exact bracket key successor = %v, want Lens %v", next, exact)
+	if next, ok := flow.Ports().Finish(exactSource); !ok || next != exact {
+		t.Fatalf("exact bracket key successor = %v/%v, want Lens %v", next, ok, exact)
 	}
-	if next := unconditionalSuccessor(t, p, dynamicBase); next != dynamicSource {
-		t.Fatalf("dynamic bracket base successor = %v, want key Read %v", next, dynamicSource)
+	if next, ok := flow.Ports().Finish(dynamicBase); !ok || next != dynamicSource {
+		t.Fatalf("dynamic bracket base successor = %v/%v, want key Read %v", next, ok, dynamicSource)
 	}
-	if next := unconditionalSuccessor(t, p, dynamicSource); next != dynamic {
-		t.Fatalf("dynamic bracket key successor = %v, want Lens %v", next, dynamic)
+	if next, ok := flow.Ports().Finish(dynamicSource); !ok || next != dynamic {
+		t.Fatalf("dynamic bracket key successor = %v/%v, want Lens %v", next, ok, dynamic)
 	}
 }
 

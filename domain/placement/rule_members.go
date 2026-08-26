@@ -18,7 +18,6 @@ const (
 	FreshBirthDestinations        schemaapi.Key  = "placement/fresh-birth/destinations"
 	CaptureRoutes                 schemaapi.Key  = "placement/closure-capture/routes"
 	ContainmentRoutes             schemaapi.Key  = "placement/containment/routes"
-	PublicationRoutes             schemaapi.Key  = "placement/publication-escape/routes"
 	SuspensionRoutes              schemaapi.Key  = "placement/suspension/routes"
 	StorageRouteKey               schemaapi.Key  = "placement/store/route-key"
 	StorageRouteTag               schemaapi.Key  = "placement/store/route-tag"
@@ -40,9 +39,6 @@ const (
 	ContainmentRouteKey           schemaapi.Key  = "placement/containment/route-key"
 	ContainmentRouteTag           schemaapi.Key  = "placement/containment/route-tag"
 	ContainmentRouteDestination   schemaapi.Key  = "placement/containment/route-destination"
-	PublicationRouteKey           schemaapi.Key  = "placement/publication-escape/route-key"
-	PublicationRouteTag           schemaapi.Key  = "placement/publication-escape/route-tag"
-	PublicationRouteDestination   schemaapi.Key  = "placement/publication-escape/route-destination"
 	SuspensionRouteKey            schemaapi.Key  = "placement/suspension/route-key"
 	SuspensionRouteTag            schemaapi.Key  = "placement/suspension/route-tag"
 	SuspensionRouteDestination    schemaapi.Key  = "placement/suspension/route-destination"
@@ -62,7 +58,6 @@ const (
 	FormalRouteSelection          schemaapi.Key  = "placement/formal/route-selection"
 	CaptureRouteSelection         schemaapi.Key  = "placement/closure-capture/route-selection"
 	ContainmentRouteSelection     schemaapi.Key  = "placement/containment/route-selection"
-	PublicationRouteSelection     schemaapi.Key  = "placement/publication-escape/route-selection"
 	SuspensionRouteSelection      schemaapi.Key  = "placement/suspension/route-selection"
 	PlacementKeyCarrier           member.Carrier = "carrier/placement/key"
 	PlacementFactCarrier          member.Carrier = "carrier/placement/fact"
@@ -90,11 +85,6 @@ const (
 	ContainmentRouteCarrier       member.Carrier = "carrier/placement/containment-route"
 	ContainmentRouteTagCarrier    member.Carrier = "carrier/placement/containment-route-tag"
 	PublicationRequirementCarrier member.Carrier = "carrier/placement/publication-requirement"
-	EffectMountedCallCarrier      member.Carrier = "carrier/effect/mounted-call"
-	PublicationSourceCarrier      member.Carrier = "carrier/effect/mounted-publication-source"
-	PublicationSourceTagCarrier   member.Carrier = "carrier/effect/mounted-publication-source-tag"
-	PublicationRouteCarrier       member.Carrier = "carrier/placement/publication-escape-route"
-	PublicationRouteTagCarrier    member.Carrier = "carrier/placement/publication-escape-route-tag"
 	SubjectLivenessCarrier        member.Carrier = "carrier/program/subject-liveness"
 	SuspensionRouteTagCarrier     member.Carrier = "carrier/placement/suspension-route-tag"
 	SuspensionSourceCarrier       member.Carrier = "carrier/value/suspension-source"
@@ -114,8 +104,7 @@ func AxisMemberCatalog() member.Catalog {
 			{Key: FreshBirthDestinations, Subject: FreshResultCallCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/fresh-result/candidates"})},
 			{Key: CaptureRoutes, Subject: CaptureRouteCarrier, CandidateProvider: member.IssuedRowCandidate("program-relation/occurrence-closure-proof"), Inputs: []member.Carrier{PlacementKeyCarrier, ValueFactCarrier}},
 			{Key: ContainmentRoutes, Subject: ContainmentRouteCarrier, CandidateProvider: member.IssuedRowCandidate("program-relation/occurrence-entry-geometry"), Inputs: []member.Carrier{PlacementFactCarrier, HeapFactCarrier}},
-			{Key: PublicationRoutes, Subject: PublicationRouteCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "effect"}, Member: "effect/mounted-call/candidates"}), Inputs: []member.Carrier{EffectMountedCallCarrier, CallFactCarrier, ValueFactCarrier}},
-			{Key: SuspensionRoutes, Subject: SuspensionRouteCarrier, CandidateProvider: member.IssuedRowCandidate("program-relation/occurrence-subject-liveness"), Inputs: []member.Carrier{SubjectLivenessCarrier, CallFactCarrier}},
+			{Key: SuspensionRoutes, Subject: SuspensionRouteCarrier, CandidateProvider: member.IssuedRowCandidate("program-relation/occurrence-subject-liveness"), Inputs: []member.Carrier{SubjectLivenessCarrier}},
 		},
 		[]member.Projection{
 			{Key: StorageRouteKey, Relation: StorageRoutes, Role: member.Key, Result: PlacementKeyCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/storage-transfer/candidates"})},
@@ -138,9 +127,6 @@ func AxisMemberCatalog() member.Catalog {
 			{Key: ContainmentRouteKey, Relation: ContainmentRoutes, Role: member.Key, Result: PlacementKeyCarrier, CandidateProvider: member.IssuedRowCandidate("program-relation/occurrence-entry-geometry")},
 			{Key: ContainmentRouteTag, Relation: ContainmentRoutes, Role: member.Predicate, Result: ContainmentRouteTagCarrier, CandidateProvider: member.IssuedRowCandidate("program-relation/occurrence-entry-geometry")},
 			{Key: ContainmentRouteDestination, Relation: ContainmentRoutes, Role: member.Destination, Result: PlacementKeyCarrier, CandidateProvider: member.IssuedRowCandidate("program-relation/occurrence-entry-geometry")},
-			{Key: PublicationRouteKey, Relation: PublicationRoutes, Role: member.Key, Result: PlacementKeyCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "effect"}, Member: "effect/mounted-call/candidates"})},
-			{Key: PublicationRouteTag, Relation: PublicationRoutes, Role: member.Predicate, Result: PublicationRouteTagCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "effect"}, Member: "effect/mounted-call/candidates"})},
-			{Key: PublicationRouteDestination, Relation: PublicationRoutes, Role: member.Destination, Result: PlacementKeyCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "effect"}, Member: "effect/mounted-call/candidates"})},
 			{Key: SuspensionRouteKey, Relation: SuspensionRoutes, Role: member.Key, Result: PlacementKeyCarrier, CandidateProvider: member.IssuedRowCandidate("program-relation/occurrence-subject-liveness")},
 			{Key: SuspensionRouteTag, Relation: SuspensionRoutes, Role: member.Predicate, Result: SuspensionRouteTagCarrier, CandidateProvider: member.IssuedRowCandidate("program-relation/occurrence-subject-liveness")},
 			{Key: SuspensionRouteDestination, Relation: SuspensionRoutes, Role: member.Destination, Result: PlacementKeyCarrier, CandidateProvider: member.IssuedRowCandidate("program-relation/occurrence-subject-liveness")},
@@ -179,14 +165,13 @@ func AxisMemberCatalog() member.Catalog {
 			}},
 			{Key: CaptureReducer, Inputs: []member.ReducerInput{
 				{Axis: valueAxis, Carrier: PlacementFactCarrier, Form: member.ReadFormExact, Multiplicity: member.MultiplicityOne},
-				{Axis: valueAxis, Carrier: PlacementFactCarrier, Form: member.ReadFormSelected, Multiplicity: member.MultiplicityOne, Tag: CaptureRouteTagCarrier, Route: PlacementKeyCarrier},
+				{Axis: valueAxis, Carrier: PlacementFactCarrier, Form: member.ReadFormSelected, Multiplicity: member.MultiplicityOne, Tag: CaptureRouteTagCarrier},
 			}, Outputs: []member.ReducerOutput{
 				{Axis: valueAxis, Carrier: PlacementFactCarrier},
 			}},
 			{Key: ContainmentReducer, Inputs: []member.ReducerInput{
-				{Axis: valueAxis, Carrier: PlacementFactCarrier, Form: member.ReadFormComplete, Multiplicity: member.MultiplicityMany},
-				{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKindAxis, Key: "heap"}, Carrier: HeapFactCarrier, Form: member.ReadFormComplete, Multiplicity: member.MultiplicityMany},
-				{Axis: valueAxis, Carrier: PlacementFactCarrier, Form: member.ReadFormSelected, Multiplicity: member.MultiplicityOne, Tag: ContainmentRouteTagCarrier, Route: PlacementKeyCarrier},
+				{Axis: valueAxis, Carrier: PlacementFactCarrier, Form: member.ReadFormSelected, Multiplicity: member.MultiplicityOne},
+				{Axis: valueAxis, Carrier: PlacementFactCarrier, Form: member.ReadFormExact, Multiplicity: member.MultiplicityOne},
 			}, Outputs: []member.ReducerOutput{
 				{Axis: valueAxis, Carrier: PlacementFactCarrier},
 			}},
@@ -214,7 +199,6 @@ func AxisMemberCatalog() member.Catalog {
 		{Key: FormalRouteSelection, Relation: FormalRoutes, Tag: FormalRouteTag},
 		{Key: CaptureRouteSelection, Relation: CaptureRoutes, Tag: CaptureRouteTag},
 		{Key: ContainmentRouteSelection, Relation: ContainmentRoutes, Tag: ContainmentRouteTag},
-		{Key: PublicationRouteSelection, Relation: PublicationRoutes, Tag: PublicationRouteTag},
 		{Key: SuspensionRouteSelection, Relation: SuspensionRoutes, Tag: SuspensionRouteTag},
 	})
 	if !ok {

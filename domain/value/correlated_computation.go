@@ -625,10 +625,9 @@ func (schema *valueBuilder) sealComputationRows() bool {
 				targetID, targetOK := program.OccurrenceInputID(index, 1)
 				operandID, operandOK := program.OccurrenceInputID(index, 2)
 				routeID, routeOK := program.OccurrenceInputID(index, 3)
-				cellID, cellOK := program.OccurrenceInputID(index, 4)
 				op := flowkind.BinaryOp(row.Code() & 0xff)
 				truth := row.Code()&(1<<8) != 0
-				rowOK := sourceOK && targetOK && operandOK && routeOK && cellOK
+				rowOK := sourceOK && targetOK && operandOK && routeOK
 				call, callOK := program.CallForID(sourceCallID)
 				if !rowOK || !routeID.Available() || !callOK || call.ID() != sourceCallID ||
 					call.Form() != programschema.CallFormPlain || call.ArgumentCount() != 1 {
@@ -645,25 +644,17 @@ func (schema *valueBuilder) sealComputationRows() bool {
 					return false
 				}
 				resultSlot, resultOK := schema.Schema.MountedCallResultSlotFor(module, call.ID(), 0)
-				_, inputOK := schema.sealBoundary().Values().ForMountedSemantic(module, targetID)
+				input, inputOK := schema.sealBoundary().Values().ForMountedSemantic(module, targetID)
 				// Program issues the compared operand as a value-subject span
 				// identity, the same identity the BinaryEquality row carries,
 				// so Boundary's mounted span directory is its total inverse.
 				// The semantic directory keys parent-issued occurrence IDs and
 				// names an operand span only when another row published it.
 				comparison, comparisonOK := schema.sealBoundary().Values().ForMountedSpan(module, operandID)
-				// The predicate narrows the storage the subject was read from,
-				// so the arm reads and writes that cell. Narrowing the call's
-				// own argument coordinate would prove the fact about a value
-				// no later Read is addressed to: the next mention of the
-				// subject is a fresh read of this cell.
-				cellValue, cellValueOK := schema.sealBoundary().Values().ForMountedSemantic(module, cellID)
 				rc, rcOK := resultSlot.Coordinate()
+				ic, icOK := schema.coordinateForCold(input)
 				pc, pcOK := schema.coordinateForCold(comparison)
-				cc, ccOK := schema.coordinateForCold(cellValue)
-				// input authenticates that the subject really is this call's
-				// own argument; the coordinate the arm narrows is the cell's.
-				if !resultOK || !inputOK || !comparisonOK || !cellValueOK || !rcOK || !pcOK || !ccOK ||
+				if !resultOK || !inputOK || !comparisonOK || !rcOK || !icOK || !pcOK ||
 					(op != flowkind.BinaryEqual && op != flowkind.BinaryNotEqual) {
 					return false
 				}
@@ -679,7 +670,7 @@ func (schema *valueBuilder) sealComputationRows() bool {
 					continue
 				}
 				content := computationContent(schema.linkID, "val-runtime-kind-predicate!", module, row.ID(), uint64(op), truthCode)
-				runtimeCall := RuntimeKindCall{schema: schema.Schema, key: key, content: content, result: rc, input: cc, comparison: pc, write: cc, call: sourceCallID, op: op, truth: truth, refinement: true, coordinate: coordinate}
+				runtimeCall := RuntimeKindCall{schema: schema.Schema, key: key, content: content, result: rc, input: ic, comparison: pc, write: ic, call: sourceCallID, op: op, truth: truth, refinement: true, coordinate: coordinate}
 				if !runtimeCall.valid() {
 					return false
 				}

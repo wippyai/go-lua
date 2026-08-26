@@ -4,7 +4,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/engine/operand"
+	"github.com/wippyai/go-lua/analysis/engine/execution"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/domain/materialization"
 	"github.com/wippyai/go-lua/domain/placement"
@@ -118,7 +118,7 @@ func TestReturnRouteSetCommonPathsDoNotAllocate(t *testing.T) {
 		{"top", fixture.values.Top(), true, len(fixture.allocations)},
 		{"opaque", opaque, true, len(fixture.allocations)},
 	} {
-		vector, vectorOK := operand.NewMemberVector([]operand.MemberCell[valuedomain.Value]{returnCell(item.fact)})
+		vector, vectorOK := execution.NewMemberVector([]execution.MemberCell[valuedomain.Value]{returnCell(item.fact)})
 		if !vectorOK {
 			t.Fatal("member vector")
 		}

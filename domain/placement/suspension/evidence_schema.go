@@ -3,8 +3,6 @@ package suspension
 import (
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
-	calldomain "github.com/wippyai/go-lua/domain/call"
-	callowner "github.com/wippyai/go-lua/domain/call/owner"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 	valueowner "github.com/wippyai/go-lua/domain/value/owner"
 )
@@ -16,7 +14,6 @@ import (
 type EvidenceSchemaFragment struct {
 	slot         *engine.RuleSlot[Evidence, operand]
 	input        engine.SchemaInput
-	callRead     engine.SchemaReadSlot[calldomain.Value]
 	valueAnchor  engine.SchemaReadSlot[valuedomain.Value]
 	valueRead    engine.SchemaReadSlot[valuedomain.Value]
 	evidenceRead engine.SchemaReadSlot[Evidence]
@@ -25,8 +22,8 @@ type EvidenceSchemaFragment struct {
 	route        bool
 }
 
-func DeclareEvidenceSchema(builder *engine.SchemaBuilder, semantic, operandFamily identity.SemanticKey, values *valueowner.SchemaFragment, calls *callowner.SchemaFragment, owner *EvidenceFactorFragment) (*EvidenceSchemaFragment, bool) {
-	if builder == nil || values == nil || calls == nil || owner == nil || !identity.DistinctKeys(semantic, operandFamily) || owner.Ref() == (engine.FactorRef[Evidence]{}) {
+func DeclareEvidenceSchema(builder *engine.SchemaBuilder, semantic, operandFamily identity.SemanticKey, values *valueowner.SchemaFragment, owner *EvidenceFactorFragment) (*EvidenceSchemaFragment, bool) {
+	if builder == nil || values == nil || owner == nil || !identity.DistinctKeys(semantic, operandFamily) || owner.Ref() == (engine.FactorRef[Evidence]{}) {
 		return nil, false
 	}
 	slot, ok := engine.NewRuleSlot[Evidence, operand](builder, engine.SchemaRuleSpec[Evidence]{
@@ -40,19 +37,15 @@ func DeclareEvidenceSchema(builder *engine.SchemaBuilder, semantic, operandFamil
 	if !ok {
 		return nil, false
 	}
-	callRead, ok := engine.SchemaRead[calldomain.Value](slot, calls.ExactRead(), input)
-	if !ok {
-		return nil, false
-	}
 	valueAnchor, ok := engine.SchemaRead[valuedomain.Value](slot, values.ExactRead(), input)
 	if !ok {
 		return nil, false
 	}
-	valueRead, ok := engine.SchemaSelectedRead[valuedomain.Value](slot, values.ExactRead(), input, callRead.Ref(), valueAnchor.Ref())
+	valueRead, ok := engine.SchemaSelectedRead[valuedomain.Value](slot, values.ExactRead(), input, valueAnchor.Ref())
 	if !ok {
 		return nil, false
 	}
-	evidenceRead, ok := engine.SchemaSelectedRead[Evidence](slot, owner.ExactRead(), input, callRead.Ref(), valueAnchor.Ref(), valueRead.Ref())
+	evidenceRead, ok := engine.SchemaSelectedRead[Evidence](slot, owner.ExactRead(), input, valueAnchor.Ref(), valueRead.Ref())
 	if !ok {
 		return nil, false
 	}
@@ -64,7 +57,7 @@ func DeclareEvidenceSchema(builder *engine.SchemaBuilder, semantic, operandFamil
 	if !ok {
 		return nil, false
 	}
-	return &EvidenceSchemaFragment{slot: slot, input: input, callRead: callRead, valueAnchor: valueAnchor, valueRead: valueRead, evidenceRead: evidenceRead, carry: carry, write: write, route: true}, true
+	return &EvidenceSchemaFragment{slot: slot, input: input, valueAnchor: valueAnchor, valueRead: valueRead, evidenceRead: evidenceRead, carry: carry, write: write, route: true}, true
 }
 
 func (fragment *EvidenceSchemaFragment) RuleSlot() *engine.RuleSlot[Evidence, operand] {

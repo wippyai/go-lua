@@ -147,12 +147,7 @@ func (row Occurrence) Available() bool {
 	if row.kind == OccurrenceBinaryPresenceRefinement && (!row.body.Available() || row.pointCount != 1 || row.inputCount != 4) {
 		return false
 	}
-	// The operation-predicate arm carries five operands: the call it
-	// interprets, the subject that call was handed, the value compared
-	// against, the route that proves the arm, and the storage the subject was
-	// read from - which is what the arm narrows, so a row without it names no
-	// coordinate any later Read is addressed to.
-	if row.kind == OccurrenceOperationPredicateRefinement && (!row.body.Available() || row.pointCount != 1 || row.inputCount != 5) {
+	if row.kind == OccurrenceOperationPredicateRefinement && (!row.body.Available() || row.pointCount != 1 || row.inputCount != 4) {
 		return false
 	}
 	return true

@@ -28,10 +28,11 @@ func Contribution() definition.Contribution {
 		Selections: []definition.Selection{{
 			// The rows of StorageRoutes do not exist until the reads before this
 			// one have delivered their cells, so an operation publishes them
-			// and stamps each with StorageRouteTag. The operation is the
-			// derivation StorageRoutes declares, named there and nowhere else.
+			// and stamps each with StorageRouteTag. Its body is the owner judgment
+			// named here, never a second copy of it.
 			Name: "StorageRouteSelection", Key: "placement/store/route-selection",
 			Relation: "StorageRoutes", Tag: "StorageRouteTag",
+			Implementation: definition.GoSymbol{PackagePath: storePackagePath, Name: "ResolveRoute", ResultIndex: 0},
 		}},
 		Reducers: []definition.Reducer{{
 			Name:      "StorageReducer",

@@ -25,6 +25,10 @@ func goType(path, name string) definition.GoType {
 	return definition.GoType{PackagePath: path, Name: name}
 }
 
+func captureFunction(name string) definition.GoSymbol {
+	return definition.GoSymbol{PackagePath: capturePackagePath, Name: name, ResultIndex: 0}
+}
+
 func sourceMethod(name string, result int8) definition.GoSymbol {
 	return definition.GoSymbol{PackagePath: capturePackagePath, Name: name, Receiver: goType(capturePackagePath, "Source"), ResultIndex: result}
 }
@@ -114,6 +118,7 @@ func Contribution() definition.Contribution {
 				// are published by this operation rather than enumerated.
 				Name: "CaptureSourceSelection", Key: "value/closure-capture/source-selection",
 				Relation: "CaptureSources", Tag: "CaptureSourceTag",
+				Implementation: captureFunction("DeriveCaptureSources"),
 			},
 			{
 				// The route set is the union of the allocations every captured
@@ -121,6 +126,7 @@ func Contribution() definition.Contribution {
 				// are known.
 				Name: "CaptureRouteSelection", Key: "placement/closure-capture/route-selection",
 				Relation: "CaptureRoutes", Tag: "CaptureRouteTag",
+				Implementation: captureFunction("DeriveCaptureRoutes"),
 			},
 		},
 		Reducers: []definition.Reducer{{
@@ -128,14 +134,7 @@ func Contribution() definition.Contribution {
 			Key:  "placement/closure-capture/reducer",
 			Inputs: []definition.ReducerInput{
 				{Axis: placementAxis(), Carrier: "PlacementFactCarrier", Form: member.ReadFormExact, Multiplicity: member.MultiplicityOne},
-				{
-					// The routed input carries the destination it publishes at
-					// as well as the tag it was correlated by: the fold
-					// authenticates the coordinate a route names rather than
-					// taking it on trust from the selection.
-					Axis: placementAxis(), Carrier: "PlacementFactCarrier", Form: member.ReadFormSelected,
-					Multiplicity: member.MultiplicityOne, Tag: "CaptureRouteTagCarrier", Route: "PlacementKeyCarrier",
-				},
+				{Axis: placementAxis(), Carrier: "PlacementFactCarrier", Form: member.ReadFormSelected, Multiplicity: member.MultiplicityOne, Tag: "CaptureRouteTagCarrier"},
 			},
 			Outputs:        []definition.ReducerOutput{{Axis: placementAxis(), Carrier: "PlacementFactCarrier"}},
 			Implementation: definition.GoSymbol{PackagePath: capturePackagePath, Name: "CaptureFold", ResultIndex: 0},

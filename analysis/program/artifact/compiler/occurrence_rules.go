@@ -27,7 +27,7 @@ func (compiler *compiler) deriveRuleOccurrencesFailure() CompileFailure {
 	if !evaluated {
 		return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceUnavailable)
 	}
-	schedule, scheduled := issuanceexecutor.BuildSchedule(artifactFormat(), compiler.issuance, requests, compiler.routeSourcePoint)
+	schedule, scheduled := issuanceexecutor.BuildSchedule(artifactFormat(), compiler.issuance, requests)
 	if !scheduled {
 		return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceUnavailable)
 	}

@@ -34,13 +34,8 @@ func (row EnvironmentReset) ID() identity.ContentID {
 // span in EnvironmentResetFamily, preserving the canonical witness order
 // while making this row flat and copy-safe.
 type EnvironmentEdge struct {
-	id identity.ContentID
-	// from and to are the route's endpoints and this row's identity.
-	// departure is where its state actually leaves once those endpoints carry
-	// stages. Both are published: a reader that authenticates the route needs
-	// the endpoints, and a reader that moves state along it needs departure.
+	id          identity.ContentID
 	from        identity.ContentID
-	departure   identity.ContentID
 	to          identity.ContentID
 	route       identity.ContentID
 	guard       identity.ContentID
@@ -61,14 +56,11 @@ type EnvironmentEdge struct {
 // NewEnvironmentEdge copies one canonical EnvironmentEdge row and replaces
 // its nested reset slice with a dense EnvironmentResetFamily span.
 func NewEnvironmentEdge(
-	id, from, departure, to, route, guard, decision, condition, reset, component, mu identity.ContentID,
+	id, from, to, route, guard, decision, condition, reset, component, mu identity.ContentID,
 	resetOffset, resetCount uint32, arm uint8, guarded, truth, hasReset, hasMu bool,
 ) (EnvironmentEdge, bool) {
-	if !departure.Available() {
-		departure = from
-	}
 	row := EnvironmentEdge{
-		id: id, from: from, departure: departure, to: to, route: route, guard: guard, decision: decision,
+		id: id, from: from, to: to, route: route, guard: guard, decision: decision,
 		condition: condition, reset: reset, component: component, mu: mu,
 		resetOffset: resetOffset, resetCount: resetCount, arm: arm,
 		guarded: guarded, truth: truth, hasReset: hasReset, hasMu: hasMu,
@@ -77,8 +69,7 @@ func NewEnvironmentEdge(
 }
 
 func (row EnvironmentEdge) Available() bool {
-	if !row.id.Available() || !row.from.Available() || !row.departure.Available() ||
-		!row.to.Available() || !row.route.Available() ||
+	if !row.id.Available() || !row.from.Available() || !row.to.Available() || !row.route.Available() ||
 		row.arm < EnvironmentArmLocal || row.arm > EnvironmentArmCancel ||
 		uint64(row.resetOffset)+uint64(row.resetCount) > uint64(^uint32(0)) {
 		return false
@@ -117,14 +108,6 @@ func (row EnvironmentEdge) From() identity.ContentID {
 		return identity.ContentID{}
 	}
 	return row.from
-}
-
-// Departure is the point the state travelling this route leaves from.
-func (row EnvironmentEdge) Departure() identity.ContentID {
-	if !row.Available() {
-		return identity.ContentID{}
-	}
-	return row.departure
 }
 
 func (row EnvironmentEdge) To() identity.ContentID {

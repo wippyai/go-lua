@@ -38,17 +38,8 @@ func (point pointDraft) Initial() (bool, bool) { return point.initial, point.Ava
 // Its ID is the stable route-occurrence identity. RouteID is the parent
 // final-route semantic ID and is not a second artifact identity.
 type environmentEdgeDraft struct {
-	id identity.ContentID
-	// from and to are where the route comes from and goes to. They are the
-	// edge's identity and never move, which is what lets the seal authenticate
-	// a routed occurrence against the route that carries it.
-	//
-	// departure is where the state travelling this route actually leaves from:
-	// the source's terminal stage once the source is staged, and the route's
-	// own predecessor stage where one stands on it. Separating the two is what
-	// lets a fact this transfer proves be staged on the transfer itself.
+	id        identity.ContentID
 	from      identity.ContentID
-	departure identity.ContentID
 	to        identity.ContentID
 	route     identity.ContentID
 	guard     identity.ContentID
@@ -65,16 +56,7 @@ type environmentEdgeDraft struct {
 	hasMu     bool
 }
 
-func (edge environmentEdgeDraft) ID() identity.ContentID { return edge.id }
-
-// Departure is the point the transfer's state leaves from: From until the
-// source carries stages, and the source's terminal stage afterwards.
-func (edge environmentEdgeDraft) Departure() identity.ContentID {
-	if edge.departure.Available() {
-		return edge.departure
-	}
-	return edge.from
-}
+func (edge environmentEdgeDraft) ID() identity.ContentID      { return edge.id }
 func (edge environmentEdgeDraft) From() identity.ContentID    { return edge.from }
 func (edge environmentEdgeDraft) To() identity.ContentID      { return edge.to }
 func (edge environmentEdgeDraft) RouteID() identity.ContentID { return edge.route }

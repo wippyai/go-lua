@@ -12,7 +12,7 @@ func (s *evalState) addSequence(from, to, owner keyspace.Term) error {
 	fromEndpoint, fromOK := s.finishEndpoint(from)
 	toEndpoint, toOK := s.entries.Entry(to)
 	if !fromOK || !toOK {
-		if !fromOK && s.evaluates(from) && !s.static(from) || !toOK && s.evaluates(to) && !s.static(to) {
+		if !fromOK && s.live(from) && !s.static(from) || !toOK && s.live(to) && !s.static(to) {
 			return fmt.Errorf("program/flow/causal: live evaluation endpoint %v -> %v has no typed port", from, to)
 		}
 		// Static/dead operands are not causal endpoints. The surrounding live
@@ -92,7 +92,7 @@ func (s *evalState) addTableRoute(from, field, owner keyspace.Term, entry bool) 
 	}
 	toEndpoint, toOK := s.tableFieldEntry(field)
 	if !fromOK || !toOK {
-		if !fromOK && s.evaluates(from) && !s.static(from) || !toOK && s.evaluates(field) && !s.static(field) {
+		if !fromOK && s.live(from) && !s.static(from) || !toOK && s.live(field) && !s.static(field) {
 			return fmt.Errorf("program/flow/causal: live TableField endpoint %v -> %v has no typed port", from, field)
 		}
 		return nil
@@ -115,7 +115,7 @@ func (s *evalState) addFinish(from, to, owner keyspace.Term) error {
 	fromEndpoint, fromOK := s.finishEndpoint(from)
 	toEndpoint, toOK := s.finishEndpoint(to)
 	if !fromOK || !toOK {
-		if !fromOK && s.evaluates(from) && !s.static(from) || !toOK && s.evaluates(to) && !s.static(to) {
+		if !fromOK && s.live(from) && !s.static(from) || !toOK && s.live(to) && !s.static(to) {
 			return fmt.Errorf("program/flow/causal: live evaluation commit %v -> %v has no typed port", from, to)
 		}
 		return nil
@@ -133,7 +133,7 @@ func (s *evalState) addGuard(from, to, owner, decision keyspace.Term, truth bool
 	fromEndpoint, fromOK := s.finishEndpoint(from)
 	toEndpoint, toOK := s.entries.Entry(to)
 	if !fromOK || !toOK {
-		if !fromOK && s.evaluates(from) && !s.static(from) || !toOK && s.evaluates(to) && !s.static(to) {
+		if !fromOK && s.live(from) && !s.static(from) || !toOK && s.live(to) && !s.static(to) {
 			return fmt.Errorf("program/flow/causal: live guarded endpoint %v -> %v has no typed port", from, to)
 		}
 		return nil
@@ -151,7 +151,7 @@ func (s *evalState) addGuardFinish(from, to, owner, decision keyspace.Term, trut
 	fromEndpoint, fromOK := s.finishEndpoint(from)
 	toEndpoint, toOK := s.finishEndpoint(to)
 	if !fromOK || !toOK {
-		if !fromOK && s.evaluates(from) && !s.static(from) || !toOK && s.evaluates(to) && !s.static(to) {
+		if !fromOK && s.live(from) && !s.static(from) || !toOK && s.live(to) && !s.static(to) {
 			return fmt.Errorf("program/flow/causal: live guarded commit %v -> %v has no typed port", from, to)
 		}
 		return nil
@@ -169,7 +169,7 @@ func (s *evalState) addGuardFinish(from, to, owner, decision keyspace.Term, trut
 // Call found in an evaluation relation. They operate on the dense seal-local
 // plan; the published CallBoundary is the sole retained representation.
 func (s *evalState) planCallEntry(call, target keyspace.Term) error {
-	if keyspace.TermFamily(call) != keyspace.FamilyCall || !s.evaluates(call) || s.tailPlans[keyspace.TermOrdinal(call)] != 0 {
+	if keyspace.TermFamily(call) != keyspace.FamilyCall || !s.live(call) || s.tailPlans[keyspace.TermOrdinal(call)] != 0 {
 		return nil
 	}
 	to, ok := s.entries.Entry(target)
@@ -180,7 +180,7 @@ func (s *evalState) planCallEntry(call, target keyspace.Term) error {
 }
 
 func (s *evalState) planCallFinish(call, term keyspace.Term) error {
-	if keyspace.TermFamily(call) != keyspace.FamilyCall || !s.evaluates(call) || s.tailPlans[keyspace.TermOrdinal(call)] != 0 {
+	if keyspace.TermFamily(call) != keyspace.FamilyCall || !s.live(call) || s.tailPlans[keyspace.TermOrdinal(call)] != 0 {
 		return nil
 	}
 	to, ok := s.finishEndpoint(term)
@@ -191,12 +191,12 @@ func (s *evalState) planCallFinish(call, term keyspace.Term) error {
 }
 
 func (s *evalState) planCallSelect(call, selectTerm, right keyspace.Term, operation kind.SelectOp) error {
-	if keyspace.TermFamily(call) != keyspace.FamilyCall || !s.evaluates(call) || s.tailPlans[keyspace.TermOrdinal(call)] != 0 {
+	if keyspace.TermFamily(call) != keyspace.FamilyCall || !s.live(call) || s.tailPlans[keyspace.TermOrdinal(call)] != 0 {
 		return nil
 	}
 	other, ok := s.entries.Entry(right)
 	if !ok {
-		if s.static(right) || !s.evaluates(right) {
+		if s.static(right) || !s.live(right) {
 			// A static/dead right operand contributes no runtime endpoint. Both
 			// short-circuit arms still remain represented in the closed
 			// Boundary plane, with the right arm collapsing to Select Finish.
@@ -216,7 +216,7 @@ func (s *evalState) emitEvaluation() error {
 	values := s.flow.Values()
 	for ordinal := uint32(1); ordinal <= s.counts[keyspace.FamilyValues]; ordinal++ {
 		term := keyspace.MakeTerm(keyspace.FamilyValues, ordinal)
-		if !s.evaluates(term) {
+		if !s.live(term) {
 			continue
 		}
 		length, ok := values.Len(term)
@@ -233,7 +233,7 @@ func (s *evalState) emitEvaluation() error {
 			if !memberOK {
 				return errors.New("program/flow/causal: Values member is unavailable")
 			}
-			if !s.evaluates(member) {
+			if !s.live(member) {
 				continue
 			}
 			if previous != 0 {
@@ -246,7 +246,7 @@ func (s *evalState) emitEvaluation() error {
 			}
 			previous = member
 		}
-		if tail != 0 && s.evaluates(tail) {
+		if tail != 0 && s.live(tail) {
 			if previous != 0 {
 				if err := s.planCallEntry(previous, tail); err != nil {
 					return err
@@ -272,7 +272,7 @@ func (s *evalState) emitEvaluation() error {
 	binds := s.flow.Storage().Binds()
 	for ordinal := uint32(1); ordinal <= s.counts[keyspace.FamilyBind]; ordinal++ {
 		bind := keyspace.MakeTerm(keyspace.FamilyBind, ordinal)
-		if !s.evaluates(bind) {
+		if !s.live(bind) {
 			continue
 		}
 		owner, values, ok := binds.Get(bind)
@@ -290,14 +290,14 @@ func (s *evalState) emitEvaluation() error {
 	exact := s.flow.Access().Exact()
 	for ordinal := uint32(1); ordinal <= s.counts[keyspace.FamilyLensExact]; ordinal++ {
 		term := keyspace.MakeTerm(keyspace.FamilyLensExact, ordinal)
-		if !s.evaluates(term) {
+		if !s.live(term) {
 			continue
 		}
 		owner, base, sourceTerm, fieldKind, ok := exact.Get(term)
 		if !ok || !validPreTerm(owner, s.counts) || keyspace.TermFamily(owner) != keyspace.FamilyBody {
 			return errors.New("program/flow/causal: malformed exact Lens")
 		}
-		if fieldKind == kind.FieldExact && sourceTerm != 0 && s.evaluates(sourceTerm) {
+		if fieldKind == kind.FieldExact && sourceTerm != 0 && s.live(sourceTerm) {
 			if err := s.planCallEntry(base, sourceTerm); err != nil {
 				return err
 			}
@@ -323,14 +323,14 @@ func (s *evalState) emitEvaluation() error {
 	dynamic := s.flow.Access().Dynamic()
 	for ordinal := uint32(1); ordinal <= s.counts[keyspace.FamilyLensKey]; ordinal++ {
 		term := keyspace.MakeTerm(keyspace.FamilyLensKey, ordinal)
-		if !s.evaluates(term) {
+		if !s.live(term) {
 			continue
 		}
 		owner, base, key, ok := dynamic.Get(term)
 		if !ok || !validPreTerm(owner, s.counts) || keyspace.TermFamily(owner) != keyspace.FamilyBody {
 			return errors.New("program/flow/causal: malformed dynamic Lens")
 		}
-		if s.evaluates(key) {
+		if s.live(key) {
 			if err := s.planCallEntry(base, key); err != nil {
 				return err
 			}
@@ -356,7 +356,7 @@ func (s *evalState) emitEvaluation() error {
 	reads := s.flow.Storage().Reads()
 	for ordinal := uint32(1); ordinal <= s.counts[keyspace.FamilyRead]; ordinal++ {
 		term := keyspace.MakeTerm(keyspace.FamilyRead, ordinal)
-		if !s.evaluates(term) {
+		if !s.live(term) {
 			continue
 		}
 		owner, sourceTerm, _, ok := reads.Get(term)
@@ -376,7 +376,7 @@ func (s *evalState) emitEvaluation() error {
 	unaries := s.flow.Operators().Unaries()
 	for ordinal := uint32(1); ordinal <= s.counts[keyspace.FamilyUnary]; ordinal++ {
 		term := keyspace.MakeTerm(keyspace.FamilyUnary, ordinal)
-		if !s.evaluates(term) {
+		if !s.live(term) {
 			continue
 		}
 		owner, _, operand, ok := unaries.Get(term)
@@ -397,14 +397,14 @@ func (s *evalState) emitEvaluation() error {
 	binaries := s.flow.Operators().Binaries()
 	for ordinal := uint32(1); ordinal <= s.counts[keyspace.FamilyBinary]; ordinal++ {
 		term := keyspace.MakeTerm(keyspace.FamilyBinary, ordinal)
-		if !s.evaluates(term) {
+		if !s.live(term) {
 			continue
 		}
 		owner, _, left, right, ok := binaries.Get(term)
 		if !ok || !validPreTerm(owner, s.counts) || keyspace.TermFamily(owner) != keyspace.FamilyBody {
 			return errors.New("program/flow/causal: malformed Binary")
 		}
-		if s.evaluates(right) {
+		if s.live(right) {
 			if err := s.planCallEntry(left, right); err != nil {
 				return err
 			}
@@ -419,7 +419,7 @@ func (s *evalState) emitEvaluation() error {
 				return err
 			}
 		}
-		if s.evaluates(right) {
+		if s.live(right) {
 			if err := s.addFinish(right, term, owner); err != nil {
 				return err
 			}
@@ -431,7 +431,7 @@ func (s *evalState) emitEvaluation() error {
 	selects := s.flow.Operators().Selects()
 	for ordinal := uint32(1); ordinal <= s.counts[keyspace.FamilySelect]; ordinal++ {
 		term := keyspace.MakeTerm(keyspace.FamilySelect, ordinal)
-		if !s.evaluates(term) {
+		if !s.live(term) {
 			continue
 		}
 		owner, operation, left, right, ok := selects.Get(term)
@@ -441,7 +441,7 @@ func (s *evalState) emitEvaluation() error {
 		leftEndpoint, leftOK := s.finishEndpoint(left)
 		if leftOK && keyspace.TermFamily(leftEndpoint) != keyspace.FamilyCall {
 			if operation == kind.SelectAnd {
-				if s.evaluates(right) {
+				if s.live(right) {
 					if err := s.addGuard(left, right, owner, term, true, -1); err != nil {
 						return err
 					}
@@ -455,7 +455,7 @@ func (s *evalState) emitEvaluation() error {
 				if err := s.addGuardFinish(left, term, owner, term, true, -1); err != nil {
 					return err
 				}
-				if s.evaluates(right) {
+				if s.live(right) {
 					if err := s.addGuard(left, right, owner, term, false, -1); err != nil {
 						return err
 					}
@@ -479,7 +479,7 @@ func (s *evalState) emitEvaluation() error {
 	claims := s.flow.Claims()
 	for ordinal := uint32(1); ordinal <= s.counts[keyspace.FamilyValueClaim]; ordinal++ {
 		term := keyspace.MakeTerm(keyspace.FamilyValueClaim, ordinal)
-		if !s.evaluates(term) {
+		if !s.live(term) {
 			continue
 		}
 		owner, operand, _, ok := claims.Get(term)
@@ -514,7 +514,7 @@ func (s *evalState) emitAssigns() error {
 	writes := s.flow.Storage().Writes()
 	for ordinal := uint32(1); ordinal <= s.counts[keyspace.FamilyAssign]; ordinal++ {
 		assign := keyspace.MakeTerm(keyspace.FamilyAssign, ordinal)
-		if !s.evaluates(assign) {
+		if !s.live(assign) {
 			continue
 		}
 		owner, values, ok := assigns.Get(assign)
@@ -537,7 +537,7 @@ func (s *evalState) emitAssigns() error {
 			if !targetOK || parent != assign {
 				return errors.New("program/flow/causal: Write parent disagrees with Assign")
 			}
-			if keyspace.TermFamily(target) != keyspace.FamilyCell && s.evaluates(target) {
+			if keyspace.TermFamily(target) != keyspace.FamilyCell && s.live(target) {
 				nonCellTargets = append(nonCellTargets, target)
 			}
 		}
@@ -570,7 +570,7 @@ func (s *evalState) emitAssigns() error {
 				if !currentOK || !previousOK {
 					return errors.New("program/flow/causal: Assign reverse Write chain is unavailable")
 				}
-				if !s.evaluates(current) || !s.evaluates(previous) {
+				if !s.live(current) || !s.live(previous) {
 					continue
 				}
 				if err := s.addWriteCommit(current, previous, owner); err != nil {
@@ -586,7 +586,7 @@ func (s *evalState) emitCalls() error {
 	calls := s.flow.Calls()
 	for ordinal := uint32(1); ordinal <= s.counts[keyspace.FamilyCall]; ordinal++ {
 		call := keyspace.MakeTerm(keyspace.FamilyCall, ordinal)
-		if !s.evaluates(call) {
+		if !s.live(call) {
 			continue
 		}
 		owner, callee, _, actuals, ok := calls.Get(call)
@@ -600,7 +600,7 @@ func (s *evalState) emitCalls() error {
 			return err
 		}
 		actualsFinish, actualsOK := s.finishEndpoint(actuals)
-		if actualsOK && s.evaluates(call) {
+		if actualsOK && s.live(call) {
 			if keyspace.TermFamily(actualsFinish) != keyspace.FamilyCall {
 				if err := s.appendEdge(actualsFinish, call, owner, 0, false, -1); err != nil {
 					return err
@@ -624,7 +624,7 @@ func (s *evalState) emitTables() error {
 	fields := s.flow.Fields()
 	for ordinal := uint32(1); ordinal <= s.counts[keyspace.FamilyTable]; ordinal++ {
 		table := keyspace.MakeTerm(keyspace.FamilyTable, ordinal)
-		if !s.evaluates(table) {
+		if !s.live(table) {
 			continue
 		}
 		owner, ok := tables.Get(table)
@@ -641,7 +641,7 @@ func (s *evalState) emitTables() error {
 			if !fieldOK {
 				return errors.New("program/flow/causal: TableField order is unavailable")
 			}
-			if !s.evaluates(field) {
+			if !s.live(field) {
 				continue
 			}
 			if previous == table {
@@ -660,7 +660,7 @@ func (s *evalState) emitTables() error {
 
 	for ordinal := uint32(1); ordinal <= s.counts[keyspace.FamilyTableField]; ordinal++ {
 		field := keyspace.MakeTerm(keyspace.FamilyTableField, ordinal)
-		if !s.evaluates(field) {
+		if !s.live(field) {
 			continue
 		}
 		table, key, values, _, ok := fields.Get(field)
@@ -672,7 +672,7 @@ func (s *evalState) emitTables() error {
 			return errors.New("program/flow/causal: TableField owner is unavailable")
 		}
 		keyUsable := !s.invalidExactField(field)
-		if keyUsable && s.evaluates(key) {
+		if keyUsable && s.live(key) {
 			if err := s.planCallEntry(key, values); err != nil {
 				return err
 			}
@@ -694,7 +694,7 @@ func (s *evalState) emitReturns() error {
 	returns := s.flow.Control().Returns()
 	for ordinal := uint32(1); ordinal <= s.counts[keyspace.FamilyReturn]; ordinal++ {
 		term := keyspace.MakeTerm(keyspace.FamilyReturn, ordinal)
-		if !s.evaluates(term) {
+		if !s.live(term) {
 			continue
 		}
 		owner, values, ok := returns.Get(term)
@@ -744,7 +744,7 @@ func (s *evalState) nextLiveRoot(bodyTerm keyspace.Term, cursor int) (keyspace.T
 		if !rootOK {
 			return 0, false
 		}
-		if !rootKind(keyspace.TermFamily(root)) || s.static(root) || !s.evaluates(root) {
+		if !rootKind(keyspace.TermFamily(root)) || s.static(root) || !s.live(root) {
 			continue
 		}
 		return root, true

@@ -8,46 +8,12 @@ import (
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
-// Selected is one delivered selection slot: the value a frame's selection
-// answered for one tag, and the three dispositions that answer distinguishes.
-//
-// A slot is refused when the selection could not be read at all, missing when
-// the selection was read and holds no row for the tag, and found otherwise. A
-// found slot is present when the row carries a value and absent when the row
-// proves there is none. The three stay distinct because a raw access answers
-// differently for each, and a binding that collapsed them would answer for a
-// reading its owner did not make.
-type Selected[V any] struct {
+type rawSelected[V any] struct {
 	value   V
 	present bool
 	found   bool
 	valid   bool
 }
-
-// NewSelected delivers one row the selection found, present or proven absent.
-func NewSelected[V any](value V, present bool) Selected[V] {
-	return Selected[V]{value: value, present: present, found: true, valid: true}
-}
-
-// NewMissingSelected delivers a selection that was read and holds no row for
-// the tag.
-func NewMissingSelected[V any]() Selected[V] { return Selected[V]{valid: true} }
-
-// NewRefusedSelected delivers a selection that could not be read.
-func NewRefusedSelected[V any]() Selected[V] { return Selected[V]{} }
-
-// Value returns the delivered value. It carries meaning only for a found and
-// present slot.
-func (selected Selected[V]) Value() V { return selected.value }
-
-// Present reports whether the found row carries a value.
-func (selected Selected[V]) Present() bool { return selected.present }
-
-// Found reports whether the selection holds a row for the tag.
-func (selected Selected[V]) Found() bool { return selected.found }
-
-// Valid reports whether the selection was read at all.
-func (selected Selected[V]) Valid() bool { return selected.valid }
 
 func (rule *RawGetRule) fold(frame engine.Frame[valuedomain.Value, Index]) engine.RuleResult[valuedomain.Value] {
 	operand, ok := engine.Operand(frame)
@@ -112,7 +78,7 @@ func transferRawGetView(
 	heaps engine.Selection[heapdomain.RawRouteTag, engine.OrderedCells[heapdomain.Value]],
 	packs engine.Selection[heapdomain.RawPayloadTag, engine.OrderedCells[pack.Value]],
 	sources engine.Selection[RawSourceTag, engine.OrderedCells[valuedomain.Value]],
-	scratch *RawGetScratch,
+	scratch *rawGetScratch,
 ) (RawGetFrame, bool) {
 	if scratch == nil {
 		return RawGetFrame{}, false
@@ -151,16 +117,16 @@ func transferRawGetView(
 			return RawGetFrame{}, false
 		}
 	}
-	view.Call = func(tag uint64) Selected[calldomain.Value] {
+	view.Call = func(tag uint64) rawSelected[calldomain.Value] {
 		return transferSelectionValue(frame, calls, &scratch.call, tag)
 	}
-	view.Heap = func(tag heapdomain.RawRouteTag, _ heapdomain.Key) Selected[heapdomain.Value] {
+	view.Heap = func(tag heapdomain.RawRouteTag, _ heapdomain.Key) rawSelected[heapdomain.Value] {
 		return transferSelectionValue(frame, heaps, &scratch.heap, tag)
 	}
-	view.Pack = func(tag heapdomain.RawPayloadTag) Selected[pack.Value] {
+	view.Pack = func(tag heapdomain.RawPayloadTag) rawSelected[pack.Value] {
 		return transferSelectionValue(frame, packs, &scratch.pack, tag)
 	}
-	view.Source = func(tag RawSourceTag) Selected[valuedomain.Value] {
+	view.Source = func(tag RawSourceTag) rawSelected[valuedomain.Value] {
 		return transferSelectionValue(frame, sources, &scratch.value, tag)
 	}
 	return view, true
@@ -170,29 +136,29 @@ func transferSelectionValue[Out any, O any, S any, Tag interface {
 	~uint8 | ~uint16 | ~uint32 | ~uint64
 }](
 	frame engine.Frame[Out, O], selection engine.Selection[Tag, engine.OrderedCells[S]], index *rawSelectionIndex, want Tag,
-) Selected[S] {
+) rawSelected[S] {
 	ordinal := 0
 	if index == nil {
 		count, ok := engine.SelectionCount(frame, selection)
 		if !ok || count != 1 {
-			return Selected[S]{}
+			return rawSelected[S]{}
 		}
 	} else {
 		found, ok := index.ordinal(uint64(want))
 		if !ok {
-			return Selected[S]{valid: true}
+			return rawSelected[S]{valid: true}
 		}
 		ordinal = found
 	}
 	tag, cells, selected := engine.SelectionAt(frame, selection, ordinal)
 	if !selected || tag != want || cells.Count() != 1 {
-		return Selected[S]{}
+		return rawSelected[S]{}
 	}
 	value, present, available := cells.At(0)
 	if !available {
-		return Selected[S]{}
+		return rawSelected[S]{}
 	}
-	return Selected[S]{value: value, present: present, found: true, valid: true}
+	return rawSelected[S]{value: value, present: present, found: true, valid: true}
 }
 
 func buildTransferIndex[Out any, O any, S any, Tag interface {

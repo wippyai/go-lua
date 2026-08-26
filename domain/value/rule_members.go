@@ -27,7 +27,6 @@ const (
 	ReturnBoundaryMembers              schemaapi.Key  = "value/return-boundary/members"
 	MountedCallParents                 schemaapi.Key  = "value/mounted-call/parents"
 	MountedCallActualMembers           schemaapi.Key  = "value/mounted-call/actual-members"
-	MountedCallResultSlotCandidates    schemaapi.Key  = "value/mounted-call-result/candidates"
 	FreshResultRoutes                  schemaapi.Key  = "value/fresh-result/routes"
 	BinaryArithmeticSources            schemaapi.Key  = "value/binary-arithmetic/sources"
 	BinaryEqualitySources              schemaapi.Key  = "value/binary-equality/sources"
@@ -38,6 +37,7 @@ const (
 	RuntimeKindCallCandidates          schemaapi.Key  = "value/runtime-kind/candidates"
 	RuntimeKindSubjects                schemaapi.Key  = "value/runtime-kind/subjects"
 	RuntimeKindComparisons             schemaapi.Key  = "value/runtime-kind/comparisons"
+	MountedCallResultSlotCandidates    schemaapi.Key  = "value/mounted-call-result/candidates"
 	ResultAliasRoutes                  schemaapi.Key  = "value/result-alias/routes"
 	BodyReturnRoutes                   schemaapi.Key  = "value/body-result/routes"
 	AllocationFacts                    schemaapi.Key  = "value/allocation/facts"
@@ -59,7 +59,6 @@ const (
 	MountedCallCalleeKey               schemaapi.Key  = "value/mounted-call/callee-key"
 	MountedCallActualKey               schemaapi.Key  = "value/mounted-call/actual-key"
 	MountedCallActualTag               schemaapi.Key  = "value/mounted-call/actual-tag"
-	MountedCallResultSlotCoordinate    schemaapi.Key  = "value/mounted-call-result/coordinate"
 	FreshResultRouteKey                schemaapi.Key  = "value/fresh-result/route-key"
 	FreshResultRouteDestination        schemaapi.Key  = "value/fresh-result/route-destination"
 	FreshResultRouteTag                schemaapi.Key  = "value/fresh-result/route-tag"
@@ -80,6 +79,7 @@ const (
 	RuntimeKindComparisonKey           schemaapi.Key  = "value/runtime-kind/comparison-key"
 	RuntimeKindWriteCoordinate         schemaapi.Key  = "value/runtime-kind/coordinate"
 	RuntimeKindCallOccurrence          schemaapi.Key  = "value/runtime-kind/call-occurrence"
+	MountedCallResultSlotCoordinate    schemaapi.Key  = "value/mounted-call-result/coordinate"
 	ResultAliasRouteKey                schemaapi.Key  = "value/result-alias/route-key"
 	ResultAliasRouteTag                schemaapi.Key  = "value/result-alias/route-tag"
 	BodyReturnRouteKey                 schemaapi.Key  = "value/body-result/route-key"
@@ -135,12 +135,12 @@ const (
 	FreshResultTagCarrier              member.Carrier = "carrier/value/fresh-result-tag"
 	FreshResultRouteCarrier            member.Carrier = "carrier/value/fresh-result-route"
 	CallCoordinateCarrier              member.Carrier = "carrier/call/mounted-call"
-	MountedCallResultSlotCarrier       member.Carrier = "carrier/value/mounted-call-result-slot"
 	CallFactCarrier                    member.Carrier = "carrier/call/fact"
 	FreshResultRouteTagCarrier         member.Carrier = "carrier/value/fresh-result-route-tag"
 	ModuleLoadCallCarrier              member.Carrier = "carrier/value/module-load-call"
 	RuntimeKindCallCarrier             member.Carrier = "carrier/value/runtime-kind-call"
 	RuntimeKindCallOccurrenceCarrier   member.Carrier = "carrier/value/runtime-kind-call-occurrence"
+	MountedCallResultSlotCarrier       member.Carrier = "carrier/value/mounted-call-result-slot"
 	ResultAliasRouteCarrier            member.Carrier = "carrier/value/result-alias-route"
 	ResultAliasRouteTagCarrier         member.Carrier = "carrier/value/result-alias-route-tag"
 	BodyReturnRouteCarrier             member.Carrier = "carrier/value/body-return-route"
@@ -179,7 +179,6 @@ func AxisMemberCatalog() member.Catalog {
 			{Key: ReturnBoundaryMembers, Subject: ReturnBoundaryMemberCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/return-boundary/members"}), Inputs: []member.Carrier{ReturnBoundaryCarrier}, Parent: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/return-boundary/candidates"}, Ordinal: ReturnBoundaryMemberOrdinalCarrier},
 			{Key: MountedCallParents, Subject: MountedCallActualsCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/mounted-call/parents"}), Inputs: []member.Carrier{CallCoordinateCarrier}, Correspondences: []member.RelationRef{member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "call"}, Member: "call/mounted-call/candidates"}}},
 			{Key: MountedCallActualMembers, Subject: MountedCallArgumentCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/mounted-call/actual-members"}), Inputs: []member.Carrier{CallCoordinateCarrier}, Parent: member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/mounted-call/parents"}, Ordinal: MountedCallActualTagCarrier},
-			{Key: MountedCallResultSlotCandidates, Subject: MountedCallResultSlotCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/mounted-call-result/candidates"})},
 			{Key: FreshResultRoutes, Subject: FreshResultRouteCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "call"}, Member: "call/mounted-call/candidates"}), Inputs: []member.Carrier{CallCoordinateCarrier, CallFactCarrier}},
 			{Key: BinaryArithmeticSources, Subject: ValueFactCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/binary-arithmetic/candidates"}), Inputs: []member.Carrier{BinaryArithmeticCarrier}},
 			{Key: BinaryEqualitySources, Subject: ValueFactCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/binary-equality/candidates"}), Inputs: []member.Carrier{BinaryEqualityCarrier}},
@@ -190,6 +189,7 @@ func AxisMemberCatalog() member.Catalog {
 			{Key: RuntimeKindCallCandidates, Subject: RuntimeKindCallCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/runtime-kind/candidates"})},
 			{Key: RuntimeKindSubjects, Subject: ValueFactCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/runtime-kind/candidates"}), Inputs: []member.Carrier{RuntimeKindCallCarrier}},
 			{Key: RuntimeKindComparisons, Subject: ValueFactCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/runtime-kind/candidates"}), Inputs: []member.Carrier{RuntimeKindCallCarrier}},
+			{Key: MountedCallResultSlotCandidates, Subject: MountedCallResultSlotCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/mounted-call-result/candidates"})},
 			{Key: ResultAliasRoutes, Subject: ResultAliasRouteCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/mounted-call-result/candidates"}), Inputs: []member.Carrier{MountedCallResultSlotCarrier, CallFactCarrier}},
 			{Key: BodyReturnRoutes, Subject: BodyReturnRouteCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/mounted-call-result/candidates"}), Inputs: []member.Carrier{MountedCallResultSlotCarrier, CallFactCarrier}},
 			{Key: AllocationFacts, Subject: ValueFactCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/allocation/candidates"}), Inputs: []member.Carrier{AllocationResultCarrier}},
@@ -213,7 +213,6 @@ func AxisMemberCatalog() member.Catalog {
 			{Key: MountedCallCalleeKey, Relation: MountedCallParents, Role: member.Key, Result: ValueCoordinateCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/mounted-call/parents"})},
 			{Key: MountedCallActualKey, Relation: MountedCallActualMembers, Role: member.Key, Result: ValueCoordinateCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/mounted-call/actual-members"})},
 			{Key: MountedCallActualTag, Relation: MountedCallActualMembers, Role: member.Predicate, Result: MountedCallActualTagCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/mounted-call/actual-members"})},
-			{Key: MountedCallResultSlotCoordinate, Relation: MountedCallResultSlotCandidates, Role: member.Destination, Result: ValueCoordinateCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/mounted-call-result/candidates"})},
 			{Key: FreshResultRouteKey, Relation: FreshResultRoutes, Role: member.Key, Result: ValueCoordinateCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "call"}, Member: "call/mounted-call/candidates"})},
 			{Key: FreshResultRouteDestination, Relation: FreshResultRoutes, Role: member.Destination, Result: ValueCoordinateCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "call"}, Member: "call/mounted-call/candidates"})},
 			{Key: FreshResultRouteTag, Relation: FreshResultRoutes, Role: member.Predicate, Result: FreshResultRouteTagCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "call"}, Member: "call/mounted-call/candidates"})},
@@ -234,6 +233,7 @@ func AxisMemberCatalog() member.Catalog {
 			{Key: RuntimeKindComparisonKey, Relation: RuntimeKindComparisons, Role: member.Key, Result: ValueCoordinateCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/runtime-kind/candidates"})},
 			{Key: RuntimeKindWriteCoordinate, Relation: RuntimeKindCallCandidates, Role: member.Destination, Result: ValueCoordinateCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/runtime-kind/candidates"})},
 			{Key: RuntimeKindCallOccurrence, Relation: RuntimeKindCallCandidates, Role: member.Identity, Result: RuntimeKindCallOccurrenceCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/runtime-kind/candidates"})},
+			{Key: MountedCallResultSlotCoordinate, Relation: MountedCallResultSlotCandidates, Role: member.Destination, Result: ValueCoordinateCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/mounted-call-result/candidates"})},
 			{Key: ResultAliasRouteKey, Relation: ResultAliasRoutes, Role: member.Key, Result: ValueCoordinateCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/mounted-call-result/candidates"})},
 			{Key: ResultAliasRouteTag, Relation: ResultAliasRoutes, Role: member.Predicate, Result: ResultAliasRouteTagCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/mounted-call-result/candidates"})},
 			{Key: BodyReturnRouteKey, Relation: BodyReturnRoutes, Role: member.Key, Result: ValueCoordinateCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/mounted-call-result/candidates"})},

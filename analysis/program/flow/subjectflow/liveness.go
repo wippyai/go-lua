@@ -483,11 +483,6 @@ func (builder *sealBuilder) classifyLiveness(boundary Boundary, subject Subject,
 	}
 
 	prior, post, unknown := false, false, false
-	// observedBefore and definedAfter carry the positive proof of the negative
-	// answer: nothing in the pre-yield slice touches this subject, and its
-	// definition lies in the post-reentry slice. A boundary cannot observe a
-	// subject whose definition it precedes.
-	observedBefore, definedAfter := false, false
 	for _, eventIndex := range events {
 		if eventIndex < 0 || eventIndex >= len(builder.events) || eventIndex >= len(index.events) {
 			return LivenessUnknown
@@ -502,12 +497,6 @@ func (builder *sealBuilder) classifyLiveness(boundary Boundary, subject Subject,
 		}
 		inPrior := priorReach[attachment.node]
 		inPost := postReach[attachment.node]
-		if inPrior {
-			observedBefore = true
-		}
-		if inPost && event.Kind == EventDefine {
-			definedAfter = true
-		}
 		if !inPrior && !inPost {
 			continue
 		}
@@ -524,13 +513,6 @@ func (builder *sealBuilder) classifyLiveness(boundary Boundary, subject Subject,
 		}
 	}
 	if !prior {
-		// A subject the pre-yield slice never touches, whose definition the
-		// post-reentry slice carries, does not exist at the cut. That is a
-		// proof of the negative answer, not an absence of evidence, so it is
-		// stated as DiesBefore rather than widened to Unknown.
-		if !observedBefore && definedAfter {
-			return LivenessDiesBefore
-		}
 		return LivenessUnknown
 	}
 	// An exact post-reentry use or alias is sufficient positive evidence that
@@ -592,16 +574,12 @@ func (builder *sealBuilder) liveness() error {
 		return err
 	}
 
-	// The accumulators are ordered directly. The comparison key is the
-	// accumulated row's own route and subject, so ordering the accumulators
-	// reads each one through its pointer; ordering their map keys instead
-	// would resolve the map twice per comparison and copy a row per read.
-	ordered := make([]*livenessAccumulator, 0, len(rows))
-	for _, entry := range rows {
-		ordered = append(ordered, entry)
+	keys := make([]livenessKey, 0, len(rows))
+	for key := range rows {
+		keys = append(keys, key)
 	}
-	sort.Slice(ordered, func(left, right int) bool {
-		leftRow, rightRow := &ordered[left].row, &ordered[right].row
+	sort.Slice(keys, func(left, right int) bool {
+		leftRow, rightRow := rows[keys[left]].row, rows[keys[right]].row
 		if leftRow.YieldRoute != rightRow.YieldRoute {
 			return bytes.Compare(leftRow.YieldRoute[:], rightRow.YieldRoute[:]) < 0
 		}
@@ -610,7 +588,8 @@ func (builder *sealBuilder) liveness() error {
 		}
 		return bytes.Compare(leftRow.Subject.ID[:], rightRow.Subject.ID[:]) < 0
 	})
-	for _, entry := range ordered {
+	for _, key := range keys {
+		entry := rows[key]
 		entry.row.State = AggregateLiveness(entry.states)
 		entry.row.ID = livenessID(entry.row.YieldRoute, entry.row.YieldFromPath, entry.row.YieldToPath, entry.row.Subject)
 		if !entry.row.ID.Available() {

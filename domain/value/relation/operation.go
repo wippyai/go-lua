@@ -1,17 +1,11 @@
 package relation
 
 import (
-	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/relation/semantic/outcome"
 	"github.com/wippyai/go-lua/analysis/schema/rule/relbindgen"
-	calldomain "github.com/wippyai/go-lua/domain/call"
-	packdomain "github.com/wippyai/go-lua/domain/pack"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 	"github.com/wippyai/go-lua/domain/value/allocation"
-	"github.com/wippyai/go-lua/domain/value/bodyresult"
-	"github.com/wippyai/go-lua/domain/value/freshresult"
 	"github.com/wippyai/go-lua/domain/value/moduleload"
-	"github.com/wippyai/go-lua/domain/value/resultalias"
 	"github.com/wippyai/go-lua/domain/value/runtimekind"
 )
 
@@ -225,149 +219,4 @@ func (operation ValueSummaryOperation) Evaluate(argument ValueSummaryArgument, e
 		return outcome.Refused
 	}
 	return outcome.Produced
-}
-
-// ValueFreshResultOperation is domain/value/freshresult's own judgment: the
-// fresh value a call result route publishes at the coordinate it names.
-type ValueFreshResultOperation struct {
-	judgment freshresult.Judgment
-	derived  bool
-}
-
-// NewValueFreshResultOperation derives the fresh-result judgment from the two
-// sealed algebras it reads through.
-func NewValueFreshResultOperation(values *valuedomain.Schema, calls *calldomain.Algebra) (ValueFreshResultOperation, bool) {
-	judgment, ok := freshresult.NewJudgment(values, calls)
-	if !ok {
-		return ValueFreshResultOperation{}, false
-	}
-	return ValueFreshResultOperation{judgment: judgment, derived: true}, true
-}
-
-// Available reports whether the operation carries a derived judgment. The
-// owner seals its judgment at derivation and publishes no second reading of
-// that seal, so the operation records the one its constructor obtained.
-func (operation ValueFreshResultOperation) Available() bool { return operation.derived }
-
-// Evaluate answers one fresh call result at the route it was selected on.
-func (operation ValueFreshResultOperation) Evaluate(argument ValueFreshResultArgument, emitter *relbindgen.Emitter[valuedomain.Value]) outcome.Code {
-	fact, reduction := operation.judgment.FreshResultFact(argument.Candidate, argument.CallFact, argument.Destination, argument.Tag, argument.Prior)
-	return relbindgen.Reduce(emitter, fact, reduction)
-}
-
-// coordinateTags resolves the owner tag one delivered row carries.
-//
-// Both call-result folds read a cell's tag as the dense position of the value
-// coordinate that cell was read at, one-based: they answer with
-// CoordinateAt(tag - 1). The rows of a delivered span are addressed by the
-// portable identity their coordinate's own schema issued, so the tag is that
-// identity resolved back to the position its owner assigned it. Nothing here
-// numbers anything.
-func coordinateTags(values *valuedomain.Schema) func(identity.ContentID) (uint64, bool) {
-	return func(row identity.ContentID) (uint64, bool) {
-		coordinate, resolved := values.CoordinateForID(row)
-		if !resolved {
-			return 0, false
-		}
-		dense, indexed := values.CoordinateIndex(coordinate)
-		if !indexed {
-			return 0, false
-		}
-		return uint64(dense) + 1, true
-	}
-}
-
-// ValueBodyResultOperation is domain/value/bodyresult's own judgment: the
-// value a call result takes from the bodies its dispatch selected.
-type ValueBodyResultOperation struct {
-	judgment bodyresult.Judgment
-	cells    *relbindgen.Cells[valuedomain.Value]
-	tags     func(identity.ContentID) (uint64, bool)
-}
-
-// NewValueBodyResultOperation derives the body-result judgment from the two
-// sealed algebras it reads through.
-func NewValueBodyResultOperation(values *valuedomain.Schema, calls *calldomain.Algebra) (ValueBodyResultOperation, bool) {
-	judgment, ok := bodyresult.Derive(values, calls)
-	if !ok {
-		return ValueBodyResultOperation{}, false
-	}
-	cells, reserved := relbindgen.NewCells[valuedomain.Value](values.CoordinateCount())
-	if !reserved {
-		return ValueBodyResultOperation{}, false
-	}
-	return ValueBodyResultOperation{judgment: judgment, cells: cells, tags: coordinateTags(values)}, true
-}
-
-// NewOperation gives one solve-local worker its own materialization storage.
-func (operation ValueBodyResultOperation) NewOperation() relbindgen.Operation[ValueBodyResultArgument, valuedomain.Value] {
-	local := operation
-	cells, reserved := relbindgen.NewCells[valuedomain.Value](cap(operation.cells.Rows()))
-	if !reserved {
-		return nil
-	}
-	local.cells = cells
-	return local
-}
-
-// Available reports whether the operation carries a derived judgment.
-func (operation ValueBodyResultOperation) Available() bool {
-	return operation.cells != nil && operation.tags != nil && operation.judgment.Valid()
-}
-
-// Evaluate answers one call result from the bodies its dispatch selected.
-func (operation ValueBodyResultOperation) Evaluate(argument ValueBodyResultArgument, emitter *relbindgen.Emitter[valuedomain.Value]) outcome.Code {
-	cells, materialized := operation.cells.Fill(argument.Cells, operation.tags)
-	if !materialized {
-		return outcome.Refused
-	}
-	fact, reduction := operation.judgment.Result(argument.Candidate, argument.Dispatched, cells)
-	return relbindgen.Reduce(emitter, fact, reduction)
-}
-
-// ValueResultAliasOperation is domain/value/resultalias's own judgment.
-type ValueResultAliasOperation struct {
-	judgment resultalias.Judgment
-	cells    *relbindgen.Cells[valuedomain.Value]
-	tags     func(identity.ContentID) (uint64, bool)
-}
-
-// NewValueResultAliasOperation derives the result-alias judgment from the
-// three sealed algebras it reads through.
-func NewValueResultAliasOperation(values *valuedomain.Schema, calls *calldomain.Algebra, packs *packdomain.Schema) (ValueResultAliasOperation, bool) {
-	judgment, ok := resultalias.Derive(values, calls, packs)
-	if !ok {
-		return ValueResultAliasOperation{}, false
-	}
-	cells, reserved := relbindgen.NewCells[valuedomain.Value](values.CoordinateCount())
-	if !reserved {
-		return ValueResultAliasOperation{}, false
-	}
-	return ValueResultAliasOperation{judgment: judgment, cells: cells, tags: coordinateTags(values)}, true
-}
-
-// NewOperation gives one solve-local worker its own materialization storage.
-func (operation ValueResultAliasOperation) NewOperation() relbindgen.Operation[ValueResultAliasArgument, valuedomain.Value] {
-	local := operation
-	cells, reserved := relbindgen.NewCells[valuedomain.Value](cap(operation.cells.Rows()))
-	if !reserved {
-		return nil
-	}
-	local.cells = cells
-	return local
-}
-
-// Available reports whether the operation carries a derived judgment.
-func (operation ValueResultAliasOperation) Available() bool {
-	return operation.cells != nil && operation.tags != nil && operation.judgment.Valid()
-}
-
-// Evaluate answers one aliased call result.
-func (operation ValueResultAliasOperation) Evaluate(argument ValueResultAliasArgument, emitter *relbindgen.Emitter[valuedomain.Value]) outcome.Code {
-	cells, materialized := operation.cells.Fill(argument.Cells, operation.tags)
-	if !materialized {
-		return outcome.Refused
-	}
-	fact, reduction := operation.judgment.Result(argument.Candidate, argument.Dispatched, cells)
-	return relbindgen.Reduce(emitter, fact, reduction)
 }

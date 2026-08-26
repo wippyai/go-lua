@@ -109,7 +109,7 @@ writes               value
 owner                value
 semantic             semantic/rule/value/presence-refinement
 role[0]              semantic/operand/value/presence-refinement
-issue[0]             occurrence=occurrence/binary-presence-refinement form=program-form/route-predecessor requirement=program-requirement/unrestricted
+issue[0]             occurrence=occurrence/binary-presence-refinement form=program-form/local-predecessor requirement=program-requirement/unrestricted
 `
 
 // TestPresenceRefinementRuleEntryIsTheSealedDeclaration holds the rule entry to its identity, to

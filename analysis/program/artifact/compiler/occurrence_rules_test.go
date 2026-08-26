@@ -50,8 +50,8 @@ return redundant
 		point := rule.PointID()
 		input, inputOK := rule.InputPointAt(0)
 		if !ruleOK || !ordinalOK || !occurrenceOK || !bodyOK || occurrence.Kind() != programschema.OccurrenceBinaryPresenceRefinement || !routeInputOK || !predecessorOK || !point.Available() || !inputOK || predecessor.ID != route || !predecessor.Point.Available() ||
-			rule.InputSpec() != programissuance.InputRouteArrival || rule.Stage() != programissuance.StageRoutePredecessor || point == input || predecessor.Point == input {
-			t.Fatalf("refinement[%d] lost exact guarded route placement", index)
+			rule.InputSpec() != programissuance.InputPreviousStage || rule.Stage() != programissuance.StagePredecessor || point == input || predecessor.Point == input {
+			t.Fatalf("refinement[%d] lost exact guarded predecessor/local placement", index)
 		}
 		count++
 	}

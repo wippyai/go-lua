@@ -3,8 +3,6 @@ package execution
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/engine/operand"
-
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
 )
 
@@ -74,7 +72,7 @@ func TestAnInvalidSupportIsRefused(t *testing.T) {
 func TestAVectorNarrowsTheConclusionToEveryCellItDelivered(t *testing.T) {
 	fixture := newSelectedFixture(t)
 	narrower := narrowerSupport(t, fixture)
-	cells := []operand.MemberCell[uint64]{
+	cells := []MemberCell[uint64]{
 		{Value: 1, Present: true, Region: fixture.whole},
 		{Value: 2, Present: true, Region: narrower},
 		{Value: 3, Present: true, Region: fixture.whole},
@@ -98,7 +96,7 @@ func TestAVectorNarrowsTheConclusionToEveryCellItDelivered(t *testing.T) {
 // what the fold concluded.
 func TestACellWithNoSupportRefusesTheWholeVector(t *testing.T) {
 	fixture := newSelectedFixture(t)
-	cells := []operand.MemberCell[uint64]{
+	cells := []MemberCell[uint64]{
 		{Value: 1, Present: true, Region: fixture.whole},
 		{Value: 2, Present: true},
 	}

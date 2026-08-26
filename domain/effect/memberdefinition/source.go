@@ -9,10 +9,12 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member/definition"
+	"github.com/wippyai/go-lua/analysis/schema/carrier"
 )
 
 const (
 	effectPackagePath = "github.com/wippyai/go-lua/domain/effect/factor"
+	callPackagePath   = "github.com/wippyai/go-lua/domain/call"
 )
 
 func effectGoType(name string) definition.GoType {
@@ -70,10 +72,17 @@ func MountedCall() definition.Definition {
 			Fact: "EffectFactCarrier",
 		},
 		Carriers: []definition.Carrier{
-			{Name: "EffectKeyCarrier", Key: "carrier/effect/key", Type: key},
-			{Name: "EffectFactCarrier", Key: "carrier/effect/fact", Type: value},
-			{Name: "EffectMountedCallCarrier", Key: "carrier/effect/mounted-call", Type: mounted},
+			{Name: "EffectKeyCarrier", Key: "carrier/effect/key", Type: key, Capability: carrier.Equatable},
+			{Name: "EffectFactCarrier", Key: "carrier/effect/fact", Type: value, Capability: carrier.Ascending},
+			{Name: "EffectMountedCallCarrier", Key: "carrier/effect/mounted-call", Type: mounted, Capability: carrier.DecodeOnly},
+			{Name: "PublicationSourceCarrier", Key: "carrier/effect/mounted-publication-source", Type: effectGoType("PublicationSubject"), Capability: carrier.DecodeOnly},
+			{Name: "PublicationSourceTagCarrier", Key: "carrier/effect/mounted-publication-source-tag", Type: builtinGoType("uint64"), Capability: carrier.DecodeOnly},
 		},
+		CarrierRefs: []definition.CarrierReference{{
+			Name: "CallFactCarrier", Key: "carrier/call/fact",
+			Ref:  carrier.Ref{Owner: axisReference("call"), Carrier: "carrier/call/fact"},
+			Type: definition.GoType{PackagePath: callPackagePath, Name: "Value"},
+		}},
 		Relations: []definition.Relation{
 			{
 				// The candidates are the mounted call sites Effect already
@@ -89,6 +98,17 @@ func MountedCall() definition.Definition {
 				CandidateOrdinal:  effectMethod("MountedCallOrdinal", "Algebra", true, 0),
 				CandidateAt:       effectMethod("MountedCallAt", "Algebra", true, 0),
 			},
+			{
+				// Publication subject members are Effect-owned rows reached from
+				// the canonical mounted-call candidate and authenticated Call fact.
+				Name: "PublicationSources", Key: "effect/mounted-publication/sources",
+				Subject: "PublicationSourceCarrier",
+				Inputs: []definition.RelationInput{
+					{Carrier: "EffectMountedCallCarrier"},
+					{Carrier: "CallFactCarrier"},
+				},
+				CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: axisReference("effect"), Member: "effect/mounted-call/candidates"}),
+			},
 		},
 		Projections: []definition.Projection{
 			{
@@ -100,7 +120,19 @@ func MountedCall() definition.Definition {
 				Result:            "EffectKeyCarrier",
 				Accessor:          effectMethod("Root", "MountedCall", false, -1),
 			},
+			{
+				Name: "PublicationSourceTag", Key: "effect/mounted-publication/source-tag",
+				Relation: "PublicationSources", Role: member.Predicate,
+				Result:            "PublicationSourceTagCarrier",
+				CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: axisReference("effect"), Member: "effect/mounted-call/candidates"}),
+				Accessor:          effectMethod("Predicate", "PublicationSubject", false, -1),
+			},
 		},
+		Selections: []definition.Selection{{
+			Name: "PublicationSourceSelection", Key: "effect/publication-escape/source-selection",
+			Relation: "PublicationSources", Tag: "PublicationSourceTag",
+			Implementation: effectMethod("PublicationSubjectAt", "Algebra", true, 0),
+		}},
 	}
 }
 

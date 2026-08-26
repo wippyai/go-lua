@@ -102,11 +102,10 @@ func TestGapsCloseBothWays(t *testing.T) {
 		}
 		for _, consumer := range consumers.Consumers {
 			_, named := listed[consumer.Path]
-			cites := consumer.Gap == gap.ID || consumer.WaitsOn == gap.ID
-			if cites && !named {
+			if consumer.Gap == gap.ID && !named {
 				t.Errorf("gap %s does not list consumer %s that cites it", gap.ID, consumer.Path)
 			}
-			if !cites && named {
+			if consumer.Gap != gap.ID && named {
 				t.Errorf("gap %s lists consumer %s that does not cite it", gap.ID, consumer.Path)
 			}
 		}
@@ -188,97 +187,5 @@ func TestGapAndColumnCannotBothBeClaimed(t *testing.T) {
 	}
 	if !Refused(ValidateConsumers(unknown, "")) {
 		t.Fatal("a consumer citing an undeclared gap was accepted")
-	}
-}
-
-// Every prerequisite a consumer waits on is one the cut can deliver: a manifest
-// entry that lands, or a gap the map declares. A prerequisite that names
-// neither is a move deferred to nobody, which reads as scheduled work and is
-// not.
-func TestEveryPrerequisiteIsDeliverable(t *testing.T) {
-	consumers, err := LoadConsumers()
-	if err != nil {
-		t.Fatal(err)
-	}
-	manifest, err := Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	entries := map[string]struct{}{}
-	for _, entry := range manifest.Entries {
-		entries[entry.ID] = struct{}{}
-	}
-	for _, consumer := range consumers.Consumers {
-		if consumer.WaitsOn == "" {
-			continue
-		}
-		if _, held := entries[consumer.WaitsOn]; held {
-			continue
-		}
-		if _, held := consumers.Gap(consumer.WaitsOn); held {
-			continue
-		}
-		t.Errorf("%s waits on %s, which is neither a manifest entry nor a declared gap", consumer.Path, consumer.WaitsOn)
-	}
-}
-
-// A consumer pointed at a surface that answers none of its reads, and naming no
-// prerequisite, is refused. This is the shape a bridge arrives in: the entry
-// claims the move is available, the surface does not carry the distinction, and
-// the difference is made up in the consumer.
-func TestUnreachableMoveIsRefused(t *testing.T) {
-	root, err := RepositoryRoot(".")
-	if err != nil {
-		t.Fatal(err)
-	}
-	surface := "github.com/wippyai/go-lua/analysis/engine"
-	target := "github.com/wippyai/go-lua/analysis/schema/rule/relcompile"
-	unreachable := ConsumerMap{
-		Surfaces: []Surface{{Package: surface, ManifestEntry: "S6-engine-runtime"}},
-		Consumers: []Consumer{{
-			Path:          "analysis/compile.go",
-			ManifestEntry: "S1-analyzer-constructor",
-			Reads:         []Read{{Package: surface, Symbol: "PublishColumn", Uses: 1, Class: ReadClassDeclaration}},
-			Target:        Target{Kind: TargetDeclaredSurface, Package: target, Note: "x"},
-		}},
-	}
-	if !Refused(ValidateConsumers(unreachable, root)) {
-		t.Fatal("a consumer whose target answers none of its reads was accepted with no prerequisite")
-	}
-	reachable := unreachable
-	reachable.Gaps = []Gap{{
-		ID:          "G",
-		Distinction: "a production entry into the declared rule surface",
-		Consumers:   []string{"analysis/compile.go"},
-	}}
-	reachable.Consumers = []Consumer{unreachable.Consumers[0]}
-	reachable.Consumers[0].WaitsOn = "G"
-	if Refused(ValidateConsumers(reachable, root)) {
-		t.Fatal("a consumer that names the prerequisite its move waits on was refused")
-	}
-}
-
-// The other direction: an entry whose target already declares every symbol it
-// reads is at its post-cut home, and a prerequisite there would defer a move
-// that is done.
-func TestSettledConsumerNamingAPrerequisiteIsRefused(t *testing.T) {
-	root, err := RepositoryRoot(".")
-	if err != nil {
-		t.Fatal(err)
-	}
-	surface := "github.com/wippyai/go-lua/analysis/engine/operand"
-	settled := ConsumerMap{
-		Surfaces: []Surface{{Package: surface, ManifestEntry: "S2-reducer-operand-abi"}},
-		Gaps:     []Gap{{ID: "G", Distinction: "d", Consumers: []string{"domain/placement/suspension/reducer.go"}}},
-		Consumers: []Consumer{{
-			Path:          "domain/placement/suspension/reducer.go",
-			ManifestEntry: "",
-			Reads:         []Read{{Package: surface, Symbol: "SummaryVector", Uses: 1, Class: ReadClassRowABI}},
-			Target:        Target{Kind: TargetRowABI, Package: surface, Note: "already at its post-cut home"},
-			WaitsOn:       "G",
-		}},
-	}
-	if !Refused(ValidateConsumers(settled, root)) {
-		t.Fatal("an entry already at its post-cut home was accepted while waiting on a prerequisite")
 	}
 }

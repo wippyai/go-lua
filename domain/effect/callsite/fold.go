@@ -1,7 +1,7 @@
 package callsite
 
 import (
-	"github.com/wippyai/go-lua/analysis/engine/operand"
+	"github.com/wippyai/go-lua/analysis/engine/execution"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	calldomain "github.com/wippyai/go-lua/domain/call"
@@ -194,7 +194,7 @@ func (judgment Judgment) operationAtoms(mounted effectfactor.MountedCall, root e
 // the callee's root and the site publishes under its own. A part that is
 // already Top makes the whole site Top, and an answer that reduces to Bottom
 // is no candidate rather than a published empty fact.
-func (judgment Judgment) BodyEffect(mounted effectfactor.MountedCall, cells []operand.SelectedCell[effectfactor.Value]) (effectfactor.Value, structure.ReductionOutcome) {
+func (judgment Judgment) BodyEffect(mounted effectfactor.MountedCall, cells []execution.SelectedCell[effectfactor.Value]) (effectfactor.Value, structure.ReductionOutcome) {
 	_, root, siteOK := judgment.site(mounted)
 	if !siteOK {
 		return effectfactor.Value{}, structure.Refuse

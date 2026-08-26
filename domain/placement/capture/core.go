@@ -511,3 +511,7 @@ func oneOrderedCell[T any](cells engine.OrderedCells[T]) (value T, present, avai
 	}
 	return cells.At(0)
 }
+
+func captureValue(parent, current placementdomain.Fact) (placementdomain.Fact, bool) {
+	return placementdomain.ThroughContainerChecked(current, parent)
+}

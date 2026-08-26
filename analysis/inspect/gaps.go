@@ -26,12 +26,13 @@ func transitionGaps() []Gap { return transitionGapRows }
 // The declared topology is reachable through composite.Table and
 // composite.RulePlans; the rows the fixture actually instantiated live on
 // engine.CommittedProgram, which analysis.Plan holds privately and publishes
-// no accessor for. CommittedProgram enumerates its activation triggers and
-// their candidate rows; its rule members are still reached only by an identity
-// the caller must already hold.
+// no accessor for. The lookups CommittedProgram does export are keyed by an
+// identity the caller must already hold, so there is no enumeration either.
 var constructGapRows = []Gap{
 	{Layer: "construct", Accessor: "analysis.Plan.CommittedProgram"},
 	{Layer: "construct", Accessor: "engine.CommittedProgram member enumeration (RuleMember is keyed lookup only)"},
+	{Layer: "construct", Accessor: "engine.CommittedProgram activation enumeration (ActivationMember is keyed lookup only)"},
+	{Layer: "construct", Accessor: "engine.CommittedProgram.MountedActivationCandidate rows"},
 }
 
 // solvedGapRows are the solver-state facts a published cell does not carry.

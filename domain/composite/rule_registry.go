@@ -14,11 +14,14 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/diagnostic"
 	issuanceschema "github.com/wippyai/go-lua/analysis/schema/issuance"
 	"github.com/wippyai/go-lua/analysis/schema/observation"
+	programschema "github.com/wippyai/go-lua/analysis/schema/program"
+	programissuance "github.com/wippyai/go-lua/analysis/schema/program/issuance"
 	"github.com/wippyai/go-lua/analysis/schema/query"
 	"github.com/wippyai/go-lua/analysis/schema/rule"
 	"github.com/wippyai/go-lua/analysis/schema/seal"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
+	heapdomain "github.com/wippyai/go-lua/domain/heap"
 )
 
 // ruleTableLimit is one past the last declaration slot (slots are 1-based).
@@ -52,7 +55,10 @@ func newCatalog() (*catalog, schema.SealFailure) {
 		state.failure = schema.SealFailure{Contributor: schema.SurfaceKindAxis, Law: seal.LawEntryAdmissible, Disposition: schema.DispositionMalformed}
 		return state, state.failure
 	}
-	issuances, issuanceOK := issuanceEntries()
+	issuanceEntries, issuanceOK := programissuance.Entries(
+		programissuance.CodeFamily{Key: "occurrence/allocation-empty", Kind: programschema.OccurrenceAllocation, Code: uint64(heapdomain.AllocationFormEmpty)},
+		programissuance.CodeFamily{Key: "occurrence/allocation-closed", Kind: programschema.OccurrenceAllocation, Code: uint64(heapdomain.AllocationFormClosed)},
+	)
 	if !issuanceOK {
 		state.failure = schema.SealFailure{Contributor: schema.SurfaceKindIssuance, Law: seal.LawEntryAdmissible, Disposition: schema.DispositionMalformed}
 		return state, state.failure
@@ -96,7 +102,7 @@ func newCatalog() (*catalog, schema.SealFailure) {
 	declarations := analysiscatalog.NewDeclarations()
 	declarations.Register(structure.NewSurface(structures))
 	declarations.Register(axis.NewSurface(axes))
-	declarations.Register(issuanceschema.NewSurface(issuances))
+	declarations.Register(issuanceschema.NewSurface(issuanceEntries))
 	declarations.Register(rule.NewSurface(templates))
 	declarations.Register(diagnostic.NewSurface(diagnostics))
 	declarations.Register(composite.NewSurface(composites))

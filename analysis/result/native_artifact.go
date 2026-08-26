@@ -30,7 +30,6 @@ func newNativeMountDirectory(program programschema.Program) (nativeMountDirector
 		points:      make(map[identity.ContentID]identity.ContentID),
 	}
 	for index := 0; index < occurrenceCount; index++ {
-		dbgNativeJoinRowRead()
 		row, rowOK := program.OccurrenceAt(index)
 		if !rowOK || !row.Available() {
 			return nativeMountDirectory{}, false
@@ -53,10 +52,8 @@ func newNativeMountDirectory(program programschema.Program) (nativeMountDirector
 	seen := make(map[identity.ContentID]struct{})
 	invalid := make(map[identity.ContentID]struct{})
 	for index := 0; index < ruleCount; index++ {
-		dbgNativeJoinRowRead()
 		row, rowOK := program.RuleOccurrenceAt(index)
 		ordinal, ordinalOK := row.Occurrence()
-		dbgNativeJoinRowRead()
 		parent, parentOK := program.OccurrenceAt(int(ordinal))
 		candidate := row.PointID()
 		if !rowOK || !ordinalOK || !parentOK || !candidate.Available() {

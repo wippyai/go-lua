@@ -171,6 +171,18 @@ func (rule *HotRule) locate(context engine.SelectorContext, candidate Operand) b
 	return true
 }
 
+// routePlacement keeps the placement-policy coordinate separate from the
+// child-identity coordinate. An authenticated Heap Top or opaque containment
+// edge can widen which child route is selected, but it cannot erase the
+// parent's known Placement. Unknown is returned only when that parent policy
+// is itself Unknown (or when the input evidence is malformed and refused).
+func routePlacement(current, parent placement.Fact, child heapdomain.Value, schema heapdomain.Schema) (placement.Fact, bool) {
+	if !schema.Valid() || !validPlacement(current) || !validPlacement(parent) || !heapdomain.Equal(child, child) || heapdomain.Equal(child, schema.Bottom()) {
+		return placement.BottomFact(), false
+	}
+	return placement.ThroughContainerChecked(current, parent)
+}
+
 func (rule *HotRule) fold(frame engine.Frame[placement.Fact, Operand]) engine.RuleResult[placement.Fact] {
 	candidate, operandOK := engine.Operand(frame)
 	if !operandOK || !rule.accepts(candidate) {
@@ -205,10 +217,6 @@ func (rule *HotRule) fold(frame engine.Frame[placement.Fact, Operand]) engine.Ru
 		if !parentOK || !heapOK {
 			return placement.BottomFact(), false
 		}
-		// The judgment is the declared fold's own: the placement policy a
-		// contained child takes from its parent. The schema this cell was read
-		// out of is already established by the operand admission and the
-		// vector shapes, so what remains is the three cells themselves.
-		return containmentValue(current, parent, heapValue)
+		return routePlacement(current, parent, heapValue, rule.heap.Schema())
 	})
 }

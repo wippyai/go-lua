@@ -153,10 +153,11 @@ func Contribution() definition.Contribution {
 		// before it delivered, so they are published by the derivation this
 		// package already owns rather than enumerated from a directory.
 		Selections: []definition.Selection{{
-			Name:     "FormalFreezeRouteSelection",
-			Key:      "heap/formal-freeze/route-selection",
-			Relation: "FormalFreezeRoutes",
-			Tag:      "FormalFreezeRouteTag",
+			Name:           "FormalFreezeRouteSelection",
+			Key:            "heap/formal-freeze/route-selection",
+			Relation:       "FormalFreezeRoutes",
+			Tag:            "FormalFreezeRouteTag",
+			Implementation: freezeFunction("DeriveFreezeRoutes"),
 		}},
 		Reducers: []definition.Reducer{{
 			Name: "FormalFreezeReducer",

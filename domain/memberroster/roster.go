@@ -18,9 +18,7 @@ import (
 	callactivation "github.com/wippyai/go-lua/domain/call/activation/memberdefinition"
 	calldispatch "github.com/wippyai/go-lua/domain/call/dispatch/memberdefinition"
 	callbase "github.com/wippyai/go-lua/domain/call/memberdefinition"
-	effectcallsitebody "github.com/wippyai/go-lua/domain/effect/callsite/body/memberdefinition"
-	effectcallsiteopaque "github.com/wippyai/go-lua/domain/effect/callsite/opaque/memberdefinition"
-	effectcallsiteselected "github.com/wippyai/go-lua/domain/effect/callsite/selected/memberdefinition"
+	effectcallsite "github.com/wippyai/go-lua/domain/effect/callsite/memberdefinition"
 	effectbase "github.com/wippyai/go-lua/domain/effect/memberdefinition"
 	heapbase "github.com/wippyai/go-lua/domain/heap/memberdefinition"
 
@@ -47,8 +45,6 @@ import (
 	placementtransfer "github.com/wippyai/go-lua/domain/placement/transfer/memberdefinition"
 	staticbase "github.com/wippyai/go-lua/domain/static/memberdefinition"
 	statictransfer "github.com/wippyai/go-lua/domain/static/transfer/memberdefinition"
-	typestatebase "github.com/wippyai/go-lua/domain/typestate/memberdefinition"
-	typestateobligation "github.com/wippyai/go-lua/domain/typestate/obligation/memberdefinition"
 	valueallocation "github.com/wippyai/go-lua/domain/value/allocation/memberdefinition"
 	valuearithmetic "github.com/wippyai/go-lua/domain/value/arithmetic/memberdefinition"
 	valuebodyresult "github.com/wippyai/go-lua/domain/value/bodyresult/memberdefinition"
@@ -157,26 +153,13 @@ func Composition() (definition.Roster, bool) {
 			},
 		},
 		definition.Source{
-			// One coordinate of this axis is one resource under one protocol.
-			// The obligation rule is the one rule that writes it, and the axis
-			// base holds only what a coordinate and a state are, so the two
-			// statements stay apart the way every other composed axis keeps
-			// them.
-			Package: "statecell",
-			Name:    "typestate",
-			Base:    typestatebase.StateSource(),
-			Contributions: []definition.Contribution{
-				typestateobligation.Contribution(),
-			},
-		},
-		definition.Source{
 			Package: "effect",
 			Name:    "effect",
 			Base:    effectbase.MountedCall(),
 			Contributions: []definition.Contribution{
-				effectcallsiteselected.Contribution(),
-				effectcallsiteopaque.Contribution(),
-				effectcallsitebody.Contribution(),
+				effectcallsite.SelectedContribution(),
+				effectcallsite.OpaqueContribution(),
+				effectcallsite.BodyContribution(),
 			},
 		},
 	)

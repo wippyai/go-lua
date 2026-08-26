@@ -2,10 +2,8 @@ package catalog
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
-	"github.com/wippyai/go-lua/analysis/relation/schema/model"
 	"github.com/wippyai/go-lua/analysis/schema"
 	ruleplan "github.com/wippyai/go-lua/analysis/schema/rule/plan"
-	"github.com/wippyai/go-lua/analysis/schema/rule/relinput"
 	"github.com/wippyai/go-lua/analysis/schema/seal"
 )
 
@@ -62,24 +60,6 @@ func (compilation Compilation) RulePlans() (ruleplan.Catalog, bool) {
 		return ruleplan.Catalog{}, false
 	}
 	return compilation.rulePlans, true
-}
-
-// InputBundle seals the relation input bundle for this compilation's own rule
-// catalog. The ordinals a bundle is addressed by are the ordinals this
-// compilation numbered its rules with, so the catalog the bundle is fenced to
-// is supplied here and never by its caller.
-//
-// Placement is not a declaration fact and is not recoverable from one: which
-// relation-schema conjunction a rule's candidate rows are decided at, and
-// which one each declared input port observes, is decided where the rule is
-// composed. The composition that placed the rules answers all of it; this
-// boundary adds the catalog and seals the two together.
-//
-// A compilation that did not seal states no rule ordinals, and the seal
-// refuses at the catalog boundary rather than publishing an empty table.
-func (compilation Compilation) InputBundle(owner model.OwnerID, composition relinput.Composition) (*relinput.Bundle, *relinput.Refusal) {
-	plans, _ := compilation.RulePlans()
-	return relinput.Seal(plans, owner, composition)
 }
 
 // Available reports whether this compilation sealed completely.

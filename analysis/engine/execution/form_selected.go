@@ -15,7 +15,6 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/internal/factbinding"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/scalar"
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
-	"github.com/wippyai/go-lua/analysis/engine/operand"
 	ruleplan "github.com/wippyai/go-lua/analysis/schema/rule/plan"
 	ruleprogram "github.com/wippyai/go-lua/analysis/schema/rule/program"
 )
@@ -27,6 +26,17 @@ import (
 type SelectedCoordinate struct {
 	Unit carrier.Unit
 	Tag  uint64
+}
+
+// SelectedCell is one delivered member of a Selection. Value has already been
+// through the read's sealed substitutions, so Present is false only under a
+// contract that genuinely reads evidence provenance. Region is the member's own
+// authenticated support row, which is what a routed write stages against.
+type SelectedCell[V any] struct {
+	Value   V
+	Present bool
+	Tag     uint64
+	Region  support.Mask
 }
 
 // SelectedRead is one immutable typed selected-read descriptor. It is sealed
@@ -202,7 +212,7 @@ func (read SelectedRead[K, V]) Observe(
 	ticket Ticket,
 	scratch *SelectedScratch[K, V],
 	members []RouteMember,
-	cells []operand.SelectedCell[V],
+	cells []SelectedCell[V],
 ) ReadStatus {
 	if !read.Valid() || scratch == nil || !ticket.Valid() {
 		return ReadRefuse
@@ -218,12 +228,13 @@ func (read SelectedRead[K, V]) Observe(
 		return ReadRefuse
 	}
 	for index, member := range members {
-		cell, ok := scratch.observe(work, state, within, member.coordinate.Unit, read.policy)
+		value, present, region, ok := scratch.observe(work, state, within, member.coordinate.Unit)
 		if !ok {
 			scratch.finish()
 			return ReadRefuse
 		}
-		cells[index] = operand.SelectedCell[V]{Value: cell.Value, Present: cell.Present, Tag: member.coordinate.Tag, Region: cell.Region}
+		delivered, deliveredPresent := read.policy.Cell(value, present)
+		cells[index] = SelectedCell[V]{Value: delivered, Present: deliveredPresent, Tag: member.coordinate.Tag, Region: region}
 	}
 	if !scratch.close() {
 		return ReadRefuse
@@ -257,54 +268,38 @@ func (scratch *SelectedScratch[K, V]) begin(ticket Ticket, binding *factbinding.
 	return true
 }
 
-// observe consumes one sealed coordinate's whole delivery and returns the
-// single cell it names. The cursor partitions the read region by guard exactly
-// as a directly read coordinate's does, so the blocks are folded through the
-// read boundary's own accumulator rather than stopped at the first one: what a
-// member delivers is what its coordinate holds, over the region it holds it
-// on. A coordinate that produces no block at all is not a member of this
-// Factor's geometry and refuses. The cursor is closed before the next
-// coordinate opens, so one member's observation never outlives its own step.
+// observe steps one sealed coordinate and returns its single entry. The cursor
+// is closed before the next coordinate opens, so one member's observation never
+// outlives its own step.
 func (scratch *SelectedScratch[K, V]) observe(
 	work *carrier.Work,
 	state carrier.State,
 	within support.Mask,
 	unit carrier.Unit,
-	policy ReadCellPolicy[V],
-) (ExactCell[V], bool) {
+) (V, bool, support.Mask, bool) {
+	var zero V
 	if scratch == nil || !scratch.open || scratch.binding == nil {
-		return ExactCell[V]{}, false
+		return zero, false, support.Mask{}, false
 	}
 	if !scratch.binding.BeginDirectObservation(&scratch.cursor, work, state, unit, within) {
-		return ExactCell[V]{}, false
+		return zero, false, support.Mask{}, false
 	}
-	var fold exactCellFold[V]
-	observed := false
-	for {
-		row, view, status := scratch.cursor.Step()
-		if status == factbinding.DirectObservationExhausted {
-			break
-		}
-		if status != factbinding.DirectObservationAvailable || view.Count() != 1 || !row.Region().Valid() {
-			_ = scratch.cursor.Close()
-			return ExactCell[V]{}, false
-		}
-		entry, entryOK := view.At(0)
-		if !entryOK {
-			_ = scratch.cursor.Close()
-			return ExactCell[V]{}, false
-		}
-		value, present := entry.Read()
-		if !fold.admit(value, present, row.Region(), scratch.binding.Join) {
-			_ = scratch.cursor.Close()
-			return ExactCell[V]{}, false
-		}
-		observed = true
+	row, view, status := scratch.cursor.Step()
+	if status != factbinding.DirectObservationAvailable || view.Count() != 1 || !row.Region().Valid() {
+		_ = scratch.cursor.Close()
+		return zero, false, support.Mask{}, false
 	}
-	if !scratch.cursor.Close() || !observed {
-		return ExactCell[V]{}, false
+	entry, entryOK := view.At(0)
+	if !entryOK {
+		_ = scratch.cursor.Close()
+		return zero, false, support.Mask{}, false
 	}
-	return fold.settle(within, policy), true
+	value, present := entry.Read()
+	region := row.Region()
+	if !scratch.cursor.Close() {
+		return zero, false, support.Mask{}, false
+	}
+	return value, present, region, true
 }
 
 func (scratch *SelectedScratch[K, V]) close() bool {

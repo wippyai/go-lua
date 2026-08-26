@@ -11,7 +11,6 @@ package closed
 import (
 	"github.com/wippyai/go-lua/analysis/engine/execution"
 	"github.com/wippyai/go-lua/analysis/engine/execution/product"
-	"github.com/wippyai/go-lua/analysis/engine/operand"
 	"github.com/wippyai/go-lua/analysis/schema/rule/program"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/domain/heap"
@@ -35,7 +34,7 @@ type familyReducer struct {
 // called once per cell of the canonical product its declared reads refine, and
 // the worker authenticates presence before calling it, so absence never becomes
 // a default fact and the fold receives only declared carriers.
-func (fold familyReducer) Reduce(cell0 heap.Value, read1Vector operand.SummaryVector[value.Value]) (heap.Value, structure.ReductionOutcome) {
+func (fold familyReducer) Reduce(cell0 heap.Value, read1Vector execution.SummaryVector[value.Value]) (heap.Value, structure.ReductionOutcome) {
 	return fold.state.resultClosed(fold.candidate, cell0, read1Vector)
 }
 
@@ -69,7 +68,7 @@ func (sealed *sealedFamily) NewExecutor(run *execution.Run) execution.Executor {
 	return &familyWorker{
 		family:     sealed,
 		run:        run,
-		read1Cells: make([]operand.MemberCell[value.Value], sealed.read1Width),
+		read1Cells: make([]execution.MemberCell[value.Value], sealed.read1Width),
 	}
 }
 
@@ -92,7 +91,7 @@ type familyWorker struct {
 	run        *execution.Run
 	read0      execution.Scratch[heap.DenseCoordinate, heap.Value]
 	read1      execution.Scratch[value.DenseCoordinate, value.Value]
-	read1Cells []operand.MemberCell[value.Value]
+	read1Cells []execution.MemberCell[value.Value]
 	product0   product.Extender[heap.DenseCoordinate, heap.Value, struct{}]
 	product1   product.Extender[value.DenseCoordinate, value.Value, productTuple0]
 	write      execution.Scratch[heap.DenseCoordinate, heap.Value]
@@ -139,7 +138,7 @@ func (lane *familyWorker) Execute(frame execution.Frame, ticket execution.Ticket
 			return lane.settle(ticket, structure.Refuse)
 		}
 	}
-	read1Vector, read1VectorOK := operand.NewMemberVector(read1Cells)
+	read1Vector, read1VectorOK := execution.NewMemberVector(read1Cells)
 	if !read1VectorOK {
 		return lane.settle(ticket, structure.Refuse)
 	}
@@ -204,15 +203,26 @@ func (lane *familyWorker) Execute(frame execution.Frame, ticket execution.Ticket
 }
 
 // read1Cell takes one member of a nested set at its own sealed coordinate.
-func (lane *familyWorker) read1Cell(read execution.ExactRead[value.DenseCoordinate, value.Value], policy execution.ReadCellPolicy[value.Value], ticket execution.Ticket, destination *operand.MemberCell[value.Value]) structure.ReductionOutcome {
+func (lane *familyWorker) read1Cell(read execution.ExactRead[value.DenseCoordinate, value.Value], policy execution.ReadCellPolicy[value.Value], ticket execution.Ticket, destination *execution.MemberCell[value.Value]) structure.ReductionOutcome {
 	if lane == nil || destination == nil || !read.Valid() {
 		return structure.Refuse
 	}
-	cell, status := execution.DeliverExactCell(read, policy, ticket, &lane.read1)
-	if status != execution.ReadAvailable {
+	if read.Read(ticket, &lane.read1) != execution.ReadAvailable {
+		_ = lane.read1.Discard(ticket)
 		return structure.Refuse
 	}
-	*destination = operand.MemberCell[value.Value]{Value: cell.Value, Present: cell.Present, Region: cell.Region}
+	cell, available := lane.read1.Value()
+	present := lane.read1.Present()
+	region, regionOK := lane.read1.Region()
+	if !read.Close(ticket, &lane.read1) || !lane.read1.Reuse(ticket) {
+		_ = lane.read1.Discard(ticket)
+		return structure.Refuse
+	}
+	if !available || !regionOK {
+		return structure.Refuse
+	}
+	cell, present = policy.Cell(cell, present)
+	*destination = execution.MemberCell[value.Value]{Value: cell, Present: present, Region: region}
 	return structure.Concrete
 }
 

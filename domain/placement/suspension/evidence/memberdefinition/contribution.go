@@ -16,7 +16,6 @@ import (
 const (
 	suspensionPackagePath = "github.com/wippyai/go-lua/domain/placement/suspension"
 	lifecyclePackagePath  = "github.com/wippyai/go-lua/analysis/schema/program/lifecycle"
-	callPackagePath       = "github.com/wippyai/go-lua/domain/call"
 	valuePackagePath      = "github.com/wippyai/go-lua/domain/value"
 	heapPackagePath       = "github.com/wippyai/go-lua/domain/heap"
 )
@@ -37,6 +36,10 @@ func provider() member.CandidateRef {
 	return member.IssuedRowCandidate(programissuance.RelationOccurrenceSubjectLiveness)
 }
 
+func suspensionFunction(name string) definition.GoSymbol {
+	return definition.GoSymbol{PackagePath: suspensionPackagePath, Name: name, ResultIndex: 0}
+}
+
 func sourceMethod(name string, result int8) definition.GoSymbol {
 	return definition.GoSymbol{PackagePath: suspensionPackagePath, Name: name, Receiver: goType(suspensionPackagePath, "Source"), ResultIndex: result}
 }
@@ -53,7 +56,6 @@ func contributionCarriers() []definition.Carrier {
 		{Name: "SubjectLivenessCarrier", Key: "carrier/program/subject-liveness", Type: goType(lifecyclePackagePath, "MountedSubjectLiveness")},
 		{Name: "ValueCoordinateCarrier", Key: "carrier/value/coordinate", Type: goType(valuePackagePath, "Coordinate")},
 		{Name: "ValueFactCarrier", Key: "carrier/value/fact", Type: goType(valuePackagePath, "Value")},
-		{Name: "CallFactCarrier", Key: "carrier/call/fact", Type: goType(callPackagePath, "Value")},
 		{Name: "PlacementKeyCarrier", Key: "carrier/placement/key", Type: goType(heapPackagePath, "Key")},
 		{Name: "EvidenceFactCarrier", Key: "carrier/placement/suspension-evidence/fact", Type: goType(suspensionPackagePath, "Evidence")},
 		{Name: "SuspensionEvidenceRouteTagCarrier", Key: "carrier/placement/suspension-evidence-route-tag", Type: builtin("uint64")},
@@ -77,11 +79,8 @@ func relations() []definition.Relation {
 		},
 		{
 			Name: "EvidenceRoutes", Key: "placement/suspension-evidence/routes",
-			Subject: "SuspensionRouteCarrier",
-			// The route set answers to the boundary call as well as to the
-			// liveness row: a call whose every target operation declares only
-			// a normal outcome is not a yield boundary and reaches no route.
-			Inputs:            []definition.RelationInput{{Carrier: "SubjectLivenessCarrier"}, {Carrier: "CallFactCarrier"}},
+			Subject:           "SuspensionRouteCarrier",
+			Inputs:            []definition.RelationInput{{Carrier: "SubjectLivenessCarrier"}},
 			CandidateProvider: provider(),
 		},
 	}
@@ -122,10 +121,12 @@ func selections() []definition.Selection {
 		{
 			Name: "EvidenceSourceSelection", Key: "value/suspension-evidence/source-selection",
 			Relation: "EvidenceSources", Tag: "EvidenceSourceTag",
+			Implementation: suspensionFunction("DeriveSuspensionSources"),
 		},
 		{
 			Name: "EvidenceRouteSelection", Key: "placement/suspension-evidence/route-selection",
 			Relation: "EvidenceRoutes", Tag: "EvidenceRouteTag",
+			Implementation: suspensionFunction("DeriveSuspensionRoutes"),
 		},
 	}
 }

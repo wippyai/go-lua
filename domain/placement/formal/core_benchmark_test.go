@@ -4,7 +4,7 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/engine/operand"
+	"github.com/wippyai/go-lua/analysis/engine/execution"
 	"github.com/wippyai/go-lua/analysis/program/target/vocabulary"
 	"github.com/wippyai/go-lua/domain/materialization"
 	"github.com/wippyai/go-lua/domain/placement"
@@ -34,9 +34,9 @@ func TestFormalDeliveredVectorIsConsumedWithoutACopy(t *testing.T) {
 	if !atomOK || !factOK {
 		t.Fatal("allocation fact")
 	}
-	cells := make([]operand.MemberCell[valuedomain.Value], 16)
+	cells := make([]execution.MemberCell[valuedomain.Value], 16)
 	for index := range cells {
-		cells[index] = operand.MemberCell[valuedomain.Value]{Value: fact, Present: true}
+		cells[index] = execution.MemberCell[valuedomain.Value]{Value: fact, Present: true}
 	}
 	actuals := formalActuals(t, cells)
 	allocations := testing.AllocsPerRun(100, func() {

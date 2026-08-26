@@ -5,7 +5,6 @@ import (
 	"sync"
 	"testing"
 
-	reduceroperand "github.com/wippyai/go-lua/analysis/engine/operand"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
@@ -98,21 +97,8 @@ func suspensionRouteFact(t testing.TB, values *valuedomain.Schema, key heap.Key)
 	return fact
 }
 
-func suspensionSourceFacts(fact valuedomain.Value) reduceroperand.SummaryVector[valuedomain.Value] {
-	return suspensionSourceCells(reduceroperand.MemberCell[valuedomain.Value]{Value: fact, Present: true})
-}
-
-// suspensionSourceCells delivers a fixture source vector in the same member
-// form the hot rules build from their selected Value read.
-func suspensionSourceCells(cells ...reduceroperand.MemberCell[valuedomain.Value]) reduceroperand.SummaryVector[valuedomain.Value] {
-	if cells == nil {
-		cells = []reduceroperand.MemberCell[valuedomain.Value]{}
-	}
-	vector, vectorOK := reduceroperand.NewMemberVector(cells)
-	if !vectorOK {
-		return reduceroperand.SummaryVector[valuedomain.Value]{}
-	}
-	return vector
+func suspensionSourceFacts(fact valuedomain.Value) []sourceFact {
+	return []sourceFact{{fact: fact, present: true, available: true}}
 }
 
 func suspensionRoutePlanStructural(t testing.TB) structure.Table {
@@ -179,7 +165,7 @@ func (surface suspensionRoutePlanEmptySurface) Seal(seal.View, seal.Sealed) sche
 func TestSuspensionRoutePlanClassesAndLazyAllRoot(t *testing.T) {
 	fixture := suspensionRoutePlanFixtureFor(t, routeInlineWidth+2)
 	exactFact := suspensionRouteFact(t, fixture.values, fixture.keys[0])
-	exact, exactOK := routePlanForSources(fixture.placement, fixture.values, suspensionSourceFacts(exactFact))
+	exact, exactOK := routePlanForFacts(fixture.placement, fixture.values, suspensionSourceFacts(exactFact))
 	if !exactOK || exact.class != routeExact || exact.count() != 1 || exact.allRoot || len(exact.extra) != 0 {
 		t.Fatalf("exact suspension plan=%#v/%t", exact, exactOK)
 	}
@@ -189,16 +175,16 @@ func TestSuspensionRoutePlanClassesAndLazyAllRoot(t *testing.T) {
 		t.Fatalf("exact suspension route=%#v/%t dense=%d/%t", exactRoute, exactRouteOK, dense, denseOK)
 	}
 
-	bottom, bottomOK := routePlanForSources(fixture.placement, fixture.values, suspensionSourceCells(reduceroperand.MemberCell[valuedomain.Value]{Value: fixture.values.Bottom(), Present: true}))
+	bottom, bottomOK := routePlanForFacts(fixture.placement, fixture.values, []sourceFact{{fact: fixture.values.Bottom(), present: true, available: true}})
 	if !bottomOK || bottom.class != routeScalar || bottom.count() != 0 {
 		t.Fatalf("Bottom suspension plan=%#v/%t, want scalar/no routes", bottom, bottomOK)
 	}
-	sparseBottom, sparseBottomOK := routePlanForSources(fixture.placement, fixture.values, suspensionSourceCells(reduceroperand.MemberCell[valuedomain.Value]{Value: fixture.values.Bottom()}))
+	sparseBottom, sparseBottomOK := routePlanForFacts(fixture.placement, fixture.values, []sourceFact{{fact: fixture.values.Bottom(), available: true}})
 	if !sparseBottomOK || sparseBottom.class != routeScalar || sparseBottom.count() != 0 {
 		t.Fatalf("sparse Bottom suspension plan=%#v/%t, want scalar/no routes", sparseBottom, sparseBottomOK)
 	}
 
-	top, topOK := routePlanForSources(fixture.placement, fixture.values, suspensionSourceCells(reduceroperand.MemberCell[valuedomain.Value]{Value: fixture.values.Top(), Present: true}))
+	top, topOK := routePlanForFacts(fixture.placement, fixture.values, []sourceFact{{fact: fixture.values.Top(), present: true, available: true}})
 	if !topOK || top.class != routeWidened || !top.allRoot || len(top.extra) != 0 || top.count() != len(fixture.keys) {
 		t.Fatalf("Top suspension plan=%#v/%t, want lazy all-root view", top, topOK)
 	}
@@ -224,7 +210,7 @@ func TestSuspensionRoutePlanClassesAndLazyAllRoot(t *testing.T) {
 	if !opaqueFactOK {
 		t.Fatal("opaque suspension fact")
 	}
-	opaque, opaqueOK := routePlanForSources(fixture.placement, fixture.values, suspensionSourceFacts(opaqueFact))
+	opaque, opaqueOK := routePlanForFacts(fixture.placement, fixture.values, suspensionSourceFacts(opaqueFact))
 	if !opaqueOK || opaque.class != routeWidened || !opaque.allRoot || opaque.count() != top.count() || len(opaque.extra) != 0 {
 		t.Fatalf("opaque suspension plan=%#v/%t, want lazy all-root view", opaque, opaqueOK)
 	}
@@ -244,7 +230,7 @@ func TestSuspensionRoutePlanOverflowAndOwnerFence(t *testing.T) {
 	if !factOK {
 		t.Fatal("overflow suspension fact")
 	}
-	plan, planOK := routePlanForSources(fixture.placement, fixture.values, suspensionSourceFacts(fact))
+	plan, planOK := routePlanForFacts(fixture.placement, fixture.values, suspensionSourceFacts(fact))
 	if !planOK || plan.class != routeExact || plan.count() != len(atoms) || len(plan.extra) != len(atoms)-routeInlineWidth {
 		t.Fatalf("overflow suspension plan=%#v/%t", plan, planOK)
 	}
@@ -259,10 +245,10 @@ func TestSuspensionRoutePlanOverflowAndOwnerFence(t *testing.T) {
 
 	foreign := suspensionRoutePlanFixtureFor(t, 1)
 	foreignFact := suspensionRouteFact(t, foreign.values, foreign.keys[0])
-	if _, foreignOK := routePlanForSources(fixture.placement, foreign.values, suspensionSourceFacts(foreignFact)); foreignOK {
+	if _, foreignOK := routePlanForFacts(fixture.placement, foreign.values, suspensionSourceFacts(foreignFact)); foreignOK {
 		t.Fatal("suspension route planner accepted foreign Value owner")
 	}
-	if _, foreignOK := routePlanForSources(fixture.placement, fixture.values, suspensionSourceFacts(foreignFact)); foreignOK {
+	if _, foreignOK := routePlanForFacts(fixture.placement, fixture.values, suspensionSourceFacts(foreignFact)); foreignOK {
 		t.Fatal("suspension route planner accepted foreign Value fact")
 	}
 }
@@ -276,7 +262,7 @@ func TestSuspensionRoutePlanAllocations(t *testing.T) {
 	fixture := suspensionRoutePlanFixtureFor(t, 2)
 	exactFact := suspensionRouteFact(t, fixture.values, fixture.keys[0])
 	exactFacts := suspensionSourceFacts(exactFact)
-	topFacts := suspensionSourceCells(reduceroperand.MemberCell[valuedomain.Value]{Value: fixture.values.Top(), Present: true})
+	topFacts := []sourceFact{{fact: fixture.values.Top(), present: true, available: true}}
 	opaqueAtom, opaqueAtomOK := fixture.values.OpaqueReference(valuedomain.ReferenceOpaque)
 	if !opaqueAtomOK {
 		t.Fatal("opaque suspension atom")
@@ -287,17 +273,17 @@ func TestSuspensionRoutePlanAllocations(t *testing.T) {
 	}
 	opaqueFacts := suspensionSourceFacts(opaqueFact)
 	if got := testing.AllocsPerRun(100, func() {
-		suspensionRoutePlanBenchmarkPlan, suspensionRoutePlanBenchmarkOK = routePlanForSources(fixture.placement, fixture.values, exactFacts)
+		suspensionRoutePlanBenchmarkPlan, suspensionRoutePlanBenchmarkOK = routePlanForFacts(fixture.placement, fixture.values, exactFacts)
 	}); got != 0 || !suspensionRoutePlanBenchmarkOK || suspensionRoutePlanBenchmarkPlan.count() != 1 {
 		t.Fatalf("exact suspension Plan allocations=%v plan=%#v/%t", got, suspensionRoutePlanBenchmarkPlan, suspensionRoutePlanBenchmarkOK)
 	}
 	if got := testing.AllocsPerRun(100, func() {
-		suspensionRoutePlanBenchmarkPlan, suspensionRoutePlanBenchmarkOK = routePlanForSources(fixture.placement, fixture.values, topFacts)
+		suspensionRoutePlanBenchmarkPlan, suspensionRoutePlanBenchmarkOK = routePlanForFacts(fixture.placement, fixture.values, topFacts)
 	}); got != 0 || !suspensionRoutePlanBenchmarkOK || !suspensionRoutePlanBenchmarkPlan.widened() || !suspensionRoutePlanBenchmarkPlan.allRoot {
 		t.Fatalf("Top suspension Plan allocations=%v plan=%#v/%t", got, suspensionRoutePlanBenchmarkPlan, suspensionRoutePlanBenchmarkOK)
 	}
 	if got := testing.AllocsPerRun(100, func() {
-		suspensionRoutePlanBenchmarkPlan, suspensionRoutePlanBenchmarkOK = routePlanForSources(fixture.placement, fixture.values, opaqueFacts)
+		suspensionRoutePlanBenchmarkPlan, suspensionRoutePlanBenchmarkOK = routePlanForFacts(fixture.placement, fixture.values, opaqueFacts)
 	}); got != 0 || !suspensionRoutePlanBenchmarkOK || !suspensionRoutePlanBenchmarkPlan.widened() || !suspensionRoutePlanBenchmarkPlan.allRoot {
 		t.Fatalf("opaque suspension Plan allocations=%v plan=%#v/%t", got, suspensionRoutePlanBenchmarkPlan, suspensionRoutePlanBenchmarkOK)
 	}
@@ -305,7 +291,7 @@ func TestSuspensionRoutePlanAllocations(t *testing.T) {
 
 func TestSuspensionRoutePlanWideViewIsConcurrent(t *testing.T) {
 	fixture := suspensionRoutePlanFixtureFor(t, routeInlineWidth+4)
-	top, topOK := routePlanForSources(fixture.placement, fixture.values, suspensionSourceCells(reduceroperand.MemberCell[valuedomain.Value]{Value: fixture.values.Top(), Present: true}))
+	top, topOK := routePlanForFacts(fixture.placement, fixture.values, []sourceFact{{fact: fixture.values.Top(), present: true, available: true}})
 	if !topOK || !top.allRoot || top.count() == 0 {
 		t.Fatal("wide suspension plan")
 	}
@@ -345,7 +331,7 @@ func BenchmarkSuspensionRoutePlanExact(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for index := 0; index < b.N; index++ {
-		suspensionRoutePlanBenchmarkPlan, suspensionRoutePlanBenchmarkOK = routePlanForSources(fixture.placement, fixture.values, facts)
+		suspensionRoutePlanBenchmarkPlan, suspensionRoutePlanBenchmarkOK = routePlanForFacts(fixture.placement, fixture.values, facts)
 		if !suspensionRoutePlanBenchmarkOK || suspensionRoutePlanBenchmarkPlan.count() != 1 {
 			b.Fatal("exact suspension Plan")
 		}
@@ -356,11 +342,11 @@ func BenchmarkSuspensionRoutePlanTopScaling(b *testing.B) {
 	for _, width := range []int{1, routeInlineWidth, 32} {
 		b.Run(fmt.Sprintf("width-%d", width), func(b *testing.B) {
 			fixture := suspensionRoutePlanFixtureFor(b, width)
-			facts := suspensionSourceCells(reduceroperand.MemberCell[valuedomain.Value]{Value: fixture.values.Top(), Present: true})
+			facts := []sourceFact{{fact: fixture.values.Top(), present: true, available: true}}
 			b.ReportAllocs()
 			b.ResetTimer()
 			for index := 0; index < b.N; index++ {
-				suspensionRoutePlanBenchmarkPlan, suspensionRoutePlanBenchmarkOK = routePlanForSources(fixture.placement, fixture.values, facts)
+				suspensionRoutePlanBenchmarkPlan, suspensionRoutePlanBenchmarkOK = routePlanForFacts(fixture.placement, fixture.values, facts)
 				if !suspensionRoutePlanBenchmarkOK || !suspensionRoutePlanBenchmarkPlan.widened() || !suspensionRoutePlanBenchmarkPlan.allRoot {
 					b.Fatal("Top suspension Plan")
 				}
@@ -385,7 +371,7 @@ func BenchmarkSuspensionRoutePlanOpaqueScaling(b *testing.B) {
 			b.ReportAllocs()
 			b.ResetTimer()
 			for index := 0; index < b.N; index++ {
-				suspensionRoutePlanBenchmarkPlan, suspensionRoutePlanBenchmarkOK = routePlanForSources(fixture.placement, fixture.values, facts)
+				suspensionRoutePlanBenchmarkPlan, suspensionRoutePlanBenchmarkOK = routePlanForFacts(fixture.placement, fixture.values, facts)
 				if !suspensionRoutePlanBenchmarkOK || !suspensionRoutePlanBenchmarkPlan.widened() || !suspensionRoutePlanBenchmarkPlan.allRoot {
 					b.Fatal("opaque suspension Plan")
 				}

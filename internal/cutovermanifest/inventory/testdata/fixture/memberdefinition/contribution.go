@@ -35,7 +35,7 @@ func Contribution() definition.Contribution {
 			Name:              "FixturePredecessors",
 			Key:               "fixture/predecessors",
 			Subject:           "FixtureFactCarrier",
-			Inputs:            []definition.RelationInput{{Carrier: "FixtureKeyCarrier"}},
+			Inputs:            []string{"FixtureKeyCarrier"},
 			CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: fixtureAxis(), Member: "fixture/candidates"}),
 		}},
 		Projections: []definition.Projection{{

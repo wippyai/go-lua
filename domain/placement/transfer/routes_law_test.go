@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/engine"
-	"github.com/wippyai/go-lua/analysis/engine/operand"
+	"github.com/wippyai/go-lua/analysis/engine/execution"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lua/lower"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
@@ -61,13 +61,13 @@ type transferRouteLawFixture struct {
 	openFact    calldomain.Value
 	payloadID   identity.ContentID
 	payloadRoot heapdomain.Key
-	cells       []operand.MemberCell[valuedomain.Value]
+	cells       []execution.MemberCell[valuedomain.Value]
 }
 
 // actuals views the fixture's own member cells as the whole vector the
 // declaration delivers. A vector is a view over caller-owned cells, so a law
 // that varies one cell copies the slice and views the copy.
-func (fixture transferRouteLawFixture) actuals(t testing.TB) operand.SummaryVector[valuedomain.Value] {
+func (fixture transferRouteLawFixture) actuals(t testing.TB) execution.SummaryVector[valuedomain.Value] {
 	t.Helper()
 	return transferActuals(t, fixture.cells)
 }
@@ -86,9 +86,9 @@ func (fixture transferRouteLawFixture) rootedActual(t testing.TB) int {
 	return -1
 }
 
-func transferActuals(t testing.TB, cells []operand.MemberCell[valuedomain.Value]) operand.SummaryVector[valuedomain.Value] {
+func transferActuals(t testing.TB, cells []execution.MemberCell[valuedomain.Value]) execution.SummaryVector[valuedomain.Value] {
 	t.Helper()
-	vector, ok := operand.NewMemberVector(cells)
+	vector, ok := execution.NewMemberVector(cells)
 	if !ok {
 		t.Fatal("mounted actual member vector")
 	}
@@ -136,7 +136,7 @@ func TestTransferRejectOnlyHasNoPlacementRouteAndBadFactsRefuse(t *testing.T) {
 	if !planOK || plan.routeCount() != 0 {
 		t.Fatalf("reject-only transfer plan = %t/%d, want valid no-route", planOK, plan.routeCount())
 	}
-	missing := append([]operand.MemberCell[valuedomain.Value](nil), fixture.cells...)
+	missing := append([]execution.MemberCell[valuedomain.Value](nil), fixture.cells...)
 	rooted := fixture.rootedActual(t)
 	// A cell that claims absence while carrying a value is the one shape a
 	// delivered member set can still be wrong in: the owner's Factor default
@@ -148,7 +148,7 @@ func TestTransferRejectOnlyHasNoPlacementRouteAndBadFactsRefuse(t *testing.T) {
 	// A vector narrower than Pack's sealed actual count is not this call's
 	// member set at all, and no shorter delivery is completed here.
 	if len(fixture.cells) > 1 {
-		short := append([]operand.MemberCell[valuedomain.Value](nil), fixture.cells[:len(fixture.cells)-1]...)
+		short := append([]execution.MemberCell[valuedomain.Value](nil), fixture.cells[:len(fixture.cells)-1]...)
 		if _, shortOK := planFor(fixture.packs, fixture.calls, fixture.placement, fixture.values, fixture.contract, fixture.mounted, fixture.callFact, transferActuals(t, short)); shortOK {
 			t.Fatal("a member vector narrower than the sealed actual count was completed")
 		}
@@ -157,7 +157,7 @@ func TestTransferRejectOnlyHasNoPlacementRouteAndBadFactsRefuse(t *testing.T) {
 	if _, foreignOK := planFor(fixture.packs, fixture.calls, fixture.placement, fixture.values, foreign.contract, fixture.mounted, fixture.callFact, fixture.actuals(t)); foreignOK {
 		t.Fatal("foreign Target Contract crossed the Call owner fence")
 	}
-	foreignValue := append([]operand.MemberCell[valuedomain.Value](nil), fixture.cells...)
+	foreignValue := append([]execution.MemberCell[valuedomain.Value](nil), fixture.cells...)
 	foreignValue[0].Value = foreign.values.Bottom()
 	if _, foreignValueOK := planFor(fixture.packs, fixture.calls, fixture.placement, fixture.values, fixture.contract, fixture.mounted, fixture.callFact, transferActuals(t, foreignValue)); foreignValueOK {
 		t.Fatal("foreign Value fact crossed the coordinate owner fence")
@@ -584,7 +584,7 @@ return payload`)})
 	var callFact calldomain.Value
 	var callFactOK bool
 	var payloadID identity.ContentID
-	var cells []operand.MemberCell[valuedomain.Value]
+	var cells []execution.MemberCell[valuedomain.Value]
 	var payloadRoot heapdomain.Key
 	found := false
 	callCount, callCountOK := artifact.Program().CallCount()
@@ -618,9 +618,9 @@ return payload`)})
 		if !payloadRoot.Valid() {
 			continue
 		}
-		cells = make([]operand.MemberCell[valuedomain.Value], actual.ActualCount())
+		cells = make([]execution.MemberCell[valuedomain.Value], actual.ActualCount())
 		for ordinal := range cells {
-			cells[ordinal] = operand.MemberCell[valuedomain.Value]{Value: values.Bottom(), Present: true}
+			cells[ordinal] = execution.MemberCell[valuedomain.Value]{Value: values.Bottom(), Present: true}
 			source, sourceOK := actual.ActualAt(ordinal)
 			if !sourceOK {
 				cells = nil
@@ -633,7 +633,7 @@ return payload`)})
 					cells = nil
 					break
 				}
-				cells[ordinal] = operand.MemberCell[valuedomain.Value]{Value: fact, Present: true}
+				cells[ordinal] = execution.MemberCell[valuedomain.Value]{Value: fact, Present: true}
 			}
 		}
 		if len(cells) != actual.ActualCount() {

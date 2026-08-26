@@ -3,12 +3,6 @@
 // output axis own the relations the sealed rule joins around it. The member
 // keys below remain local pre-stage spellings until those owner relations and
 // vector delivery can replace the legacy Link catalog atomically.
-//
-// Call's exact fact is the first join because it decides whether the row is a
-// yield boundary at all: an operation set declaring only a normal outcome
-// cannot suspend, and its subject reaches no route. The key and relation are
-// Call's own spellings, shared with the Formal and Publication Escape
-// families rather than re-minted here.
 package program
 
 import (
@@ -20,11 +14,9 @@ import (
 	ruleprogram "github.com/wippyai/go-lua/analysis/schema/rule/program"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
-	calldomain "github.com/wippyai/go-lua/domain/call"
 )
 
 const (
-	callAxisKey         schema.Key = "call"
 	valueAxisKey        schema.Key = "value"
 	placementAxisKey    schema.Key = "placement"
 	RuleKey                        = "placement-suspension"
@@ -33,10 +25,6 @@ const (
 	OperandRole                    = "operand/placement/suspension"
 	EvidenceRuleRole               = "rule/placement/suspension-evidence"
 	EvidenceOperandRole            = "operand/placement/suspension-evidence"
-
-	// Call's exact boundary fact.
-	boundaryCallFacts   schema.Key = calldomain.MountedCallFacts
-	boundaryCallFactKey schema.Key = calldomain.MountedCallFactKey
 
 	// Value's exact anchor and selected source vector.
 	suspensionAnchors         schema.Key = "value/suspension/anchors"
@@ -103,30 +91,8 @@ func denominatorReference(key schema.Key) ruleprogram.DenominatorRef {
 	return ruleprogram.DenominatorRef{Surface: schema.SurfaceKindDenominator, Key: key}
 }
 
-func callAxis() schema.EntryReference      { return axisReference(callAxisKey) }
 func valueAxis() schema.EntryReference     { return axisReference(valueAxisKey) }
 func placementAxis() schema.EntryReference { return axisReference(placementAxisKey) }
-
-// boundaryCallRead is the exact statement of the yield boundary. It is
-// candidate-only and point-bound: one liveness row is anchored at one mounted
-// call, and the fact solved there is what decides whether the row publishes a
-// route. It names no fold input - the class the fold draws comes from the
-// subject's liveness answer, not from the call - so the gate stays a join and
-// never becomes a second judgment.
-func boundaryCallRead() ruleprogram.ReadDecl {
-	return ruleprogram.ReadDecl{
-		Input:      0,
-		Axis:       ruleprogram.AxisRef(callAxis()),
-		Form:       ruleprogram.Exact,
-		PointBound: ruleprogram.PointBound,
-		Contract: ruleprogram.ReadContract{
-			Order:        ruleprogram.OrderCanonical,
-			Sparse:       ruleprogram.SparseExplicit,
-			OnOpaque:     ruleprogram.OnOpaqueRefuse,
-			Multiplicity: ruleprogram.MultiplicityOne,
-		},
-	}
-}
 
 // anchorRead is the denominator statement of the source vector: the closed
 // Value world the subject's cells are complete against. It is not a value the
@@ -194,19 +160,12 @@ func selectedPlacementRead() ruleprogram.ReadDecl {
 }
 
 func declaration(outputAxisKey schema.Key, candidate member.CandidateRef, anchor, anchorKey, sources, sourceKey, sourceTag, sourceSelection, routes, routeKey, routeTag, routeSelection, routeDestination, reducer, outputColumn schema.Key) ruleprogram.Program {
-	call := callAxis()
 	value := valueAxis()
 	outputAxis := axisReference(outputAxisKey)
 	return ruleprogram.Program{
 		OperandRole: vocabulary.RoleKey(OperandRole),
 		Candidate:   candidate,
 		Joins: []ruleprogram.JoinDecl{
-			{
-				Sources:  []ruleprogram.SourceRef{ruleprogram.CandidateSource()},
-				Relation: member.RelationRef{Axis: call, Member: boundaryCallFacts},
-				Key:      member.ProjectionRef{Axis: call, Member: boundaryCallFactKey},
-				Read:     boundaryCallRead(),
-			},
 			{
 				Sources:  []ruleprogram.SourceRef{ruleprogram.CandidateSource()},
 				Relation: member.RelationRef{Axis: value, Member: anchor},
@@ -217,7 +176,6 @@ func declaration(outputAxisKey schema.Key, candidate member.CandidateRef, anchor
 				Sources: []ruleprogram.SourceRef{
 					ruleprogram.CandidateSource(),
 					ruleprogram.PriorSource(0),
-					ruleprogram.PriorSource(1),
 				},
 				Relation:  member.RelationRef{Axis: value, Member: sources},
 				Key:       member.ProjectionRef{Axis: value, Member: sourceKey},
@@ -230,7 +188,6 @@ func declaration(outputAxisKey schema.Key, candidate member.CandidateRef, anchor
 					ruleprogram.CandidateSource(),
 					ruleprogram.PriorSource(0),
 					ruleprogram.PriorSource(1),
-					ruleprogram.PriorSource(2),
 				},
 				Relation:  member.RelationRef{Axis: outputAxis, Member: routes},
 				Key:       member.ProjectionRef{Axis: outputAxis, Member: routeKey},
@@ -240,17 +197,16 @@ func declaration(outputAxisKey schema.Key, candidate member.CandidateRef, anchor
 		},
 		Fold: ruleprogram.FoldDecl{
 			Reducer: member.ReducerRef{Axis: outputAxis, Member: reducer},
-			// Neither the boundary gate nor the anchor read is a fold input:
-			// the gate decides whether a route exists and the anchor states
-			// the denominator the vector is complete against. The fold takes
+			// The anchor read states the denominator the vector is complete
+			// against; a denominator is not a fold input, so the fold takes
 			// the vector and the routed cell and nothing else.
-			Inputs: []ruleprogram.JoinRef{2, 3},
+			Inputs: []ruleprogram.JoinRef{1, 2},
 			Outputs: []ruleprogram.OutputDecl{{
 				Column:           axis.OutputRef{Axis: outputAxis, Key: outputColumn},
 				Destination:      member.ProjectionRef{Axis: outputAxis, Member: routeDestination},
 				Mode:             ruleprogram.ModeRoute,
 				ValueSlot:        0,
-				RouteJoin:        3,
+				RouteJoin:        2,
 				RouteJoinPresent: true,
 			}},
 		},
@@ -264,7 +220,7 @@ func selectedOutputRead(outputAxis schema.EntryReference) ruleprogram.ReadDecl {
 	return read
 }
 
-// Suspension returns the mounted consumer's four-read pre-stage declaration.
+// Suspension returns the mounted consumer's three-read pre-stage declaration.
 // Its candidate is Program's authenticated subject-liveness row; the remaining
 // reads are retained only until the Call-authenticated vector shape can replace
 // this draft in the same cut that deletes the legacy Link implementation.

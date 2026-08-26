@@ -145,19 +145,14 @@ func TestDiagnosticDeclarationTableIsPolicyAndDispatchAuthority(t *testing.T) {
 		if policy.Valid(fixture.declarations) != entry.Collectable() {
 			t.Fatalf("policy admission drifted from the declared lane for %q", entry.Code().String())
 		}
-		// A row is measured over an Engine observation population exactly when
-		// its lane reads one. A post-solve Result row is collected from
-		// already-composed facts and names no observation; it declares the
-		// verdict category it answers under instead.
-		observed := entry.Lane() == diagnostic.LaneBranch || entry.Lane() == diagnostic.LaneStatic
-		if entry.Observation().Declared() != observed {
-			t.Fatalf("row %q declares observation=%t for lane %d", entry.Code().String(), entry.Observation().Declared(), entry.Lane())
-		}
-		if entry.Lane() == diagnostic.LaneResult && !entry.VerdictCategory().Available() {
-			t.Fatalf("result-lane row %q declares no verdict category", entry.Code().String())
-		}
 		if !entry.Collectable() {
+			if entry.Observation().Declared() {
+				t.Fatalf("row %q without a producer declares an observation population", entry.Code().String())
+			}
 			continue
+		}
+		if !entry.Observation().Declared() {
+			t.Fatalf("producing row %q declares no observation population", entry.Code().String())
 		}
 		if entry.Lane() != diagnostic.LaneStatic {
 			continue

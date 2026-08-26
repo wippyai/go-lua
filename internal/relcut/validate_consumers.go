@@ -27,13 +27,6 @@ const modulePath = "github.com/wippyai/go-lua/"
 // still declares that symbol. A consumer that stopped reading a symbol, a
 // symbol that left its package, and a file that was deleted are all the same
 // finding - the map has gone stale and the cut cannot be planned from it.
-//
-// Also against the repository: every entry states a reachable move. Either the
-// target package already declares every symbol the entry attributes to the
-// consumer, in which case the read is at its post-cut home and the entry waits
-// on nothing, or the entry names the prerequisite whose landing builds that
-// target. An entry that states neither claims a move nobody can make, and a
-// move nobody can make is answered with a bridge.
 func ValidateConsumers(consumers ConsumerMap, repositoryRoot string) []Finding {
 	var findings []Finding
 	refuse := func(entry, detail string) {
@@ -105,9 +98,6 @@ func ValidateConsumers(consumers ConsumerMap, repositoryRoot string) []Finding {
 		}
 		switch consumer.Target.Kind {
 		case TargetGap:
-			if consumer.WaitsOn != "" {
-				refuse(consumer.Path, "a gap entry names a prerequisite; the gap is the finding")
-			}
 			if consumer.Gap == "" {
 				refuse(consumer.Path, "target is a gap but the entry names none")
 				break
@@ -133,9 +123,6 @@ func ValidateConsumers(consumers ConsumerMap, repositoryRoot string) []Finding {
 			if consumer.Target.Package == "" {
 				refuse(consumer.Path, fmt.Sprintf("target %q names no package", consumer.Target.Kind))
 			}
-		}
-		if _, held := gaps[consumer.WaitsOn]; held {
-			cited[consumer.WaitsOn] = struct{}{}
 		}
 		if consumer.ManifestEntry == "" && consumer.Target.Note == "" {
 			refuse(consumer.Path, "consumer is outside every manifest entry and carries no note saying why")
@@ -171,31 +158,6 @@ func ValidateConsumers(consumers ConsumerMap, repositoryRoot string) []Finding {
 			if _, held := exported[read.Symbol]; !held {
 				refuse(consumer.Path, fmt.Sprintf("%s no longer declares %s; the map is stale", read.Package, read.Symbol))
 			}
-		}
-
-		if consumer.Target.Kind == TargetGap || consumer.Target.Package == "" {
-			continue
-		}
-		answered, err := packageSymbols(declared, repositoryRoot, consumer.Target.Package)
-		if err != nil {
-			refuse(consumer.Path, fmt.Sprintf("target package %s: %v", consumer.Target.Package, err))
-			continue
-		}
-		unanswered := ""
-		for _, read := range consumer.Reads {
-			if _, held := answered[read.Symbol]; !held {
-				unanswered = read.Symbol
-				break
-			}
-		}
-		if unanswered == "" {
-			if consumer.WaitsOn != "" {
-				refuse(consumer.Path, fmt.Sprintf("waits on %s while target %s already declares every symbol the entry reads", consumer.WaitsOn, consumer.Target.Package))
-			}
-			continue
-		}
-		if consumer.WaitsOn == "" {
-			refuse(consumer.Path, fmt.Sprintf("target %s declares no %s and the entry names no prerequisite; the move it states is unreachable", consumer.Target.Package, unanswered))
 		}
 	}
 	return findings

@@ -42,17 +42,14 @@ func TestCompiledPlanProcessSendTransferPublishesExactSharedHeapPlacement(t *tes
 		identityValue != vocabulary.TransferIdentityUnspecified || capabilities != vocabulary.TransferCapabilitiesUnspecified {
 		t.Fatalf("canonical process.send transfer = %d/%t declaration=%t endpoint=%#v payload=%#v alias=%#v identity=%d capabilities=%d; want authenticated external ValuesVar transfer", transferID, transferOK, declarationOK, endpoint, payload, alias, identityValue, capabilities)
 	}
-	// send answers the module's value/error pair, so its sealed outcome set is
-	// the throw arm followed by the two correlated normal arms: the arm
-	// answering true delivers, the arm answering the error rejects, and a send
-	// that raised delivered nothing.
-	if count := target.Operations.TransferOutcomeCount(op, 0); count != 3 {
-		t.Fatalf("canonical process.send transfer outcomes = %d, want three", count)
+	if target.Operations.TransferOutcomeCount(op, 0) != 2 {
+		t.Fatalf("canonical process.send transfer outcomes = %d, want MayDeliver and MayReject", target.Operations.TransferOutcomeCount(op, 0))
 	}
-	for outcome, want := range []vocabulary.TransferPossibility{vocabulary.TransferMayReject, vocabulary.TransferMayDeliver, vocabulary.TransferMayReject} {
-		if _, possibility, outcomeOK := target.Operations.TransferOutcomeAt(op, 0, outcome); !outcomeOK || possibility != want {
-			t.Fatalf("canonical process.send outcome %d = %d/%t, want %d", outcome, possibility, outcomeOK, want)
-		}
+	if _, possibility, outcomeOK := target.Operations.TransferOutcomeAt(op, 0, 0); !outcomeOK || possibility != vocabulary.TransferMayDeliver {
+		t.Fatalf("canonical process.send normal outcome = %d/%t, want MayDeliver", possibility, outcomeOK)
+	}
+	if _, possibility, outcomeOK := target.Operations.TransferOutcomeAt(op, 0, 1); !outcomeOK || possibility != vocabulary.TransferMayReject {
+		t.Fatalf("canonical process.send throw outcome = %d/%t, want MayReject", possibility, outcomeOK)
 	}
 
 	linked, err := testfixture.SealSource(target, "process-send-transfer.lua", []byte(`

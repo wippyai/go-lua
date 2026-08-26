@@ -7,18 +7,13 @@ import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
-	"github.com/wippyai/go-lua/analysis/schema/axis/member"
 	"github.com/wippyai/go-lua/analysis/schema/denominator"
-	schemaissuance "github.com/wippyai/go-lua/analysis/schema/issuance"
-	programissuance "github.com/wippyai/go-lua/analysis/schema/program/issuance"
 	"github.com/wippyai/go-lua/analysis/schema/rule"
 	ruleplan "github.com/wippyai/go-lua/analysis/schema/rule/plan"
 	ruleprogram "github.com/wippyai/go-lua/analysis/schema/rule/program"
 	seal "github.com/wippyai/go-lua/analysis/schema/seal"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
-	calldomain "github.com/wippyai/go-lua/domain/call"
-	effectdomain "github.com/wippyai/go-lua/domain/effect"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	placementdomain "github.com/wippyai/go-lua/domain/placement"
 	placementmember "github.com/wippyai/go-lua/domain/placement/memberdefinition"
@@ -157,60 +152,39 @@ func (storageNoopSurface) Seal(seal.View, seal.Sealed) schema.SealFailure {
 	return schema.SealFailure{}
 }
 
-// focusedAxis builds one axis of the focused table. Every axis this law
-// registers is the same shape - a dense engine factor publishing its own fact
-// column under its own semantic role - so the shape is stated once and the
-// three things that actually differ per axis are the arguments.
-func focusedAxis(key schema.Key, catalog member.Catalog, signature axis.Signature) (*axis.Template[struct{}], bool) {
-	return axis.New(axis.Spec[struct{}]{
-		Key:         key,
+func compileStorageProgram(t *testing.T, declaration ruleprogram.Program) (ruleplan.Catalog, schema.SealFailure) {
+	t.Helper()
+	valueCatalog := valuedomain.AxisMemberCatalog()
+	placementCatalog := placementdomain.AxisMemberCatalog()
+	valueAxis, ok := axis.New(axis.Spec[struct{}]{
+		Key:         "value",
 		Storage:     axis.StorageEngine,
 		Cardinality: axis.CardinalityDense,
 		Lifetime:    axis.LifetimeProcess,
 		Mutability:  axis.MutabilityFrozen,
 		Concurrency: axis.ConcurrencyShared,
-		Frame:       axis.Frame{Outputs: []axis.Output{{Key: key + "/facts", Writer: key}}},
-		Catalog:     catalog,
-		Signature:   signature,
-		Semantic:    "semantic/factor/" + key,
+		Frame:       axis.Frame{Outputs: []axis.Output{{Key: "value/facts", Writer: "value"}}},
+		Catalog:     valueCatalog,
+		Signature:   axis.Signature{Key: valuedomain.ValueCoordinateCarrier, Fact: valuedomain.ValueFactCarrier},
+		Semantic:    "semantic/factor/value",
 	})
-}
-
-func compileStorageProgram(t *testing.T, declaration ruleprogram.Program) (ruleplan.Catalog, schema.SealFailure) {
-	t.Helper()
-	valueCatalog := valuedomain.AxisMemberCatalog()
-	placementCatalog := placementdomain.AxisMemberCatalog()
-	valueAxis, ok := focusedAxis("value", valueCatalog,
-		axis.Signature{Key: valuedomain.ValueCoordinateCarrier, Fact: valuedomain.ValueFactCarrier})
 	if !ok {
 		t.Fatal("focused Value axis rejected")
 	}
-	placementAxis, ok := focusedAxis("placement", placementCatalog,
-		axis.Signature{Key: placementdomain.PlacementKeyCarrier, Fact: placementdomain.PlacementFactCarrier})
+	placementAxis, ok := axis.New(axis.Spec[struct{}]{
+		Key:         "placement",
+		Storage:     axis.StorageEngine,
+		Cardinality: axis.CardinalityDense,
+		Lifetime:    axis.LifetimeProcess,
+		Mutability:  axis.MutabilityFrozen,
+		Concurrency: axis.ConcurrencyShared,
+		Frame:       axis.Frame{Outputs: []axis.Output{{Key: "placement/facts", Writer: "placement"}}},
+		Catalog:     placementCatalog,
+		Signature:   axis.Signature{Key: placementdomain.PlacementKeyCarrier, Fact: placementdomain.PlacementFactCarrier},
+		Semantic:    "semantic/factor/placement",
+	})
 	if !ok {
 		t.Fatal("focused Placement axis rejected")
-	}
-	// Value and Placement do not close the world. Their member catalogs name
-	// the Call, Heap and Effect axes - through the reducer inputs and relation
-	// providers the call-result, module-load, runtime-kind and
-	// closed-allocation rules read them with - and the reference law resolves
-	// every one of those against this table. The transitive closure of what
-	// the two declared axes reach is exactly these five, so registering them
-	// is what makes this catalog COMPLETE rather than merely focused.
-	callAxis, ok := focusedAxis("call", calldomain.AxisMemberCatalog(),
-		axis.Signature{Key: calldomain.CallKeyCarrier, Fact: calldomain.CallFactCarrier})
-	if !ok {
-		t.Fatal("focused Call axis rejected")
-	}
-	heapAxis, ok := focusedAxis("heap", heapdomain.AxisMemberCatalog(),
-		axis.Signature{Key: heapdomain.HeapKeyCarrier, Fact: heapdomain.HeapFactCarrier})
-	if !ok {
-		t.Fatal("focused Heap axis rejected")
-	}
-	effectAxis, ok := focusedAxis("effect", effectdomain.AxisMemberCatalog(),
-		axis.Signature{Key: effectdomain.EffectKeyCarrier, Fact: effectdomain.EffectFactCarrier})
-	if !ok {
-		t.Fatal("focused Effect axis rejected")
 	}
 
 	programRule, ok := rule.New(rule.Spec{
@@ -229,9 +203,6 @@ func compileStorageProgram(t *testing.T, declaration ruleprogram.Program) (rulep
 	roles := []string{
 		"factor/value",
 		"factor/placement",
-		"factor/call",
-		"factor/heap",
-		"factor/effect",
 		"rule/placement/storage",
 		"operand/placement/storage",
 	}
@@ -287,39 +258,16 @@ func compileStorageProgram(t *testing.T, declaration ruleprogram.Program) (rulep
 	if !ok {
 		t.Fatal("Placement denominator rejected")
 	}
-	denominators := []*denominator.Entry{valueDenominator, placementDenominator}
-	for _, key := range []string{"call", "heap", "effect"} {
-		universe, universeOK := identity.DeriveContentID("go-lua/store-program/"+key, []byte(key))
-		if !universeOK {
-			t.Fatalf("%s denominator universe identity unavailable", key)
-		}
-		entry, entryOK := denominator.Coordinate(schema.Key(key), universe)
-		if !entryOK {
-			t.Fatalf("%s denominator rejected", key)
-		}
-		denominators = append(denominators, entry)
-	}
-
-	// The value axis's member catalog names issued-Program candidate providers -
-	// the closure-proof and subject-liveness occurrence relations the capture,
-	// suspension and suspension-evidence rules are addressed through - so the
-	// issuance surface has to carry those declarations for the reference law to
-	// resolve them. A no-op issuance surface makes this catalog incomplete, not
-	// focused.
-	issuanceEntries, issuanceOK := programissuance.Entries()
-	if !issuanceOK {
-		t.Fatal("Program issuance entries unavailable")
-	}
 
 	builder := seal.NewBuilder()
 	for _, surface := range []seal.Surface{
 		structure.NewSurface(roleEntries),
-		axis.NewSurface([]*axis.Template[struct{}]{valueAxis, placementAxis, callAxis, heapAxis, effectAxis}),
-		schemaissuance.NewSurface(issuanceEntries),
+		axis.NewSurface([]*axis.Template[struct{}]{valueAxis, placementAxis}),
+		storageNoopSurface{kind: schema.SurfaceKindIssuance},
 		rule.NewSurface([]*rule.Template{programRule}),
 		storageNoopSurface{kind: schema.SurfaceKindDiagnostic},
 		storageNoopSurface{kind: schema.SurfaceKindComposite},
-		denominator.NewSurface(denominators),
+		denominator.NewSurface([]*denominator.Entry{valueDenominator, placementDenominator}),
 		storageNoopSurface{kind: schema.SurfaceKindQuery},
 		storageNoopSurface{kind: schema.SurfaceKindObservation},
 	} {

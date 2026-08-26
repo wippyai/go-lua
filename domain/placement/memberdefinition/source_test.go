@@ -9,12 +9,6 @@ import (
 	"github.com/wippyai/go-lua/domain/memberroster"
 )
 
-// storePackagePath is the package whose symbols the Store route derivation
-// names. It is spelled here rather than imported, because the law is over what
-// the DECLARATION says, and reaching into the judged package for the constant
-// would let a rename agree with itself.
-const storePackagePath = "github.com/wippyai/go-lua/domain/placement/store"
-
 // composedStorage is Placement's whole member definition: the Store base this
 // package declares folded with the Store rule's own reducer contribution. The
 // law is stated over the composition rather than over the base, because the
@@ -61,44 +55,10 @@ func TestStorageDefinitionIsCompleteAndForeignProviderOwned(t *testing.T) {
 	if relation.CandidateResolver.Available() || relation.CandidateOrdinal.Available() || relation.CandidateAt.Available() || relation.Materialize.Available() {
 		t.Fatal("foreign candidate directory was copied into Placement")
 	}
-	// The route relation states its construction and authors only the judgments
-	// inside it. The authored quartet is gone, and its absence is the
-	// statement: a relation carrying both forms would be two answers to what
-	// its rows are.
 	derivation := relation.Derivation
-	if derivation.AuthoredDerivation() {
-		t.Fatalf("Store route derivation still states an authored construction: %+v", derivation)
-	}
-	if !derivation.DeclaredDerivation() {
-		t.Fatalf("Store route derivation states no construction at all: %+v", derivation)
-	}
-	if len(derivation.StaticAxes) != 2 || derivation.StaticAxes[0].Surface != schema.SurfaceKindAxis || derivation.StaticAxes[0].Key != "placement" || derivation.StaticAxes[1].Key != "value" {
-		t.Fatalf("Store route static axes=%+v, want explicit placement then value", derivation.StaticAxes)
-	}
-	// The rows are the atoms of the Value the relation is given, read through
-	// Value's own schema, and each is judged by Store's own symbol.
-	if len(derivation.Source) != 1 || derivation.Source[0].Axis.Key != "value" || derivation.Source[0].Name != "Atoms" {
-		t.Fatalf("Store route source=%+v, want Value's own atom enumeration", derivation.Source)
-	}
-	if derivation.Resolve.Name != "ResolveRoute" || derivation.Resolve.PackagePath != storePackagePath {
-		t.Fatalf("Store route judgment=%+v", derivation.Resolve)
-	}
-	// The width the set holds BY VALUE before it spills. A store transfer
-	// routes to one allocation, or to a couple where a value carries
-	// alternatives, so the ordinary answer never allocates a slice just to be
-	// returned. It is pinned rather than merely required positive: the number
-	// is the relation's own statement of how many rows it ordinarily answers,
-	// and a change to it is a change to that statement.
-	if derivation.InlineWidth != 8 {
-		t.Fatalf("Store route inline width=%d, want the declared 8", derivation.InlineWidth)
-	}
-	// A Value that named no closed list of allocations widens to Placement's
-	// whole directory, whose rows are Heap keys rather than atoms - so the
-	// endpoint states its own judgment for what one of those means.
-	widen := derivation.Widen
-	if !widen.Declared() || widen.Predicate.Name != "BeyondAllocations" || widen.Resolve.Name != "ResolveDirectoryRoute" ||
-		len(widen.Source) != 1 || widen.Source[0].Axis.Key != "placement" || widen.Source[0].Name != "AllocationDirectory" {
-		t.Fatalf("Store route widen endpoint=%+v", widen)
+	if derivation.State.Name != "RoutePlan" || derivation.Build.Name != "DeriveRoutes" || derivation.Count.Name != "RouteCount" || derivation.At.Name != "RouteAt" ||
+		len(derivation.StaticAxes) != 2 || derivation.StaticAxes[0].Surface != schema.SurfaceKindAxis || derivation.StaticAxes[0].Key != "placement" || derivation.StaticAxes[1].Key != "value" {
+		t.Fatalf("Store route derivation=%+v, want explicit placement/value Build/Count/At", derivation)
 	}
 
 	wantProjections := []struct {

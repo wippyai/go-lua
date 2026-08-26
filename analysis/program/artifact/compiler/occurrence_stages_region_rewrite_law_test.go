@@ -23,7 +23,7 @@ func TestRewriteRegionMembersIgnoresUnrelatedGlobalStages(t *testing.T) {
 		stageFor[unrelated] = []identity.ContentID{regionRewriteID(value + 100)}
 	}
 
-	rewritten, injected, ok := rewriteRegionMembers([]identity.ContentID{first, second}, nil, stageFor)
+	rewritten, injected, ok := rewriteRegionMembers([]identity.ContentID{first, second}, stageFor)
 	if !ok {
 		t.Fatal("rewrite failed")
 	}

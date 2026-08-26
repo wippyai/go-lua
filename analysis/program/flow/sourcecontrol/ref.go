@@ -140,40 +140,6 @@ func (r *Result) BodyTailPhase(body keyspace.Term) (PhaseRef, bool) {
 	return r.phaseRefAt(node)
 }
 
-// repeatEntryNode is the authored Loop cursor of a Repeat: the node a
-// predecessor enters. The generic Loop coordinate denotes the post-body
-// hidden decision, which a route entering the Repeat never reaches.
-func (r *Result) repeatEntryNode(view source.View, term keyspace.Term) (uint32, bool) {
-	if !r.available() || keyspace.TermFamily(term) != keyspace.FamilyLoop {
-		return 0, false
-	}
-	ordinal := keyspace.TermOrdinal(term)
-	if ordinal == 0 || uint64(ordinal) >= uint64(len(r.coordinates.repeatLoop)) || !r.coordinates.repeatLoop[ordinal] {
-		return 0, false
-	}
-	body, _, cursor, ok := view.Index().Position(term)
-	if !ok || cursor < 0 {
-		return 0, false
-	}
-	return r.Cursor(body, uint32(cursor))
-}
-
-// EntryPhase is the phase a route entering term reaches.
-func (r *Result) EntryPhase(view source.View, term keyspace.Term) (PhaseRef, bool) {
-	if node, ok := r.repeatEntryNode(view, term); ok {
-		return r.phaseRefAt(node)
-	}
-	return r.CoordinatePhase(view, term)
-}
-
-// EntryRef is the CSR node a route entering term reaches.
-func (r *Result) EntryRef(view source.View, term keyspace.Term) (NodeRef, bool) {
-	if node, ok := r.repeatEntryNode(view, term); ok {
-		return NodeRef{result: r, node: node}, true
-	}
-	return r.CoordinateRef(view, term)
-}
-
 func (r *Result) CoordinatePhase(view source.View, term keyspace.Term) (PhaseRef, bool) {
 	node, ok := r.Coordinate(view, term)
 	if !ok {

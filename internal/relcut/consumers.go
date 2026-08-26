@@ -94,14 +94,6 @@ type Consumer struct {
 	Reads         []Read `json:"reads"`
 	Target        Target `json:"target"`
 	Gap           string `json:"gap"`
-	// WaitsOn is the prerequisite whose landing makes this entry's move
-	// possible: a manifest entry, or a declared gap. It is empty exactly when
-	// the target package already declares every symbol the entry attributes to
-	// the consumer, which is the record of a read that is at its post-cut home.
-	// A target naming a package that answers none of the entry's reads is where
-	// a bridge enters, so the map states the prerequisite rather than leaving
-	// the move to look available.
-	WaitsOn string `json:"waits_on"`
 }
 
 // Gap is a distinction a consumer reads that no declared owner publishes.

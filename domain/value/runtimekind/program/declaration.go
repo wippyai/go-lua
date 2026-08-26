@@ -73,7 +73,7 @@ func RuleIssues() []rule.Issuance {
 		{
 			Occurrence:  "occurrence/operation-predicate-refinement",
 			Requirement: "program-requirement/unrestricted",
-			Form:        "program-form/route-predecessor",
+			Form:        "program-form/local-predecessor",
 		},
 	}
 }

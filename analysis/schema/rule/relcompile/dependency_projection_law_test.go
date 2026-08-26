@@ -21,11 +21,10 @@ func TestDependencyProjectionCarriesEverySemanticRead(t *testing.T) {
 	spec := valuesource.RuleEntry()
 	surfaces := newOwners(t)
 	placement := surfaces.install(spec)
-	resolution, err := relcompile.Resolve(surfaces.registry, spec, placement)
+	rules, err := relcompile.Resolve(surfaces.registry, spec, placement)
 	if err != nil {
 		t.Fatalf("resolve %s: %v", spec.Key, err)
 	}
-	rules := resolution.Rules
 	compiled := lower(t, surfaces, spec, rules)
 
 	dependencies := compiled.Dependencies()

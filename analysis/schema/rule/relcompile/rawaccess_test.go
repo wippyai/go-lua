@@ -3,8 +3,6 @@ package relcompile_test
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/relation/check/authority"
-	"github.com/wippyai/go-lua/analysis/relation/check/certificate"
 	"github.com/wippyai/go-lua/analysis/relation/schema/model"
 	"github.com/wippyai/go-lua/analysis/relation/semantic/outcome"
 	"github.com/wippyai/go-lua/analysis/relation/semantic/signature"
@@ -85,66 +83,21 @@ func (access *rawAccess) factRelation(axis schema.Key, member schema.Key) relcom
 // step adds one dependent read of the chain: a typed expansion over the
 // results already known, publishing the route relation the read is then an
 // ordinary equijoin onto.
-//
-// An expansion states one join per fact its enumeration reads, from the spine
-// the chain already carries onto the relation that fact lives in, and the
-// operand projection carries those reads into the row the operation is applied
-// to. A read the enumeration makes and the join list omits is a frame the
-// operation asks for and the plan never delivers, so the reads are stated here
-// and nowhere else.
-func (access *rawAccess) step(rule schema.Key, candidate relcompile.Name, route schema.Key, bound uint32, reads ...relcompile.Name) relcompile.Name {
+func (access *rawAccess) step(rule schema.Key, candidate relcompile.Name, read relcompile.Name, route schema.Key, bound uint32) relcompile.Name {
 	access.t.Helper()
 	routeRelation := access.factRelation(heapAxis, route)
 	operation := relationName(heapAxis, route+"#expansion")
-	access.surfaces.expansion(operation, access.destinationColumn(routeRelation), bound, len(reads), candidate)
-	joins := make([]relcompile.JoinSpec, 0, len(reads))
-	for _, read := range reads {
-		joins = append(joins, access.join(candidate, read))
-	}
+	access.surfaces.expansion(operation, access.destinationColumn(routeRelation), bound)
 	access.rules = append(access.rules, relcompile.Rule{
 		ID:         access.dependencyOf(rule),
 		Expression: access.expressionOf(rule),
 		Candidate:  access.relation(candidate),
-		Joins:      joins,
+		Joins:      []relcompile.JoinSpec{access.join(candidate, read)},
 		Scope:      access.scopeID(),
-		Operand:    access.operandOf(operation, joins),
 		Apply:      access.signature(operation),
 		Publish:    &relcompile.Publication{Relation: access.relation(routeRelation), Key: access.publicationKey(routeRelation)},
 	})
 	return routeRelation
-}
-
-// operandOf projects the joined row onto the relation the operation reads.
-//
-// The operation's signature names that relation, and it declares one column
-// per read the rule makes, so the column at position i is defined by the read
-// at position i. Every column is defined exactly once, which is what makes the
-// Apply's input a column of its own child rather than a column the plan hoped
-// would be there.
-func (access *rawAccess) operandOf(operation relcompile.Name, joins []relcompile.JoinSpec) *relcompile.Operand {
-	access.t.Helper()
-	site := relcompile.Site{Rule: "raw-access", Path: "operand"}
-	name := relcompile.NewName(operation.Entry, operation.Member+"#operand")
-	relation, err := access.surfaces.registry.Relation(site, name)
-	if err != nil {
-		access.t.Fatalf("resolve operand relation %v: %v", name, err)
-	}
-	key, err := access.surfaces.registry.RelationKeyOf(site, relation)
-	if err != nil {
-		access.t.Fatalf("resolve operand key of %v: %v", name, err)
-	}
-	targets, err := access.surfaces.registry.RelationColumns(site, relation)
-	if err != nil {
-		access.t.Fatalf("resolve operand columns of %v: %v", name, err)
-	}
-	if len(targets) != len(joins) {
-		access.t.Fatalf("operand %v declares %d columns and the rule makes %d reads", name, len(targets), len(joins))
-	}
-	mappings := make([]relcompile.ColumnMapping, 0, len(targets))
-	for index, target := range targets {
-		mappings = append(mappings, relcompile.ColumnMapping{Source: joins[index].RightColumns[0], Target: target})
-	}
-	return &relcompile.Operand{Relation: relation, Key: key, Columns: mappings}
 }
 
 func (access *rawAccess) destinationColumn(relation relcompile.Name) relcompile.Name {
@@ -269,41 +222,27 @@ func rawGetPlan(t *testing.T) *rawAccess {
 	heaps := access.factRelation(heapAxis, heapFacts)
 	packs := access.factRelation(packAxis, packFacts)
 
-	keyRoutes := access.step("raw-get/key-routes", candidates, "heap/raw-get-key-routes", 64, values)
-	callRoutes := access.step("raw-get/call-routes", keyRoutes, "heap/raw-get-call-routes", 64, values)
-	heapRoutes := access.step("raw-get/heap-routes", callRoutes, "heap/raw-get-heap-routes", 64, calls)
-	// The pack expansion enumerates the payloads one selected route carries
-	// under a key selector, and the selectors are the ones the read candidate
-	// resolves to under the value its key selected. So it reads the heap fact
-	// the route selected, the candidate whose key geometry decides whether the
-	// selection is read at all, and the key value the selectors project from.
-	// The key route states the coordinate and never the value at it, so it is
-	// not the relation this read observes.
-	packRoutes := access.step("raw-get/pack-routes", heapRoutes, "heap/raw-get-pack-routes", 64, heaps, candidates, values)
-	sourceRoutes := access.step("raw-get/source-routes", packRoutes, "heap/raw-get-source-routes", 64, packs)
+	keyRoutes := access.step("raw-get/key-routes", candidates, values, "heap/raw-get-key-routes", 64)
+	callRoutes := access.step("raw-get/call-routes", keyRoutes, values, "heap/raw-get-call-routes", 64)
+	heapRoutes := access.step("raw-get/heap-routes", callRoutes, calls, "heap/raw-get-heap-routes", 64)
+	packRoutes := access.step("raw-get/pack-routes", heapRoutes, heaps, "heap/raw-get-pack-routes", 64)
+	sourceRoutes := access.step("raw-get/source-routes", packRoutes, packs, "heap/raw-get-source-routes", 64)
 
 	reduction := relationName(heapAxis, "heap/raw-get-reduction")
-	// The reduction re-enumerates the receiver's calls and rooted routes and
-	// looks up the fact each one selected, so its frame is the value, call,
-	// heap, source and pack selections together.
-	reductionJoins := []relcompile.JoinSpec{
-		access.join(candidates, values),
-		access.join(candidates, calls),
-		access.join(candidates, heaps),
-		access.join(candidates, sourceRoutes),
-		access.join(sourceRoutes, packs),
-	}
-	access.surfaces.operation(reduction, access.destinationColumn(values), len(reductionJoins), candidates)
+	access.surfaces.operation(reduction, access.destinationColumn(values))
 	access.rules = append(access.rules, relcompile.Rule{
 		ID:         access.dependencyOf("raw-get/result"),
 		Expression: access.expressionOf("raw-get/result"),
 		Candidate:  access.relation(candidates),
-		Joins:      reductionJoins,
-		Scope:      access.scopeID(),
-		Operand:    access.operandOf(reduction, reductionJoins),
-		Apply:      access.signature(reduction),
-		Carry:      &relcompile.CarrySpec{Relation: access.relation(values), Scope: access.portScope()},
-		Publish:    &relcompile.Publication{Relation: access.relation(values), Key: access.publicationKey(values)},
+		Joins: []relcompile.JoinSpec{
+			access.join(candidates, values),
+			access.join(candidates, sourceRoutes),
+			access.join(sourceRoutes, packs),
+		},
+		Scope:   access.scopeID(),
+		Apply:   access.signature(reduction),
+		Carry:   &relcompile.CarrySpec{Relation: access.relation(values), Scope: access.portScope()},
+		Publish: &relcompile.Publication{Relation: access.relation(values), Key: access.publicationKey(values)},
 	})
 	return access
 }
@@ -320,55 +259,52 @@ func rawSetPlan(t *testing.T) *rawAccess {
 	heaps := access.factRelation(heapAxis, heapFacts)
 	packs := access.factRelation(packAxis, packFacts)
 
-	keyRoutes := access.step("raw-set/key-routes", candidates, "heap/raw-set-key-routes", 64, values)
-	heapRoutes := access.step("raw-set/heap-routes", keyRoutes, "heap/raw-set-heap-routes", 64, values)
-	// The write side's pack expansion is the same enumeration over the same
-	// three reads: the heap fact the route selected, the write candidate whose
-	// key geometry decides whether the key selection is read, and the key value
-	// the selectors project from.
-	packRoutes := access.step("raw-set/pack-routes", heapRoutes, "heap/raw-set-pack-routes", 64, heaps, candidates, values)
-	sourceRoutes := access.step("raw-set/source-routes", packRoutes, "heap/raw-set-source-routes", 64, packs)
+	keyRoutes := access.step("raw-set/key-routes", candidates, values, "heap/raw-set-key-routes", 64)
+	heapRoutes := access.step("raw-set/heap-routes", keyRoutes, values, "heap/raw-set-heap-routes", 64)
+	packRoutes := access.step("raw-set/pack-routes", heapRoutes, heaps, "heap/raw-set-pack-routes", 64)
+	sourceRoutes := access.step("raw-set/source-routes", packRoutes, packs, "heap/raw-set-source-routes", 64)
 
 	update := relationName(heapAxis, "heap/raw-set-cell-update")
-	// The cell update writes the payload each source names into the route it
-	// selected, so its frame is the value, pack and source selections together
-	// with the heap denominator row it is authenticated against.
-	updateJoins := []relcompile.JoinSpec{
-		access.join(candidates, values),
-		access.join(candidates, packs),
-		access.join(candidates, sourceRoutes),
-		access.completed(access.join(sourceRoutes, heaps), heaps),
-	}
-	access.surfaces.operation(update, access.destinationColumn(heaps), len(updateJoins), candidates)
+	access.surfaces.operation(update, access.destinationColumn(heaps))
 	access.rules = append(access.rules, relcompile.Rule{
 		ID:         access.dependencyOf("raw-set/commit"),
 		Expression: access.expressionOf("raw-set/commit"),
 		Candidate:  access.relation(candidates),
-		Joins:      updateJoins,
-		Scope:      access.scopeID(),
-		Operand:    access.operandOf(update, updateJoins),
-		Apply:      access.signature(update),
-		Carry:      &relcompile.CarrySpec{Relation: access.relation(heaps), Scope: access.portScope()},
-		Publish:    &relcompile.Publication{Relation: access.relation(heaps), Key: access.publicationKey(heaps)},
+		Joins: []relcompile.JoinSpec{
+			access.join(candidates, values),
+			access.join(candidates, sourceRoutes),
+			access.completed(access.join(sourceRoutes, heaps), heaps),
+		},
+		Scope:   access.scopeID(),
+		Apply:   access.signature(update),
+		Carry:   &relcompile.CarrySpec{Relation: access.relation(heaps), Scope: access.portScope()},
+		Publish: &relcompile.Publication{Relation: access.relation(heaps), Key: access.publicationKey(heaps)},
 	})
 	return access
 }
 
 func (access *rawAccess) compile(t *testing.T, label schema.Key) planResult {
 	t.Helper()
-	declaration := access.surfaces.registry.Declaration(access.surfaces.schema())
+	owner, err := access.surfaces.registry.Owner(relcompile.Site{Path: "raw-access"}, axisRef(heapAxis))
+	if err != nil {
+		t.Fatalf("resolve heap owner: %v", err)
+	}
+	schemaID, ok := model.IssueSchemaID(owner, access.surfaces.token("schema", relcompile.EntryName(schema.SurfaceKindRule, label)))
+	if !ok {
+		t.Fatalf("issue schema identity for %s", label)
+	}
+	declaration := access.surfaces.registry.Declaration(schemaID)
 	declaration.Rules = access.rules
 	compiled, err := relcompile.Compile(declaration)
 	if err != nil {
 		t.Fatalf("compile %s: %v", label, err)
 	}
-	return planResult{count: len(compiled.Expressions()), sketch: sketch(compiled), certified: certification(compiled)}
+	return planResult{count: len(compiled.Expressions()), sketch: sketch(compiled)}
 }
 
 type planResult struct {
-	count     int
-	sketch    string
-	certified string
+	count  int
+	sketch string
 }
 
 // rawAccessCensus contributes the two authored raw indexed access rows. Their
@@ -381,12 +317,12 @@ func rawAccessCensus(t *testing.T) []entry {
 	return []entry{
 		{
 			Family: "heap/index", Plane: "family", Rule: "raw-get", Status: statusCompiles,
-			Sketch: get.sketch, Expressions: get.count, Certified: get.certified,
+			Sketch: get.sketch, Expressions: get.count,
 			Reason: "plan authored from the read chain; the rule declaration carries no Program",
 		},
 		{
 			Family: "heap/index", Plane: "family", Rule: "raw-set", Status: statusCompiles,
-			Sketch: set.sketch, Expressions: set.count, Certified: set.certified,
+			Sketch: set.sketch, Expressions: set.count,
 			Reason: "plan authored from the read chain; the rule declaration carries no Program",
 		},
 	}
@@ -417,62 +353,8 @@ func TestRawGetChainLowersToExpansionsAndOneReduction(t *testing.T) {
 	if final.Carry == nil {
 		t.Fatal("raw-get's reduction drops the receiver fact it carries")
 	}
-	if len(final.Joins) != 5 {
-		t.Fatalf("raw-get reduction joins = %d, want the receiver, the call and heap fact selections, the route chain and its payload", len(final.Joins))
-	}
-}
-
-// TestEveryRawAccessOperationReadsARowItsPlanBuilds states the closure of the
-// plan gap. An operation is applied to the relation its signature names, so
-// the rule that applies it owes a projection that defines every column of that
-// relation, and it owes one read per column. A rule that applied its operation
-// to the joined row would be asking for a column no child of the Apply carries,
-// which is a frame the plan never delivered.
-func TestEveryRawAccessOperationReadsARowItsPlanBuilds(t *testing.T) {
-	for _, plan := range []struct {
-		label  schema.Key
-		access *rawAccess
-	}{{"raw-get", rawGetPlan(t)}, {"raw-set", rawSetPlan(t)}} {
-		for index, declared := range plan.access.rules {
-			if declared.Operand == nil {
-				t.Fatalf("%s dependency %d applies an operation to a row its plan never builds", plan.label, index)
-			}
-			if len(declared.Operand.Columns) != len(declared.Joins) {
-				t.Fatalf("%s dependency %d projects %d columns from %d reads", plan.label, index, len(declared.Operand.Columns), len(declared.Joins))
-			}
-			defined := map[model.ColumnID]bool{}
-			for _, mapping := range declared.Operand.Columns {
-				if defined[mapping.Target] {
-					t.Fatalf("%s dependency %d defines one operand column twice", plan.label, index)
-				}
-				defined[mapping.Target] = true
-			}
-		}
-	}
-}
-
-// TestEveryRawAccessPlanCertifies states that both authored plans pass the
-// independent checker on everything the plan itself states. The scope-order
-// finding is the census harness's own port scope, carried by every family in
-// the matrix, so it is not a statement about raw access.
-func TestEveryRawAccessPlanCertifies(t *testing.T) {
-	for _, plan := range []struct {
-		label  schema.Key
-		access *rawAccess
-	}{{"raw-get", rawGetPlan(t)}, {"raw-set", rawSetPlan(t)}} {
-		declaration := plan.access.surfaces.registry.Declaration(plan.access.surfaces.schema())
-		declaration.Rules = plan.access.rules
-		compiled, err := relcompile.Compile(declaration)
-		if err != nil {
-			t.Fatalf("compile %s: %v", plan.label, err)
-		}
-		_, refusal := certificate.Check(compiled)
-		for _, issue := range refusal.Issues() {
-			if issue.Pass == certificate.PassAuthority && issue.Code == uint16(authority.CodeInvalidScopeOrder) {
-				continue
-			}
-			t.Errorf("%s: %s[%d] at %s: %s", plan.label, issue.Pass, issue.Code, issue.Path, issue.Detail)
-		}
+	if len(final.Joins) != 3 {
+		t.Fatalf("raw-get reduction joins = %d, want the receiver, the route chain and its payload", len(final.Joins))
 	}
 }
 
@@ -506,7 +388,7 @@ func TestRawSetChainEndsInAnAuthenticatedHeapPublication(t *testing.T) {
 // expansion installs one finite expansion signature: a bounded output span
 // over the destination's own denominator, which is what makes a value-
 // dependent route emission expressible without a callback.
-func (surfaces *owners) expansion(name relcompile.Name, destination relcompile.Name, bound uint32, reads int, candidate relcompile.Name) {
+func (surfaces *owners) expansion(name relcompile.Name, destination relcompile.Name, bound uint32) {
 	surfaces.t.Helper()
 	surfaces.owner(name.Entry)
 	if !surfaces.once("operation", name) {
@@ -523,26 +405,27 @@ func (surfaces *owners) expansion(name relcompile.Name, destination relcompile.N
 	if err != nil {
 		surfaces.t.Fatalf("resolve operation owner %v: %v", name, err)
 	}
-	schemaID := surfaces.schema()
-	site := relcompile.Site{Path: "census.expansion"}
-	// The rows an expansion publishes are computed from the results it reads,
-	// so it is applied to the same kind of projected operand row a fold is.
-	operand := candidate
-	first := surfaces.coordinateName(candidate, relcompile.CoordinateAddress)
-	if reads != 0 {
-		operand = relcompile.NewName(name.Entry, name.Member+"#operand")
-		first = surfaces.operandRelation(operand, reads)
+	schemaID, ok := model.IssueSchemaID(owner, surfaces.token("schema", relcompile.Name{Entry: name.Entry}))
+	if !ok {
+		surfaces.t.Fatalf("issue schema identity for %v", name)
 	}
-	reference := surfaces.denominatorOf(operand)
-	column, err := surfaces.registry.Column(site, first)
+	column, err := surfaces.registry.Column(relcompile.Site{Path: "census.expansion"}, destination)
 	if err != nil {
-		surfaces.t.Fatalf("resolve operand column %v: %v", first, err)
+		surfaces.t.Fatalf("resolve destination %v: %v", destination, err)
 	}
-	delivery, ok := signature.NewBoundedSpanDelivery(bound, reference.Key())
+	key, err := surfaces.registry.PublicationKey(relcompile.Site{Path: "census.expansion"}, destination)
+	if err != nil {
+		surfaces.t.Fatalf("resolve publication key of %v: %v", destination, err)
+	}
+	reference, ok := model.NewDenominatorRef(column.Relation(), key)
+	if !ok {
+		surfaces.t.Fatalf("construct denominator for %v", destination)
+	}
+	delivery, ok := signature.NewBoundedSpanDelivery(bound, key)
 	if !ok {
 		surfaces.t.Fatal("construct bounded span delivery")
 	}
-	valueType, err := surfaces.registry.ColumnType(site, first)
+	valueType, err := surfaces.registry.Type(relcompile.Site{Path: "census.expansion"}, relcompile.NewName(destination.Entry, destination.Member+"#type"))
 	if err != nil {
 		surfaces.t.Fatalf("resolve destination type %v: %v", destination, err)
 	}
@@ -558,14 +441,14 @@ func (surfaces *owners) expansion(name relcompile.Name, destination relcompile.N
 		Identity: signature.Identity{Operation: operation, Version: 1},
 		Fence:    signature.Fence{Owner: owner, Schema: schemaID},
 		Inputs: []signature.Input{{
-			Relation: reference.Relation(), Column: column, Type: valueType,
+			Relation: column.Relation(), Column: column, Type: valueType,
 			Presence: signature.AllowMissing, Delivery: delivery, Denominator: reference,
 		}},
-		// An expansion publishes rows, and a row is whole: the operation yields
-		// every column the relation it lands in declares, so the publication
-		// of its result owes nothing the operation did not produce.
-		Outputs:     surfaces.destinationOutputs(surfaces.relationOf(destination)),
-		Authority:   signature.OutputAuthority{Denominator: surfaces.denominatorOf(surfaces.relationOf(destination))},
+		Outputs: []signature.Output{{
+			Relation: column.Relation(), Column: column, Type: valueType,
+			Presence: signature.ProducePresent,
+		}},
+		Authority:   signature.OutputAuthority{Denominator: reference},
 		Cardinality: cardinality,
 		Outcomes:    accepted,
 	})

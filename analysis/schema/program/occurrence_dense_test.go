@@ -77,7 +77,7 @@ func TestOccurrenceOperationPredicateCodeOwnsTruthEncoding(t *testing.T) {
 	valid, validOK := NewOccurrence(
 		OccurrenceOperationPredicateRefinement,
 		identity.ContentID{1}, body, trueCode,
-		0, 1, 0, 5,
+		0, 1, 0, 4,
 		keyspace.FamilyInvalid, keyspace.LiteralValue{}, false,
 	)
 	if !validOK || !OccurrenceSemanticAvailable(valid) {

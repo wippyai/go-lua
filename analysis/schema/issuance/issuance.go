@@ -153,16 +153,10 @@ const (
 	InputSourceRelation
 	InputSourceStage
 	InputSourcePrevious
-	// InputSourceRoute takes the input point from the route that reaches the
-	// stage rather than from its position in the linear stage chain. A stage
-	// standing on one route reads the state that route carries; taking the
-	// previous stage instead would read a point the route itself feeds, which
-	// is a cycle rather than a predecessor.
-	InputSourceRoute
 )
 
 func (source InputSource) valid() bool {
-	return source > InputSourceInvalid && source <= InputSourceRoute
+	return source > InputSourceInvalid && source <= InputSourcePrevious
 }
 
 // InputSelection is the complete point-selection law for an input source.
@@ -176,14 +170,10 @@ const (
 	InputSelectionOnly
 	InputSelectionStage
 	InputSelectionPrevious
-	// InputSelectionRoute resolves the one point the declared route departs
-	// from. The host owns the route-to-source mapping; the schedule never
-	// falls back to the chain when that mapping has no answer.
-	InputSelectionRoute
 )
 
 func (selection InputSelection) valid() bool {
-	return selection > InputSelectionInvalid && selection <= InputSelectionRoute
+	return selection > InputSelectionInvalid && selection <= InputSelectionPrevious
 }
 
 type StageTransport uint8
@@ -220,15 +210,10 @@ const (
 	StageEdgeSourcePrevious
 	StageEdgeSourceStage
 	StageEdgeSourceBeforeStage
-	// StageEdgeSourceRoute transfers into the stage from the point its route
-	// departs from, placing the stage on that route instead of in the linear
-	// chain at its base. It is the transfer half of InputSourceRoute, and only
-	// a stage that carries a route in its identity may declare it.
-	StageEdgeSourceRoute
 )
 
 func (source StageEdgeSource) valid() bool {
-	return source > StageEdgeSourceInvalid && source <= StageEdgeSourceRoute
+	return source > StageEdgeSourceInvalid && source <= StageEdgeSourceBeforeStage
 }
 
 // StageEdge states one explicit transport source. Previous names the active
@@ -634,8 +619,6 @@ func validInputSource(kind InputKind, source InputSource, selection InputSelecti
 		return kind == InputFinish && selection == InputSelectionStage && reference.Available()
 	case InputSourcePrevious:
 		return kind == InputFinish && selection == InputSelectionPrevious && !reference.Available()
-	case InputSourceRoute:
-		return kind == InputPredecessor && selection == InputSelectionRoute && !reference.Available()
 	default:
 		return false
 	}

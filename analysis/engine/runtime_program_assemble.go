@@ -75,7 +75,7 @@ type MountedPointRuleAdmission struct {
 // the sealed query cells; the declaration pass states the row and the
 // constructor resolves the Point it is anchored at.
 type programQueryAdmit interface {
-	declareMountedQuery(state *schemaBindingState, authority *schemaBindingAuthority, context executioncontext.Context, id, mount, point identity.ContentID, writes exactQueryPointWrites) (declaredQueryRow, []*ruleSummaryMapping, bool)
+	declareMountedQuery(state *schemaBindingState, authority *schemaBindingAuthority, context executioncontext.Context, id, mount, point identity.ContentID) (declaredQueryRow, []*ruleSummaryMapping, bool)
 	bindProgramQuery(plane *programPlane, query equation.Query) (queryRow, bool)
 }
 
@@ -141,7 +141,6 @@ type CommittedProgram struct {
 	pointOwners       []contextfiber.PointOwner
 	nativeCallStages  map[artifactMountedRuleOccurrence]artifactNativeCallStage
 	pointTransitions  []ProgramPointTransition
-	activations       []programActivationBinding
 	members           []programMemberBinding
 	queries           []programQueryBinding
 	addressed         []composition.Key

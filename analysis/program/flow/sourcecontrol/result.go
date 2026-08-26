@@ -24,7 +24,6 @@ type coordinateProof struct {
 	bodyOffsets  []uint32
 	loopDecision []uint32
 	repeatBody   []uint32
-	repeatLoop   []bool
 	nodeCount    uint32
 }
 

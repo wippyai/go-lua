@@ -65,8 +65,8 @@ local function bitwise() return ~bitwiseOperand() end
 		if !ok || operandEntry != callEntry {
 			t.Fatalf("Unary %q operand entry = %v; Call entry = %v/%v", want.name, operandEntry, callEntry, ok)
 		}
-		if next := unconditionalSuccessor(t, p, call); next != unary {
-			t.Fatalf("Unary %q Call successor = %v, want Unary %v", want.name, next, unary)
+		if next, ok := flow.Ports().Finish(call); !ok || next != unary {
+			t.Fatalf("Unary %q Call successor = %v/%v, want Unary %v", want.name, next, ok, unary)
 		}
 
 		returned := returnOwnedBy(t, p, owner)
@@ -77,8 +77,8 @@ local function bitwise() return ~bitwiseOperand() end
 		if result := valueAt(t, p, values, 0); result != unary {
 			t.Fatalf("Unary %q Return value = %v, want Unary %v", want.name, result, unary)
 		}
-		if next := unconditionalSuccessor(t, p, unary); next != values {
-			t.Fatalf("Unary %q successor = %v, want parent Return Values %v", want.name, next, values)
+		if next, ok := flow.Ports().Finish(unary); !ok || next != values {
+			t.Fatalf("Unary %q successor = %v/%v, want parent Return Values %v", want.name, next, ok, values)
 		}
 	}
 }
@@ -125,16 +125,16 @@ local function nonNilClaim() return nonNilOperand()! end
 		if !ok || !callOK || entry == 0 || entry != callEntry {
 			t.Fatalf("ValueClaim %d operand entry = %v/%v; Call entry = %v/%v", index, entry, ok, callEntry, callOK)
 		}
-		if next := unconditionalSuccessor(t, p, call); next != claim {
-			t.Fatalf("Call %d successor = %v, want ValueClaim %v", index, next, claim)
+		if next, ok := flow.Ports().Finish(call); !ok || next != claim {
+			t.Fatalf("Call %d successor = %v/%v, want ValueClaim %v", index, next, ok, claim)
 		}
 		returned := returnOwnedBy(t, p, owner)
 		_, values, ok := flow.Authored().Control().Returns().Get(returned)
 		if !ok || valueAt(t, p, values, 0) != claim || valuesTail(t, p, values) != 0 {
 			t.Fatalf("ValueClaim %d Return Values = %v/%v tail %v, want fixed claim %v", index, values, ok, valuesTail(t, p, values), claim)
 		}
-		if next := unconditionalSuccessor(t, p, claim); next != values {
-			t.Fatalf("ValueClaim %d successor = %v, want parent Return Values %v", index, next, values)
+		if next, ok := flow.Ports().Finish(claim); !ok || next != values {
+			t.Fatalf("ValueClaim %d successor = %v/%v, want parent Return Values %v", index, next, ok, values)
 		}
 	}
 }
@@ -182,7 +182,10 @@ end
 		} else if literal, _, value, literalOK := p.Source().Literals().Bools().At(int(keyspace.TermOrdinal(operand)) - 1); !literalOK || literal != operand || value {
 			t.Fatalf("ValueClaim %d operand %v is not false Bool", index, operand)
 		}
-		next := unconditionalSuccessor(t, p, claim)
+		next, normal := flow.Ports().Finish(claim)
+		if !normal || next == 0 {
+			t.Fatalf("ValueClaim %d has no normal successor", index)
+		}
 		if _, _, _, isOutcome := flow.Outcomes().Get(next); isOutcome {
 			t.Fatalf("ValueClaim %d normal successor %v is an Outcome", index, next)
 		}
@@ -240,8 +243,8 @@ end
 		if result := valueAt(t, p, values, index); result != claim {
 			t.Fatalf("return fixed value %d = %v, want ValueClaim %v", index, result, claim)
 		}
-		if next := unconditionalSuccessor(t, p, operand); next != claim {
-			t.Fatalf("Vararg %d successor = %v, want ValueClaim %v", index, next, claim)
+		if next, ok := flow.Ports().Finish(operand); !ok || next != claim {
+			t.Fatalf("Vararg %d successor = %v/%v, want ValueClaim %v", index, next, ok, claim)
 		}
 	}
 }

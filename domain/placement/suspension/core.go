@@ -10,11 +10,8 @@ package suspension
 import (
 	"crypto/sha256"
 
-	"github.com/wippyai/go-lua/analysis/engine"
-	reduceroperand "github.com/wippyai/go-lua/analysis/engine/operand"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/schema/program/lifecycle"
-	calldomain "github.com/wippyai/go-lua/domain/call"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
 	placementdomain "github.com/wippyai/go-lua/domain/placement"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
@@ -51,15 +48,10 @@ func PlacementForState(state lifecycle.SubjectLivenessState) (placementdomain.Pl
 // allocation root. The row identity is Link-scoped by Catalog; key and state
 // remain together so an admission cannot replace either side independently.
 type operand struct {
-	key heapdomain.Key
-	id  identity.ContentID
-	// liveness is the redeemed Program row this operand projects. The rule
-	// reads the Call fact at the boundary it names, so the row travels with
-	// the projection rather than being rebuilt from a mounted Program in a
-	// selector or fold.
-	liveness lifecycle.MountedSubjectLiveness
-	state    lifecycle.SubjectLivenessState
-	sources  []source
+	key     heapdomain.Key
+	id      identity.ContentID
+	state   lifecycle.SubjectLivenessState
+	sources []source
 }
 
 func validPlacement(value placementdomain.Placement) bool {
@@ -73,7 +65,7 @@ func validPlacement(value placementdomain.Placement) bool {
 }
 
 func operandForSchema(schema placementdomain.Schema, candidate operand) (operand, bool) {
-	if !schema.Valid() || !candidate.id.Available() || !candidate.state.Valid() || !candidate.liveness.Available() {
+	if !schema.Valid() || !candidate.id.Available() || !candidate.state.Valid() {
 		return operand{}, false
 	}
 	heap := schema.Heap()
@@ -152,7 +144,7 @@ type routePlan struct {
 // Wider mounted rows use invocation-local overflow rather than mutable scratch
 // retained on HotRule, which could race across engine sessions.
 const (
-	sourceCellInlineWidth = 8
+	sourceFactInlineWidth = 8
 	routeInlineWidth      = 8
 )
 
@@ -341,43 +333,49 @@ func (plan routePlan) allRootAtTag(tag routeTag) (route, bool) {
 	return route{key: key, tag: tag}, true
 }
 
-// sourceCellBuffer returns a bounded caller-owned view for one selected
+// sourceFactBuffer returns a bounded caller-owned view for one selected
 // source row. A negative count is malformed; wider valid rows use invocation
 // local storage and are never retained by the rule.
-func sourceCellBuffer(count int, inline []reduceroperand.MemberCell[valuedomain.Value]) ([]reduceroperand.MemberCell[valuedomain.Value], bool) {
+func sourceFactBuffer(count int, inline []sourceFact) ([]sourceFact, bool) {
 	if count < 0 {
 		return nil, false
 	}
 	if count <= cap(inline) {
 		return inline[:count], true
 	}
-	return make([]reduceroperand.MemberCell[valuedomain.Value], count), true
+	return make([]sourceFact, count), true
 }
 
-// routePlanForSources is the source-vector planner shared by the derivation
-// and by both suspension consumers. It unions exact Value support directly
-// into the plan's canonical inline/overflow route storage. Heap
-// ownership/canonical-key checks remain in collectValueRoutes.
-func routePlanForSources(schema placementdomain.Schema, values *valuedomain.Schema, sources reduceroperand.SummaryVector[valuedomain.Value]) (routePlan, bool) {
-	if !schema.Valid() || values == nil || !values.Valid() || !values.OwnsHeapSchema(schema.Heap()) || !sources.Valid() {
+type sourceFact struct {
+	fact      valuedomain.Value
+	present   bool
+	available bool
+}
+
+// routePlanForFacts is the selected-read planner used by both suspension
+// consumers. It unions exact Value support directly into the plan's canonical
+// inline/overflow route storage. Heap ownership/canonical-key checks remain in
+// collectValueRoutes; only the temporary map and post-hoc integer sort are
+// removed.
+func routePlanForFacts(schema placementdomain.Schema, values *valuedomain.Schema, facts []sourceFact) (routePlan, bool) {
+	if !schema.Valid() || values == nil || !values.Valid() || !values.OwnsHeapSchema(schema.Heap()) {
 		return routePlan{}, false
 	}
 	var plan routePlan
-	for index := 0; index < sources.Count(); index++ {
-		fact, present, available := sources.At(index)
-		if !available {
+	for _, item := range facts {
+		if !item.available {
 			// A revoked/unavailable Value cell is not an opaque Value fact.
 			// Refuse the operation; widening it would fabricate authority for
 			// every allocation root.
 			return routePlan{}, false
 		}
-		if !present && !values.Equal(fact, values.Bottom()) {
+		if !item.present && !values.Equal(item.fact, values.Bottom()) {
 			// Sparse absence is admissible only when the selected Value owner
 			// supplied its exact lattice Bottom. A zero, foreign, or otherwise
 			// malformed absent cell remains unavailable evidence.
 			return routePlan{}, false
 		}
-		widen, factOK, visited := collectValueRoutes(schema, values, fact, &plan)
+		widen, factOK, visited := collectValueRoutes(schema, values, item.fact, &plan)
 		if !factOK || !visited {
 			return routePlan{}, false
 		}
@@ -427,132 +425,4 @@ func collectValueRoutes(schema placementdomain.Schema, values *valuedomain.Schem
 		}
 	}
 	return projection.HasOpaque(), true, true
-}
-
-// selectorSourceVector delivers one operand's authenticated Value source
-// vector inside a selector. A subject whose owner issued an allocation root
-// directly publishes no source vector, so the empty vector is its complete
-// delivery rather than an unread one. The transport tag order is authenticated
-// here, against the catalog-sealed source list, before any cell reaches the
-// route derivation.
-func selectorSourceVector(
-	context engine.SelectorContext,
-	read engine.Read[engine.Selection[routeTag, engine.OrderedCells[valuedomain.Value]]],
-	canonical operand,
-	inline []reduceroperand.MemberCell[valuedomain.Value],
-) (reduceroperand.SummaryVector[valuedomain.Value], bool) {
-	if canonical.key.Kind() == heapdomain.RootAllocation {
-		return reduceroperand.NewMemberVector(inline[:0])
-	}
-	selection, selectionOK := engine.SelectorRead(context, read)
-	if !selectionOK {
-		return reduceroperand.SummaryVector[valuedomain.Value]{}, false
-	}
-	count, countOK := engine.SelectorSelectionCount(context, selection)
-	if !countOK || count != len(canonical.sources) {
-		return reduceroperand.SummaryVector[valuedomain.Value]{}, false
-	}
-	cells, cellsOK := sourceCellBuffer(count, inline)
-	if !cellsOK {
-		return reduceroperand.SummaryVector[valuedomain.Value]{}, false
-	}
-	for index := 0; index < count; index++ {
-		tag, ordered, selectedOK := engine.SelectorSelectionAt(context, selection, index)
-		if !selectedOK || tag != canonical.sources[index].tag || ordered.Count() != 1 {
-			return reduceroperand.SummaryVector[valuedomain.Value]{}, false
-		}
-		cell, cellOK := sourceCell(ordered)
-		if !cellOK {
-			return reduceroperand.SummaryVector[valuedomain.Value]{}, false
-		}
-		cells[index] = cell
-	}
-	return reduceroperand.NewMemberVector(cells)
-}
-
-// frameSourceVector is the fold-side delivery of the same vector. It is
-// generic over the written Factor because both suspension producers consume
-// the identical Value source relation.
-func frameSourceVector[V any](
-	frame engine.Frame[V, operand],
-	selection engine.Selection[routeTag, engine.OrderedCells[valuedomain.Value]],
-	canonical operand,
-	inline []reduceroperand.MemberCell[valuedomain.Value],
-) (reduceroperand.SummaryVector[valuedomain.Value], bool) {
-	count, countOK := engine.SelectionCount(frame, selection)
-	if !countOK {
-		return reduceroperand.SummaryVector[valuedomain.Value]{}, false
-	}
-	if canonical.key.Kind() == heapdomain.RootAllocation {
-		if count != 0 {
-			return reduceroperand.SummaryVector[valuedomain.Value]{}, false
-		}
-		return reduceroperand.NewMemberVector(inline[:0])
-	}
-	if count != len(canonical.sources) {
-		return reduceroperand.SummaryVector[valuedomain.Value]{}, false
-	}
-	cells, cellsOK := sourceCellBuffer(count, inline)
-	if !cellsOK {
-		return reduceroperand.SummaryVector[valuedomain.Value]{}, false
-	}
-	for index := 0; index < count; index++ {
-		tag, ordered, selectedOK := engine.SelectionAt(frame, selection, index)
-		if !selectedOK || tag != canonical.sources[index].tag || ordered.Count() != 1 {
-			return reduceroperand.SummaryVector[valuedomain.Value]{}, false
-		}
-		cell, cellOK := sourceCell(ordered)
-		if !cellOK {
-			return reduceroperand.SummaryVector[valuedomain.Value]{}, false
-		}
-		cells[index] = cell
-	}
-	return reduceroperand.NewMemberVector(cells)
-}
-
-// sourceCell authenticates one delivered Value cell. Absence is preserved as
-// the cell's own presence bit; an unavailable cell is not evidence at all and
-// refuses here rather than reaching the route planner as a wider answer.
-func sourceCell(ordered engine.OrderedCells[valuedomain.Value]) (reduceroperand.MemberCell[valuedomain.Value], bool) {
-	fact, present, available := ordered.At(0)
-	if !available {
-		return reduceroperand.MemberCell[valuedomain.Value]{}, false
-	}
-	return reduceroperand.MemberCell[valuedomain.Value]{Value: fact, Present: present}, true
-}
-
-// boundaryCallCoordinate is the dense Call coordinate of the yield boundary
-// one operand is anchored at. Program names the boundary occurrence and Call
-// owns the directory it addresses; no local inverse is retained.
-func boundaryCallCoordinate(calls *calldomain.Algebra, candidate operand) (uint64, bool) {
-	key, keyOK := BoundaryCallKey(calls, candidate.liveness)
-	if !keyOK {
-		return 0, false
-	}
-	index, indexOK := calls.KeyIndex(key)
-	return uint64(index), indexOK && index >= 0
-}
-
-// admitBoundaryCall authenticates the exact typed Call predecessor before the
-// derivation treats its sparse bit as semantic state. Call's owner supplies
-// its Factor Default in an absent observation; this rule accepts that sparse
-// form only when the observed value is equal under the same Algebra to its
-// exact Bottom. A missing or malformed row has no value to authenticate and
-// refuses; this helper never manufactures Bottom from the read metadata.
-func admitBoundaryCall(calls *calldomain.Algebra, canonical operand, cells engine.OrderedCells[calldomain.Value]) (calldomain.Value, bool) {
-	if calls == nil || !calls.Valid() || cells.Count() != 1 {
-		return calldomain.Value{}, false
-	}
-	key, keyOK := BoundaryCallKey(calls, canonical.liveness)
-	if !keyOK {
-		return calldomain.Value{}, false
-	}
-	value, present, available := cells.At(0)
-	if !available || !calls.Admits(key, value) {
-		return calldomain.Value{}, false
-	}
-	if !present && !calls.Equal(value, calls.Bottom()) {
-		return calldomain.Value{}, false
-	}
-	return value, true
 }

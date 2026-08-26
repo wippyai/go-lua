@@ -5,14 +5,12 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine"
 	"github.com/wippyai/go-lua/analysis/identity"
 	programartifact "github.com/wippyai/go-lua/analysis/program/artifact"
-	"github.com/wippyai/go-lua/analysis/relation/schema/model"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/diagnostic"
 	"github.com/wippyai/go-lua/analysis/schema/observation"
 	"github.com/wippyai/go-lua/analysis/schema/query"
 	"github.com/wippyai/go-lua/analysis/schema/rule"
 	ruleplan "github.com/wippyai/go-lua/analysis/schema/rule/plan"
-	"github.com/wippyai/go-lua/analysis/schema/rule/relinput"
 	"github.com/wippyai/go-lua/analysis/schema/seal"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
@@ -159,24 +157,6 @@ func (compilation Compilation) RulePlans() (ruleplan.Catalog, bool) {
 		return ruleplan.Catalog{}, false
 	}
 	return compilation.catalog.declarations.RulePlans()
-}
-
-// InputBundle seals the relation input bundle for this compilation's rule
-// catalog. The ordinals it is addressed by are the ordinals RulePlans is
-// addressed by, because both are sealed against the one declaration table
-// this compilation composed.
-//
-// Placement is composition knowledge rather than declaration knowledge, so
-// the composition that placed the rules answers every scope; this passthrough
-// adds nothing but the catalog those ordinals belong to.
-func (compilation Compilation) InputBundle(owner model.OwnerID, composition relinput.Composition) (*relinput.Bundle, *relinput.Refusal) {
-	if !compilation.Available() || compilation.catalog == nil {
-		// A compilation that did not seal holds no declaration table to
-		// delegate to, and refuses at the same catalog boundary a sealed one
-		// would rather than growing a refusal of its own.
-		return analysiscatalog.Compilation{}.InputBundle(owner, composition)
-	}
-	return compilation.catalog.declarations.InputBundle(owner, composition)
 }
 
 // Build seals one independent concrete analyzer compilation. The caller owns

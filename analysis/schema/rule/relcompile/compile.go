@@ -178,7 +178,6 @@ func lowerRule(rule Rule, relations map[model.RelationID]struct{}, columns map[m
 
 	expression := algebra.Expression(algebra.NewInput(rule.Candidate))
 	reads := []model.RelationID{rule.Candidate}
-	operandWrites := make([]model.RelationID, 0, 1)
 	for index, join := range rule.Joins {
 		if !containsRelation(relations, join.Relation) {
 			return nil, nil, nil, fmt.Errorf("relcompile: join %d relation is not declared", index)
@@ -221,28 +220,6 @@ func lowerRule(rule Rule, relations map[model.RelationID]struct{}, columns map[m
 	if rule.Complete != nil {
 		expression = algebra.NewComplete(expression, *rule.Complete)
 	}
-	if rule.Operand != nil {
-		if !containsRelation(relations, rule.Operand.Relation) {
-			return nil, nil, nil, fmt.Errorf("relcompile: operand relation is not declared")
-		}
-		if _, ok := keys[rule.Operand.Key]; !ok || rule.Operand.Key.Relation() != rule.Operand.Relation {
-			return nil, nil, nil, fmt.Errorf("relcompile: operand key is not declared by its relation")
-		}
-		mappings := make([]algebra.ColumnMapping, 0, len(rule.Operand.Columns))
-		for index, mapping := range rule.Operand.Columns {
-			if _, ok := columns[mapping.Source]; !ok {
-				return nil, nil, nil, fmt.Errorf("relcompile: operand column %d has an undeclared source", index)
-			}
-			if _, ok := columns[mapping.Target]; !ok || mapping.Target.Relation() != rule.Operand.Relation {
-				return nil, nil, nil, fmt.Errorf("relcompile: operand column %d is not owned by the operand relation", index)
-			}
-			mappings = append(mappings, algebra.NewColumnMapping(mapping.Source, mapping.Target))
-		}
-		expression = algebra.NewProject(expression, algebra.NewProjectContract(rule.Operand.Relation, mappings, rule.Operand.Key))
-		// A projection constructs the operand row, so the relation it builds is
-		// one this dependency writes.
-		operandWrites = append(operandWrites, rule.Operand.Relation)
-	}
 	if rule.Apply.Operation.Available() || rule.Apply.Version != 0 {
 		if !rule.Apply.Available() {
 			return nil, nil, nil, fmt.Errorf("relcompile: malformed semantic operation identity")
@@ -279,10 +256,10 @@ func lowerRule(rule Rule, relations map[model.RelationID]struct{}, columns map[m
 	}
 	if rule.Publish != nil {
 		expression = algebra.NewPublish(expression, algebra.NewPublishContract(rule.Publish.Relation, rule.Publish.Key))
-		writes := append(operandWrites, rule.Publish.Relation)
+		writes := []model.RelationID{rule.Publish.Relation}
 		return expression, reads, writes, nil
 	}
-	return expression, reads, operandWrites, nil
+	return expression, reads, nil, nil
 }
 
 // appendOperationReads adds the relations one semantic operation reads to a

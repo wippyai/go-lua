@@ -1691,11 +1691,6 @@ func sealConstructedTopology(declaration topologyDeclaration, source constructed
 		return constructedTopology{}, refuseTopologySeal(topologyConstructionStepDirectory, 0)
 	}
 	committed.pointTransitions = pointTransitions
-	activationRows, activationRowsOK := constructProgramActivations(declaration)
-	if !activationRowsOK {
-		return constructedTopology{}, refuseTopologySeal(topologyConstructionStepActivationRow, 0)
-	}
-	committed.activations = activationRows
 	programAdmitted := committed.sealProgramAdmission()
 	addressed, addressedOK := committed.publishedQueryKeys()
 	if !programAdmitted || !addressedOK {

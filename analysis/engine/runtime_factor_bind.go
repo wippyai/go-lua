@@ -532,18 +532,6 @@ func collectFactorGraphCatalog[K ~uint32 | ~uint64, V any](implementation *Facto
 	if routeWrite && !dynamicRead {
 		return factorGraphCatalog[K]{}, false
 	}
-	// The exact read catalog is the closed set of coordinates this Factor's
-	// owner can issue a read of: every cell a strong unrouted write names, and
-	// - where a member publishes through a route - every cell of the sealed
-	// coordinate universe that route resolves into. Collecting only the
-	// coordinates some declaration happened to name left the set incidental:
-	// an owner-issued Ref bound when a query had spelled its coordinate and
-	// refused when none had, which is not a property of the Factor.
-	if routeWrite {
-		for local := uint64(1); local <= keyEnd; local++ {
-			exact[exactReadSurface(row, local)] = struct{}{}
-		}
-	}
 	result := factorGraphCatalog[K]{summaryAliases: aliases, dynamicRead: dynamicRead, routeWrite: routeWrite}
 	for surface := range exact {
 		result.exactReads = append(result.exactReads, surface)

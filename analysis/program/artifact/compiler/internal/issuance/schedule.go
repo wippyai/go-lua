@@ -24,14 +24,6 @@ func (node Node) Stage() *schemaissuance.Entry { return node.stage }
 func (node Node) Base() identity.ContentID     { return node.base }
 func (node Node) Point() identity.ContentID    { return node.point }
 
-// Route answers the route this node carries in its own identity, if it carries
-// one. It is the scheduled counterpart of the declaration's route parameter,
-// and it is how a host tells a stage standing on a route from one standing in
-// its base's chain without reading the stage's key.
-func (node Node) Route() (identity.ContentID, bool) {
-	return nodeRoute(&node)
-}
-
 // Emission is the atomic final result of one emitted request. Inputs are
 // selected from the sealed input policies before the compiler can publish a
 // rule row, so no downstream input rewrite exists.
@@ -113,12 +105,7 @@ type nodeKey struct {
 // BuildSchedule constructs stage identities, closes declared predecessors,
 // orders repeating stages by their declared node/dependency parameters, and
 // resolves every input from its sealed generic selection policy.
-// RouteSource answers the point one declared route departs from. The host owns
-// the environment, so it owns this mapping; the schedule consults it and never
-// substitutes a chain position when it has no answer.
-type RouteSource func(route identity.ContentID) (identity.ContentID, bool)
-
-func BuildSchedule(format uint64, plan schemaissuance.Plan, requests []Request, routeSource RouteSource) (Schedule, bool) {
+func BuildSchedule(format uint64, plan schemaissuance.Plan, requests []Request) (Schedule, bool) {
 	if format == 0 {
 		return Schedule{}, false
 	}
@@ -185,7 +172,7 @@ func BuildSchedule(format uint64, plan schemaissuance.Plan, requests []Request, 
 		}
 		var inputs [6]identity.ContentID
 		for inputIndex := 0; inputIndex < inputCount; inputIndex++ {
-			input, hasInput, inputOK := resolveInput(request, requestInput(request, inputIndex), node, orderedByBase[request.base], orderedByBase, routeSource)
+			input, hasInput, inputOK := resolveInput(request, requestInput(request, inputIndex), node, orderedByBase[request.base])
 			if !inputOK || !hasInput || !input.Available() {
 				return Schedule{}, false
 			}
@@ -416,44 +403,7 @@ func requestInput(request Request, index int) Input {
 	return input
 }
 
-// nodeRoute answers the route a stage carries in its own identity. A stage
-// without one cannot take a routed input, which is the schedule's own statement
-// of the same law the seal states over the declaration.
-func nodeRoute(node *Node) (identity.ContentID, bool) {
-	if node == nil || node.stage == nil {
-		return identity.ContentID{}, false
-	}
-	for _, parameter := range node.stage.IdentityParameters() {
-		if int(parameter) < 1 || int(parameter) > len(node.args) {
-			return identity.ContentID{}, false
-		}
-		argument := node.args[parameter-1]
-		if argument.typ == schemaissuance.IdentityType(schemaissuance.TypeRouteIdentity) {
-			return argument.identity, argument.present && argument.identity.Available()
-		}
-	}
-	return identity.ContentID{}, false
-}
-
-// terminalLinearPoint answers where a base's own chain ends. Routed nodes do
-// not stand in that chain - they stand on the routes that reach the point - so
-// the state leaving a base is the last node that is not routed, and the base
-// itself when it has no chain at all.
-func terminalLinearPoint(base identity.ContentID, ordered []*Node) identity.ContentID {
-	terminal := base
-	for _, candidate := range ordered {
-		if _, routed := nodeRoute(candidate); routed {
-			continue
-		}
-		if candidate.point == base {
-			continue
-		}
-		terminal = candidate.point
-	}
-	return terminal
-}
-
-func resolveInput(request Request, input Input, node *Node, ordered []*Node, orderedByBase map[identity.ContentID][]*Node, routeSource RouteSource) (identity.ContentID, bool, bool) {
+func resolveInput(request Request, input Input, node *Node, ordered []*Node) (identity.ContentID, bool, bool) {
 	declaration := input.declaration
 	if declaration == nil || node == nil {
 		return identity.ContentID{}, false, false
@@ -484,37 +434,14 @@ func resolveInput(request Request, input Input, node *Node, ordered []*Node, ord
 		}
 		return selected, true, selected.Available()
 	case schemaissuance.InputSelectionPrevious:
-		// Routed stages stand on their routes, not in this chain, so the stage
-		// before this one is the last unrouted one. Counting them here would
-		// name a point the chain never transfers from.
 		previous := request.base
 		for _, candidate := range ordered {
 			if candidate == node {
 				return previous, true, previous.Available()
 			}
-			if _, routed := nodeRoute(candidate); routed {
-				continue
-			}
 			previous = candidate.point
 		}
 		return identity.ContentID{}, false, false
-	case schemaissuance.InputSelectionRoute:
-		// The stage stands on its route, so its input is the state that route
-		// carries. A stage with no route in its identity, or a route the host
-		// cannot place, is refused here rather than quietly reading the linear
-		// chain - which is the very point this stage was moved off.
-		route, routeOK := nodeRoute(node)
-		if !routeOK || routeSource == nil {
-			return identity.ContentID{}, false, false
-		}
-		source, sourceOK := routeSource(route)
-		if !sourceOK || !source.Available() {
-			return identity.ContentID{}, false, false
-		}
-		// The route carries the state its source finished with, so the input is
-		// that base's terminal point, not the base before its own chain ran.
-		terminal := terminalLinearPoint(source, orderedByBase[source])
-		return terminal, true, terminal.Available()
 	default:
 		return identity.ContentID{}, false, false
 	}

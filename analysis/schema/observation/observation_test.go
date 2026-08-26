@@ -90,8 +90,8 @@ const (
 
 func testStructure(t *testing.T) seal.Surface {
 	t.Helper()
-	var specs []structure.Spec
-	for category := structure.CategoryArm; category.Available(); category++ {
+	specs := make([]structure.Spec, 0, int(structure.CategoryNativeSendSafety))
+	for category := structure.CategoryArm; category <= structure.CategoryNativeSendSafety; category++ {
 		specs = append(specs, structure.Spec{
 			Key:      schema.Key(fmt.Sprintf("test/category/%d", category)),
 			Category: category,

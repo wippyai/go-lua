@@ -41,10 +41,9 @@ func TestObservationQueryDeclaresAgainstCallExactRead(t *testing.T) {
 		t.Fatal("Call factor declaration")
 	}
 	fragment, fragmentOK := DeclareQuery(builder, queryschema.Declaration{
-		Semantic:   semantic,
-		Freezer:    freezer,
-		Population: queryschema.PopulationKindObservation,
-		Subjects:   queryschema.NewSubjects(map[schema.Key]axis.Cell{"call": axis.NewCell(factor)}),
+		Semantic: semantic,
+		Freezer:  freezer,
+		Subjects: queryschema.NewSubjects(map[schema.Key]axis.Cell{"call": axis.NewCell(factor)}),
 	})
 	if !fragmentOK || fragment == nil || !fragment.Available() {
 		t.Fatal("Call observation query declaration")

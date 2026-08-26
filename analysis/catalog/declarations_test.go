@@ -5,17 +5,9 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
-	"github.com/wippyai/go-lua/analysis/schema/axis/member"
 	"github.com/wippyai/go-lua/analysis/schema/seal"
-	"github.com/wippyai/go-lua/analysis/schema/structure"
-	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 	"github.com/wippyai/go-lua/internal/framing"
 )
-
-// declarationLawRole is the semantic role this declaration table is written
-// under. The structural surface declares the role and the axis names it, so
-// the sealed table carries one vocabulary the rule plan resolves against.
-var declarationLawRole = vocabulary.RoleKey("law/role")
 
 type declarationLawEntry struct {
 	key schema.Key
@@ -40,12 +32,6 @@ func (entry declarationLawEntry) OutputAt(index int) (axis.Output, bool) {
 
 func (entry declarationLawEntry) Coverage() axis.Coverage { return axis.CoverageTotal }
 
-func (entry declarationLawEntry) Semantic() schema.Key { return declarationLawRole }
-
-func (entry declarationLawEntry) Catalog() member.Catalog { return member.Catalog{} }
-
-func (entry declarationLawEntry) Signature() axis.Signature { return axis.Signature{} }
-
 type declarationLawSurface struct {
 	kind    schema.SurfaceKind
 	entries []schema.Entry
@@ -59,25 +45,11 @@ func (surface declarationLawSurface) Seal(seal.View, seal.Sealed) schema.SealFai
 	return schema.SealFailure{}
 }
 
-func newDeclarationLawInput(t *testing.T) *Declarations {
-	t.Helper()
-	role, roleOK := structure.New(structure.Spec{
-		Key:      declarationLawRole,
-		Category: structure.CategorySemanticRole,
-		Ordinal:  1,
-		Spelling: "law/role",
-		Accepted: true,
-	})
-	if !roleOK {
-		t.Fatal("semantic role declaration was not admitted")
-	}
+func newDeclarationLawInput() *Declarations {
 	declarations := NewDeclarations()
 	for kind := schema.SurfaceKindStructure; kind.Available(); kind++ {
 		var entries []schema.Entry
-		switch kind {
-		case schema.SurfaceKindStructure:
-			entries = []schema.Entry{role}
-		case schema.SurfaceKindAxis:
+		if kind == schema.SurfaceKindAxis {
 			entries = []schema.Entry{declarationLawEntry{key: "law/axis"}}
 		}
 		declarations.Register(declarationLawSurface{kind: kind, entries: entries})
@@ -86,7 +58,7 @@ func newDeclarationLawInput(t *testing.T) *Declarations {
 }
 
 func TestDeclarationsSealOneExplicitCompilation(t *testing.T) {
-	declarations := newDeclarationLawInput(t)
+	declarations := newDeclarationLawInput()
 	compilation, failure := declarations.Seal()
 	if failure.Available() || !compilation.Available() {
 		t.Fatalf("explicit declaration seal failed: %#v", failure)
@@ -119,7 +91,7 @@ func TestDeclarationsRejectIncompleteInputBeforeCompilation(t *testing.T) {
 }
 
 func TestDeclarationsPreserveIndependentEnvironmentIdentity(t *testing.T) {
-	left, right := newDeclarationLawInput(t), newDeclarationLawInput(t)
+	left, right := newDeclarationLawInput(), newDeclarationLawInput()
 	leftCompilation, leftFailure := left.Seal()
 	rightCompilation, rightFailure := right.Seal()
 	if leftFailure.Available() || rightFailure.Available() || leftCompilation.Digest() != rightCompilation.Digest() {

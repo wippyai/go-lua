@@ -130,7 +130,7 @@ func TestSummaryIdentityFieldsPreserveFamilyOrder(t *testing.T) {
 func TestEnvironmentAndLocalTransferIdentityFieldsPreserveWitnessAndKeyOrder(t *testing.T) {
 	edgeID, fromID, toID, routeID := genericIdentityID(21), genericIdentityID(22), genericIdentityID(23), genericIdentityID(24)
 	transferID := genericIdentityID(25)
-	edge, edgeOK := programschema.NewEnvironmentEdge(edgeID, fromID, fromID, toID, routeID, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, 0, 0, programschema.EnvironmentArmLocal, false, false, false, false)
+	edge, edgeOK := programschema.NewEnvironmentEdge(edgeID, fromID, toID, routeID, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, identity.ContentID{}, 0, 0, programschema.EnvironmentArmLocal, false, false, false, false)
 	transfer, transferOK := programschema.NewLocalTransfer(transferID, fromID, toID, false, 0, 1)
 	write, writeOK := programschema.NewLocalTransferWrite(schema.Key("value-source"))
 	if !edgeOK || !transferOK || !writeOK {

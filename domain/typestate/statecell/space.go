@@ -169,16 +169,3 @@ func (space Space) Protocol(cell Cell) (vocabulary.Protocol, bool) {
 	}
 	return vocabulary.Protocol(cell.index%space.protocols) + 1, true
 }
-
-// DenseIndex normalizes one cell into the dense coordinate the engine
-// addresses this axis's Factor by.
-//
-// It is the axis's one key normalization, and it is owner-fenced: a cell a
-// separately sealed space issued has no coordinate here, so a coordinate the
-// engine is handed is one this space minted.
-func (space Space) DenseIndex(cell Cell) (uint32, bool) {
-	if !space.Owns(cell) {
-		return 0, false
-	}
-	return cell.index, true
-}

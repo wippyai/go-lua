@@ -76,7 +76,6 @@ func buildGeometry(
 	}
 	loops := flow.Control().Loops()
 	result.coordinates.loopDecision = make([]uint32, counts[keyspace.FamilyLoop]+1)
-	result.coordinates.repeatLoop = make([]bool, counts[keyspace.FamilyLoop]+1)
 	for ordinal := uint32(1); ordinal <= counts[keyspace.FamilyLoop]; ordinal++ {
 		result.coordinates.loopDecision[ordinal] = noNode
 	}
@@ -101,7 +100,6 @@ func buildGeometry(
 				return empty, errors.New("program/flow/sourcecontrol: Repeat Body has multiple decisions")
 			}
 			result.coordinates.repeatBody[childOrdinal] = decision
-			result.coordinates.repeatLoop[ordinal] = true
 		}
 	}
 	if nodeCount > uint64(^uint32(0)) || nodeCount > uint64(maxInt()) {

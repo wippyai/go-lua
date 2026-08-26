@@ -129,11 +129,6 @@ func StorageTransfer() definition.Definition {
 			// vocabulary. Repeating its canonical carrier lets Value declare the
 			// correspondence between its parent rows and Call's candidate rows.
 			{Name: "CallCoordinateCarrier", Key: "carrier/call/mounted-call", Type: callGoType("CallCoordinate")},
-			// The two carriers the shared call-result rows below are typed in.
-			// They are the axis owner's because the rows are: a directory two
-			// rules read is a vocabulary neither one owns.
-			MountedCallResultSlotCarrier(),
-			CallFactCarrier(),
 		},
 		Enumerations: []definition.Enumeration{
 			{
@@ -374,11 +369,6 @@ func StorageTransfer() definition.Definition {
 				MemberCount:       valueMethod("MemberCount", "MountedCallActuals", false, 0),
 				MemberAt:          valueMethod("MemberAt", "MountedCallActuals", false, 0),
 			},
-			// The result-zero directory both call-result rules are indexed by.
-			// It is stated here, once, because it is addressed by neither
-			// rule's own coordinate: a row two rules declare is a row a dropped
-			// rule cannot take with it.
-			MountedCallResultSlotCandidates(),
 		},
 		Projections: []definition.Projection{
 			{
@@ -489,9 +479,6 @@ func StorageTransfer() definition.Definition {
 				Result:            "MountedCallActualTagCarrier",
 				Accessor:          valueMethod("ActualTag", "MountedCallArgument", false, -1),
 			},
-			// The coordinate both call-result rules publish at, stated beside
-			// the directory it projects.
-			MountedCallResultSlotCoordinate(),
 		},
 		CarryTransforms: []definition.CarryTransform{
 			{

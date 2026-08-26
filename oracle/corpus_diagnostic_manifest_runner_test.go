@@ -118,11 +118,7 @@ var corpusDiagnosticNativeFamilies = [...]corpusDiagnosticNativeFamilyRegistrati
 	{
 		code:    anadiag.DiagnosticCodeAlwaysTrueGuard,
 		enabled: []anadiag.DiagnosticCode{anadiag.DiagnosticCodeAlwaysTrueGuard},
-		cases: []corpusDiagnosticNativeFamilyCase{
-			{project: "advice/always-true-guard", expect: 1},
-			{project: "advice/guard-route-separation", expect: 1},
-			{project: "advice/kind-guard-narrowing", expect: 1},
-		},
+		cases:   []corpusDiagnosticNativeFamilyCase{{project: "advice/always-true-guard", expect: 1}},
 	},
 	{
 		code:    anadiag.DiagnosticCodeAlwaysFalseGuard,
@@ -130,7 +126,6 @@ var corpusDiagnosticNativeFamilies = [...]corpusDiagnosticNativeFamilyRegistrati
 		cases: []corpusDiagnosticNativeFamilyCase{
 			{project: "native/truthy-false-literal-is-falsy", expect: 1},
 			{project: "native/branch-always-not-taken", expect: 1},
-			{project: "advice/guard-route-separation", expect: 1},
 		},
 	},
 	{
@@ -196,21 +191,9 @@ type corpusDiagnosticRegistrationCounts struct {
 // current declaration boundary. Installing a family changes its closed
 // registration and this one value; all census laws consume the same computed
 // counts. It is not a passing-evidence mark.
-// The registered cases above the original five are advice/guard-route-separation,
-// verified under both guard polarities, and advice/kind-guard-narrowing. Its findings are registered rather than
-// pending because the runner proves them: they are capability the corpus now
-// checks, not capability it is still owed.
-//
-// pendingFindings reads 141. Two of those rows are advice/uncalled-body-kind-guard,
-// which is pending on purpose: it states a judgment this analysis does not yet
-// make, so it is capability the corpus is owed rather than capability it
-// checks, and it registers when the body that no call reaches is judged like
-// the one that is. The other two are corpus drift that predates this branch -
-// the pending set already measured 139 before it - restated here rather than
-// left as a standing mismatch that hides the next real change.
 var corpusDiagnosticFrozenRegistrationCensus = corpusDiagnosticRegistrationCounts{
-	registeredCases: 8, registeredFindings: 8,
-	whollyPendingCodes: 30, pendingFindings: 141, inlinePending: 731,
+	registeredCases: 5, registeredFindings: 5,
+	whollyPendingCodes: 30, pendingFindings: 137, inlinePending: 731,
 }
 
 func (counts corpusDiagnosticRegistrationCounts) matches(want corpusDiagnosticRegistrationCounts) bool {

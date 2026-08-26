@@ -11,7 +11,7 @@ import (
 )
 
 // ValueSummaryColumns are the owner column codecs of the
-// query/value-summary binding.
+// grouped reduction over a complete span binding.
 type ValueSummaryColumns struct {
 	Value        *relbindgen.Column[valuedomain.Value]
 	ValueSummary *relbindgen.Column[valuedomain.ValueSummaryObservation]
@@ -34,7 +34,7 @@ func (columns ValueSummaryColumns) Available() bool {
 }
 
 // ValueSummaryArgument is the decoded frame of one
-// query/value-summary invocation.
+// grouped reduction over a complete span invocation.
 type ValueSummaryArgument struct {
 	Cells relbindgen.Span[valuedomain.Value]
 	Group valuedomain.Value
@@ -53,7 +53,7 @@ type ValueSummaryJudgment interface {
 // assertion is what makes the two halves one binding.
 var _ ValueSummaryJudgment = ValueSummaryOperation{}
 
-// BindValueSummary admits the query/value-summary family
+// BindValueSummary admits the grouped reduction over a complete span family
 // under its sealed signature.
 func BindValueSummary(operation signature.Signature, judgment ValueSummaryJudgment, columns ValueSummaryColumns, refusal model.RefusalID) (binding.Factory, bool) {
 	if judgment == nil || !judgment.Available() || !columns.Available() {

@@ -2,16 +2,15 @@ package relcompile_test
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
-	"strings"
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/relation/check/certificate"
 	"github.com/wippyai/go-lua/analysis/relation/schema/algebra"
+	"github.com/wippyai/go-lua/analysis/relation/schema/model"
 	"github.com/wippyai/go-lua/analysis/relation/schema/plan"
+	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/rule"
 	"github.com/wippyai/go-lua/analysis/schema/rule/relcompile"
 
@@ -20,7 +19,6 @@ import (
 	effectcallsitebody "github.com/wippyai/go-lua/domain/effect/callsite/body/program"
 	effectcallsiteopaque "github.com/wippyai/go-lua/domain/effect/callsite/opaque/program"
 	effectcallsiteselected "github.com/wippyai/go-lua/domain/effect/callsite/selected/program"
-	heapallocationclosed "github.com/wippyai/go-lua/domain/heap/allocation/closed/program"
 	heapallocationempty "github.com/wippyai/go-lua/domain/heap/allocation/empty/program"
 	heapallocationingress "github.com/wippyai/go-lua/domain/heap/allocation/ingress"
 	heapbootstrap "github.com/wippyai/go-lua/domain/heap/bootstrap"
@@ -74,7 +72,6 @@ func declared() []specimen {
 		{Family: "effect/callsite/body", Plane: "family", Spec: effectcallsitebody.RuleEntry()},
 		{Family: "effect/callsite/opaque", Plane: "family", Spec: effectcallsiteopaque.RuleEntry()},
 		{Family: "effect/callsite/selected", Plane: "family", Spec: effectcallsiteselected.RuleEntry()},
-		{Family: "heap/allocation/closed", Plane: "family", Spec: heapallocationclosed.RuleEntry()},
 		{Family: "heap/allocation/empty", Plane: "family", Spec: heapallocationempty.RuleEntry()},
 		{Family: "heap/allocation/ingress", Plane: "seed", Spec: heapallocationingress.RuleEntry()},
 		{Family: "heap/bootstrap", Plane: "seed", Spec: heapbootstrap.RuleEntry()},
@@ -128,41 +125,13 @@ type entry struct {
 	Rule        string `json:"rule"`
 	Status      string `json:"status"`
 	Sketch      string `json:"sketch,omitempty"`
-	Certified   string `json:"certified,omitempty"`
 	Site        string `json:"site,omitempty"`
 	Missing     string `json:"missing,omitempty"`
 	Reason      string `json:"reason,omitempty"`
 	Expressions int    `json:"expressions,omitempty"`
 }
 
-// certification records what the independent checker says about one lowered
-// schema. A row that certifies says so; a row that does not names the finding
-// that stands in its way, because a census that hid them would report coverage
-// the corpus does not have.
-func certification(compiled plan.ExecutionSchema) string {
-	_, refusal := certificate.Check(compiled)
-	if refusal.Valid() {
-		return certified
-	}
-	seen := make(map[string]struct{}, len(refusal.Issues()))
-	details := make([]string, 0, len(refusal.Issues()))
-	for _, issue := range refusal.Issues() {
-		detail := issue.Detail
-		if detail == "" {
-			detail = fmt.Sprintf("%s[%d]", issue.Pass, issue.Code)
-		}
-		if _, duplicate := seen[detail]; duplicate {
-			continue
-		}
-		seen[detail] = struct{}{}
-		details = append(details, detail)
-	}
-	sort.Strings(details)
-	return strings.Join(details, "; ")
-}
-
 const (
-	certified      = "CERTIFIED"
 	statusCompiles = "COMPILES"
 	statusCoupling = "COUPLING-FINDING"
 	statusABIGap   = "ABI-GAP"
@@ -176,7 +145,7 @@ func survey(t *testing.T, row specimen) entry {
 	result := entry{Family: row.Family, Plane: row.Plane, Rule: string(row.Spec.Key)}
 	surfaces := newOwners(t)
 	placement := surfaces.install(row.Spec)
-	resolution, err := relcompile.Resolve(surfaces.registry, row.Spec, placement)
+	rules, err := relcompile.Resolve(surfaces.registry, row.Spec, placement)
 	if err != nil {
 		refusal := refusalOf(t, err)
 		result.Status = statusCoupling
@@ -185,17 +154,24 @@ func survey(t *testing.T, row specimen) entry {
 		result.Reason = refusal.Reason.String()
 		return result
 	}
-	compiled := lower(t, surfaces, row.Spec, resolution.Rules)
+	compiled := lower(t, surfaces, row.Spec, rules)
 	result.Status = statusCompiles
 	result.Expressions = len(compiled.Expressions())
 	result.Sketch = sketch(compiled)
-	result.Certified = certification(compiled)
 	return result
 }
 
 func lower(t *testing.T, surfaces *owners, spec rule.Spec, rules []relcompile.Rule) plan.ExecutionSchema {
 	t.Helper()
-	declaration := surfaces.registry.Declaration(surfaces.schema())
+	owner, err := surfaces.registry.Owner(relcompile.Site{Path: "census"}, schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: spec.Writes})
+	if err != nil {
+		t.Fatalf("resolve writing owner of %s: %v", spec.Key, err)
+	}
+	schemaID, ok := model.IssueSchemaID(owner, surfaces.token("schema", relcompile.EntryName(schema.SurfaceKindRule, spec.Key)))
+	if !ok {
+		t.Fatalf("issue schema identity for %s", spec.Key)
+	}
+	declaration := surfaces.registry.Declaration(schemaID)
 	declaration.Rules = rules
 	compiled, err := relcompile.Compile(declaration)
 	if err != nil {

@@ -39,13 +39,13 @@ func generatedHelperLaws() []HelperLaw {
 						{Kind: GuardAtomKind(2), Negated: true, Term: ActionTermID(2), Constant: ActionSymbolID(9), SetStart: 0, SetCount: 0, ParseClass: NumberParseClass(0)},
 						{Kind: GuardAtomKind(4), Negated: true, Term: ActionTermID(1), Constant: ActionSymbolID(0), SetStart: 0, SetCount: 2, ParseClass: NumberParseClass(0)},
 					}},
-					Diagnostic: ActionSymbolID(356),
+					Diagnostic: ActionSymbolID(357),
 				},
 			},
 			Products: []ConstructorProduct{},
 			Helpers: []HelperApplication{
 				{
-					Helper: ActionSymbolID(95),
+					Helper: ActionSymbolID(96),
 					Scope:  ActionScopeID(2),
 					Guard: Guard{Atoms: []GuardAtom{
 						{Kind: GuardAtomKind(4), Negated: false, Term: ActionTermID(1), Constant: ActionSymbolID(0), SetStart: 0, SetCount: 2, ParseClass: NumberParseClass(0)},
@@ -81,13 +81,13 @@ func generatedHelperLaws() []HelperLaw {
 						{Kind: GuardAtomKind(2), Negated: true, Term: ActionTermID(5), Constant: ActionSymbolID(9), SetStart: 0, SetCount: 0, ParseClass: NumberParseClass(0)},
 						{Kind: GuardAtomKind(4), Negated: true, Term: ActionTermID(4), Constant: ActionSymbolID(0), SetStart: 2, SetCount: 1, ParseClass: NumberParseClass(0)},
 					}},
-					Diagnostic: ActionSymbolID(356),
+					Diagnostic: ActionSymbolID(357),
 				},
 			},
 			Products: []ConstructorProduct{},
 			Helpers: []HelperApplication{
 				{
-					Helper: ActionSymbolID(95),
+					Helper: ActionSymbolID(96),
 					Scope:  ActionScopeID(3),
 					Guard: Guard{Atoms: []GuardAtom{
 						{Kind: GuardAtomKind(4), Negated: false, Term: ActionTermID(4), Constant: ActionSymbolID(0), SetStart: 2, SetCount: 1, ParseClass: NumberParseClass(0)},
@@ -205,7 +205,7 @@ func generatedHelperLaws() []HelperLaw {
 					Guard: Guard{Atoms: []GuardAtom{
 						{Kind: GuardAtomKind(1), Negated: false, Term: ActionTermID(15), Constant: ActionSymbolID(0), SetStart: 0, SetCount: 0, ParseClass: NumberParseClass(0)},
 					}},
-					Diagnostic: ActionSymbolID(355),
+					Diagnostic: ActionSymbolID(356),
 				},
 			},
 			Products: []ConstructorProduct{},
@@ -333,7 +333,7 @@ func generatedHelperLaws() []HelperLaw {
 						{Kind: GuardAtomKind(2), Negated: false, Term: ActionTermID(40), Constant: ActionSymbolID(10), SetStart: 0, SetCount: 0, ParseClass: NumberParseClass(0)},
 						{Kind: GuardAtomKind(3), Negated: false, Term: ActionTermID(43), Constant: ActionSymbolID(1), SetStart: 0, SetCount: 0, ParseClass: NumberParseClass(0)},
 					}},
-					Diagnostic: ActionSymbolID(355),
+					Diagnostic: ActionSymbolID(356),
 				},
 			},
 			Products: []ConstructorProduct{},
@@ -397,7 +397,7 @@ func generatedHelperLaws() []HelperLaw {
 					Guard: Guard{Atoms: []GuardAtom{
 						{Kind: GuardAtomKind(1), Negated: false, Term: ActionTermID(52), Constant: ActionSymbolID(0), SetStart: 0, SetCount: 0, ParseClass: NumberParseClass(0)},
 					}},
-					Diagnostic: ActionSymbolID(355),
+					Diagnostic: ActionSymbolID(356),
 				},
 			},
 			Products: []ConstructorProduct{},

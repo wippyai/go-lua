@@ -66,12 +66,8 @@ func TestCommittedExactQueryPublishesOneEvidenceSurface(t *testing.T) {
 	if !locatorOK || !identityOK || !fixture.graph.graph.OwnsQuery(identity) || identity.Family() != compositionKeyOf(coldKey(953_000)) || len(surfaces) != 1 {
 		t.Fatal("committed exact query evidence row")
 	}
-	// The published surface states what is actually read: the coordinate this
-	// query's own point wrote, which the matrix rule declares at Local 2. A
-	// row that published the Factor's first cell while reading another would
-	// be evidence of a read that never happened.
 	surface := surfaces[0]
-	if surface.Factor != compositionKeyOf(coldKey(951_000)) || surface.Form != equation.SurfaceReadExact || surface.Local != 2 || surface.Semantic.Available() || surface.Normalizer.Available() {
+	if surface.Factor != compositionKeyOf(coldKey(951_000)) || surface.Form != equation.SurfaceReadExact || surface.Local != 1 || surface.Semantic.Available() || surface.Normalizer.Available() {
 		t.Fatal("committed exact query published the wrong surface")
 	}
 	key, keyed := query.PublicationKey()

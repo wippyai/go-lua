@@ -15,12 +15,12 @@ import (
 // incomplete join: routeSet plans no route and does not refuse.
 func TestRouteSetProvenNilSubjectRoutesNothing(t *testing.T) {
 	fixture := newPublicationEscapeFixture(t)
-	prepared := &PreparedBatch{
+	prepared := &preparedBatch{
 		rows:     []publicationRow{{id: contentID(51), requirement: placementdomain.SharedHeap, operation: 1, subjectNil: true}},
 		byTag:    map[sourceTag]sourceSpec{},
 		prepared: true,
 	}
-	routes, ok := routeSetFor(fixture.placement, fixture.values, prepared, operationGateForTest(1), factBuffer{})
+	routes, ok := fixture.rule().routeSet(fixture.placement, prepared, operationGateForTest(1), factBuffer{})
 	if !ok {
 		t.Fatal("proven-nil subject refused the route set")
 	}
@@ -35,12 +35,12 @@ func TestRouteSetProvenNilSubjectRoutesNothing(t *testing.T) {
 // SharedHeap at each root rather than changing the policy to Unknown.
 func TestRouteSetOpenSubjectBroadcastsKnownRequirement(t *testing.T) {
 	fixture := newPublicationEscapeFixture(t)
-	prepared := &PreparedBatch{
+	prepared := &preparedBatch{
 		rows:     []publicationRow{{id: contentID(52), requirement: placementdomain.SharedHeap, operation: 1, subjectOpen: true}},
 		byTag:    map[sourceTag]sourceSpec{},
 		prepared: true,
 	}
-	routes, ok := routeSetFor(fixture.placement, fixture.values, prepared, operationGateForTest(1), factBuffer{})
+	routes, ok := fixture.rule().routeSet(fixture.placement, prepared, operationGateForTest(1), factBuffer{})
 	if !ok {
 		t.Fatal("unknown subject refused the route set")
 	}
@@ -72,7 +72,7 @@ func TestRouteSetOpenSubjectBroadcastsKnownRequirement(t *testing.T) {
 // no mounted call and must not reach the route planner.
 func TestValidPreparedRoutesRefusesContradictorySubjectShape(t *testing.T) {
 	fixture := newPublicationEscapeFixture(t)
-	prepared := &PreparedBatch{
+	prepared := &preparedBatch{
 		rows:     []publicationRow{{id: contentID(53), requirement: placementdomain.SharedHeap, operation: 1, subjectNil: true, subjectOpen: true}},
 		byTag:    map[sourceTag]sourceSpec{},
 		prepared: true,
@@ -80,7 +80,7 @@ func TestValidPreparedRoutesRefusesContradictorySubjectShape(t *testing.T) {
 	if validPreparedRoutes(prepared, fixture.values) {
 		t.Fatal("contradictory subject shape passed the route integrity fence")
 	}
-	routes, ok := routeSetFor(fixture.placement, fixture.values, prepared, operationGateForTest(1), factBuffer{})
+	routes, ok := fixture.rule().routeSet(fixture.placement, prepared, operationGateForTest(1), factBuffer{})
 	if ok || routes.len() != 0 {
 		t.Fatalf("contradictory subject shape produced routes=%d ok=%t", routes.len(), ok)
 	}
@@ -96,7 +96,7 @@ func TestValidPreparedRoutesRefusesProvenNilRowWithSource(t *testing.T) {
 		t.Fatal("Value coordinate")
 	}
 	rowID := identity.ContentID{54}
-	prepared := &PreparedBatch{
+	prepared := &preparedBatch{
 		rows:    []publicationRow{{id: rowID, requirement: placementdomain.SharedHeap, operation: 1, subjectNil: true}},
 		sources: []sourceSpec{{tag: sourceTag(1), rowID: rowID, operation: 1, coordinate: coordinate}},
 	}
@@ -113,12 +113,12 @@ func TestValidPreparedRoutesRefusesProvenNilRowWithSource(t *testing.T) {
 // incomplete join for evidence the parent has already resolved.
 func TestRouteSetEmptyValueListSubjectRoutesNothing(t *testing.T) {
 	fixture := newPublicationEscapeFixture(t)
-	prepared := &PreparedBatch{
+	prepared := &preparedBatch{
 		rows:     []publicationRow{{id: contentID(55), requirement: placementdomain.SharedHeap, operation: 1, subjectEmpty: true}},
 		byTag:    map[sourceTag]sourceSpec{},
 		prepared: true,
 	}
-	routes, ok := routeSetFor(fixture.placement, fixture.values, prepared, operationGateForTest(1), factBuffer{})
+	routes, ok := fixture.rule().routeSet(fixture.placement, prepared, operationGateForTest(1), factBuffer{})
 	if !ok {
 		t.Fatal("empty value list subject refused the route set")
 	}
@@ -135,7 +135,7 @@ func TestValidPreparedRoutesRefusesEmptySubjectContradictions(t *testing.T) {
 		"empty-and-nil":  {id: contentID(56), requirement: placementdomain.SharedHeap, operation: 1, subjectEmpty: true, subjectNil: true},
 		"empty-and-open": {id: contentID(57), requirement: placementdomain.SharedHeap, operation: 1, subjectEmpty: true, subjectOpen: true},
 	} {
-		prepared := &PreparedBatch{rows: []publicationRow{row}, byTag: map[sourceTag]sourceSpec{}, prepared: true}
+		prepared := &preparedBatch{rows: []publicationRow{row}, byTag: map[sourceTag]sourceSpec{}, prepared: true}
 		if validPreparedRoutes(prepared, fixture.values) {
 			t.Fatalf("%s subject shape passed the route integrity fence", name)
 		}
@@ -146,7 +146,7 @@ func TestValidPreparedRoutesRefusesEmptySubjectContradictions(t *testing.T) {
 		t.Fatal("Value coordinate")
 	}
 	rowID := contentID(58)
-	prepared := &PreparedBatch{
+	prepared := &preparedBatch{
 		rows:    []publicationRow{{id: rowID, requirement: placementdomain.SharedHeap, operation: 1, subjectEmpty: true}},
 		sources: []sourceSpec{{tag: sourceTag(1), rowID: rowID, operation: 1, coordinate: coordinate}},
 	}

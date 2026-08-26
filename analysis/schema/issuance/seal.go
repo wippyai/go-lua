@@ -190,9 +190,6 @@ func sealReferences(entry *Entry, entries map[schema.Key]*Entry) bool {
 			if edge.Source == StageEdgeSourceBeforeStage && entries[edge.Stage].order >= entry.order {
 				return false
 			}
-			if edge.Source == StageEdgeSourceRoute && !stageCarriesRoute(entry) {
-				return false
-			}
 			for _, stage := range edge.WriterStages {
 				if !resolve(stage, KindStage) {
 					return false
@@ -491,9 +488,7 @@ func validProgram(entry *Entry, entries map[schema.Key]*Entry) (map[uint16]DataT
 				return nil, false
 			}
 			switch input.inputSource {
-			case InputSourceNone, InputSourceStage, InputSourcePrevious, InputSourceRoute:
-				// A routed input names no operand: the route it reads is the
-				// one the stage it feeds already carries in its identity.
+			case InputSourceNone, InputSourceStage, InputSourcePrevious:
 				if !noArgs(instruction) {
 					return nil, false
 				}
@@ -587,25 +582,6 @@ func containsKey(keys []schema.Key, sought schema.Key) bool {
 	return false
 }
 
-// stageCarriesRoute reports whether a stage names its route as part of its own
-// identity. Only such a stage may take a routed input or a routed edge: the
-// route is what tells two stages standing on two routes into one point apart,
-// so a stage that does not carry it cannot honour a per-route fact.
-func stageCarriesRoute(stage *Entry) bool {
-	if stage == nil {
-		return false
-	}
-	for _, parameter := range stage.identity {
-		if int(parameter) < 1 || int(parameter) > len(stage.parameters) {
-			return false
-		}
-		if stage.parameters[parameter-1] == IdentityType(TypeRouteIdentity) {
-			return true
-		}
-	}
-	return false
-}
-
 func stageArgumentsMatch(arguments [6]uint16, stage *Entry, registers map[uint16]DataType, entries map[schema.Key]*Entry) bool {
 	if stage == nil || len(stage.parameters)+int(stage.inputCount) > len(arguments) {
 		return false
@@ -621,9 +597,6 @@ func stageArgumentsMatch(arguments [6]uint16, stage *Entry, registers map[uint16
 		input := entries[typ.Name]
 		if !ok || typ.Value != ValueInputRange || typ.Cardinality != CardinalityMany ||
 			input == nil || input.kind != KindInput || input.input == InputNone {
-			return false
-		}
-		if input.inputSource == InputSourceRoute && !stageCarriesRoute(stage) {
 			return false
 		}
 	}

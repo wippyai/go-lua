@@ -81,18 +81,12 @@ func TestARoutedFoldReceivesTheObservedCellAndItsTag(t *testing.T) {
 // explicit sparsity at an exact prerequisite read, and it is the one place
 // that reading is now stated.
 //
-// A coordinate the Factor never wrote is delivered as absence, and a rule that
-// declared explicit sparsity has said that absence is not a candidate. That is
-// not a judgment the fold makes: the fold is reached only with a present cell,
-// which is why the emitted reducer takes no presence bit. This law carries the
+// A cursor that answered no cell is unavailable and refuses; a coordinate the
+// Factor never wrote is delivered as absence, and a rule that declared
+// explicit sparsity has said that absence is not a candidate. Neither is a
+// judgment the fold makes: the fold is reached only with a present cell, which
+// is why the emitted reducer takes no presence bit. This law carries the
 // statement Store's own source gate used to make from beside its family.
-//
-// What the coordinate holds - the whole partition its read region is split
-// into, which block of it names the answer, and closing the cursor before that
-// answer is used - belongs to the read boundary's one delivery statement. So
-// this law also holds the emitted body to reaching it and to taking no cell
-// beside it: a family that read the cursor itself would be a second answer to
-// a question the boundary already answers.
 func TestAnExactPrerequisiteSettlesAbsenceAsAnAbsentCandidate(t *testing.T) {
 	source := emittedFamily(t, "placement-storage")
 	body, found := functionBody(source, "func (lane *familyWorker) read0Cell(")
@@ -100,18 +94,16 @@ func TestAnExactPrerequisiteSettlesAbsenceAsAnAbsentCandidate(t *testing.T) {
 		t.Fatal("the routed worker emits no exact prerequisite cursor")
 	}
 	for _, required := range []string{
-		"cell, status := execution.DeliverExactCell(read, policy, ticket, &lane.read0)",
-		"if !cell.Present {\n\t\t\treturn structure.NoCandidate\n\t\t}",
-		"case execution.ReadExhausted:\n\t\treturn structure.NoCandidate",
+		"if !available {\n\t\t\treturn structure.Refuse\n\t\t}",
+		"if !present {\n\t\t\treturn structure.NoCandidate\n\t\t}",
+		"case execution.ReadExhausted:",
 	} {
 		if !strings.Contains(body, required) {
 			t.Errorf("the exact prerequisite cursor does not state %q", required)
 		}
 	}
-	for _, forbidden := range []string{"lane.read0.Value()", "lane.read0.Present()", "read.Read(ticket, &lane.read0)"} {
-		if strings.Contains(body, forbidden) {
-			t.Errorf("the exact prerequisite takes its cell beside the delivery statement, through %q", forbidden)
-		}
+	if !strings.Contains(body, "if !read.Close(ticket, &lane.read0) {") {
+		t.Error("the exact prerequisite cursor is not closed before its cell is used")
 	}
 }
 

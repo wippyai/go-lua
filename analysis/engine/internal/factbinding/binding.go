@@ -154,29 +154,6 @@ func (algebra *Algebra[K, V]) Fingerprint(value V) uint64 {
 	return algebra.fingerprint(value)
 }
 
-// Join is the admitted least upper bound of two values of this axis. It is
-// published for the read boundary, which must answer what one coordinate holds
-// over a region its cursor split into several blocks: over a region spanning
-// blocks that disagree, the coordinate holds their join and nothing smaller.
-// Callers cannot replace the sealed implementation.
-func (algebra *Algebra[K, V]) Join(left, right V) (V, bool) {
-	if algebra == nil || algebra.seal == nil {
-		var zero V
-		return zero, false
-	}
-	return algebra.join(left, right), true
-}
-
-// Join forwards this Factor's sealed axis join. The Binding is what a read
-// surface holds, so this is where the boundary reaches the algebra.
-func (binding *Binding[K, V]) Join(left, right V) (V, bool) {
-	if binding == nil || !binding.live() {
-		var zero V
-		return zero, false
-	}
-	return binding.algebra.Join(left, right)
-}
-
 func (algebra *Algebra[K, V]) valid() bool { return algebra != nil && algebra.seal != nil }
 
 func (algebra *Algebra[K, V]) sameValue(left, right V) bool {

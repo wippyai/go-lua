@@ -24,26 +24,9 @@ func TestSuspensionContributionDeclaresItsVectorsAndOneFold(t *testing.T) {
 			t.Fatalf("relation %q does not hang off the issued Program row", relation.Name)
 		}
 	}
-	// A selection names no symbol of its own: the operation that computes its
-	// rows is the derivation the relation it publishes into declares. What each
-	// one owes is that the relation it publishes into and the tag it stamps are
-	// rows this rule declares itself.
 	for _, selection := range contribution.Selections {
-		declared := false
-		for _, relation := range contribution.Relations {
-			declared = declared || relation.Name == selection.Relation
-		}
-		if !declared {
-			t.Fatalf("selection %q publishes into %q, which this rule does not declare", selection.Name, selection.Relation)
-		}
-		stamped := false
-		for _, projection := range contribution.Projections {
-			if projection.Name == selection.Tag {
-				stamped = projection.Relation == selection.Relation && projection.Role == member.Predicate
-			}
-		}
-		if !stamped {
-			t.Fatalf("selection %q stamps %q, which is not the predicate projection of %q", selection.Name, selection.Tag, selection.Relation)
+		if !selection.Implementation.Available() || !strings.HasPrefix(selection.Implementation.Name, "Derive") {
+			t.Fatalf("selection %q names no owner judgment: %+v", selection.Name, selection.Implementation)
 		}
 	}
 

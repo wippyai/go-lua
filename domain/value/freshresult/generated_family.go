@@ -10,7 +10,6 @@ package freshresult
 
 import (
 	"github.com/wippyai/go-lua/analysis/engine/execution"
-	"github.com/wippyai/go-lua/analysis/engine/operand"
 	"github.com/wippyai/go-lua/analysis/schema/rule/program"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/domain/call"
@@ -33,7 +32,7 @@ type familyReducer struct {
 // Reduce answers one selected route. The route coordinate, cell, and tag
 // are the three owner-issued halves of the one member the read observed,
 // so the fold never re-derives a destination or correlation.
-func (fold familyReducer) Reduce(routeCoordinate value.Coordinate, cell operand.SelectedCell[value.Value]) (value.Value, structure.ReductionOutcome) {
+func (fold familyReducer) Reduce(routeCoordinate value.Coordinate, cell execution.SelectedCell[value.Value]) (value.Value, structure.ReductionOutcome) {
 	return fold.state.FreshResultFact(fold.candidate, fold.input0, routeCoordinate, cell.Tag, cell.Value)
 }
 
@@ -77,7 +76,7 @@ func (sealed *sealedFamily) NewExecutor(run *execution.Run) execution.Executor {
 		family:  sealed,
 		run:     run,
 		members: make([]execution.RouteMember, sealed.width),
-		cells:   make([]operand.SelectedCell[value.Value], sealed.width),
+		cells:   make([]execution.SelectedCell[value.Value], sealed.width),
 		routes:  make([]value.Coordinate, sealed.width),
 		carries: make([]execution.RouteCarry[value.Value], sealed.width),
 	}
@@ -96,7 +95,7 @@ type familyWorker struct {
 	read1   execution.SelectedScratch[value.DenseCoordinate, value.Value]
 	write   execution.RouteScratch[value.DenseCoordinate, value.Value]
 	members []execution.RouteMember
-	cells   []operand.SelectedCell[value.Value]
+	cells   []execution.SelectedCell[value.Value]
 	routes  []value.Coordinate
 	carries []execution.RouteCarry[value.Value]
 }
@@ -199,24 +198,37 @@ func (lane *familyWorker) Execute(frame execution.Frame, ticket execution.Ticket
 	return execution.NewResult(outcome, written)
 }
 
-// read0Cell takes one exact prerequisite cell: the coordinate's whole delivery
-// answered as the one cell it names, with the row's sealed policy settling
-// what an unwritten coordinate delivers.
+// read0Cell takes one exact prerequisite cell. The cursor is closed before the
+// value is used, and the row's sealed policy settles what an unwritten
+// coordinate delivers.
 func (lane *familyWorker) read0Cell(read execution.ExactRead[call.DenseCoordinate, call.Value], policy execution.ReadCellPolicy[call.Value], ticket execution.Ticket, destination *call.Value) structure.ReductionOutcome {
 	if lane == nil || destination == nil || !read.Valid() {
 		return structure.Refuse
 	}
-	cell, status := execution.DeliverExactCell(read, policy, ticket, &lane.read0)
-	switch status {
+	switch read.Read(ticket, &lane.read0) {
 	case execution.ReadAvailable:
-		if !cell.Present {
+		cell, available := lane.read0.Value()
+		present := lane.read0.Present()
+		if !read.Close(ticket, &lane.read0) {
+			_ = lane.read0.Discard(ticket)
+			return structure.Refuse
+		}
+		if !available {
+			return structure.Refuse
+		}
+		cell, present = policy.Cell(cell, present)
+		if !present {
 			return structure.NoCandidate
 		}
-		*destination = cell.Value
+		*destination = cell
 		return structure.Concrete
 	case execution.ReadExhausted:
+		if !read.Close(ticket, &lane.read0) {
+			return structure.Refuse
+		}
 		return structure.NoCandidate
 	default:
+		_ = lane.read0.Discard(ticket)
 		return structure.Refuse
 	}
 }

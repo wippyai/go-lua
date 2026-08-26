@@ -349,116 +349,25 @@ func TestEveryOutcomeHasADeclaredProducer(t *testing.T) {
 	}
 }
 
-// packageFunctions indexes every function of one package by the spelling a
-// call inside that package reaches it through: "Receiver.Name" for a method,
-// ".Name" for a package-level function. A pointer receiver is indexed under
-// its bare type, because a call site spells the receiver variable and not its
-// indirection.
-func packageFunctions(t *testing.T, root, packagePath string) (map[string]*ast.FuncDecl, map[*ast.FuncDecl]*ast.File) {
-	t.Helper()
-	directory := filepath.Join(root, filepath.FromSlash(strings.TrimPrefix(packagePath, modulePath+"/")))
-	fileSet := token.NewFileSet()
-	parsed, err := parser.ParseDir(fileSet, directory, func(info os.FileInfo) bool {
-		return !strings.HasSuffix(info.Name(), "_test.go")
-	}, 0)
-	if err != nil {
-		t.Fatalf("parse %s: %v", directory, err)
-	}
-	functions := make(map[string]*ast.FuncDecl)
-	files := make(map[*ast.FuncDecl]*ast.File)
-	for _, group := range parsed {
-		for _, file := range group.Files {
-			for _, declaration := range file.Decls {
-				function, isFunction := declaration.(*ast.FuncDecl)
-				if !isFunction {
-					continue
-				}
-				functions[functionKey(function)] = function
-				files[function] = file
-			}
-		}
-	}
-	return functions, files
-}
-
-// functionKey is the call spelling one declaration answers to.
-func functionKey(function *ast.FuncDecl) string {
-	if function.Recv == nil || len(function.Recv.List) != 1 {
-		return "." + function.Name.Name
-	}
-	return strings.TrimPrefix(typeSpelling(function.Recv.List[0].Type), "*") + "." + function.Name.Name
-}
-
-// receiverBinding is the name a method's body calls its own other methods
-// through, and the type those calls resolve against.
-func receiverBinding(function *ast.FuncDecl) (string, string) {
-	if function.Recv == nil || len(function.Recv.List) != 1 || len(function.Recv.List[0].Names) != 1 {
-		return "", ""
-	}
-	return function.Recv.List[0].Names[0].Name,
-		strings.TrimPrefix(typeSpelling(function.Recv.List[0].Type), "*")
-}
-
-// concludedOutcomes reports the sealed outcome members one fold concludes.
-//
-// A fold's conclusion is what its declared entry point RETURNS, which is not
-// always what its own return statements spell: a fold whose body is one
-// delegation - "successor, outcome := judgment.decide(...); return successor,
-// outcome" - concludes every outcome the judgment it forwards concludes, and
-// reading only the entry point would report that fold as concluding nothing.
-// So the walk follows the calls the fold makes inside its own package, which
-// is exactly as far as one fold's authored judgment reaches; a call into
-// another package is that package's judgment and is not credited here.
+// concludedOutcomes reports the sealed outcome members one fold returns, read
+// from the return statements of its declaration.
 func concludedOutcomes(t *testing.T, root string, symbol memberdefinition.GoSymbol) []string {
 	t.Helper()
-	functions, files := packageFunctions(t, root, symbol.PackagePath)
-	entry := "." + symbol.Name
-	if symbol.Receiver.Name != "" {
-		entry = symbol.Receiver.Name + "." + symbol.Name
+	decl, file, declOK := findFunction(t, root, symbol)
+	if !declOK {
+		return nil
 	}
 	var outcomes []string
-	visited := map[string]bool{}
-	queue := []string{entry}
-	for len(queue) != 0 {
-		key := queue[0]
-		queue = queue[1:]
-		if visited[key] {
-			continue
-		}
-		visited[key] = true
-		decl, found := functions[key]
-		if !found {
-			continue
-		}
-		file := files[decl]
-		receiverName, receiverType := receiverBinding(decl)
-		ast.Inspect(decl, func(node ast.Node) bool {
-			switch statement := node.(type) {
-			case *ast.ReturnStmt:
-				// The outcome is the LAST result a judgment returns, and an
-				// inner judgment returns more than the fold's own pair: the
-				// obligation judgment answers a successor, the verdict it
-				// reached, and the outcome. Pinning the second position would
-				// read the verdict and credit that fold with nothing.
-				if len(statement.Results) < 2 {
-					return true
-				}
-				path, name := resolvedType(file, symbol.PackagePath, statement.Results[len(statement.Results)-1])
-				if path == outcomePackage {
-					outcomes = append(outcomes, name)
-				}
-			case *ast.CallExpr:
-				switch callee := statement.Fun.(type) {
-				case *ast.Ident:
-					queue = append(queue, "."+callee.Name)
-				case *ast.SelectorExpr:
-					if target, isIdent := callee.X.(*ast.Ident); isIdent && receiverName != "" && target.Name == receiverName {
-						queue = append(queue, receiverType+"."+callee.Sel.Name)
-					}
-				}
-			}
+	ast.Inspect(decl, func(node ast.Node) bool {
+		statement, isReturn := node.(*ast.ReturnStmt)
+		if !isReturn || len(statement.Results) != 2 {
 			return true
-		})
-	}
+		}
+		path, name := resolvedType(file, symbol.PackagePath, statement.Results[1])
+		if path == outcomePackage {
+			outcomes = append(outcomes, name)
+		}
+		return true
+	})
 	return outcomes
 }

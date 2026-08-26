@@ -29,12 +29,7 @@ func TestCarryTransformRowsNameDirectCandidateMethods(t *testing.T) {
 		pointer       bool
 	}{
 		{"transform/value/allocation", "AllocationResult", true},
-		// The fresh-result transition is issued by the ROUTE row, not by the
-		// call: a call that publishes at several destinations has one
-		// transition per destination, and asking which of them is the call's
-		// has no answer. So the row is keyed by the route and its receiver is
-		// the route, which is what the freshresult Program's carry names.
-		{"transform/value/fresh-result-route", "Route", false},
+		{"transform/value/callresult-freshresult", "FreshResultCall", false},
 	}
 	for index, row := range rows {
 		if string(row.Key) != want[index].key {
@@ -140,19 +135,7 @@ func TestStorageTransferPublishesTheSharedArithmeticCandidateDirectory(t *testin
 		candidate.CandidateAt.Name != "BinaryArithmeticAt" {
 		t.Fatalf("arithmetic directory methods = %#v", *candidate)
 	}
-	// The carrier is stated on the OWNER source, which is what makes the
-	// directory shared rather than a reading rule's own. Presence is the whole
-	// claim: carriers are resolved by name everywhere, so an absolute position
-	// among them encodes nothing and pinning one would refuse any unrelated
-	// carrier declared ahead of this one.
-	arithmeticCarrier := false
-	for _, carrier := range source.Carriers {
-		if carrier.Name == "BinaryArithmeticCarrier" {
-			arithmeticCarrier = true
-			break
-		}
-	}
-	if !arithmeticCarrier {
+	if len(source.Carriers) < 4 || source.Carriers[3].Name != "BinaryArithmeticCarrier" {
 		t.Fatalf("arithmetic carrier was not added to the owner source: %#v", source.Carriers)
 	}
 }
