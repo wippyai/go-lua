@@ -295,7 +295,7 @@ func (scratch *SelectedScratch[K, V]) observe(
 			return ExactCell[V]{}, false
 		}
 		value, present := entry.Read()
-		if !fold.admit(value, present, row.Region()) {
+		if !fold.admit(value, present, row.Region(), scratch.binding.Join) {
 			_ = scratch.cursor.Close()
 			return ExactCell[V]{}, false
 		}

@@ -29,7 +29,8 @@ type ExactCell[V any] struct {
 // exact read and the selected read's per-member observation - step their own
 // cursor and must reach the same answer from it.
 type exactCellFold[V any] struct {
-	cell ExactCell[V]
+	cell    ExactCell[V]
+	written int
 	// unwritten is the Factor's own reading of an unwritten block. An absence
 	// still delivers a value - the Factor's, not the language's zero - and
 	// that reading is the coordinate's, so which block it was taken from does
@@ -38,34 +39,50 @@ type exactCellFold[V any] struct {
 	absent    bool
 }
 
-// admit takes one block of the delivery. An unwritten block names no
-// alternative and cannot be the coordinate's answer, but its reading is kept
-// so an absence is still delivered as the Factor read it. A second written
-// block disagrees with the first by construction, since the cursor coalesces
-// equal ones, so the two name no single cell and the fold refuses.
-func (fold *exactCellFold[V]) admit(value V, present bool, region support.Mask) bool {
+// admit takes one block of the delivery under the axis's own join.
+//
+// An unwritten block names no alternative and cannot be the coordinate's
+// answer, but its reading is kept so an absence is still delivered as the
+// Factor read it. Written blocks disagree by construction - the cursor
+// coalesces equal ones - so over a region that spans more than one of them the
+// coordinate holds their join and nothing smaller.
+func (fold *exactCellFold[V]) admit(value V, present bool, region support.Mask, join func(V, V) (V, bool)) bool {
 	if !present {
 		if !fold.absent {
 			fold.unwritten, fold.absent = value, true
 		}
 		return true
 	}
-	if fold.cell.Present {
+	if fold.written == 0 {
+		fold.cell, fold.written = ExactCell[V]{Value: value, Present: true, Region: region}, 1
+		return true
+	}
+	joined, joinOK := join(fold.cell.Value, value)
+	if !joinOK {
 		return false
 	}
-	fold.cell = ExactCell[V]{Value: value, Present: true, Region: region}
+	fold.cell.Value, fold.written = joined, fold.written+1
 	return true
 }
 
-// settle answers the delivered cell once every block has been admitted. A
-// coordinate no block wrote is absent over the whole read region, carrying the
-// Factor's reading of it, and the read's declared substitutions are applied
-// once, here: a sparse default stands for a coordinate nothing wrote, not for
-// a block that happened to be enumerated before the one that did.
+// settle answers the delivered cell once every block has been admitted.
+//
+// One written block is the exact answer, over exactly the region it was proved
+// on. A coordinate no block wrote is absent over the whole read region,
+// carrying the Factor's reading of it. Blocks that disagree have no single
+// exact value, so what the coordinate holds over the read region is their
+// join, proved over the whole of it - which is the sound answer a single cell
+// can give, and weaker on each block than an invocation run once per block
+// would be. The read's declared substitutions are applied once, here: a sparse
+// default stands for a coordinate nothing wrote, not for a block that happened
+// to be enumerated before the one that did.
 func (fold *exactCellFold[V]) settle(within support.Mask, policy ReadCellPolicy[V]) ExactCell[V] {
 	cell := fold.cell
-	if !cell.Present {
+	switch {
+	case fold.written == 0:
 		cell.Value, cell.Region = fold.unwritten, within
+	case fold.written > 1:
+		cell.Region = within
 	}
 	cell.Value, cell.Present = policy.Cell(cell.Value, cell.Present)
 	return cell
@@ -116,7 +133,7 @@ func DeliverExactCell[K scalar.Key, V any](
 			observed = true
 			value, available := scratch.Value()
 			region, regionOK := scratch.Region()
-			if !available || !regionOK || !fold.admit(value, scratch.Present(), region) {
+			if !available || !regionOK || !fold.admit(value, scratch.Present(), region, read.join) {
 				_ = scratch.Discard(ticket)
 				return ExactCell[V]{}, ReadRefuse
 			}

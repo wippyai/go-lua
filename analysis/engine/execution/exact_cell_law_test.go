@@ -225,16 +225,24 @@ func TestExactCellCarriesTheFactorReadingOfAnUnwrittenBlockPastAWrittenOne(t *te
 	}
 }
 
-// TestExactCellRefusesTwoDisagreeingWrittenBlocks holds the boundary at the
-// one case a single cell cannot answer. Two written blocks disagree by
-// construction - equal ones are coalesced - so no single value is the
-// coordinate's answer over the read region, and the delivery refuses by name
-// instead of settling on whichever block the enumeration reached first.
-func TestExactCellRefusesTwoDisagreeingWrittenBlocks(t *testing.T) {
+// TestExactCellJoinsTwoDisagreeingWrittenBlocks states the one case a single
+// cell cannot answer exactly. Two written blocks disagree by construction -
+// equal ones are coalesced - so no one block is the coordinate's answer over a
+// read region spanning both, and what it holds there is their join, proved
+// over the whole of that region. Settling on whichever block the enumeration
+// reached first would drop the other branch's value outright.
+func TestExactCellJoinsTwoDisagreeingWrittenBlocks(t *testing.T) {
 	fixture := newExactCellFixture(t)
 	state := fixture.publishRegions(t, 31, []support.Mask{fixture.on, fixture.off}, []uint64{210, 220})
 	cell, status := fixture.deliver(t, 32, state)
-	if status != ReadRefuse {
-		t.Fatalf("disagreeing blocks delivered status %d as %d/%t", status, cell.Value, cell.Present)
+	if status != ReadAvailable {
+		t.Fatalf("disagreeing blocks delivered status %d", status)
+	}
+	// The fixture's join is the greater of the two.
+	if !cell.Present || cell.Value != 220 {
+		t.Fatalf("disagreeing blocks delivered %d/%t, want the join 220", cell.Value, cell.Present)
+	}
+	if !cell.Region.Equal(fixture.whole) {
+		t.Fatal("a joined cell is not proved over the whole read region")
 	}
 }
