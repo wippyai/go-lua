@@ -7,7 +7,6 @@
 package harness
 
 import (
-	"reflect"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
@@ -178,7 +177,6 @@ func (place Place) Seal(t testing.TB, label string, inputs []signature.Input, ou
 		Fence:       signature.Fence{Owner: place.Owner, Schema: place.SchemaID},
 		Inputs:      inputs,
 		Outputs:     outputs,
-		Authority:   signature.OutputAuthority{Denominator: place.Denominator},
 		Cardinality: cardinality,
 		Outcomes:    set,
 	})
@@ -257,7 +255,41 @@ func (place Place) Frame(t testing.TB, slots ...binding.Slot) binding.Frame {
 // Buffer opens one proposal buffer for a sealed operation.
 func (place Place) Buffer(t testing.TB, operation signature.Signature) *binding.ProposalBuffer {
 	t.Helper()
-	buffer, ok := binding.NewProposalBuffer(operation, place.Fence, place.Witness, place.Scope)
+	outputs := operation.Outputs()
+	if len(outputs) == 0 {
+		t.Fatal("operation has no output destination")
+	}
+	destination := binding.NewOwnerNamedDestination(outputs[0].Relation)
+	buffer, ok := binding.NewProposalBuffer(operation, place.Fence, []binding.DenominatorWitness{place.Witness}, place.Scope, destination)
+	if !ok {
+		t.Fatal("proposal buffer")
+	}
+	return &buffer
+}
+
+// BufferAt opens a proposal buffer whose destination row has already been
+// resolved by the plan.  Direct binding laws use this to model the engine's
+// scalar destination: the generated operation emits with Emitter.Put, so an
+// owner-named destination would exercise PutAt instead and falsely refuse a
+// valid fold.  The destination cell is deliberately proven absent because
+// this helper needs only its authenticated address; the emitted value is
+// supplied by the operation's owner column.
+func (place Place) BufferAt(t testing.TB, operation signature.Signature, row model.RowID) *binding.ProposalBuffer {
+	t.Helper()
+	outputs := operation.Outputs()
+	if len(outputs) == 0 {
+		t.Fatal("operation has no output destination")
+	}
+	output := outputs[0]
+	if output.Denominator != place.Denominator {
+		t.Fatal("operation destination denominator differs from harness witness")
+	}
+	destinationCell := place.AbsentCell(t, output.Column, row, output.Type)
+	destination, ok := binding.NewScalarDestination(destinationCell)
+	if !ok {
+		t.Fatal("scalar destination")
+	}
+	buffer, ok := binding.NewProposalBuffer(operation, place.Fence, []binding.DenominatorWitness{place.Witness}, place.Scope, destination)
 	if !ok {
 		t.Fatal("proposal buffer")
 	}
@@ -290,59 +322,4 @@ func NewColumn[T any](t testing.TB, typeID model.TypeID, label string, reserve i
 		t.Fatalf("column %q", label)
 	}
 	return column
-}
-
-// InstallTypes fills every field of one axis's emitted PayloadTypes with a
-// distinct owner-issued type, and InstallTags does the same for its store
-// fences.
-//
-// A law that restates an axis's column list breaks every time the corpus
-// declares another column, and what it was stating was never the list: it was
-// that every declared column installs. These say that instead, so the law
-// keeps holding as the axis grows.
-func (place Place) InstallTypes(t testing.TB, types any) {
-	t.Helper()
-	place.fill(t, types, "type/", func(name string) reflect.Value {
-		return reflect.ValueOf(place.TypeID(t, "type/"+name))
-	})
-}
-
-// InstallTags fills every field of one axis's emitted PayloadTags.
-func (place Place) InstallTags(t testing.TB, tags any) {
-	t.Helper()
-	place.fill(t, tags, "store/", func(name string) reflect.Value {
-		return reflect.ValueOf(Content(t, "store/"+name))
-	})
-}
-
-func (place Place) fill(t testing.TB, target any, label string, issue func(string) reflect.Value) {
-	t.Helper()
-	pointer := reflect.ValueOf(target)
-	if pointer.Kind() != reflect.Pointer || pointer.IsNil() || pointer.Elem().Kind() != reflect.Struct {
-		t.Fatalf("%s target is not a pointer to a payload structure", label)
-	}
-	structure := pointer.Elem()
-	if structure.NumField() == 0 {
-		t.Fatalf("%s target declares no column", label)
-	}
-	for index := 0; index < structure.NumField(); index++ {
-		field := structure.Type().Field(index)
-		value := issue(field.Name)
-		if !value.Type().AssignableTo(field.Type) {
-			t.Fatalf("%s cannot fill field %s", label, field.Name)
-		}
-		structure.Field(index).Set(value)
-	}
-}
-
-// BorrowSpan delivers one span slot as the borrowed view a decoder receives,
-// so a law can measure or read a span without standing up a whole binding.
-func BorrowSpan[T any](t testing.TB, place Place, cells []binding.Cell, column *relbindgen.Column[T]) relbindgen.Span[T] {
-	t.Helper()
-	frame := place.Frame(t, SpanSlot(t, cells))
-	span, ok := relbindgen.SpanAtFrame(frame, 0, column)
-	if !ok {
-		t.Fatal("borrow span")
-	}
-	return span
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/relation/schema/algebra"
 	"github.com/wippyai/go-lua/analysis/relation/schema/model"
 	"github.com/wippyai/go-lua/analysis/relation/schema/plan"
+	"github.com/wippyai/go-lua/analysis/relation/schema/region"
 	"github.com/wippyai/go-lua/analysis/relation/semantic/outcome"
 	"github.com/wippyai/go-lua/analysis/relation/semantic/signature"
 )
@@ -55,12 +56,25 @@ func newFixture(t *testing.T) fixture {
 
 func validSchema(t *testing.T, value fixture, expressions ...algebra.Expression) plan.ExecutionSchema {
 	t.Helper()
-	return schemaWith(t, value, expressions, true)
+	delivery, ok := signature.NewScalarDelivery()
+	if !ok {
+		t.Fatal("scalar delivery")
+	}
+	return schemaWithDelivery(t, value, expressions, true, delivery)
 }
 
 func schemaWith(t *testing.T, value fixture, expressions []algebra.Expression, includeSignature bool) plan.ExecutionSchema {
 	t.Helper()
-	scope := model.DefineScopeSchema(value.scope, []model.ColumnID{value.columnA, value.columnB})
+	delivery, ok := signature.NewScalarDelivery()
+	if !ok {
+		t.Fatal("scalar delivery")
+	}
+	return schemaWithDelivery(t, value, expressions, includeSignature, delivery)
+}
+
+func schemaWithDelivery(t *testing.T, value fixture, expressions []algebra.Expression, includeSignature bool, delivery signature.Delivery) plan.ExecutionSchema {
+	t.Helper()
+	scope := model.DefineScopeSchema(value.scope, []model.ColumnID{value.columnA, value.columnB}, region.True())
 	relationA := model.DefineRelationSchema(value.relationA, []model.ColumnID{value.columnA}, []model.KeyID{value.keyA}, value.scope)
 	relationB := model.DefineRelationSchema(value.relationB, []model.ColumnID{value.columnB}, []model.KeyID{value.keyB}, value.scope)
 	columnA := model.DefineColumnSchema(value.columnA, value.typeID)
@@ -86,6 +100,10 @@ func schemaWith(t *testing.T, value fixture, expressions []algebra.Expression, i
 	if !builder.AddScope(scope) {
 		t.Fatal("add scope")
 	}
+	capability, capabilityOK := model.NewAscendingCapability(value.typeID)
+	if !capabilityOK || !builder.AddTypeCapability(capability) {
+		t.Fatal("add ascending type capability")
+	}
 	for index, expression := range expressions {
 		id := issueExpression(t, value.owner, string(rune('a'+index)))
 		if !builder.AddExpression(plan.DefineExpressionRef(id, expression)) {
@@ -93,10 +111,6 @@ func schemaWith(t *testing.T, value fixture, expressions []algebra.Expression, i
 		}
 	}
 	if includeSignature {
-		delivery, ok := signature.NewScalarDelivery()
-		if !ok {
-			t.Fatal("scalar delivery")
-		}
 		accepted, ok := outcome.NewSet(outcome.Produced, outcome.NoCandidate, outcome.NoSelection, outcome.Refused)
 		if !ok {
 			t.Fatal("outcomes")
@@ -105,8 +119,7 @@ func schemaWith(t *testing.T, value fixture, expressions []algebra.Expression, i
 			Identity:    value.operation,
 			Fence:       signature.Fence{Owner: value.owner, Schema: value.schema},
 			Inputs:      []signature.Input{{Relation: value.relationA, Column: value.columnA, Type: value.typeID, Presence: signature.RequirePresent, Delivery: delivery, Denominator: value.denominatorA}},
-			Outputs:     []signature.Output{{Relation: value.relationB, Column: value.columnB, Type: value.typeID, Presence: signature.ProducePresent}},
-			Authority:   signature.OutputAuthority{Denominator: value.denominatorB},
+			Outputs:     []signature.Output{{Relation: value.relationB, Column: value.columnB, Type: value.typeID, Presence: signature.ProducePresent, Denominator: value.denominatorB}},
 			Cardinality: mustCardinality(t, model.ExactlyOne), Outcomes: accepted,
 		})
 		if !ok || !builder.AddSignature(signatureValue) {
@@ -130,15 +143,18 @@ func TestValidClosedOperatorSpecIsAccepted(t *testing.T) {
 	merge := algebra.NewMerge([]algebra.Expression{inputA, inputA}, algebra.NewMergeContract(value.keyA))
 	group := algebra.NewGroup(inputA, algebra.NewGroupContract(value.keyA, mustCardinality(t, model.ExactlyOne)))
 	complete := algebra.NewComplete(inputA, value.denominatorA)
-	apply := algebra.NewApply([]algebra.Expression{inputA}, algebra.NewApplyContract(value.operation))
-	publish := algebra.NewPublish(inputB, algebra.NewPublishContract(value.relationB, value.keyB))
+	apply := algebra.NewApply([]algebra.Expression{inputA}, algebra.NewApplyContract(value.operation, []algebra.SlotSource{algebra.NewSlotSource(0, 0)}, algebra.OwnerNamed()))
+	publish := algebra.NewPublish(apply, algebra.NewPublishContract(value.relationB, value.keyB))
 	schema := validSchema(t, value, inputA, selectA, projectB, join, merge, group, complete, apply, publish)
 	report := typing.Check(schema)
 	if !report.Valid() {
 		t.Fatalf("valid closed operator schema rejected: %v", report.Error())
 	}
-	if got := len(report.MergeRequirements()); got != 1 {
-		t.Fatalf("Merge did not expose one TypeID obligation per output column: got %d", got)
+	if got := len(report.MergeRequirements()); got != 0 {
+		t.Fatalf("Merge incorrectly requested lattice ascent for its key column: got %d", got)
+	}
+	if got := len(report.EqualityRequirements()); got != 6 {
+		t.Fatalf("key operators did not expose their semantic equality obligations: got %d", got)
 	}
 	requirements := report.AlgebraRequirements()
 	if len(requirements) != 1 || requirements[0] != value.typeID {
@@ -148,6 +164,232 @@ func TestValidClosedOperatorSpecIsAccepted(t *testing.T) {
 	if got := report.AlgebraRequirements(); len(got) != 1 || got[0] != value.typeID {
 		t.Fatal("algebra requirements exposed mutable storage")
 	}
+}
+
+func TestMergeSeparatesKeyEqualityFromValueAscent(t *testing.T) {
+	owner := issueOwner(t, "merge-capability-owner")
+	schemaID := issueSchema(t, owner, "merge-capability-schema")
+	relation := issueRelation(t, owner, "merge-capability-relation")
+	keyColumn := issueColumn(t, relation, "merge-key")
+	valueColumn := issueColumn(t, relation, "merge-value")
+	keyID := issueKey(t, relation, "merge-key")
+	scope := issueScope(t, owner, "merge-capability-scope")
+	keyType := issueType(t, owner, "merge-key-type")
+	valueType := issueType(t, owner, "merge-value-type")
+	input := algebra.NewInput(relation)
+	merge := algebra.NewMerge([]algebra.Expression{input, input}, algebra.NewMergeContract(keyID))
+
+	build := func(t *testing.T, valueCapability model.TypeCapability) typing.Report {
+		t.Helper()
+		builder := plan.NewBuilder(schemaID)
+		if !builder.AddRelation(model.DefineRelationSchema(relation, []model.ColumnID{keyColumn, valueColumn}, []model.KeyID{keyID}, scope)) ||
+			!builder.AddColumn(model.DefineColumnSchema(keyColumn, keyType)) ||
+			!builder.AddColumn(model.DefineColumnSchema(valueColumn, valueType)) ||
+			!builder.AddKey(model.DefineKeySchema(keyID, []model.ColumnID{keyColumn})) ||
+			!builder.AddScope(model.DefineScopeSchema(scope, nil, region.True())) {
+			t.Fatal("add merge capability declarations")
+		}
+		keyCapability, ok := model.NewEquatableCapability(keyType)
+		if !ok || !builder.AddTypeCapability(keyCapability) || !builder.AddTypeCapability(valueCapability) {
+			t.Fatal("add merge capabilities")
+		}
+		if !builder.AddExpression(plan.DefineExpressionRef(issueExpression(t, owner, "merge-capability-expression"), merge)) {
+			t.Fatal("add merge expression")
+		}
+		schema, ok := builder.Build()
+		if !ok {
+			t.Fatal("build merge capability schema")
+		}
+		return typing.Check(schema)
+	}
+
+	decodeOnly, ok := model.NewDecodeOnlyCapability(valueType)
+	if !ok {
+		t.Fatal("decode-only value capability")
+	}
+	decodeReport := build(t, decodeOnly)
+	if decodeReport.Valid() || !hasIssue(decodeReport, typing.CodeTypeCapabilityMismatch) {
+		t.Fatalf("decode-only Merge value was accepted: %v", decodeReport.Issues())
+	}
+	ascending, ok := model.NewAscendingCapability(valueType)
+	if !ok {
+		t.Fatal("ascending value capability")
+	}
+	ascendingReport := build(t, ascending)
+	if !ascendingReport.Valid() {
+		t.Fatalf("ascending Merge value was rejected: %v", ascendingReport.Issues())
+	}
+	if len(ascendingReport.EqualityRequirements()) != 1 || len(ascendingReport.MergeRequirements()) != 1 {
+		t.Fatalf("Merge obligations were not separated: equality=%v ascent=%v", ascendingReport.EqualityRequirements(), ascendingReport.MergeRequirements())
+	}
+}
+
+func TestProposalMergeRejectsAlternateDestinationKey(t *testing.T) {
+	value := newFixture(t)
+	alternate := issueKey(t, value.relationB, "alternate-output-key")
+	input := algebra.NewInput(value.relationA)
+	apply := algebra.NewApply([]algebra.Expression{input}, algebra.NewApplyContract(value.operation, []algebra.SlotSource{algebra.NewSlotSource(0, 0)}, algebra.OwnerNamed()))
+	merge := algebra.NewMerge([]algebra.Expression{apply, apply}, algebra.NewMergeContract(alternate))
+
+	delivery, ok := signature.NewScalarDelivery()
+	if !ok {
+		t.Fatal("scalar delivery")
+	}
+	accepted, ok := outcome.NewSet(outcome.Produced, outcome.NoCandidate, outcome.NoSelection, outcome.Refused)
+	if !ok {
+		t.Fatal("outcomes")
+	}
+	signatureValue, ok := signature.Seal(signature.Spec{
+		Identity: value.operation, Fence: signature.Fence{Owner: value.owner, Schema: value.schema},
+		Inputs:      []signature.Input{{Relation: value.relationA, Column: value.columnA, Type: value.typeID, Presence: signature.RequirePresent, Delivery: delivery, Denominator: value.denominatorA}},
+		Outputs:     []signature.Output{{Relation: value.relationB, Column: value.columnB, Type: value.typeID, Presence: signature.ProducePresent, Denominator: value.denominatorB}},
+		Cardinality: mustCardinality(t, model.ExactlyOne), Outcomes: accepted,
+	})
+	if !ok {
+		t.Fatal("signature")
+	}
+	builder := plan.NewBuilder(value.schema)
+	if !builder.AddRelation(model.DefineRelationSchema(value.relationA, []model.ColumnID{value.columnA}, []model.KeyID{value.keyA}, value.scope)) ||
+		!builder.AddRelation(model.DefineRelationSchema(value.relationB, []model.ColumnID{value.columnB}, []model.KeyID{value.keyB, alternate}, value.scope)) ||
+		!builder.AddColumn(model.DefineColumnSchema(value.columnA, value.typeID)) ||
+		!builder.AddColumn(model.DefineColumnSchema(value.columnB, value.typeID)) ||
+		!builder.AddKey(model.DefineKeySchema(value.keyA, []model.ColumnID{value.columnA})) ||
+		!builder.AddKey(model.DefineKeySchema(value.keyB, []model.ColumnID{value.columnB})) ||
+		!builder.AddKey(model.DefineKeySchema(alternate, []model.ColumnID{value.columnB})) ||
+		!builder.AddScope(model.DefineScopeSchema(value.scope, []model.ColumnID{value.columnA, value.columnB}, region.True())) ||
+		!builder.AddSignature(signatureValue) ||
+		!builder.AddExpression(plan.DefineExpressionRef(issueExpression(t, value.owner, "alternate-proposal-merge"), merge)) {
+		t.Fatal("add alternate-key proposal schema")
+	}
+	capability, ok := model.NewAscendingCapability(value.typeID)
+	if !ok || !builder.AddTypeCapability(capability) {
+		t.Fatal("capability")
+	}
+	schema, ok := builder.Build()
+	if !ok {
+		t.Fatal("build schema")
+	}
+	report := typing.Check(schema)
+	if report.Valid() || !hasIssue(report, typing.CodeKeyMismatch) {
+		t.Fatalf("proposal Merge accepted a key not issued by the Apply output denominator: %v", report.Issues())
+	}
+}
+
+func TestSpanApplyRequiresAProvenRangeBoundary(t *testing.T) {
+	value := newFixture(t)
+	bounded, ok := signature.NewBoundedSpanDelivery(1, value.keyA)
+	if !ok {
+		t.Fatal("bounded span delivery")
+	}
+	completeSpan, ok := signature.NewCompleteSpanDelivery(value.keyA)
+	if !ok {
+		t.Fatal("complete span delivery")
+	}
+	input := algebra.NewInput(value.relationA)
+
+	// A nominal Input has the right relation and key, but it is only a flat
+	// row stream. Accepting it here would let Apply interpret incidental batch
+	// boundaries as the authored complete denominator range.
+	direct := algebra.NewApply([]algebra.Expression{input}, algebra.NewApplyContract(value.operation, []algebra.SlotSource{algebra.NewSlotSource(0, 0)}, algebra.OwnerNamed()))
+	directReport := typing.Check(schemaWithDelivery(t, value, []algebra.Expression{direct}, true, bounded))
+	if directReport.Valid() {
+		t.Fatal("span Apply over an unbounded Input was accepted")
+	}
+	if !hasIssue(directReport, typing.CodeDeliveryMismatch) {
+		t.Fatalf("span Apply lacked range-boundary refusal: %v", directReport.Issues())
+	}
+
+	// Group proves an ordered bounded range.
+	group := algebra.NewGroup(input, algebra.NewGroupContract(value.keyA, mustCardinality(t, model.ExactlyOne)))
+	groupApply := algebra.NewApply([]algebra.Expression{group}, algebra.NewApplyContract(value.operation, []algebra.SlotSource{algebra.NewSlotSource(0, 0)}, algebra.OwnerNamed()))
+	groupReport := typing.Check(schemaWithDelivery(t, value, []algebra.Expression{groupApply}, true, bounded))
+	if !groupReport.Valid() {
+		t.Fatalf("span Apply over Group rejected: %v", groupReport.Error())
+	}
+
+	// CompleteSpan is stronger: it requires the exact closed denominator
+	// materialized by Complete, rather than merely any range boundary.
+	complete := algebra.NewComplete(input, value.denominatorA)
+	completeApply := algebra.NewApply([]algebra.Expression{complete}, algebra.NewApplyContract(value.operation, []algebra.SlotSource{algebra.NewSlotSource(0, 0)}, algebra.OwnerNamed()))
+	completeReport := typing.Check(schemaWithDelivery(t, value, []algebra.Expression{completeApply}, true, completeSpan))
+	if !completeReport.Valid() {
+		t.Fatalf("span Apply over Complete rejected: %v", completeReport.Error())
+	}
+	completeOverGroup := typing.Check(schemaWithDelivery(t, value, []algebra.Expression{groupApply}, true, completeSpan))
+	if completeOverGroup.Valid() || !hasIssue(completeOverGroup, typing.CodeDeliveryMismatch) {
+		t.Fatalf("CompleteSpan Apply over Group accepted: %v", completeOverGroup.Issues())
+	}
+}
+
+func TestApplyRequiresAtLeastOneDeliveredChild(t *testing.T) {
+	value := newFixture(t)
+	input := algebra.NewInput(value.relationA)
+	positive := algebra.NewApply([]algebra.Expression{input}, algebra.NewApplyContract(value.operation, []algebra.SlotSource{algebra.NewSlotSource(0, 0)}, algebra.OwnerNamed()))
+	if report := typing.Check(validSchema(t, value, positive)); !report.Valid() {
+		t.Fatalf("one-child Apply rejected: %v", report.Error())
+	}
+
+	// Owner seed/materializer signatures may legitimately have no inputs: they
+	// publish base facts at seal/mount, not through a runtime judgment. The
+	// signature must remain sealable; only an algebra.Apply which tries to
+	// invoke it with zero delivered children is invalid.
+	accepted, acceptedOK := outcome.NewSet(outcome.Produced, outcome.NoCandidate, outcome.NoSelection, outcome.Refused)
+	if !acceptedOK {
+		t.Fatal("seed outcomes")
+	}
+	seed, seedOK := signature.Seal(signature.Spec{
+		Identity:    value.operation,
+		Fence:       signature.Fence{Owner: value.owner, Schema: value.schema},
+		Outputs:     []signature.Output{{Relation: value.relationB, Column: value.columnB, Type: value.typeID, Presence: signature.ProducePresent, Denominator: value.denominatorB}},
+		Cardinality: mustCardinality(t, model.ExactlyOne),
+		Outcomes:    accepted,
+	})
+	if !seedOK || !seed.Available() || seed.InputLen() != 0 {
+		t.Fatal("zero-input seed signature did not seal")
+	}
+	base := schemaWith(t, value, nil, false)
+	builder := plan.NewBuilder(value.schema)
+	for _, relation := range base.Relations() {
+		if !builder.AddRelation(relation) {
+			t.Fatal("seed add relation")
+		}
+	}
+	for _, column := range base.Columns() {
+		if !builder.AddColumn(column) {
+			t.Fatal("seed add column")
+		}
+	}
+	for _, key := range base.Keys() {
+		if !builder.AddKey(key) {
+			t.Fatal("seed add key")
+		}
+	}
+	for _, scope := range base.Scopes() {
+		if !builder.AddScope(scope) {
+			t.Fatal("seed add scope")
+		}
+	}
+	zero := algebra.NewApply([]algebra.Expression{}, algebra.NewApplyContract(value.operation, nil, algebra.OwnerNamed()))
+	if !builder.AddExpression(plan.DefineExpressionRef(issueExpression(t, value.owner, "zero-child-apply"), zero)) || !builder.AddSignature(seed) {
+		t.Fatal("seed Apply schema declarations")
+	}
+	schema, schemaOK := builder.Build()
+	if !schemaOK {
+		t.Fatal("seed Apply schema")
+	}
+	report := typing.Check(schema)
+	if report.Valid() || !hasIssue(report, typing.CodeShapeMismatch) {
+		t.Fatalf("zero-child Apply accepted: %v", report.Issues())
+	}
+}
+
+func hasIssue(report typing.Report, want typing.Code) bool {
+	for _, issue := range report.Issues() {
+		if issue.Code == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestAlgebraRequirementsAreDeduplicatedAndCanonical(t *testing.T) {
@@ -177,6 +419,51 @@ func TestAlgebraRequirementsAreDeduplicatedAndCanonical(t *testing.T) {
 		if !builder.AddScope(scope) {
 			t.Fatal("add scope")
 		}
+	}
+	capability, capabilityOK := model.NewAscendingCapability(value.typeID)
+	secondCapability, secondCapabilityOK := model.NewAscendingCapability(secondType)
+	if !capabilityOK || !builder.AddTypeCapability(capability) || !secondCapabilityOK || !builder.AddTypeCapability(secondCapability) {
+		t.Fatal("add ascending type capability")
+	}
+	delivery, ok := signature.NewScalarDelivery()
+	if !ok {
+		t.Fatal("scalar delivery")
+	}
+	cardinality := mustCardinality(t, model.ExactlyOne)
+	outcomes, ok := outcome.NewSet(outcome.Produced, outcome.NoCandidate, outcome.NoSelection, outcome.Refused)
+	if !ok {
+		t.Fatal("outcomes")
+	}
+	secondOperation := issueOperation(t, value.owner, "second-operation")
+	for _, specification := range []signature.Spec{
+		{
+			Identity:    value.operation,
+			Fence:       signature.Fence{Owner: value.owner, Schema: value.schema},
+			Inputs:      []signature.Input{{Relation: value.relationA, Column: value.columnA, Type: value.typeID, Presence: signature.RequireOpaque, Delivery: delivery, Denominator: value.denominatorA}},
+			Outputs:     []signature.Output{{Relation: value.relationA, Column: value.columnA, Type: value.typeID, Presence: signature.ProducePresent, Denominator: value.denominatorA}},
+			Cardinality: cardinality, Outcomes: outcomes,
+		},
+		{
+			Identity:    signature.Identity{Operation: secondOperation, Version: 1},
+			Fence:       signature.Fence{Owner: value.owner, Schema: value.schema},
+			Inputs:      []signature.Input{{Relation: value.relationA, Column: value.columnA, Type: value.typeID, Presence: signature.RequireOpaque, Delivery: delivery, Denominator: value.denominatorA}},
+			Outputs:     []signature.Output{{Relation: value.relationB, Column: value.columnB, Type: secondType, Presence: signature.ProducePresent, Denominator: value.denominatorB}},
+			Cardinality: cardinality, Outcomes: outcomes,
+		},
+	} {
+		sealed, sealedOK := signature.Seal(specification)
+		if !sealedOK || !builder.AddSignature(sealed) {
+			t.Fatal("add signature")
+		}
+	}
+	firstApply := algebra.NewApply([]algebra.Expression{algebra.NewInput(value.relationA)}, algebra.NewApplyContract(value.operation, []algebra.SlotSource{algebra.NewSlotSource(0, 0)}, algebra.OwnerNamed()))
+	secondApply := algebra.NewApply([]algebra.Expression{algebra.NewInput(value.relationA)}, algebra.NewApplyContract(signature.Identity{Operation: secondOperation, Version: 1}, []algebra.SlotSource{algebra.NewSlotSource(0, 0)}, algebra.OwnerNamed()))
+	firstExpression := algebra.NewPublish(firstApply, algebra.NewPublishContract(value.relationA, value.keyA))
+	secondExpression := algebra.NewPublish(secondApply, algebra.NewPublishContract(value.relationB, value.keyB))
+	firstID := issueExpression(t, value.owner, "distinct-first")
+	secondID := issueExpression(t, value.owner, "distinct-second")
+	if !builder.AddExpression(plan.DefineExpressionRef(firstID, firstExpression)) || !builder.AddExpression(plan.DefineExpressionRef(secondID, secondExpression)) {
+		t.Fatal("add distinct output expressions")
 	}
 	schema, ok := builder.Build()
 	if !ok {
@@ -213,7 +500,7 @@ func TestNearestMutationIsRejectedForEveryOperator(t *testing.T) {
 		{"Merge-missing-key", algebra.NewMerge([]algebra.Expression{inputA, inputA}, algebra.NewMergeContract(issueKey(t, value.relationA, "missing"))), typing.CodeMissingReference},
 		{"Group-invalid-cardinality", algebra.NewGroup(inputA, algebra.NewGroupContract(value.keyA, model.Cardinality{})), typing.CodeOperatorContract},
 		{"Complete-foreign-denominator", algebra.NewComplete(inputA, issueDenominator(t, value.owner, "missing")), typing.CodeDenominatorMismatch},
-		{"Apply-unknown-operation", algebra.NewApply([]algebra.Expression{inputA}, algebra.NewApplyContract(signature.Identity{Operation: issueOperation(t, value.owner, "missing"), Version: 1})), typing.CodeSignatureMismatch},
+		{"Apply-unknown-operation", algebra.NewApply([]algebra.Expression{inputA}, algebra.NewApplyContract(signature.Identity{Operation: issueOperation(t, value.owner, "missing"), Version: 1}, []algebra.SlotSource{algebra.NewSlotSource(0, 0)}, algebra.OwnerNamed())), typing.CodeSignatureMismatch},
 		{"Publish-foreign-destination", algebra.NewPublish(inputB, algebra.NewPublishContract(issueRelation(t, value.owner, "missing"), value.keyB)), typing.CodeMissingReference},
 	}
 	for _, mutation := range mutations {
@@ -246,11 +533,11 @@ func TestExactSchemaFenceAndTypeMembershipAreIndependentChecks(t *testing.T) {
 		t.Fatal("outcomes")
 	}
 	foreignSignature, ok := signature.Seal(signature.Spec{
-		Identity:  value.operation,
-		Fence:     signature.Fence{Owner: value.owner, Schema: otherSchema},
-		Inputs:    []signature.Input{{Relation: value.relationA, Column: value.columnA, Type: issueType(t, value.owner, "foreign-type"), Presence: signature.RequirePresent, Delivery: delivery, Denominator: value.denominatorA}},
-		Outputs:   []signature.Output{{Relation: value.relationB, Column: value.columnB, Type: value.typeID, Presence: signature.ProducePresent}},
-		Authority: signature.OutputAuthority{Denominator: value.denominatorB}, Cardinality: mustCardinality(t, model.ExactlyOne), Outcomes: accepted,
+		Identity:    value.operation,
+		Fence:       signature.Fence{Owner: value.owner, Schema: otherSchema},
+		Inputs:      []signature.Input{{Relation: value.relationA, Column: value.columnA, Type: issueType(t, value.owner, "foreign-type"), Presence: signature.RequirePresent, Delivery: delivery, Denominator: value.denominatorA}},
+		Outputs:     []signature.Output{{Relation: value.relationB, Column: value.columnB, Type: value.typeID, Presence: signature.ProducePresent, Denominator: value.denominatorB}},
+		Cardinality: mustCardinality(t, model.ExactlyOne), Outcomes: accepted,
 	})
 	if !ok {
 		t.Fatal("foreign signature")
@@ -391,16 +678,4 @@ func token(t *testing.T, label string) identity.ContentID {
 		t.Fatal("token")
 	}
 	return value
-}
-
-func TestARelationReadAtTwoCoordinatesJoinsWithItself(t *testing.T) {
-	value := newFixture(t)
-	left := algebra.NewInput(value.relationA)
-	right := algebra.NewInput(value.relationA)
-	selfJoin := algebra.NewJoin(left, right, algebra.NewJoinContract([]model.ColumnID{value.columnA}, []model.ColumnID{value.columnA}))
-	schema := validSchema(t, value, selfJoin)
-	report := typing.Check(schema)
-	if !report.Valid() {
-		t.Fatalf("a relation read at two coordinates cannot form a join result: %v", report.Error())
-	}
 }
