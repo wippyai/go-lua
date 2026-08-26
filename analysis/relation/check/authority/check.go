@@ -625,9 +625,13 @@ func (checker *checker) checkExpression(expression algebra.Expression, path stri
 		if len(inputs) == 0 {
 			checker.add(CodeInvalidExpression, path+".inputs")
 		}
+		childInfos := make([]exprInfo, 0, len(inputs))
 		for index, childExpression := range inputs {
-			info = mergeInfo(info, checker.checkExpression(childExpression, fmt.Sprintf("%s.inputs[%d]", path, index), stack))
+			child := checker.checkExpression(childExpression, fmt.Sprintf("%s.inputs[%d]", path, index), stack)
+			childInfos = append(childInfos, child)
+			info = mergeInfo(info, child)
 		}
+		info.scoped = allScoped(childInfos)
 		if key := value.Contract().Key(); !checker.keyUsableByInfo(key, info) {
 			checker.add(CodeInvalidMembership, path+".key")
 		}

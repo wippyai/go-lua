@@ -316,3 +316,20 @@ func issueDependency(t *testing.T, owner model.OwnerID, value string) model.Depe
 	}
 	return result
 }
+
+func TestMergeOfScopedChildrenIsScoped(t *testing.T) {
+	value := newAuthorityFixture(t)
+	denominator, ok := model.NewDenominatorRef(value.relation, value.key)
+	if !ok {
+		t.Fatal("output denominator unavailable")
+	}
+	sig := value.signature(t, value.schemaID, value.foreignRelation, value.foreignColumn, value.foreignType, value.foreignKey, denominator, []signature.Output{value.output(t, value.relation, value.column, value.typeID)})
+	left := algebra.NewInput(value.foreignRelation)
+	right := algebra.NewInput(value.foreignRelation)
+	merge := algebra.NewMerge([]algebra.Expression{left, right}, algebra.NewMergeContract(value.foreignKey))
+	apply := algebra.NewApply([]algebra.Expression{merge}, algebra.NewApplyContract(sig.Identity()))
+	publish := algebra.NewPublish(apply, algebra.NewPublishContract(value.relation, value.key))
+	if report := Check(value.schema(t, sig, value.foreignRelation, value.foreignColumn, value.foreignKey, publish)); hasCode(report, CodeInvalidScopeOrder) {
+		t.Fatalf("a merge of scoped children reports scope disorder: %s", report.Error())
+	}
+}

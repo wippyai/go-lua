@@ -50,7 +50,7 @@
     "rule": "heap-empty",
     "status": "COMPILES",
     "sketch": "Publish(Merge(Apply(Project(Select(Join(Input,Select(Input))))),Apply(Select(Input))))",
-    "certified": "authority[19]",
+    "certified": "CERTIFIED",
     "expressions": 1
   },
   {
@@ -77,7 +77,7 @@
     "rule": "heap-formal-freeze",
     "status": "COMPILES",
     "sketch": "Publish(Apply(Project(Select(Join(Join(Input,Select(Input)),Select(Input)))))) | Publish(Merge(Apply(Project(Select(Join(Join(Join(Join(Input,Select(Input)),Complete(Select(Input))),Select(Input)),Complete(Select(Input)))))),Select(Input)))",
-    "certified": "authority[19]",
+    "certified": "CERTIFIED",
     "expressions": 2
   },
   {
@@ -86,7 +86,7 @@
     "rule": "raw-get",
     "status": "COMPILES",
     "sketch": "Publish(Apply(Project(Select(Join(Input,Select(Input)))))) | Publish(Apply(Project(Select(Join(Input,Select(Input)))))) | Publish(Apply(Project(Select(Join(Input,Select(Input)))))) | Publish(Apply(Project(Select(Join(Input,Select(Input)))))) | Publish(Apply(Project(Select(Join(Join(Join(Input,Select(Input)),Select(Input)),Select(Input)))))) | Publish(Merge(Apply(Project(Select(Join(Join(Join(Join(Join(Input,Select(Input)),Select(Input)),Select(Input)),Select(Input)),Select(Input))))),Select(Input)))",
-    "certified": "authority[19]",
+    "certified": "CERTIFIED",
     "reason": "plan authored from the read chain; the rule declaration carries no Program",
     "expressions": 6
   },
@@ -96,7 +96,7 @@
     "rule": "raw-set",
     "status": "COMPILES",
     "sketch": "Publish(Apply(Project(Select(Join(Input,Select(Input)))))) | Publish(Apply(Project(Select(Join(Input,Select(Input)))))) | Publish(Apply(Project(Select(Join(Input,Select(Input)))))) | Publish(Apply(Project(Select(Join(Join(Join(Input,Select(Input)),Select(Input)),Select(Input)))))) | Publish(Merge(Apply(Project(Select(Join(Join(Join(Join(Input,Select(Input)),Select(Input)),Select(Input)),Complete(Select(Input)))))),Select(Input)))",
-    "certified": "authority[19]",
+    "certified": "CERTIFIED",
     "reason": "plan authored from the read chain; the rule declaration carries no Program",
     "expressions": 5
   },
@@ -106,7 +106,7 @@
     "rule": "heap-publication-freeze",
     "status": "COMPILES",
     "sketch": "Publish(Apply(Project(Select(Join(Join(Input,Select(Input)),Select(Input)))))) | Publish(Merge(Apply(Project(Select(Join(Join(Join(Join(Input,Select(Input)),Complete(Select(Input))),Select(Input)),Complete(Select(Input)))))),Select(Input)))",
-    "certified": "authority[19]",
+    "certified": "CERTIFIED",
     "expressions": 2
   },
   {
@@ -124,7 +124,7 @@
     "rule": "placement-allocation-birth",
     "status": "COMPILES",
     "sketch": "Publish(Merge(Apply(Project(Select(Join(Input,Select(Input))))),Select(Input)))",
-    "certified": "authority[19]",
+    "certified": "CERTIFIED",
     "expressions": 1
   },
   {
@@ -133,7 +133,7 @@
     "rule": "placement-closure-capture",
     "status": "COMPILES",
     "sketch": "Publish(Apply(Project(Select(Join(Input,Select(Input)))))) | Publish(Apply(Project(Select(Join(Join(Input,Select(Input)),Select(Input)))))) | Publish(Merge(Apply(Project(Select(Join(Join(Join(Input,Select(Input)),Select(Input)),Select(Input))))),Select(Input)))",
-    "certified": "authority[19]",
+    "certified": "CERTIFIED",
     "expressions": 3
   },
   {
@@ -160,7 +160,7 @@
     "rule": "placement-fresh-birth",
     "status": "COMPILES",
     "sketch": "Publish(Merge(Apply(Project(Select(Join(Input,Select(Input))))),Select(Input)))",
-    "certified": "authority[19]",
+    "certified": "CERTIFIED",
     "expressions": 1
   },
   {
@@ -169,7 +169,7 @@
     "rule": "placement-publication-escape",
     "status": "COMPILES",
     "sketch": "Publish(Apply(Project(Select(Join(Input,Select(Input)))))) | Publish(Apply(Project(Select(Join(Join(Input,Select(Input)),Select(Input)))))) | Publish(Merge(Apply(Project(Select(Join(Join(Join(Input,Select(Input)),Select(Input)),Select(Input))))),Select(Input)))",
-    "certified": "authority[19]",
+    "certified": "CERTIFIED",
     "expressions": 3
   },
   {
@@ -196,7 +196,7 @@
     "rule": "placement-suspension",
     "status": "COMPILES",
     "sketch": "Publish(Apply(Project(Select(Join(Join(Input,Select(Input)),Select(Input)))))) | Publish(Apply(Project(Select(Join(Join(Join(Input,Select(Input)),Select(Input)),Select(Input)))))) | Publish(Merge(Apply(Project(Select(Join(Join(Join(Join(Input,Select(Input)),Complete(Select(Input))),Complete(Select(Input))),Complete(Select(Input)))))),Select(Input)))",
-    "certified": "authority[19]",
+    "certified": "CERTIFIED",
     "expressions": 3
   },
   {
@@ -205,7 +205,7 @@
     "rule": "placement-suspension-evidence",
     "status": "COMPILES",
     "sketch": "Publish(Apply(Project(Select(Join(Join(Input,Select(Input)),Select(Input)))))) | Publish(Apply(Project(Select(Join(Join(Join(Input,Select(Input)),Select(Input)),Select(Input)))))) | Publish(Merge(Apply(Project(Select(Join(Join(Join(Join(Input,Select(Input)),Complete(Select(Input))),Complete(Select(Input))),Complete(Select(Input)))))),Select(Input)))",
-    "certified": "authority[19]",
+    "certified": "CERTIFIED",
     "expressions": 3
   },
   {
@@ -223,7 +223,7 @@
     "rule": "static-transfer",
     "status": "COMPILES",
     "sketch": "Publish(Merge(Apply(Project(Select(Join(Input,Select(Input))))),Select(Input)))",
-    "certified": "authority[19]",
+    "certified": "CERTIFIED",
     "expressions": 1
   },
   {
@@ -232,7 +232,7 @@
     "rule": "typestate-obligation",
     "status": "COMPILES",
     "sketch": "Publish(Apply(Project(Select(Join(Join(Input,Select(Input)),Select(Input)))))) | Publish(Merge(Apply(Project(Select(Join(Join(Join(Input,Select(Input)),Select(Input)),Complete(Select(Input)))))),Select(Input)))",
-    "certified": "authority[19]",
+    "certified": "CERTIFIED",
     "expressions": 2
   },
   {
@@ -241,7 +241,7 @@
     "rule": "value-allocation",
     "status": "COMPILES",
     "sketch": "Publish(Merge(Apply(Select(Input)),Apply(Select(Input))))",
-    "certified": "authority[19]",
+    "certified": "CERTIFIED",
     "expressions": 1
   },
   {
@@ -250,7 +250,7 @@
     "rule": "value-binary-arithmetic",
     "status": "COMPILES",
     "sketch": "Publish(Merge(Apply(Project(Select(Join(Join(Input,Select(Input)),Select(Input))))),Select(Input)))",
-    "certified": "Join output repeats a nominal column identity; authority[19]",
+    "certified": "Join output repeats a nominal column identity",
     "expressions": 1
   },
   {
@@ -259,7 +259,7 @@
     "rule": "value-callresult-body",
     "status": "COMPILES",
     "sketch": "Publish(Apply(Project(Select(Join(Input,Select(Input)))))) | Publish(Merge(Apply(Project(Select(Join(Join(Input,Select(Input)),Select(Input))))),Select(Input)))",
-    "certified": "authority[19]",
+    "certified": "CERTIFIED",
     "expressions": 2
   },
   {
@@ -277,7 +277,7 @@
     "rule": "value-binary-equality",
     "status": "COMPILES",
     "sketch": "Publish(Merge(Apply(Project(Select(Join(Join(Input,Select(Input)),Select(Input))))),Select(Input)))",
-    "certified": "Join output repeats a nominal column identity; authority[19]",
+    "certified": "Join output repeats a nominal column identity",
     "expressions": 1
   },
   {
@@ -286,7 +286,7 @@
     "rule": "value-callresult-freshresult",
     "status": "COMPILES",
     "sketch": "Publish(Apply(Project(Select(Join(Input,Select(Input)))))) | Publish(Merge(Apply(Project(Select(Join(Join(Input,Select(Input)),Complete(Select(Input)))))),Apply(Select(Input))))",
-    "certified": "authority[19]",
+    "certified": "CERTIFIED",
     "expressions": 2
   },
   {
@@ -295,7 +295,7 @@
     "rule": "value-callresult-moduleload",
     "status": "COMPILES",
     "sketch": "Publish(Merge(Apply(Project(Select(Join(Join(Input,Select(Input)),Select(Input))))),Select(Input)))",
-    "certified": "authority[19]",
+    "certified": "CERTIFIED",
     "expressions": 1
   },
   {
@@ -304,7 +304,7 @@
     "rule": "value-binary-order",
     "status": "COMPILES",
     "sketch": "Publish(Merge(Apply(Project(Select(Join(Join(Input,Select(Input)),Select(Input))))),Select(Input)))",
-    "certified": "Join output repeats a nominal column identity; authority[19]",
+    "certified": "Join output repeats a nominal column identity",
     "expressions": 1
   },
   {
@@ -313,7 +313,7 @@
     "rule": "value-presence-refinement",
     "status": "COMPILES",
     "sketch": "Publish(Merge(Apply(Project(Select(Join(Input,Select(Input))))),Select(Input)))",
-    "certified": "authority[19]",
+    "certified": "CERTIFIED",
     "expressions": 1
   },
   {
@@ -322,7 +322,7 @@
     "rule": "value-callresult-resultalias",
     "status": "COMPILES",
     "sketch": "Publish(Apply(Project(Select(Join(Input,Select(Input)))))) | Publish(Merge(Apply(Project(Select(Join(Join(Input,Select(Input)),Select(Input))))),Select(Input)))",
-    "certified": "authority[19]",
+    "certified": "CERTIFIED",
     "expressions": 2
   },
   {
@@ -331,7 +331,7 @@
     "rule": "value-runtime-kind-call",
     "status": "COMPILES",
     "sketch": "Publish(Merge(Apply(Project(Select(Join(Join(Join(Join(Input,Select(Input)),Select(Input)),Select(Input)),Select(Input))))),Select(Input)))",
-    "certified": "Join output repeats a nominal column identity; authority[19]",
+    "certified": "Join output repeats a nominal column identity",
     "expressions": 1
   },
   {
@@ -349,7 +349,7 @@
     "rule": "value-transfer",
     "status": "COMPILES",
     "sketch": "Publish(Merge(Apply(Project(Select(Join(Input,Select(Input))))),Select(Input)))",
-    "certified": "authority[19]",
+    "certified": "CERTIFIED",
     "expressions": 1
   }
 ]
