@@ -23,6 +23,7 @@ func RuleEntry() rule.Spec {
 		Issues: []rule.Issuance{
 			{Occurrence: "occurrence/value-source", Requirement: "program-requirement/unrestricted", Form: "program-form/base-none"},
 			{Occurrence: "occurrence/formal-entry", Requirement: "program-requirement/unrestricted", Form: "program-form/base-none"},
+			{Occurrence: "occurrence/global-entry", Requirement: "program-requirement/unrestricted", Form: "program-form/base-none"},
 		},
 		Lane:     rule.LaneMounted,
 		Semantic: "semantic/rule/value/source",

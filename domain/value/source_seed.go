@@ -238,7 +238,9 @@ func (schema *valueBuilder) sealSourceSeedOccurrences() bool {
 		}
 		for index := 0; index < count; index++ {
 			row, rowOK := program.OccurrenceAt(index)
-			if !rowOK || row.Kind() != programschema.OccurrenceValueSource && row.Kind() != programschema.OccurrenceFormalEntry {
+			if !rowOK || row.Kind() != programschema.OccurrenceValueSource &&
+				row.Kind() != programschema.OccurrenceFormalEntry &&
+				row.Kind() != programschema.OccurrenceGlobalEntry {
 				continue
 			}
 			id := row.ID()
@@ -248,6 +250,15 @@ func (schema *valueBuilder) sealSourceSeedOccurrences() bool {
 			value, valueOK := schema.sealBoundary().Values().ForMountedSemantic(module, id)
 			valueID, valueIDOK := schema.sealBoundary().Values().ID(value)
 			seed, seedOK := schema.SourceSeedForValueID(valueID)
+			if !seedOK && row.Kind() == programschema.OccurrenceGlobalEntry {
+				// Program offers an admission for every unwritten global cell a
+				// body reads; Value declines the ones whose binding names no
+				// value it can carry - denied and absent bindings among them.
+				// A declined admission contributes no fact, which is the same
+				// answer as not being offered one.
+				delete(rows.occurrenceIndex, id)
+				continue
+			}
 			if !valueOK || !valueIDOK || !seedOK || !id.Available() || seed.occurrence.Available() || seed.module.Available() {
 				return false
 			}

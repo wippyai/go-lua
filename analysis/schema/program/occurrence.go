@@ -53,10 +53,17 @@ const (
 	// its sole finish Point and Call input are owner-issued references, not a
 	// consumer-side reconstruction.
 	OccurrenceSubjectLiveness
+	// OccurrenceGlobalEntry admits one Host global cell at the entry of every
+	// callable body, which is what a body entered by an unknown caller can
+	// still know about that cell. It is issued only for a cell no code in the
+	// program writes, so what it carries is settled for every entry rather
+	// than being one path's value standing in for all of them. Its identity is
+	// the cell, and its points are those entries.
+	OccurrenceGlobalEntry
 )
 
 func (kind OccurrenceKind) Valid() bool {
-	return kind >= OccurrencePointAttachment && kind <= OccurrenceSubjectLiveness
+	return kind >= OccurrencePointAttachment && kind <= OccurrenceGlobalEntry
 }
 
 // occurrenceOutputOperand names the operand position at which a family whose
@@ -152,6 +159,9 @@ func (row Occurrence) Available() bool {
 	// against, the route that proves the arm, and the storage the subject was
 	// read from - which is what the arm narrows, so a row without it names no
 	// coordinate any later Read is addressed to.
+	if row.kind == OccurrenceGlobalEntry && (row.body.Available() || row.pointCount == 0 || row.inputCount != 1 || row.code != 0) {
+		return false
+	}
 	if row.kind == OccurrenceOperationPredicateRefinement && (!row.body.Available() || row.pointCount != 1 || row.inputCount != 5) {
 		return false
 	}

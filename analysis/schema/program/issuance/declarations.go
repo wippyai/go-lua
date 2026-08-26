@@ -414,6 +414,7 @@ func familyDeclarations(codeFamilies []CodeFamily) ([]schemaissuance.Spec, bool)
 		{"occurrence/binary-presence-refinement", programschema.OccurrenceBinaryPresenceRefinement},
 		{"occurrence/return-boundary", programschema.OccurrenceReturnBoundary},
 		{"occurrence/formal-entry", programschema.OccurrenceFormalEntry},
+		{"occurrence/global-entry", programschema.OccurrenceGlobalEntry},
 		{"occurrence/operation-predicate-refinement", programschema.OccurrenceOperationPredicateRefinement},
 		{"occurrence/binary-concat", programschema.OccurrenceBinaryConcat},
 		{"occurrence/subject-liveness", programschema.OccurrenceSubjectLiveness},

@@ -391,6 +391,11 @@ func (compiler *compiler) copyOccurrenceCatalogFailure() CompileFailure {
 	if failure := compiler.copyStorage(); failure.Available() {
 		return failure
 	}
+	// After the storage rows, because which cells this program writes is
+	// stated by those rows and is what decides which cells may be admitted.
+	if failure := compiler.copyGlobalEntryAdmissions(); failure.Available() {
+		return failure
+	}
 	if failure := compiler.copyIndexAccess(); failure.Available() {
 		return failure
 	}

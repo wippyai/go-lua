@@ -4,6 +4,8 @@ import "github.com/wippyai/go-lua/analysis/schema/program"
 
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/program/artifact/compiler/internal/rowidentity"
+	"github.com/wippyai/go-lua/analysis/program/flow/authored"
 	"github.com/wippyai/go-lua/analysis/program/flow/causal"
 	flowkind "github.com/wippyai/go-lua/analysis/program/flow/kind"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
@@ -332,4 +334,129 @@ func (compiler *compiler) copyComputations() CompileFailure {
 		}
 	}
 	return CompileFailure{}
+}
+
+// copyGlobalEntryAdmissions publishes each Host global cell that no code in
+// this program writes at the entry of every body that reads it.
+//
+// A body entered by an unknown caller still knows what such a cell holds:
+// nothing can have changed it, so its value is the same at every entry, and
+// the row says exactly that. A cell this program does write is deliberately
+// absent - its value at an arbitrary entry is the join over those writes,
+// which this row cannot state, and admitting the unwritten value in its place
+// would be one path's value standing in for all of them.
+//
+// The row spans bodies rather than naming one, because the fact it admits is
+// the same for all of them; its identity is the cell, and its points are the
+// entries of the bodies that read it, so a cell nothing reads costs nothing.
+func (compiler *compiler) copyGlobalEntryAdmissions() CompileFailure {
+	view := compiler.input.Flow()
+	cells := view.Authored().Storage().Cells()
+	programID := compiler.input.ContentID()
+	readers, written := compiler.storageCellAccess()
+	if len(readers) == 0 {
+		return CompileFailure{}
+	}
+	entries, entriesOK := compiler.bodyEntryPoints()
+	if !entriesOK {
+		return compileFailure(CompileStageOccurrences, CompileRowOccurrence, -1, -1, CompileReasonOccurrenceValueSourcePoints)
+	}
+	for index := 0; index < cells.Count(); index++ {
+		term, termOK := cells.At(index)
+		if !termOK {
+			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceValueSourceAppend)
+		}
+		kind, _, _, cellOK := cells.Get(term)
+		if !cellOK {
+			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceValueSourceAppend)
+		}
+		if kind != authored.CellGlobal {
+			continue
+		}
+		cellID, idOK := rowidentity.StorageCellID(programID, view, term)
+		if !idOK || !cellID.Available() {
+			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceValueSourceAppend)
+		}
+		bodies, mentioned := readers[cellID]
+		if !mentioned {
+			continue
+		}
+		if _, mutated := written[cellID]; mutated {
+			continue
+		}
+		var points []identity.ContentID
+		for _, body := range bodies {
+			points = append(points, entries[body]...)
+		}
+		if len(points) == 0 {
+			continue
+		}
+		if !compiler.appendOccurrence(
+			programschema.OccurrenceGlobalEntry,
+			cellID,
+			identity.ContentID{},
+			canonicalPoints(points),
+			[]identity.ContentID{cellID},
+			0,
+		) {
+			return compileFailure(CompileStageOccurrences, CompileRowOccurrence, index, -1, CompileReasonOccurrenceValueSourceAppend)
+		}
+	}
+	return CompileFailure{}
+}
+
+// bodyEntryPoints answers each callable body's own entry points, which is
+// where a fact admitted for that body is stated.
+func (compiler *compiler) bodyEntryPoints() (map[identity.ContentID][]identity.ContentID, bool) {
+	entries := make(map[identity.ContentID][]identity.ContentID)
+	all := compiler.bodyBoundary.BodyEntries()
+	for _, body := range compiler.bodyBoundary.Bodies() {
+		offset, count, spanOK := body.EntrySpan()
+		if !spanOK || uint64(offset)+uint64(count) > uint64(len(all)) {
+			return nil, false
+		}
+		for pointIndex := uint32(0); pointIndex < count; pointIndex++ {
+			entry := all[offset+pointIndex]
+			point := entry.PointID()
+			if !entry.Available() || entry.BodyID() != body.ID() || !point.Available() {
+				return nil, false
+			}
+			entries[body.ID()] = append(entries[body.ID()], point)
+		}
+	}
+	return entries, true
+}
+
+// storageCellAccess answers which storage cells this program's own code reads
+// and which it writes, from the rows that state those accesses rather than by
+// rediscovering them from authored syntax.
+//
+// Both sets bound the admission: a cell nothing reads needs no entry fact, and
+// a cell anything writes may not be given one.
+func (compiler *compiler) storageCellAccess() (map[identity.ContentID][]identity.ContentID, map[identity.ContentID]struct{}) {
+	readers := make(map[identity.ContentID][]identity.ContentID)
+	written := make(map[identity.ContentID]struct{})
+	seen := make(map[[2]identity.ContentID]struct{})
+	for _, row := range compiler.publication.Occurrences {
+		switch row.Kind() {
+		case programschema.OccurrenceStorageRead:
+			cell, cellOK := programschema.OccurrenceInputID(row, compiler.publication.OccurrenceInputs, 0)
+			body, bodyOK := row.BodyID()
+			if !cellOK || !bodyOK || !cell.Available() || !body.Available() {
+				continue
+			}
+			key := [2]identity.ContentID{cell, body}
+			if _, duplicate := seen[key]; duplicate {
+				continue
+			}
+			seen[key] = struct{}{}
+			readers[cell] = append(readers[cell], body)
+		case programschema.OccurrenceStorageWrite, programschema.OccurrenceStorageBindTransfer:
+			cell, cellOK := programschema.OccurrenceInputID(row, compiler.publication.OccurrenceInputs, 2)
+			if cellOK && cell.Available() {
+				written[cell] = struct{}{}
+			}
+		}
+	}
+	return readers, written
 }

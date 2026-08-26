@@ -583,6 +583,12 @@ type valueBuilder struct {
 	// formalSources is the construction-only set of Program-issued formal
 	// storage coordinates that receive Value Top at callable entry.
 	formalSources map[identity.ContentID]struct{}
+	// globalEntryFacts is the construction-only directory of Host global
+	// storage coordinates admitted at callable entry, each carrying the value
+	// its binding was issued with. Program publishes a global-entry row only
+	// for a cell no code writes, so the value it carries is the same at every
+	// entry and is what a body entered by an unknown caller may rely on.
+	globalEntryFacts map[identity.ContentID]Value
 	// structural is the sealed schema vocabulary supplied by composition. It
 	// is construction-only: the published Value Schema retains only the
 	// presealed atom rows and projections, never a second catalog reference.
@@ -995,6 +1001,7 @@ func SealWithFailure(source *link.Link, heaps heap.Schema, calls *calldomain.Alg
 		{SealFailureAllocationResults, builder.sealAllocationResults},
 		{SealFailureFreshResultCalls, builder.sealFreshResultCalls},
 		{SealFailureFreshResultCalls, builder.sealModuleExportFreshRows},
+		{SealFailureSourceValues, func() bool { return builder.sealGlobalEntryDirectory(source.Module()) }},
 		{SealFailureSourceValues, builder.sealSourceValues},
 		{SealFailureSourceOccurrences, builder.sealSourceSeedOccurrences},
 		{SealFailureGlobalBootstrapResults, func() bool { return builder.sealGlobalBootstrapResults(source.Module()) }},
@@ -1941,6 +1948,20 @@ func (schema *valueBuilder) sealSourceValues() bool {
 		return false
 	}
 	for subject, row := range schema.coordinates {
+		// A global admitted at callable entry carries the value its binding
+		// was issued with, not Top: Program published the row only because no
+		// code writes that cell, so this is what it holds at every entry.
+		if fact, admitted := schema.globalEntryFacts[subject]; admitted {
+			if row.source.schema != nil {
+				return false
+			}
+			if !schema.owns(fact) || schema.Equal(fact, schema.Bottom()) {
+				return false
+			}
+			row.source = fact
+			schema.coordinates[subject] = row
+			continue
+		}
 		if _, formal := schema.formalSources[subject]; formal {
 			if row.atom != 0 || row.source.schema != nil {
 				return false
@@ -2655,4 +2676,101 @@ func (schema *Schema) referenceAtom(reference uint32, role materialization.Role)
 		role:      role,
 	}]
 	return id, id != 0
+}
+
+// sealGlobalEntryDirectory resolves the value each admitted Host global cell
+// carries at callable entry.
+//
+// Program decides which cells are admitted: it publishes a global-entry row
+// only for a cell no code in this program writes, so nothing can have changed
+// it and the value it was bound with is the value it holds at every entry.
+// This step answers only what that value is. A cell the program writes has no
+// row here and keeps its flow-derived value, because what it holds at an
+// arbitrary entry is the join over those writes, which no single binding
+// states.
+func (schema *valueBuilder) sealGlobalEntryDirectory(module *linkmodule.Component) bool {
+	if schema == nil || schema.sealProject() == nil || schema.sealHost() == nil || schema.sealBoundary() == nil || module == nil || schema.globalEntryFacts != nil {
+		return false
+	}
+	schema.globalEntryFacts = make(map[identity.ContentID]Value)
+	admitted, admittedOK := schema.globalEntryAdmissions()
+	if !admittedOK {
+		return false
+	}
+	if len(admitted) == 0 {
+		return true
+	}
+	contract, contractOK := schema.sealBoundary().Target()
+	if !contractOK || contract == nil {
+		return false
+	}
+	globals := schema.sealHost().Globals()
+	for index := 0; index < globals.Count(); index++ {
+		binding, bindingOK := globals.At(index)
+		if !bindingOK {
+			return false
+		}
+		analysis, boot, cell, _, class, initial, mappingOK := globals.Mapping(binding)
+		if !mappingOK || class == vocabulary.InitialBindingInvalid || initial == 0 {
+			continue
+		}
+		canonical, canonicalOK := globals.For(analysis, cell)
+		shard, _, _, rootOK := module.Roots().Mapping(analysis)
+		if !canonicalOK || canonical != binding || !rootOK {
+			continue
+		}
+		subject, subjectOK := schema.sealBoundary().Values().Of(shard, cell)
+		subjectID, subjectIDOK := schema.sealBoundary().Values().ID(subject)
+		if !subjectOK || !subjectIDOK || !subjectID.Available() {
+			continue
+		}
+		if _, wanted := admitted[subjectID]; !wanted {
+			continue
+		}
+		kind, kindOK := contract.InitialValueKind(initial)
+		if !kindOK || kind == vocabulary.InitialValueAbsent {
+			// An absent binding names no value to admit. The cell keeps no
+			// entry fact rather than being handed a fabricated one.
+			continue
+		}
+		fact, factOK := schema.targetInitialCold(boot, initial)
+		if !factOK || schema.Equal(fact, schema.Default()) {
+			continue
+		}
+		if prior, duplicate := schema.globalEntryFacts[subjectID]; duplicate && !schema.Equal(prior, fact) {
+			return false
+		}
+		schema.globalEntryFacts[subjectID] = fact
+	}
+	return true
+}
+
+// globalEntryAdmissions answers the Value identity of every cell Program
+// admitted at callable entry. The rows are the authority for which cells those
+// are; this walk never decides admission itself.
+func (schema *valueBuilder) globalEntryAdmissions() (map[identity.ContentID]struct{}, bool) {
+	admitted := make(map[identity.ContentID]struct{})
+	if schema.artifacts == nil {
+		return nil, false
+	}
+	for module, mount := range schema.artifacts {
+		program := mount.Program.Program
+		count, countOK := program.OccurrenceKindCount(programschema.OccurrenceGlobalEntry)
+		if !countOK {
+			return nil, false
+		}
+		for index := 0; index < count; index++ {
+			row, rowOK := program.OccurrenceKindAt(programschema.OccurrenceGlobalEntry, index)
+			if !rowOK {
+				return nil, false
+			}
+			value, valueOK := schema.sealBoundary().Values().ForMountedSemantic(module, row.ID())
+			valueID, valueIDOK := schema.sealBoundary().Values().ID(value)
+			if !valueOK || !valueIDOK || !valueID.Available() {
+				return nil, false
+			}
+			admitted[valueID] = struct{}{}
+		}
+	}
+	return admitted, true
 }

@@ -231,7 +231,7 @@ func (row Program) OccurrenceOutputSemanticID(index int) (identity.ContentID, bo
 		return row.OccurrenceInputID(index, operand)
 	}
 	switch occurrence.Kind() {
-	case OccurrenceValueSource, OccurrenceFormalEntry, OccurrenceStorageRead,
+	case OccurrenceValueSource, OccurrenceFormalEntry, OccurrenceGlobalEntry, OccurrenceStorageRead,
 		OccurrenceBinaryEquality, OccurrenceBinaryArithmetic, OccurrenceBinaryOrder:
 		return occurrence.ID(), true
 	default:
