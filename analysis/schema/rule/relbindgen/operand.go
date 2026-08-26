@@ -97,3 +97,12 @@ func (members *Members[T]) Fill(span Span[T]) (operand.SummaryVector[T], bool) {
 	}
 	return operand.NewMemberVector(members.rows)
 }
+
+// Rows returns the storage this materialization refills. It is how a caller
+// that clones itself per worker sizes the clone at the same width.
+func (cells *Cells[T]) Rows() []operand.SelectedCell[T] {
+	if cells == nil {
+		return nil
+	}
+	return cells.rows
+}

@@ -24,6 +24,7 @@ type PayloadTypes struct {
 	GlobalBootstrapCandidate model.TypeID
 	ValueSourceCandidate     model.TypeID
 	ValueSummary             model.TypeID
+	ResultSlotCandidate      model.TypeID
 	FreshResultCandidate     model.TypeID
 	StorageTransferCandidate model.TypeID
 	ValueCoordinate          model.TypeID
@@ -32,7 +33,7 @@ type PayloadTypes struct {
 
 // Available reports whether every column has an owner-issued type.
 func (types PayloadTypes) Available() bool {
-	return types.Value.Available() && types.ArithmeticCandidate.Available() && types.EqualityCandidate.Available() && types.OrderCandidate.Available() && types.RefinementCandidate.Available() && types.RuntimeKindCandidate.Available() && types.ModuleLoadCandidate.Available() && types.AllocationCandidate.Available() && types.GlobalBootstrapCandidate.Available() && types.ValueSourceCandidate.Available() && types.ValueSummary.Available() && types.FreshResultCandidate.Available() && types.StorageTransferCandidate.Available() && types.ValueCoordinate.Available() && types.ValueRouteTag.Available()
+	return types.Value.Available() && types.ArithmeticCandidate.Available() && types.EqualityCandidate.Available() && types.OrderCandidate.Available() && types.RefinementCandidate.Available() && types.RuntimeKindCandidate.Available() && types.ModuleLoadCandidate.Available() && types.AllocationCandidate.Available() && types.GlobalBootstrapCandidate.Available() && types.ValueSourceCandidate.Available() && types.ValueSummary.Available() && types.ResultSlotCandidate.Available() && types.FreshResultCandidate.Available() && types.StorageTransferCandidate.Available() && types.ValueCoordinate.Available() && types.ValueRouteTag.Available()
 }
 
 // PayloadTags names the store fence each column of this axis interns under.
@@ -48,6 +49,7 @@ type PayloadTags struct {
 	GlobalBootstrapCandidate identity.ContentID
 	ValueSourceCandidate     identity.ContentID
 	ValueSummary             identity.ContentID
+	ResultSlotCandidate      identity.ContentID
 	FreshResultCandidate     identity.ContentID
 	StorageTransferCandidate identity.ContentID
 	ValueCoordinate          identity.ContentID
@@ -56,7 +58,7 @@ type PayloadTags struct {
 
 // Available reports whether every column has a store fence.
 func (tags PayloadTags) Available() bool {
-	return tags.Value.Available() && tags.ArithmeticCandidate.Available() && tags.EqualityCandidate.Available() && tags.OrderCandidate.Available() && tags.RefinementCandidate.Available() && tags.RuntimeKindCandidate.Available() && tags.ModuleLoadCandidate.Available() && tags.AllocationCandidate.Available() && tags.GlobalBootstrapCandidate.Available() && tags.ValueSourceCandidate.Available() && tags.ValueSummary.Available() && tags.FreshResultCandidate.Available() && tags.StorageTransferCandidate.Available() && tags.ValueCoordinate.Available() && tags.ValueRouteTag.Available()
+	return tags.Value.Available() && tags.ArithmeticCandidate.Available() && tags.EqualityCandidate.Available() && tags.OrderCandidate.Available() && tags.RefinementCandidate.Available() && tags.RuntimeKindCandidate.Available() && tags.ModuleLoadCandidate.Available() && tags.AllocationCandidate.Available() && tags.GlobalBootstrapCandidate.Available() && tags.ValueSourceCandidate.Available() && tags.ValueSummary.Available() && tags.ResultSlotCandidate.Available() && tags.FreshResultCandidate.Available() && tags.StorageTransferCandidate.Available() && tags.ValueCoordinate.Available() && tags.ValueRouteTag.Available()
 }
 
 // Payloads is this axis's thin typed owner-column publisher: one Column per
@@ -74,6 +76,7 @@ type Payloads struct {
 	GlobalBootstrapCandidate *relbindgen.Column[*valuedomain.GlobalBootstrapResult]
 	ValueSourceCandidate     *relbindgen.Column[valuedomain.SourceSeed]
 	ValueSummary             *relbindgen.Column[valuedomain.ValueSummaryObservation]
+	ResultSlotCandidate      *relbindgen.Column[valuedomain.MountedCallResultSlot]
 	FreshResultCandidate     *relbindgen.Column[valuedomain.FreshResultCall]
 	StorageTransferCandidate *relbindgen.Column[valuedomain.StorageTransfer]
 	ValueCoordinate          *relbindgen.Column[valuedomain.Coordinate]
@@ -166,6 +169,13 @@ func NewPayloads(types PayloadTypes, tags PayloadTags, reserve int) (Payloads, b
 	if payloads.ValueSummary, ok = relbindgen.NewColumn(types.ValueSummary, valueSummaryStore); !ok {
 		return Payloads{}, false
 	}
+	resultSlotCandidateStore, ok := relbindgen.NewStore[valuedomain.MountedCallResultSlot](tags.ResultSlotCandidate, reserve)
+	if !ok {
+		return Payloads{}, false
+	}
+	if payloads.ResultSlotCandidate, ok = relbindgen.NewColumn(types.ResultSlotCandidate, resultSlotCandidateStore); !ok {
+		return Payloads{}, false
+	}
 	freshResultCandidateStore, ok := relbindgen.NewStore[valuedomain.FreshResultCall](tags.FreshResultCandidate, reserve)
 	if !ok {
 		return Payloads{}, false
@@ -199,7 +209,7 @@ func NewPayloads(types PayloadTypes, tags PayloadTags, reserve int) (Payloads, b
 
 // Available reports whether every column carries live storage.
 func (payloads Payloads) Available() bool {
-	return payloads.Value.Available() && payloads.ArithmeticCandidate.Available() && payloads.EqualityCandidate.Available() && payloads.OrderCandidate.Available() && payloads.RefinementCandidate.Available() && payloads.RuntimeKindCandidate.Available() && payloads.ModuleLoadCandidate.Available() && payloads.AllocationCandidate.Available() && payloads.GlobalBootstrapCandidate.Available() && payloads.ValueSourceCandidate.Available() && payloads.ValueSummary.Available() && payloads.FreshResultCandidate.Available() && payloads.StorageTransferCandidate.Available() && payloads.ValueCoordinate.Available() && payloads.ValueRouteTag.Available()
+	return payloads.Value.Available() && payloads.ArithmeticCandidate.Available() && payloads.EqualityCandidate.Available() && payloads.OrderCandidate.Available() && payloads.RefinementCandidate.Available() && payloads.RuntimeKindCandidate.Available() && payloads.ModuleLoadCandidate.Available() && payloads.AllocationCandidate.Available() && payloads.GlobalBootstrapCandidate.Available() && payloads.ValueSourceCandidate.Available() && payloads.ValueSummary.Available() && payloads.ResultSlotCandidate.Available() && payloads.FreshResultCandidate.Available() && payloads.StorageTransferCandidate.Available() && payloads.ValueCoordinate.Available() && payloads.ValueRouteTag.Available()
 }
 
 // Lattices are this axis's ascent witnesses. Each names the owner's own
