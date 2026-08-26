@@ -74,15 +74,21 @@ func (lowering Lowering) Translate(value region.Region) (support.Mask, bool) {
 
 // fold evaluates the diagram in its own canonical postorder. Every row's low
 // and high references name a terminal or an earlier row, so one left-to-right
-// pass resolves each row exactly once and the last row is the root.
+// pass resolves each row exactly once. The owner-sealed Root reference is
+// resolved explicitly below; the physical bridge never infers the root from
+// the length or ordering of Nodes.
 //
 // A candidate mask becomes readable only once the work seals its pages, so the
 // fold checks construction and leaves validity to the single seal in Translate.
 func (lowering Lowering) fold(work *support.Work, value region.Region) (support.Mask, bool) {
-	if value.IsFalse() {
-		return work.False(), true
+	root, rootOK := value.Root()
+	if !rootOK {
+		return support.Mask{}, false
 	}
-	if value.IsTrue() {
+	switch root {
+	case 0:
+		return work.False(), true
+	case 1:
 		return work.True(), true
 	}
 	rows := value.Nodes()
@@ -106,7 +112,7 @@ func (lowering Lowering) fold(work *support.Work, value region.Region) (support.
 		}
 		resolved[index] = mask
 	}
-	return resolved[len(resolved)-1], true
+	return reference(work, resolved, root)
 }
 
 // shannon composes one decision row as (extent and high) or (not extent and

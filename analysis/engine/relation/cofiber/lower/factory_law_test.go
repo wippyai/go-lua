@@ -1,6 +1,7 @@
 package lower_test
 
 import (
+	"sync"
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/engine/internal/facts/support"
@@ -8,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/engine/relation/cofiber/lower"
 	"github.com/wippyai/go-lua/analysis/engine/relation/runtime"
 	"github.com/wippyai/go-lua/analysis/engine/relation/state/database"
+	"github.com/wippyai/go-lua/analysis/engine/relation/state/geometry"
 	"github.com/wippyai/go-lua/analysis/engine/testdata/relationfixture/arithmetic"
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/relation/mount/witness"
@@ -98,7 +100,7 @@ func TestAMountSolvesThroughTheGeometryItsOwnRegionsFoldTo(t *testing.T) {
 	if !ok {
 		t.Fatal("seal the lowering over the mount's own atoms")
 	}
-	factory, ok := lower.NewFactory(lowering)
+	factory, ok := lower.NewFactory(mounted.RuntimeFence().Mount(), lowering)
 	if !ok {
 		t.Fatal("adopt the lowering as a mount capability")
 	}
@@ -158,7 +160,7 @@ func TestAMountWhoseAtomsWereNotDeclaredRefuses(t *testing.T) {
 	if !ok {
 		t.Fatal("seal the lowering")
 	}
-	factory, ok := lower.NewFactory(lowering)
+	factory, ok := lower.NewFactory(fixture.Mounted().RuntimeFence().Mount(), lowering)
 	if !ok {
 		t.Fatal("adopt the lowering")
 	}
@@ -171,5 +173,142 @@ func TestAMountWhoseAtomsWereNotDeclaredRefuses(t *testing.T) {
 	}
 	if _, ok := absent.Bind(fixture.Mounted()); ok {
 		t.Fatal("the zero factory bound a geometry")
+	}
+}
+
+// TestAFactoryAdmitsTheExpectedMountOnlyAndCachesItsExactView covers the
+// mount identity half of the capability. A sibling mount is refused before
+// construction, while a second artifact carrying the same MountID is still
+// refused after the first bind because its complete mounted identity differs.
+// Exact repeats return the original immutable view, including its guard
+// manager, rather than rebuilding cofiber state.
+func TestAFactoryAdmitsTheExpectedMountOnlyAndCachesItsExactView(t *testing.T) {
+	fixture := arithmetic.New(t, 0xB1)
+	mounted := fixture.Mounted()
+	atoms := mountAtoms(t, mounted)
+	order := make([]guard.Atom, len(atoms))
+	for index := range atoms {
+		order[index] = guard.Atom(index + 1)
+	}
+	manager, err := guard.New(order)
+	if err != nil || manager == nil {
+		t.Fatalf("seal the physical universe: %v", err)
+	}
+	work := support.New(manager)
+	if work == nil {
+		t.Fatal("open physical work")
+	}
+	extents := make(map[identity.ContentID]support.Mask, len(atoms))
+	for index, atom := range atoms {
+		mask, ok := work.Literal(guard.Atom(index+1), true)
+		if !ok {
+			t.Fatalf("extent for atom %d", index)
+		}
+		extents[atom] = mask
+	}
+	if !work.Seal() {
+		work.Discard()
+		t.Fatal("seal the declared extents")
+	}
+	lowering, ok := lower.New(manager, extents)
+	if !ok {
+		t.Fatal("seal the lowering")
+	}
+	factory, ok := lower.NewFactory(mounted.RuntimeFence().Mount(), lowering)
+	if !ok {
+		t.Fatal("adopt the expected mount")
+	}
+	first, ok := factory.Bind(mounted)
+	if !ok || !first.Available() {
+		t.Fatal("bind the first exact mount")
+	}
+	repeat, ok := factory.Bind(mounted)
+	if !ok || !repeat.Available() || repeat.Manager() != first.Manager() {
+		t.Fatal("repeat bind did not return the cached view")
+	}
+
+	sibling := arithmetic.New(t, 0xB2)
+	if view, ok := factory.Bind(sibling.Mounted()); ok || view.Available() {
+		t.Fatal("a sibling mount crossed the expected-mount boundary")
+	}
+	// A fresh mount with the same MountID still has a distinct address/store
+	// fence. It must not be mistaken for the cached exact mounted capability.
+	different := arithmetic.New(t, 0xB1)
+	if view, ok := factory.Bind(different.Mounted()); ok || view.Available() {
+		t.Fatal("a distinct mounted artifact reused the cached view")
+	}
+
+	wrong, ok := lower.NewFactory(identity.MountID{0xB9}, lowering)
+	if !ok {
+		t.Fatal("adopt the alternate expected mount")
+	}
+	if view, ok := wrong.Bind(mounted); ok || view.Available() {
+		t.Fatal("a mount with the wrong expected identity bound")
+	}
+}
+
+// TestAFactoryConcurrentExactBindsShareOneConstruction checks that copying
+// the value capability across workers cannot reopen the cold bind. Every
+// exact call succeeds and observes the one cached manager.
+func TestAFactoryConcurrentExactBindsShareOneConstruction(t *testing.T) {
+	fixture := arithmetic.New(t, 0xC1)
+	mounted := fixture.Mounted()
+	atoms := mountAtoms(t, mounted)
+	order := make([]guard.Atom, len(atoms))
+	for index := range atoms {
+		order[index] = guard.Atom(index + 1)
+	}
+	manager, err := guard.New(order)
+	if err != nil || manager == nil {
+		t.Fatalf("seal the physical universe: %v", err)
+	}
+	work := support.New(manager)
+	if work == nil {
+		t.Fatal("open physical work")
+	}
+	extents := make(map[identity.ContentID]support.Mask, len(atoms))
+	for index, atom := range atoms {
+		mask, ok := work.Literal(guard.Atom(index+1), true)
+		if !ok {
+			t.Fatalf("extent for atom %d", index)
+		}
+		extents[atom] = mask
+	}
+	if !work.Seal() {
+		work.Discard()
+		t.Fatal("seal the declared extents")
+	}
+	lowering, ok := lower.New(manager, extents)
+	if !ok {
+		t.Fatal("seal the lowering")
+	}
+	factory, ok := lower.NewFactory(mounted.RuntimeFence().Mount(), lowering)
+	if !ok {
+		t.Fatal("adopt the expected mount")
+	}
+	const workers = 8
+	views := make(chan geometry.Geometry, workers)
+	var group sync.WaitGroup
+	group.Add(workers)
+	for index := 0; index < workers; index++ {
+		go func() {
+			defer group.Done()
+			view, ok := factory.Bind(mounted)
+			if ok {
+				views <- view
+			}
+		}()
+	}
+	group.Wait()
+	close(views)
+	count := 0
+	for view := range views {
+		if !view.Available() || view.Manager() != manager {
+			t.Fatal("a concurrent bind observed a rebuilt or invalid view")
+		}
+		count++
+	}
+	if count != workers {
+		t.Fatalf("concurrent exact binds = %d, want %d", count, workers)
 	}
 }
