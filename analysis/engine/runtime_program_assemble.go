@@ -141,6 +141,7 @@ type CommittedProgram struct {
 	pointOwners       []contextfiber.PointOwner
 	nativeCallStages  map[artifactMountedRuleOccurrence]artifactNativeCallStage
 	pointTransitions  []ProgramPointTransition
+	activations       []programActivationBinding
 	members           []programMemberBinding
 	queries           []programQueryBinding
 	addressed         []composition.Key
