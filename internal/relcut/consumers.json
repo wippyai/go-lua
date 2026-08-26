@@ -197,7 +197,8 @@
     "column": "",
     "note": "program assembly moves to the relational runtime"
    },
-   "gap": ""
+   "gap": "",
+   "waits_on": "G6-relational-runtime-is-a-stub"
   },
   {
    "path": "analysis/catalog/publication.go",
@@ -229,7 +230,8 @@
     "column": "",
     "note": "the symbol appears only in a declaration, which lowers into the canonical ExecutionSchema"
    },
-   "gap": ""
+   "gap": "",
+   "waits_on": "G5-declared-surface-has-no-production-entry"
   },
   {
    "path": "analysis/compile.go",
@@ -291,7 +293,8 @@
     "column": "",
     "note": "the declaration lowers into the canonical ExecutionSchema"
    },
-   "gap": ""
+   "gap": "",
+   "waits_on": "G5-declared-surface-has-no-production-entry"
   },
   {
    "path": "analysis/diagnostic/attach.go",
@@ -335,7 +338,8 @@
     "column": "",
     "note": "program assembly moves to the relational runtime"
    },
-   "gap": ""
+   "gap": "",
+   "waits_on": "G6-relational-runtime-is-a-stub"
   },
   {
    "path": "analysis/diagnostic/collect.go",
@@ -361,7 +365,8 @@
     "column": "",
     "note": "it reads a sealed answer whose publication into the snapshot the cut deletes"
    },
-   "gap": "G1-snapshot-publication-absent"
+   "gap": "G1-snapshot-publication-absent",
+   "waits_on": ""
   },
   {
    "path": "analysis/diagnostic/collect_query.go",
@@ -381,7 +386,8 @@
     "column": "",
     "note": "it reads a sealed answer whose publication into the snapshot the cut deletes"
    },
-   "gap": "G1-snapshot-publication-absent"
+   "gap": "G1-snapshot-publication-absent",
+   "waits_on": ""
   },
   {
    "path": "analysis/diagnostic/status.go",
@@ -443,7 +449,8 @@
     "column": "",
     "note": "the symbol appears only in a declaration, which lowers into the canonical ExecutionSchema"
    },
-   "gap": ""
+   "gap": "",
+   "waits_on": "G5-declared-surface-has-no-production-entry"
   },
   {
    "path": "analysis/inspect/session.go",
@@ -463,7 +470,8 @@
     "column": "",
     "note": "the symbol appears only in a declaration, which lowers into the canonical ExecutionSchema"
    },
-   "gap": ""
+   "gap": "",
+   "waits_on": "G5-declared-surface-has-no-production-entry"
   },
   {
    "path": "analysis/internal/workspace/artifact_products.go",
@@ -495,7 +503,8 @@
     "column": "",
     "note": "the only consumer of a keep-if-generic surface whose proof obligation is undischarged"
    },
-   "gap": "G3-rows-obligation-undischarged"
+   "gap": "G3-rows-obligation-undischarged",
+   "waits_on": ""
   },
   {
    "path": "analysis/lua/selectapply/publish.go",
@@ -521,7 +530,8 @@
     "column": "",
     "note": "the symbol appears only in a declaration, which lowers into the canonical ExecutionSchema"
    },
-   "gap": ""
+   "gap": "",
+   "waits_on": "G5-declared-surface-has-no-production-entry"
   },
   {
    "path": "analysis/result/native_branch.go",
@@ -541,7 +551,8 @@
     "column": "",
     "note": "it reads a sealed answer whose publication into the snapshot the cut deletes"
    },
-   "gap": "G1-snapshot-publication-absent"
+   "gap": "G1-snapshot-publication-absent",
+   "waits_on": ""
   },
   {
    "path": "analysis/result/project.go",
@@ -567,7 +578,8 @@
     "column": "",
     "note": "it reads a sealed answer whose publication into the snapshot the cut deletes"
    },
-   "gap": "G1-snapshot-publication-absent"
+   "gap": "G1-snapshot-publication-absent",
+   "waits_on": ""
   },
   {
    "path": "analysis/result/query.go",
@@ -593,7 +605,8 @@
     "column": "",
     "note": "the symbol appears only in a declaration, which lowers into the canonical ExecutionSchema"
    },
-   "gap": ""
+   "gap": "",
+   "waits_on": "G5-declared-surface-has-no-production-entry"
   },
   {
    "path": "analysis/schema/rule/relbindgen/operand.go",
@@ -631,7 +644,8 @@
     "column": "",
     "note": "reads only the surviving operand value types; the S2-reducer-operand-abi restatement already landed, so this consumer is at its post-cut home and the cut owes it nothing"
    },
-   "gap": ""
+   "gap": "",
+   "waits_on": ""
   },
   {
    "path": "domain/call/owner/registration.go",
@@ -663,7 +677,8 @@
     "column": "",
     "note": "the declaration lowers into the canonical ExecutionSchema"
    },
-   "gap": ""
+   "gap": "",
+   "waits_on": "G5-declared-surface-has-no-production-entry"
   },
   {
    "path": "domain/call/query/query.go",
@@ -755,7 +770,8 @@
     "column": "",
     "note": "the values arrive as operands while the fold runs, so the emitted binding decoder answers it"
    },
-   "gap": ""
+   "gap": "",
+   "waits_on": "S4-schema-fragments"
   },
   {
    "path": "domain/effect/callsite/fold.go",
@@ -775,7 +791,8 @@
     "column": "",
     "note": "reads only the surviving operand value types; the S2-reducer-operand-abi restatement already landed, so this consumer is at its post-cut home and the cut owes it nothing"
    },
-   "gap": ""
+   "gap": "",
+   "waits_on": ""
   },
   {
    "path": "domain/effect/callsite/mounted_site.go",
@@ -795,7 +812,8 @@
     "column": "",
     "note": "the declaration lowers into the canonical ExecutionSchema"
    },
-   "gap": ""
+   "gap": "",
+   "waits_on": "G5-declared-surface-has-no-production-entry"
   },
   {
    "path": "domain/effect/callsite/occurrence.go",
@@ -833,7 +851,8 @@
     "column": "",
     "note": "program assembly moves to the relational runtime"
    },
-   "gap": ""
+   "gap": "",
+   "waits_on": "G6-relational-runtime-is-a-stub"
   },
   {
    "path": "domain/effect/callsite/publication_transition.go",
@@ -883,7 +902,8 @@
     "column": "",
     "note": "program assembly moves to the relational runtime"
    },
-   "gap": ""
+   "gap": "",
+   "waits_on": "G6-relational-runtime-is-a-stub"
   },
   {
    "path": "domain/effect/owner/query.go",
@@ -975,7 +995,8 @@
     "column": "",
     "note": "the values arrive as operands while the fold runs, so the emitted binding decoder answers it"
    },
-   "gap": ""
+   "gap": "",
+   "waits_on": "S4-schema-fragments"
   },
   {
    "path": "domain/effect/owner/registration.go",
@@ -1007,7 +1028,8 @@
     "column": "",
     "note": "the declaration lowers into the canonical ExecutionSchema"
    },
-   "gap": ""
+   "gap": "",
+   "waits_on": "G5-declared-surface-has-no-production-entry"
   },
   {
    "path": "domain/heap/allocation/closed/rule.go",
@@ -1027,7 +1049,8 @@
     "column": "",
     "note": "reads only the surviving operand value types; the S2-reducer-operand-abi restatement already landed, so this consumer is at its post-cut home and the cut owes it nothing"
    },
-   "gap": ""
+   "gap": "",
+   "waits_on": ""
   },
   {
    "path": "domain/heap/context/owner/registration.go",
@@ -1053,7 +1076,8 @@
     "column": "",
     "note": "the declaration lowers into the canonical ExecutionSchema"
    },
-   "gap": ""
+   "gap": "",
+   "waits_on": "G5-declared-surface-has-no-production-entry"
   },
   {
    "path": "domain/heap/formalfreeze/core.go",
@@ -1073,7 +1097,8 @@
     "column": "",
     "note": "reads only the surviving operand value types; the S2-reducer-operand-abi restatement already landed, so this consumer is at its post-cut home and the cut owes it nothing"
    },
-   "gap": ""
+   "gap": "",
+   "waits_on": ""
   },
   {
    "path": "domain/heap/formalfreeze/routes.go",
@@ -1093,7 +1118,8 @@
     "column": "",
     "note": "reads only the surviving operand value types; the S2-reducer-operand-abi restatement already landed, so this consumer is at its post-cut home and the cut owes it nothing"
    },
-   "gap": ""
+   "gap": "",
+   "waits_on": ""
   },
   {
    "path": "domain/heap/owner/registration.go",
@@ -1125,7 +1151,8 @@
     "column": "",
     "note": "the declaration lowers into the canonical ExecutionSchema"
    },
-   "gap": ""
+   "gap": "",
+   "waits_on": "G5-declared-surface-has-no-production-entry"
   },
   {
    "path": "domain/heap/publicationfreeze/routes.go",
@@ -1145,7 +1172,8 @@
     "column": "",
     "note": "reads only the surviving operand value types; the S2-reducer-operand-abi restatement already landed, so this consumer is at its post-cut home and the cut owes it nothing"
    },
-   "gap": ""
+   "gap": "",
+   "waits_on": ""
   },
   {
    "path": "domain/pack/owner/registration.go",
@@ -1177,7 +1205,8 @@
     "column": "",
     "note": "the declaration lowers into the canonical ExecutionSchema"
    },
-   "gap": ""
+   "gap": "",
+   "waits_on": "G5-declared-surface-has-no-production-entry"
   },
   {
    "path": "domain/placement/capture/core.go",
@@ -1197,7 +1226,8 @@
     "column": "",
     "note": "the values arrive as operands while the fold runs, so the emitted binding decoder answers it"
    },
-   "gap": ""
+   "gap": "",
+   "waits_on": "S6-engine-runtime"
   },
   {
    "path": "domain/placement/containment/reducer.go",
@@ -1217,7 +1247,8 @@
     "column": "",
     "note": "reads only the surviving operand value types; the S2-reducer-operand-abi restatement already landed, so this consumer is at its post-cut home and the cut owes it nothing"
    },
-   "gap": ""
+   "gap": "",
+   "waits_on": ""
   },
   {
    "path": "domain/placement/containment/routes.go",
@@ -1237,7 +1268,8 @@
     "column": "",
     "note": "the values arrive as operands while the fold runs, so the emitted binding decoder answers it"
    },
-   "gap": ""
+   "gap": "",
+   "waits_on": "S6-engine-runtime"
   },
   {
    "path": "domain/placement/formal/core.go",
@@ -1257,7 +1289,8 @@
     "column": "",
     "note": "reads only the surviving operand value types; the S2-reducer-operand-abi restatement already landed, so this consumer is at its post-cut home and the cut owes it nothing"
    },
-   "gap": ""
+   "gap": "",
+   "waits_on": ""
   },
   {
    "path": "domain/placement/formal/routes.go",
@@ -1277,7 +1310,8 @@
     "column": "",
     "note": "reads only the surviving operand value types; the S2-reducer-operand-abi restatement already landed, so this consumer is at its post-cut home and the cut owes it nothing"
    },
-   "gap": ""
+   "gap": "",
+   "waits_on": ""
   },
   {
    "path": "domain/placement/observation.go",
@@ -1297,7 +1331,8 @@
     "column": "",
     "note": "the values arrive as operands while the fold runs, so the emitted binding decoder answers it"
    },
-   "gap": ""
+   "gap": "",
+   "waits_on": "S6-engine-runtime"
   },
   {
    "path": "domain/placement/owner/registration.go",
@@ -1329,7 +1364,8 @@
     "column": "",
     "note": "the declaration lowers into the canonical ExecutionSchema"
    },
-   "gap": ""
+   "gap": "",
+   "waits_on": "G5-declared-surface-has-no-production-entry"
   },
   {
    "path": "domain/placement/publicationescape/core.go",
@@ -1403,7 +1439,8 @@
     "column": "",
     "note": "the values arrive as operands while the fold runs, so the emitted binding decoder answers it"
    },
-   "gap": ""
+   "gap": "",
+   "waits_on": "S6-engine-runtime"
   },
   {
    "path": "domain/placement/query/query.go",
@@ -1525,7 +1562,8 @@
     "column": "",
     "note": "it reads a sealed answer whose publication into the snapshot the cut deletes"
    },
-   "gap": "G1-snapshot-publication-absent"
+   "gap": "G1-snapshot-publication-absent",
+   "waits_on": ""
   },
   {
    "path": "domain/placement/returnescape/core.go",
@@ -1545,7 +1583,8 @@
     "column": "",
     "note": "reads only the surviving operand value types; the S2-reducer-operand-abi restatement already landed, so this consumer is at its post-cut home and the cut owes it nothing"
    },
-   "gap": ""
+   "gap": "",
+   "waits_on": ""
   },
   {
    "path": "domain/placement/static_containment_depth.go",
@@ -1565,7 +1604,8 @@
     "column": "",
     "note": "the values arrive as operands while the fold runs, so the emitted binding decoder answers it"
    },
-   "gap": ""
+   "gap": "",
+   "waits_on": "S6-engine-runtime"
   },
   {
    "path": "domain/placement/suspension/evidence_observation.go",
@@ -1585,7 +1625,8 @@
     "column": "",
     "note": "the values arrive as operands while the fold runs, so the emitted binding decoder answers it"
    },
-   "gap": ""
+   "gap": "",
+   "waits_on": "S6-engine-runtime"
   },
   {
    "path": "domain/placement/suspension/evidence_schema.go",
@@ -1677,7 +1718,8 @@
     "column": "",
     "note": "the symbol appears only in a declaration, which lowers into the canonical ExecutionSchema"
    },
-   "gap": ""
+   "gap": "",
+   "waits_on": "G5-declared-surface-has-no-production-entry"
   },
   {
    "path": "domain/placement/suspension/reducer.go",
@@ -1697,7 +1739,8 @@
     "column": "",
     "note": "reads only the surviving operand value types; the S2-reducer-operand-abi restatement already landed, so this consumer is at its post-cut home and the cut owes it nothing"
    },
-   "gap": ""
+   "gap": "",
+   "waits_on": ""
   },
   {
    "path": "domain/placement/suspension/routes.go",
@@ -1717,7 +1760,8 @@
     "column": "",
     "note": "reads only the surviving operand value types; the S2-reducer-operand-abi restatement already landed, so this consumer is at its post-cut home and the cut owes it nothing"
    },
-   "gap": ""
+   "gap": "",
+   "waits_on": ""
   },
   {
    "path": "domain/placement/transfer/core.go",
@@ -1737,7 +1781,8 @@
     "column": "",
     "note": "reads only the surviving operand value types; the S2-reducer-operand-abi restatement already landed, so this consumer is at its post-cut home and the cut owes it nothing"
    },
-   "gap": ""
+   "gap": "",
+   "waits_on": ""
   },
   {
    "path": "domain/placement/transfer/routes.go",
@@ -1757,7 +1802,8 @@
     "column": "",
     "note": "reads only the surviving operand value types; the S2-reducer-operand-abi restatement already landed, so this consumer is at its post-cut home and the cut owes it nothing"
    },
-   "gap": ""
+   "gap": "",
+   "waits_on": ""
   },
   {
    "path": "domain/static/owner/registration.go",
@@ -1789,7 +1835,8 @@
     "column": "",
     "note": "the declaration lowers into the canonical ExecutionSchema"
    },
-   "gap": ""
+   "gap": "",
+   "waits_on": "G5-declared-surface-has-no-production-entry"
   },
   {
    "path": "domain/static/type_summary_observation.go",
@@ -1809,7 +1856,8 @@
     "column": "",
     "note": "the engine-typed reducer has no caller; the relation-side operation already folds this family"
    },
-   "gap": "G4-observation-reader-dead"
+   "gap": "G4-observation-reader-dead",
+   "waits_on": ""
   },
   {
    "path": "domain/typestate/statecell/generated_relation_owner.go",
@@ -1859,7 +1907,8 @@
     "column": "",
     "note": "a generated relation owner in no manifest entry while its eight siblings are all in S3-generated-relation-owners"
    },
-   "gap": "G2-typestate-owner-omitted"
+   "gap": "G2-typestate-owner-omitted",
+   "waits_on": ""
   },
   {
    "path": "domain/value/bodyresult/judgment.go",
@@ -1879,7 +1928,8 @@
     "column": "",
     "note": "reads only the surviving operand value types; the S2-reducer-operand-abi restatement already landed, so this consumer is at its post-cut home and the cut owes it nothing"
    },
-   "gap": ""
+   "gap": "",
+   "waits_on": ""
   },
   {
    "path": "domain/value/owner/query.go",
@@ -1971,7 +2021,8 @@
     "column": "",
     "note": "the values arrive as operands while the fold runs, so the emitted binding decoder answers it"
    },
-   "gap": ""
+   "gap": "",
+   "waits_on": "S4-schema-fragments"
   },
   {
    "path": "domain/value/owner/registration.go",
@@ -2003,7 +2054,8 @@
     "column": "",
     "note": "the declaration lowers into the canonical ExecutionSchema"
    },
-   "gap": ""
+   "gap": "",
+   "waits_on": "G5-declared-surface-has-no-production-entry"
   },
   {
    "path": "domain/value/resultalias/judgment.go",
@@ -2023,7 +2075,8 @@
     "column": "",
     "note": "reads only the surviving operand value types; the S2-reducer-operand-abi restatement already landed, so this consumer is at its post-cut home and the cut owes it nothing"
    },
-   "gap": ""
+   "gap": "",
+   "waits_on": ""
   },
   {
    "path": "domain/value/summary_observation.go",
@@ -2043,7 +2096,8 @@
     "column": "",
     "note": "the values arrive as operands while the fold runs, so the emitted binding decoder answers it"
    },
-   "gap": ""
+   "gap": "",
+   "waits_on": "S6-engine-runtime"
   }
  ],
  "gaps": [
@@ -2086,6 +2140,42 @@
    "consumers": [
     "analysis/internal/workspace/artifact_products.go"
    ]
+  },
+  {
+   "id": "G5-declared-surface-has-no-production-entry",
+   "distinction": "a production entry into the declared rule surface: the lowering from an authored declaration to the canonical ExecutionSchema that every declared-surface consumer is to read its answer out of after the cut",
+   "owner": "analysis/schema/rule/relcompile",
+   "consumers": [
+    "analysis/catalog/publication.go",
+    "analysis/compile.go",
+    "analysis/diagnostic/status.go",
+    "analysis/inspect/session.go",
+    "analysis/lua/selectapply/publish.go",
+    "analysis/result/query.go",
+    "domain/call/owner/registration.go",
+    "domain/effect/callsite/mounted_site.go",
+    "domain/effect/owner/registration.go",
+    "domain/heap/context/owner/registration.go",
+    "domain/heap/owner/registration.go",
+    "domain/pack/owner/registration.go",
+    "domain/placement/owner/registration.go",
+    "domain/placement/suspension/evidence_schema.go",
+    "domain/static/owner/registration.go",
+    "domain/value/owner/registration.go"
+   ],
+   "detail": "relcompile holds the grammar and the name registry - Declaration, Rule, JoinSpec, Operand, Publication, Registry and Compile - and lowers them to plan.ExecutionSchema. What it does not hold is a way in from production: no non-test file in the tree imports it, so the whole surface is reachable only from the census and law tests that pin it. Measured against the sixteen entries that name it as their target, it declares none of the thirty-seven symbols they read; every one of those symbols is declared in analysis/engine and nowhere else, so no partial move exists either. No manifest entry builds the entry point: S1-analyzer-constructor restates the constructor onto analysis/engine/relation/runtime, and the S4, S6 and S8 entries that own these consumers all restate onto surfaces of their own. Until an authored declaration can be compiled and read from production code, a consumer pointed here can only be bridged, which is why the map states the prerequisite instead of the move."
+  },
+  {
+   "id": "G6-relational-runtime-is-a-stub",
+   "distinction": "the composed and solved target the analyzer constructor and the runtime-composition readers are restated onto",
+   "owner": "analysis/engine/relation/runtime",
+   "consumers": [
+    "analysis/analyze.go",
+    "analysis/diagnostic/attach.go",
+    "domain/effect/callsite/occurrence.go",
+    "domain/effect/callsite/publication_transition.go"
+   ],
+   "detail": "analysis/engine/relation/runtime holds one file, doc.go. It declares no exported identity and no non-test file imports it. S1-analyzer-constructor is blocked_by nothing and is the entry the manifest says runs before every deletion, so the order the cut is planned in makes it first; it is unreachable all the same, because the surface it restates onto is a stub. The four consumers that name it read CommittedProgram and Answer, both declared in analysis/engine alone."
   }
  ]
 }
