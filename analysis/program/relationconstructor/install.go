@@ -177,3 +177,4 @@ func installScopes(registry *relcompile.Registry, placements []relcompile.Placem
 func scopeToken(kind string, name relcompile.Name) (identity.ContentID, bool) {
 	return identity.DeriveContentID(authorityTokenDomain, []byte(kind), []byte(name.String()))
 }
+

@@ -159,3 +159,4 @@ func TestAMalformedInstallationRefusesWholly(t *testing.T) {
 		t.Fatal("one axis installed twice")
 	}
 }
+
