@@ -46,7 +46,7 @@ func TestHeapAscentProposesAnAscentOfTheCellItRead(t *testing.T) {
 			harness.ScalarInput(t, place.Relation, cellColumn, heapType, place.Denominator),
 			harness.ScalarInput(t, place.Relation, proposedColumn, heapType, place.Denominator),
 		},
-		[]signature.Output{{Relation: place.Relation, Column: cellColumn, Type: heapType, Presence: signature.ProducePresent}},
+		[]signature.Output{{Relation: place.Relation, Column: cellColumn, Type: heapType, Presence: signature.ProducePresent, Denominator: place.Denominator}},
 		exactlyOne(t), outcome.Produced, outcome.Refused)
 	factory, ok := relation.BindHeapAscent(operation, relation.HeapAscentOperation{}, columns, place.Refusal)
 	if !ok {
@@ -111,7 +111,7 @@ func TestReceiverRoutesPublishTheRootsTheOwnerNames(t *testing.T) {
 	}
 	operation := place.Seal(t, "operation/receiver-routes",
 		[]signature.Input{harness.ScalarInput(t, place.Relation, receiverAddress, receiverType, place.Denominator)},
-		[]signature.Output{{Relation: place.Relation, Column: routeAddress, Type: routeType, Presence: signature.ProducePresent}},
+		[]signature.Output{{Relation: place.Relation, Column: routeAddress, Type: routeType, Presence: signature.ProducePresent, Denominator: place.Denominator}},
 		many, outcome.Produced, outcome.NoCandidate, outcome.Refused)
 	judgment, ok := relation.NewHeapReceiverRoutesOperation(fixture.Topology)
 	if !ok {
@@ -178,7 +178,7 @@ func TestHeapSeedsAnswerTheKeyTheyWereGiven(t *testing.T) {
 	factAddress := place.Column(t, "column/fact")
 	operation := place.Seal(t, "operation/heap-ingress",
 		[]signature.Input{harness.ScalarInput(t, place.Relation, keyAddress, keyType, place.Denominator)},
-		[]signature.Output{{Relation: place.Relation, Column: factAddress, Type: heapType, Presence: signature.ProducePresent}},
+		[]signature.Output{{Relation: place.Relation, Column: factAddress, Type: heapType, Presence: signature.ProducePresent, Denominator: place.Denominator}},
 		exactlyOne(t), outcome.Produced, outcome.NoCandidate, outcome.NoSelection, outcome.Opaque, outcome.Refused)
 	factory, ok := relation.BindHeapIngress(operation, relation.HeapIngressOperation{}, columns, place.Refusal)
 	if !ok {
@@ -225,7 +225,7 @@ func TestABindingRefusesAForeignSignature(t *testing.T) {
 		harness.ScalarInput(t, place.Relation, cellColumn, heapType, place.Denominator),
 		harness.ScalarInput(t, place.Relation, place.Column(t, "column/heap-proposed"), heapType, place.Denominator),
 	}
-	outputs := []signature.Output{{Relation: place.Relation, Column: cellColumn, Type: heapType, Presence: signature.ProducePresent}}
+	outputs := []signature.Output{{Relation: place.Relation, Column: cellColumn, Type: heapType, Presence: signature.ProducePresent, Denominator: place.Denominator}}
 	operation := place.Seal(t, "operation/heap-ascent", inputs, outputs, exactlyOne(t), outcome.Produced, outcome.Refused)
 	foreign := place.Seal(t, "operation/foreign", inputs, outputs, exactlyOne(t), outcome.Produced, outcome.Refused)
 	factory, ok := relation.BindHeapAscent(operation, relation.HeapAscentOperation{}, columns, place.Refusal)
@@ -267,11 +267,9 @@ func TestTheHeapBoundaryDoesNotAllocate(t *testing.T) {
 func TestTheHeapAlgebraResolvesByTypeAlone(t *testing.T) {
 	fixture := relationfixture.New(t)
 	place := harness.New(t, "row/cell")
-	var types relation.PayloadTypes
-	var tags relation.PayloadTags
-	place.InstallTypes(t, &types)
-	place.InstallTags(t, &tags)
-	heapType := types.Heap
+	heapType := place.TypeID(t, "type/heap")
+	types := relation.PayloadTypes{Heap: heapType, HeapCandidate: place.TypeID(t, "type/heap-key"), HeapRoute: place.TypeID(t, "type/route"), KeyRoute: place.TypeID(t, "type/key-route"), CallRoute: place.TypeID(t, "type/call-route"), PackRoute: place.TypeID(t, "type/pack-route"), SourceRoute: place.TypeID(t, "type/source-route"), ReadCandidate: place.TypeID(t, "type/read-candidate"), WriteCandidate: place.TypeID(t, "type/write-candidate")}
+	tags := relation.PayloadTags{Heap: harness.Content(t, "store/heap"), HeapCandidate: harness.Content(t, "store/heap-key"), HeapRoute: harness.Content(t, "store/route"), KeyRoute: harness.Content(t, "store/key-route"), CallRoute: harness.Content(t, "store/call-route"), PackRoute: harness.Content(t, "store/pack-route"), SourceRoute: harness.Content(t, "store/source-route"), ReadCandidate: harness.Content(t, "store/read-candidate"), WriteCandidate: harness.Content(t, "store/write-candidate")}
 	payloads, ok := relation.NewPayloads(types, tags, reserve)
 	if !ok {
 		t.Fatal("install the heap columns")

@@ -40,7 +40,7 @@ func TestBothCallSiteReadingsAnswerUnderOneContract(t *testing.T) {
 		harness.ScalarInput(t, place.Relation, mountedAddress, mountedType, place.Denominator),
 		harness.ScalarInput(t, place.Relation, dispatchedAddress, callType, place.Denominator),
 	}
-	outputs := []signature.Output{{Relation: place.Relation, Column: factAddress, Type: effectType, Presence: signature.ProducePresent}}
+	outputs := []signature.Output{{Relation: place.Relation, Column: factAddress, Type: effectType, Presence: signature.ProducePresent, Denominator: place.Denominator}}
 
 	opaqueColumns, ok := relation.NewEffectOpaqueCallSiteColumns(callColumn, effectColumn, mountedColumn)
 	if !ok {

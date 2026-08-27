@@ -3,7 +3,7 @@ package memberdefinition
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/engine/execution"
+	"github.com/wippyai/go-lua/analysis/engine/operand"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
 	definition "github.com/wippyai/go-lua/analysis/schema/axis/member/definition"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
@@ -63,7 +63,7 @@ func TestPublicationEscapeContributionDerivesTheOwnedFoldSignature(t *testing.T)
 	if selection.Relation != "PublicationRoutes" || selection.Tag != "PublicationRouteTag" || selection.Implementation.Name != "DerivePublicationRoutesFromComposition" {
 		t.Fatalf("publication escape selection=%+v, want the owner publisher", selection)
 	}
-	var _ func(placementdomain.Schema, *valuedomain.Schema, *effectfactor.Algebra, *calldomain.Algebra, effectfactor.MountedCall, calldomain.Value, execution.SummaryVector[valuedomain.Value]) (publicationescape.RoutePlan, bool) = publicationescape.DerivePublicationRoutesFromComposition
+	var _ func(placementdomain.Schema, *valuedomain.Schema, *effectfactor.Algebra, *calldomain.Algebra, effectfactor.MountedCall, calldomain.Value, operand.SummaryVector[valuedomain.Value]) (publicationescape.RoutePlan, bool) = publicationescape.DerivePublicationRoutesFromComposition
 	if reducer.Implementation.PackagePath != publicationEscapePackagePath || reducer.Implementation.Name != "PublicationEscapeFold" {
 		t.Fatalf("publication escape implementation=%+v", reducer.Implementation)
 	}

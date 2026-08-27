@@ -44,7 +44,7 @@ func TestDispatchAnswersUnderItsOwnVocabulary(t *testing.T) {
 			harness.ScalarInput(t, place.Relation, candidateAddress, candidateType, place.Denominator),
 			harness.ScalarInput(t, place.Relation, calleeAddress, valueType, place.Denominator),
 		},
-		[]signature.Output{{Relation: place.Relation, Column: factAddress, Type: callType, Presence: signature.ProducePresent}},
+		[]signature.Output{{Relation: place.Relation, Column: factAddress, Type: callType, Presence: signature.ProducePresent, Denominator: place.Denominator}},
 		cardinality, outcome.Produced, outcome.NoCandidate, outcome.NoSelection, outcome.Opaque, outcome.Refused)
 	judgment, ok := relation.NewCallDispatchOperation(fixture.Calls, fixture.Values, fixture.Heap)
 	if !ok {
@@ -92,10 +92,8 @@ func TestDispatchAnswersUnderItsOwnVocabulary(t *testing.T) {
 func TestTheCallAlgebraResolvesByTypeAlone(t *testing.T) {
 	fixture := relationfixture.New(t)
 	place := harness.New(t, "row/call")
-	var types relation.PayloadTypes
-	var tags relation.PayloadTags
-	place.InstallTypes(t, &types)
-	place.InstallTags(t, &tags)
+	types := relation.PayloadTypes{Call: place.TypeID(t, "type/call"), CallCandidate: place.TypeID(t, "type/call-candidate")}
+	tags := relation.PayloadTags{Call: harness.Content(t, "store/call"), CallCandidate: harness.Content(t, "store/call-candidate")}
 	callType := types.Call
 	payloads, ok := relation.NewPayloads(types, tags, reserve)
 	if !ok {
@@ -234,7 +232,7 @@ func TestAFamilyThatPublishesNoFactIsRefusedAnEncoder(t *testing.T) {
 			harness.ScalarInput(t, place.Relation, place.Column(t, "column/candidate"), candidateType, place.Denominator),
 			harness.ScalarInput(t, place.Relation, place.Column(t, "column/trigger"), callType, place.Denominator),
 		},
-		[]signature.Output{{Relation: place.Relation, Column: place.Column(t, "column/fact"), Type: callType, Presence: signature.ProducePresent}},
+		[]signature.Output{{Relation: place.Relation, Column: place.Column(t, "column/fact"), Type: callType, Presence: signature.ProducePresent, Denominator: place.Denominator}},
 		optional, outcome.Produced, outcome.Refused)
 	judgment, ok := relation.NewCallActivationOperation(fixture.Calls)
 	if !ok {

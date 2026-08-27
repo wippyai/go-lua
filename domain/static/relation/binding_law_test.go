@@ -33,7 +33,7 @@ func TestStaticTransferCarriesTheTypeFactItRead(t *testing.T) {
 	}
 	operation := place.Seal(t, "operation/static-transfer",
 		[]signature.Input{harness.ScalarInput(t, place.Relation, sourceAddress, staticType, place.Denominator)},
-		[]signature.Output{{Relation: place.Relation, Column: storedAddress, Type: staticType, Presence: signature.ProducePresent}},
+		[]signature.Output{{Relation: place.Relation, Column: storedAddress, Type: staticType, Presence: signature.ProducePresent, Denominator: place.Denominator}},
 		cardinality, outcome.Produced, outcome.Refused)
 	factory, ok := relation.BindStaticTransfer(operation, relation.StaticTransferOperation{}, columns, place.Refusal)
 	if !ok {
@@ -68,12 +68,11 @@ func TestStaticTransferCarriesTheTypeFactItRead(t *testing.T) {
 func TestTheStaticAlgebraResolvesByTypeAlone(t *testing.T) {
 	fixture := relationfixture.New(t)
 	place := harness.New(t, "row/static")
-	var types relation.PayloadTypes
-	var tags relation.PayloadTags
-	place.InstallTypes(t, &types)
-	place.InstallTags(t, &tags)
-	staticType := types.Static
-	payloads, ok := relation.NewPayloads(types, tags, reserve)
+	staticType := place.TypeID(t, "type/static")
+	payloads, ok := relation.NewPayloads(
+		relation.PayloadTypes{Static: staticType, TypeSummary: place.TypeID(t, "type/type-summary")},
+		relation.PayloadTags{Static: harness.Content(t, "store/static"), TypeSummary: harness.Content(t, "store/type-summary")},
+		reserve)
 	if !ok {
 		t.Fatal("install the static columns")
 	}

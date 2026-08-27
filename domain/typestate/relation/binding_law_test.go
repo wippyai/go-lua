@@ -41,10 +41,8 @@ func TestAnOpaqueCalleeStillPublishesItsRow(t *testing.T) {
 	}
 
 	place := harness.New(t, "row/cell")
-	var types relation.PayloadTypes
-	var tags relation.PayloadTags
-	place.InstallTypes(t, &types)
-	place.InstallTags(t, &tags)
+	types := relation.PayloadTypes{Typestate: place.TypeID(t, "type/typestate"), CallArgumentCandidate: place.TypeID(t, "type/call-argument-candidate"), ProtocolTag: place.TypeID(t, "type/protocol-tag")}
+	tags := relation.PayloadTags{Typestate: harness.Content(t, "store/typestate"), CallArgumentCandidate: harness.Content(t, "store/call-argument-candidate"), ProtocolTag: harness.Content(t, "store/protocol-tag")}
 	payloads, installed := relation.NewPayloads(types, tags, reserve)
 	if !installed {
 		t.Fatal("install the typestate columns")
@@ -76,7 +74,7 @@ func TestAnOpaqueCalleeStillPublishesItsRow(t *testing.T) {
 			harness.ScalarInput(t, place.Relation, tagAddress, types.ProtocolTag, place.Denominator),
 			harness.ScalarInput(t, place.Relation, cellAddress, types.Typestate, place.Denominator),
 		},
-		[]signature.Output{{Relation: place.Relation, Column: cellAddress, Type: types.Typestate, Presence: signature.ProduceOpaque}},
+		[]signature.Output{{Relation: place.Relation, Column: cellAddress, Type: types.Typestate, Presence: signature.ProduceOpaque, Denominator: place.Denominator}},
 		exactly, outcome.Produced, outcome.Opaque, outcome.NoCandidate, outcome.NoSelection, outcome.Refused)
 	factory, ok := relation.BindTypestateObligation(sealed, judgment, columns, place.Refusal)
 	if !ok {

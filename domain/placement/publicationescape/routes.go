@@ -1,7 +1,7 @@
 package publicationescape
 
 import (
-	"github.com/wippyai/go-lua/analysis/engine/execution"
+	"github.com/wippyai/go-lua/analysis/engine/operand"
 	calldomain "github.com/wippyai/go-lua/domain/call"
 	effectfactor "github.com/wippyai/go-lua/domain/effect/factor"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
@@ -157,7 +157,7 @@ func DerivePublicationRoutesFromComposition(
 	calls *calldomain.Algebra,
 	mounted effectfactor.MountedCall,
 	callFact calldomain.Value,
-	actuals execution.SummaryVector[valuedomain.Value],
+	actuals operand.SummaryVector[valuedomain.Value],
 ) (RoutePlan, bool) {
 	if effects == nil || !effects.Valid() || !mounted.Valid() || !actuals.Valid() {
 		return RoutePlan{}, false

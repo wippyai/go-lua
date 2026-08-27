@@ -55,7 +55,7 @@ func TestModuleLoadAnswersWithTheOwnersOwnDisposition(t *testing.T) {
 			harness.ScalarInput(t, place.Relation, argumentAddress, valueType, place.Denominator),
 			harness.ScalarInput(t, place.Relation, dispatchedAddress, callType, place.Denominator),
 		},
-		[]signature.Output{{Relation: place.Relation, Column: resultAddress, Type: valueType, Presence: signature.ProducePresent}},
+		[]signature.Output{{Relation: place.Relation, Column: resultAddress, Type: valueType, Presence: signature.ProducePresent, Denominator: place.Denominator}},
 		exactlyOne(t), outcome.Produced, outcome.NoCandidate, outcome.NoSelection, outcome.Opaque, outcome.Refused)
 	judgment, ok := relation.NewValueModuleLoadOperation(fixture.Values)
 	if !ok {
@@ -126,7 +126,7 @@ func TestValueSummaryFoldsTheCompleteDeliveredGroup(t *testing.T) {
 			harness.CompleteInput(t, place.Relation, cellAddress, valueType, place.Denominator),
 			harness.ScalarInput(t, place.Relation, groupAddress, valueType, place.Denominator),
 		},
-		[]signature.Output{{Relation: place.Relation, Column: observationAddress, Type: summaryType, Presence: signature.ProducePresent}},
+		[]signature.Output{{Relation: place.Relation, Column: observationAddress, Type: summaryType, Presence: signature.ProducePresent, Denominator: place.Denominator}},
 		exactlyOne(t), outcome.Produced, outcome.NoSelection, outcome.Refused)
 	judgment, ok := relation.NewValueSummaryOperation(fixture.Values)
 	if !ok {
@@ -196,7 +196,7 @@ func TestValueTransferCarriesTheFactItRead(t *testing.T) {
 	storedAddress := place.Column(t, "column/stored")
 	operation := place.Seal(t, "operation/value-transfer",
 		[]signature.Input{harness.ScalarInput(t, place.Relation, sourceAddress, valueType, place.Denominator)},
-		[]signature.Output{{Relation: place.Relation, Column: storedAddress, Type: valueType, Presence: signature.ProducePresent}},
+		[]signature.Output{{Relation: place.Relation, Column: storedAddress, Type: valueType, Presence: signature.ProducePresent, Denominator: place.Denominator}},
 		exactlyOne(t), outcome.Produced, outcome.Refused)
 	factory, ok := relation.BindValueTransfer(operation, relation.ValueTransferOperation{}, columns, place.Refusal)
 	if !ok {
@@ -302,7 +302,7 @@ func TestADeliveredSpanSaysWhichRowEachPositionCarries(t *testing.T) {
 			harness.CompleteInput(t, place.Relation, cellAddress, valueType, place.Denominator),
 			harness.ScalarInput(t, place.Relation, groupAddress, valueType, place.Denominator),
 		},
-		[]signature.Output{{Relation: place.Relation, Column: observationAddress, Type: summaryType, Presence: signature.ProducePresent}},
+		[]signature.Output{{Relation: place.Relation, Column: observationAddress, Type: summaryType, Presence: signature.ProducePresent, Denominator: place.Denominator}},
 		exactlyOne(t), outcome.Produced, outcome.NoSelection, outcome.Refused)
 
 	top := fixture.Values.Top()

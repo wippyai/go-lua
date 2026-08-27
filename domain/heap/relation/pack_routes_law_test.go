@@ -80,7 +80,7 @@ func TestThePackExpansionBindsOverTheReadsItsEnumerationMakes(t *testing.T) {
 			harness.ScalarInput(t, place.Relation, candidateAddress, candidateType, place.Denominator),
 			spanInput(t, place.Relation, keyAddress, valueType, place.Denominator, 64),
 		},
-		[]signature.Output{{Relation: place.Relation, Column: packRouteAddress, Type: packRouteType, Presence: signature.ProducePresent}},
+		[]signature.Output{{Relation: place.Relation, Column: packRouteAddress, Type: packRouteType, Presence: signature.ProducePresent, Denominator: place.Denominator}},
 		many, outcome.Produced, outcome.NoCandidate, outcome.Refused)
 
 	judgment, ok := relation.NewRawGetPackRoutesOperation(fixture.Topology)

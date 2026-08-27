@@ -19,10 +19,8 @@ const reserve = 64
 // the answer publishes at the row the frame delivered.
 func TestPlacementTransferCarriesTheFactAlongTheRouteItsTagNames(t *testing.T) {
 	place := harness.New(t, "row/transfer")
-	var types relation.PayloadTypes
-	var tags relation.PayloadTags
-	place.InstallTypes(t, &types)
-	place.InstallTags(t, &tags)
+	types := relation.PayloadTypes{Placement: place.TypeID(t, "type/placement"), SubjectLiveness: place.TypeID(t, "type/subject-liveness"), SuspensionEvidence: place.TypeID(t, "type/suspension-evidence"), Requirement: place.TypeID(t, "type/requirement"), PlacementRouteTag: place.TypeID(t, "type/placement-route-tag")}
+	tags := relation.PayloadTags{Placement: harness.Content(t, "store/placement"), SubjectLiveness: harness.Content(t, "store/subject-liveness"), SuspensionEvidence: harness.Content(t, "store/suspension-evidence"), Requirement: harness.Content(t, "store/requirement"), PlacementRouteTag: harness.Content(t, "store/placement-route-tag")}
 	payloads, ok := relation.NewPayloads(types, tags, reserve)
 	if !ok {
 		t.Fatal("install the placement columns")
@@ -42,7 +40,7 @@ func TestPlacementTransferCarriesTheFactAlongTheRouteItsTagNames(t *testing.T) {
 			harness.ScalarInput(t, place.Relation, tagAddress, types.PlacementRouteTag, place.Denominator),
 			harness.ScalarInput(t, place.Relation, selectedAddress, types.Placement, place.Denominator),
 		},
-		[]signature.Output{{Relation: place.Relation, Column: selectedAddress, Type: types.Placement, Presence: signature.ProducePresent}},
+		[]signature.Output{{Relation: place.Relation, Column: selectedAddress, Type: types.Placement, Presence: signature.ProducePresent, Denominator: place.Denominator}},
 		cardinality, outcome.Produced, outcome.Refused)
 	factory, ok := relation.BindPlacementTransfer(operation, relation.PlacementTransferOperation{}, columns, place.Refusal)
 	if !ok {
@@ -88,10 +86,8 @@ func TestPlacementTransferCarriesTheFactAlongTheRouteItsTagNames(t *testing.T) {
 // ascent without asking a binding which operation produced it.
 func TestThePlacementAlgebraResolvesByTypeAlone(t *testing.T) {
 	place := harness.New(t, "row/placement")
-	var types relation.PayloadTypes
-	var tags relation.PayloadTags
-	place.InstallTypes(t, &types)
-	place.InstallTags(t, &tags)
+	types := relation.PayloadTypes{Placement: place.TypeID(t, "type/placement"), SubjectLiveness: place.TypeID(t, "type/subject-liveness"), SuspensionEvidence: place.TypeID(t, "type/suspension-evidence"), Requirement: place.TypeID(t, "type/requirement"), PlacementRouteTag: place.TypeID(t, "type/placement-route-tag")}
+	tags := relation.PayloadTags{Placement: harness.Content(t, "store/placement"), SubjectLiveness: harness.Content(t, "store/subject-liveness"), SuspensionEvidence: harness.Content(t, "store/suspension-evidence"), Requirement: harness.Content(t, "store/requirement"), PlacementRouteTag: harness.Content(t, "store/placement-route-tag")}
 	payloads, ok := relation.NewPayloads(types, tags, reserve)
 	if !ok {
 		t.Fatal("install the placement columns")

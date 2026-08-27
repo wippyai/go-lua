@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
+	"github.com/wippyai/go-lua/analysis/schema/carrier"
 	"github.com/wippyai/go-lua/analysis/schema/denominator"
 	"github.com/wippyai/go-lua/analysis/schema/rule"
 	ruleplan "github.com/wippyai/go-lua/analysis/schema/rule/plan"
@@ -132,6 +133,11 @@ func relinputValueCatalog(t *testing.T) member.Catalog {
 	t.Helper()
 	provider := member.RelationRef{Axis: relinputAxisRef(relinputValueAxis), Member: relinputCandidates}
 	catalog, ok := member.NewCatalog(
+		[]carrier.Authority{
+			{Carrier: "carrier/relinput/value", Capability: carrier.Ascending},
+			{Carrier: "carrier/relinput/value-key", Capability: carrier.Equatable},
+		},
+		[]carrier.Binding{},
 		[]member.Relation{{Key: relinputCandidates, Subject: "carrier/relinput/value", CandidateProvider: member.AxisRelationCandidate(provider)}},
 		nil, nil, nil,
 	)
@@ -145,7 +151,14 @@ func relinputSingleCatalog(t *testing.T) member.Catalog {
 	t.Helper()
 	provider := member.RelationRef{Axis: relinputAxisRef(relinputValueAxis), Member: relinputCandidates}
 	catalog, ok := member.NewCatalog(
-		[]member.Relation{{Key: relinputSingleRoutes, Subject: "carrier/relinput/single-fact", Inputs: []member.Carrier{"carrier/relinput/value"}, CandidateProvider: member.AxisRelationCandidate(provider)}},
+		[]carrier.Authority{
+			{Carrier: "carrier/relinput/value", Capability: carrier.Ascending},
+			{Carrier: "carrier/relinput/single-fact", Capability: carrier.Ascending},
+			{Carrier: "carrier/relinput/single-key", Capability: carrier.Equatable},
+			{Carrier: "carrier/relinput/single-tag", Capability: carrier.DecodeOnly},
+		},
+		[]carrier.Binding{},
+		[]member.Relation{{Key: relinputSingleRoutes, Subject: "carrier/relinput/single-fact", Inputs: []carrier.Key{"carrier/relinput/value"}, CandidateProvider: member.AxisRelationCandidate(provider)}},
 		[]member.Projection{
 			{Key: relinputSingleRouteKey, Relation: relinputSingleRoutes, Role: member.Key, Result: "carrier/relinput/single-key", CandidateProvider: member.AxisRelationCandidate(provider)},
 			{Key: relinputSinglePredicate, Relation: relinputSingleRoutes, Role: member.Predicate, Result: "carrier/relinput/single-tag", CandidateProvider: member.AxisRelationCandidate(provider)},
@@ -176,7 +189,14 @@ func relinputDoubleCatalog(t *testing.T) member.Catalog {
 	t.Helper()
 	provider := member.RelationRef{Axis: relinputAxisRef(relinputValueAxis), Member: relinputCandidates}
 	catalog, ok := member.NewCatalog(
-		[]member.Relation{{Key: relinputDoubleRoutes, Subject: "carrier/relinput/double-fact", Inputs: []member.Carrier{"carrier/relinput/value"}, CandidateProvider: member.AxisRelationCandidate(provider)}},
+		[]carrier.Authority{
+			{Carrier: "carrier/relinput/value", Capability: carrier.Ascending},
+			{Carrier: "carrier/relinput/double-fact", Capability: carrier.Ascending},
+			{Carrier: "carrier/relinput/double-key", Capability: carrier.Equatable},
+			{Carrier: "carrier/relinput/double-tag", Capability: carrier.DecodeOnly},
+		},
+		[]carrier.Binding{},
+		[]member.Relation{{Key: relinputDoubleRoutes, Subject: "carrier/relinput/double-fact", Inputs: []carrier.Key{"carrier/relinput/value"}, CandidateProvider: member.AxisRelationCandidate(provider)}},
 		[]member.Projection{
 			{Key: relinputDoubleRouteKey, Relation: relinputDoubleRoutes, Role: member.Key, Result: "carrier/relinput/double-key", CandidateProvider: member.AxisRelationCandidate(provider)},
 			{Key: relinputDoublePredicate, Relation: relinputDoubleRoutes, Role: member.Predicate, Result: "carrier/relinput/double-tag", CandidateProvider: member.AxisRelationCandidate(provider)},
