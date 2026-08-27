@@ -5,7 +5,9 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/rule/relbindgen"
 	calldomain "github.com/wippyai/go-lua/domain/call"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
+	closeddomain "github.com/wippyai/go-lua/domain/heap/allocation/closed"
 	indexdomain "github.com/wippyai/go-lua/domain/heap/index"
+	"github.com/wippyai/go-lua/domain/heap/keymatch"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
@@ -58,6 +60,61 @@ func (HeapEmptyAllocationAgeOperation) Available() bool { return true }
 func (HeapEmptyAllocationAgeOperation) Evaluate(argument HeapEmptyAllocationAgeArgument, emitter *relbindgen.Emitter[heapdomain.Value]) outcome.Code {
 	fact, held := argument.Key.Age(argument.Prior)
 	return relbindgen.Carried(emitter, fact, held)
+}
+
+// HeapClosedAllocationOperation is domain/heap/allocation/closed's own fold:
+// the one Heap world a sealed scalar constructor denotes, concluded from the
+// predecessor world and the constructor's delivered operand cells.
+//
+// The judgment is sealed once from the two axis schemas the constructor is
+// fenced to and the selector projection their composition issued, so this
+// operation holds cold owner knowledge and the fold still takes carriers.
+type HeapClosedAllocationOperation struct {
+	judgment closeddomain.Judgment
+	cells    *relbindgen.Members[valuedomain.Value]
+	reserve  int
+}
+
+// NewHeapClosedAllocationOperation seals the closed-allocation judgment and
+// reserves the materialization one caller's constructors read their delivered
+// operand vector through, at the width the sealed value schema states.
+func NewHeapClosedAllocationOperation(heaps heapdomain.Schema, values *valuedomain.Schema, selectors *keymatch.SelectorProjection) (HeapClosedAllocationOperation, bool) {
+	judgment, judgmentOK := closeddomain.NewJudgment(heaps, values, selectors)
+	if !judgmentOK {
+		return HeapClosedAllocationOperation{}, false
+	}
+	cells, cellsOK := relbindgen.NewMembers[valuedomain.Value](values.CoordinateCount())
+	if !cellsOK {
+		return HeapClosedAllocationOperation{}, false
+	}
+	return HeapClosedAllocationOperation{judgment: judgment, cells: cells, reserve: values.CoordinateCount()}, true
+}
+
+// NewOperation gives one solve-local worker its own materialization storage.
+func (operation HeapClosedAllocationOperation) NewOperation() relbindgen.Operation[HeapClosedAllocationArgument, heapdomain.Value] {
+	cells, ok := relbindgen.NewMembers[valuedomain.Value](operation.reserve)
+	if !ok {
+		return nil
+	}
+	local := operation
+	local.cells = cells
+	return local
+}
+
+// Available reports whether the operation carries its sealed judgment and its
+// materialization storage.
+func (operation HeapClosedAllocationOperation) Available() bool {
+	return operation.judgment.Valid() && operation.cells != nil
+}
+
+// Evaluate answers one closed allocation against its predecessor world.
+func (operation HeapClosedAllocationOperation) Evaluate(argument HeapClosedAllocationArgument, emitter *relbindgen.Emitter[heapdomain.Value]) outcome.Code {
+	cells, materialized := operation.cells.Fill(argument.Cells)
+	if !materialized {
+		return outcome.Refused
+	}
+	fact, reduction := operation.judgment.ClosedFold(argument.Key, argument.Predecessor, cells)
+	return relbindgen.Reduce(emitter, fact, reduction)
 }
 
 // HeapAscentOperation is domain/heap's own ascent. It is monotone because it

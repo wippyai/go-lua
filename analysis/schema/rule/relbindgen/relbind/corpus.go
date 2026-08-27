@@ -278,6 +278,17 @@ func families() []Family {
 			Cardinality: model.ExactlyOne, Address: 0,
 		},
 		{
+			Census: "heap/allocation/closed", Rule: "heap-closed", Stem: "HeapClosedAllocation", Axis: "heap",
+			Judgment: "HeapClosedAllocationOperation",
+			Inputs: []Slot{
+				{Field: "Key", Payload: "heap-candidate", Delivery: scalar},
+				{Field: "Predecessor", Payload: "heap", Delivery: scalar},
+				{Field: "Cells", Payload: "value", Delivery: span},
+			},
+			Result: "heap", Outputs: []Column{{Payload: "heap"}},
+			Cardinality: model.ExactlyOne, Address: 0,
+		},
+		{
 			Census: "pack/source", Rule: "pack-source", Stem: "PackSource", Axis: "pack",
 			Judgment: "PackSourceOperation",
 			Inputs: []Slot{

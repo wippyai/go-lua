@@ -204,7 +204,7 @@ func Contribution() definition.Contribution {
 			},
 			Implementation: definition.GoSymbol{
 				PackagePath: closedPackagePath,
-				Name:        "resultClosed",
+				Name:        "ClosedFold",
 				Receiver:    definition.GoType{PackagePath: closedPackagePath, Name: "Judgment"},
 				ResultIndex: 0,
 			},

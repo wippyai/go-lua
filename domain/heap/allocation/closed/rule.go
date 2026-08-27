@@ -14,12 +14,16 @@ import (
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
-// resultClosed is the heap/reducer/closed fold: it concludes the one Heap
+// ClosedFold is the heap/reducer/closed fold: it concludes the one Heap
 // world the sealed scalar constructor denotes, and nothing else. Its whole
 // answer is a lattice value paired with the sealed outcome that value is
 // delivered under - it schedules nothing, locates nothing, and publishes
 // nothing.
-func (judgment Judgment) resultClosed(root heapdomain.Key, predecessor heapdomain.Value, cells operand.SummaryVector[valuedomain.Value]) (heapdomain.Value, structure.ReductionOutcome) {
+//
+// It is exported because the relation binding half reaches it from Heap's own
+// relation package: the emitted family and the emitted binding call one fold,
+// not one each.
+func (judgment Judgment) ClosedFold(root heapdomain.Key, predecessor heapdomain.Value, cells operand.SummaryVector[valuedomain.Value]) (heapdomain.Value, structure.ReductionOutcome) {
 	if !judgment.Valid() {
 		return heapdomain.Value{}, structure.Refuse
 	}

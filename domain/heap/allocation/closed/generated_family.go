@@ -36,7 +36,7 @@ type familyReducer struct {
 // the worker authenticates presence before calling it, so absence never becomes
 // a default fact and the fold receives only declared carriers.
 func (fold familyReducer) Reduce(cell0 heap.Value, read1Vector operand.SummaryVector[value.Value]) (heap.Value, structure.ReductionOutcome) {
-	return fold.state.resultClosed(fold.candidate, cell0, read1Vector)
+	return fold.state.ClosedFold(fold.candidate, cell0, read1Vector)
 }
 
 // familyRow is the sealed static half of one plan row: the candidate its fold
