@@ -24,12 +24,12 @@ const span = signature.BoundedSpanDelivery
 // The four reasons the remaining census families carry. Each is a statement
 // the compiler makes about an operand, not one this layer asserts.
 const (
-	// A judgment that reads the operand type of the protocol this engine
-	// replaces cannot be reached from a frame. A binding delivers owner values
-	// and spans; it cannot construct an execution selection, and the compiler
-	// says so: "cannot use cells (variable of struct type
-	// relbindgen.Span[value.Value]) as []execution.SelectedCell[value.Value]".
-	abiGapLegacyOperand = "w0-legacy-operand: the owner judgment reads execution.SelectedCell or execution.SummaryVector, the operand type of the protocol this engine replaces, and a binding delivers owner values and spans"
+	// A judgment that reads a selection cannot be reached from a frame. An
+	// operand.SelectedCell carries a Region, which is an authenticated support
+	// row; a frame delivers owner values and spans and carries no such row, so
+	// relbindgen materializes a span into an operand.SummaryVector and has
+	// nothing to materialize a selection from.
+	abiGapLegacyOperand = "w0-selection-operand: the owner judgment reads operand.SelectedCell, whose Region is an authenticated support row, and a frame delivers owner values and spans and carries no such row"
 	// An operation that publishes a disposition and no fact has no result type
 	// to instantiate the bounded emitter with, and the compiler says so:
 	// "cannot use nil as struct{} value in argument to relbindgen.Reduce".
@@ -529,6 +529,7 @@ func families() []Family {
 			},
 			Result: "effect", Outputs: []Column{{Payload: "effect"}},
 			Cardinality: model.ExactlyOne, Address: 0,
+			Pending: abiGapLegacyOperand,
 		},
 		{
 			Census: "value/bodyresult", Rule: "value-callresult-body", Stem: "ValueBodyResult", Axis: "value",
