@@ -7,10 +7,9 @@ import (
 	suspensionmember "github.com/wippyai/go-lua/domain/placement/suspension/memberdefinition"
 )
 
-// The evidence producer is an independent rule on its own axis. It reads the
-// same two produced vectors under its OWN keys - one vector answering to two
-// writers would be one row with two owners - and writes the evidence cell
-// alone, never Placement class.
+// Evidence writes its own Factor but consumes the canonical Placement route
+// row. It therefore owns no second source/vector relation, projection, or
+// selection authority.
 func TestEvidenceContributionStaysIndependentOfPlacementClass(t *testing.T) {
 	evidence := Contribution()
 	class := suspensionmember.Contribution()
@@ -20,15 +19,13 @@ func TestEvidenceContributionStaysIndependentOfPlacementClass(t *testing.T) {
 	if evidence.Axis == class.Axis || evidence.Rule == class.Rule {
 		t.Fatalf("evidence and class contributions share identity: %q/%q", evidence.Axis, evidence.Rule)
 	}
-	if len(evidence.Relations) != 2 || len(evidence.Projections) != 5 || len(evidence.Selections) != 2 || len(evidence.Reducers) != 1 {
+	if len(evidence.Relations) != 0 || len(evidence.Projections) != 0 || len(evidence.Selections) != 0 || len(evidence.Reducers) != 1 {
 		t.Fatalf("evidence contribution relations=%d projections=%d selections=%d reducers=%d",
 			len(evidence.Relations), len(evidence.Projections), len(evidence.Selections), len(evidence.Reducers))
 	}
-	for _, relation := range evidence.Relations {
-		for _, mirrored := range class.Relations {
-			if relation.Key == mirrored.Key {
-				t.Fatalf("evidence relation %q reuses the consumer's key", relation.Key)
-			}
+	for _, carrier := range evidence.Carriers {
+		if carrier.Name == "SuspensionSourceCarrier" || carrier.Name == "SuspensionRouteCarrier" || carrier.Name == "SuspensionEvidenceRouteTagCarrier" {
+			t.Fatalf("evidence retains duplicate route authority carrier=%q", carrier.Name)
 		}
 	}
 
@@ -40,18 +37,19 @@ func TestEvidenceContributionStaysIndependentOfPlacementClass(t *testing.T) {
 	if reducer.Outputs[0].Carrier != "EvidenceFactCarrier" || reducer.Outputs[0].Carrier == classReducer.Outputs[0].Carrier {
 		t.Fatalf("evidence output carrier=%q, want the evidence cell alone", reducer.Outputs[0].Carrier)
 	}
-	// The vector is the same shape read under this rule's own tag vocabulary:
-	// sharing the consumer's tag would make one correlation answer to two
-	// writers, which is the same defect the distinct route tags prevent.
-	if len(reducer.Inputs) != 2 || reducer.Inputs[0].Carrier != classReducer.Inputs[0].Carrier ||
-		reducer.Inputs[0].Form != member.ReadFormSummary || reducer.Inputs[0].Multiplicity != member.MultiplicityMany {
-		t.Fatalf("evidence source vector input=%+v, want the whole-vector delivery", reducer.Inputs[0])
+	// The complete Value span belongs to canonical SuspensionRoutes. Evidence
+	// receives the four scalar columns of its already materialized route row,
+	// so it cannot reopen, rebuild, or reinterpret that denominator.
+	want := []string{"SourceSummaryCarrier", "PlacementKeyCarrier", "SuspensionRouteTagCarrier", "EvidenceFactCarrier"}
+	if len(reducer.Inputs) != len(want) {
+		t.Fatalf("evidence inputs=%d, want %d", len(reducer.Inputs), len(want))
 	}
-	if reducer.Inputs[0].Tag == classReducer.Inputs[0].Tag {
-		t.Fatalf("source tag vocabulary was duplicated: %q", reducer.Inputs[0].Tag)
+	for index, input := range reducer.Inputs {
+		if input.Carrier != want[index] || input.Form != member.ReadFormSelected || input.Multiplicity != member.MultiplicityOne || input.Tag != "SuspensionRouteTagCarrier" {
+			t.Fatalf("evidence scalar input %d=%+v, want canonical selected route column %q", index, input, want[index])
+		}
 	}
-	if reducer.Inputs[1].Carrier != "EvidenceFactCarrier" || reducer.Inputs[1].Tag == classReducer.Inputs[1].Tag ||
-		reducer.Inputs[1].Route != "PlacementKeyCarrier" {
-		t.Fatalf("evidence routed input=%+v, want its own tag over the shared canonical route coordinate", reducer.Inputs[1])
+	if reducer.Inputs[3].Route != "PlacementKeyCarrier" {
+		t.Fatalf("evidence routed input=%+v, want canonical route destination key", reducer.Inputs[3])
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/relation/schema/region"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 	programcatalog "github.com/wippyai/go-lua/analysis/schema/program/catalog"
 	programpublication "github.com/wippyai/go-lua/analysis/schema/program/publication"
@@ -41,10 +42,12 @@ func pointValuesID(value byte) identity.ContentID { return identity.ContentID{va
 
 func TestPointIdentityFieldsPreserveVersionedDecisionOrder(t *testing.T) {
 	pointID, firstDecision, secondDecision := pointValuesID(1), pointValuesID(2), pointValuesID(3)
-	point, pointOK := programschema.NewPoint(pointID, true, 0, 2)
-	first, firstOK := programschema.NewPointDecision(firstDecision)
-	second, secondOK := programschema.NewPointDecision(secondDecision)
-	if !pointOK || !firstOK || !secondOK {
+	firstAtom, firstAtomOK := region.NewAtom(firstDecision)
+	secondAtom, secondAtomOK := region.NewAtom(secondDecision)
+	point, pointOK := programschema.NewPoint(pointID, pointID, true, 0, 2)
+	first, firstOK := programschema.NewPointDecision(firstDecision, firstAtom)
+	second, secondOK := programschema.NewPointDecision(secondDecision, secondAtom)
+	if !pointOK || !firstAtomOK || !secondAtomOK || !firstOK || !secondOK {
 		t.Fatal("point rows")
 	}
 	catalog, ok := programcatalog.CatalogID(pointValuesID(200))
@@ -73,7 +76,7 @@ func TestPointIdentityFieldsPreserveVersionedDecisionOrder(t *testing.T) {
 	}
 	want := pointValuesIdentityOperations{
 		u(programschema.PointGeometryLawVersion), u(programschema.PointAttachmentLawVersion), u(1),
-		i(pointID), b(true), u(2), i(firstDecision), i(secondDecision),
+		i(pointID), i(pointID), b(true), u(2), i(firstDecision), i(secondDecision),
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("point identity operations = %#v, want %#v", got, want)
@@ -82,11 +85,14 @@ func TestPointIdentityFieldsPreserveVersionedDecisionOrder(t *testing.T) {
 
 func TestPointIdentityFieldsIgnorePhysicalSharedSpanAndReplayLogicalRows(t *testing.T) {
 	firstID, secondID := pointValuesID(21), pointValuesID(22)
-	first, firstOK := programschema.NewPoint(firstID, true, 0, 2)
-	second, secondOK := programschema.NewPoint(secondID, false, 0, 2)
-	firstDecision, firstDecisionOK := programschema.NewPointDecision(pointValuesID(23))
-	secondDecision, secondDecisionOK := programschema.NewPointDecision(pointValuesID(24))
-	if !firstOK || !secondOK || !firstDecisionOK || !secondDecisionOK {
+	first, firstOK := programschema.NewPoint(firstID, firstID, true, 0, 2)
+	second, secondOK := programschema.NewPoint(secondID, firstID, false, 0, 2)
+	firstDecisionID, secondDecisionID := pointValuesID(23), pointValuesID(24)
+	firstAtom, firstAtomOK := region.NewAtom(firstDecisionID)
+	secondAtom, secondAtomOK := region.NewAtom(secondDecisionID)
+	firstDecision, firstDecisionOK := programschema.NewPointDecision(firstDecisionID, firstAtom)
+	secondDecision, secondDecisionOK := programschema.NewPointDecision(secondDecisionID, secondAtom)
+	if !firstOK || !secondOK || !firstAtomOK || !secondAtomOK || !firstDecisionOK || !secondDecisionOK {
 		t.Fatal("shared-span point rows")
 	}
 	catalog, ok := programcatalog.CatalogID(pointValuesID(202))
@@ -118,8 +124,8 @@ func TestPointIdentityFieldsIgnorePhysicalSharedSpanAndReplayLogicalRows(t *test
 	}
 	want := pointValuesIdentityOperations{
 		u(programschema.PointGeometryLawVersion), u(programschema.PointAttachmentLawVersion), u(2),
-		i(firstID), b(true), u(2), i(pointValuesID(23)), i(pointValuesID(24)),
-		i(secondID), b(false), u(2), i(pointValuesID(23)), i(pointValuesID(24)),
+		i(firstID), i(firstID), b(true), u(2), i(pointValuesID(23)), i(pointValuesID(24)),
+		i(secondID), i(firstID), b(false), u(2), i(pointValuesID(23)), i(pointValuesID(24)),
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("shared-span point identity operations = %#v, want %#v", got, want)

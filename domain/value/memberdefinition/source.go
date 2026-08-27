@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member/definition"
+	"github.com/wippyai/go-lua/analysis/schema/carrier"
 )
 
 const (
@@ -18,6 +19,7 @@ const (
 	// axis declares the transition they issue because a carry transform is an
 	// axis-level row.
 	freshResultPackagePath = "github.com/wippyai/go-lua/domain/value/freshresult"
+	capturePackagePath     = "github.com/wippyai/go-lua/domain/placement/capture"
 	callPackagePath        = "github.com/wippyai/go-lua/domain/call"
 )
 
@@ -85,56 +87,54 @@ func StorageTransfer() definition.Definition {
 			Fact: "ValueFactCarrier",
 		},
 		Carriers: []definition.Carrier{
-			{Name: "ValueCoordinateCarrier", Key: "carrier/value/coordinate", Type: coordinate},
-			{Name: "ValueFactCarrier", Key: "carrier/value/fact", Type: value},
-			{Name: "ValueAtomCarrier", Key: "carrier/value/atom", Type: valueGoType("Atom")},
-			{Name: "StorageTransferCarrier", Key: "carrier/value/storage-transfer", Type: storageTransfer},
-			{Name: "BinaryArithmeticCarrier", Key: "carrier/value/binary-arithmetic", Type: binaryArithmetic},
-			{Name: "BinaryEqualityCarrier", Key: "carrier/value/binary-equality", Type: binaryEquality},
-			{Name: "BinaryOrderCarrier", Key: "carrier/value/binary-order", Type: binaryOrder},
-			{Name: "PresenceRefinementCarrier", Key: "carrier/value/presence-refinement", Type: valueGoType("PresenceRefinement")},
-			{Name: "SourceSeedCarrier", Key: "carrier/value/source-seed", Type: valueGoType("SourceSeed")},
+			{Name: "ValueCoordinateCarrier", Key: "carrier/value/coordinate", Capability: carrier.Equatable, Type: coordinate},
+			{Name: "ValueFactCarrier", Key: "carrier/value/fact", Capability: carrier.Ascending, Type: value},
+			{Name: "ValueAtomCarrier", Key: "carrier/value/atom", Capability: carrier.DecodeOnly, Type: valueGoType("Atom")},
+			{Name: "StorageTransferCarrier", Key: "carrier/value/storage-transfer", Capability: carrier.DecodeOnly, Type: storageTransfer},
+			{Name: "BinaryArithmeticCarrier", Key: "carrier/value/binary-arithmetic", Capability: carrier.DecodeOnly, Type: binaryArithmetic},
+			{Name: "BinaryEqualityCarrier", Key: "carrier/value/binary-equality", Capability: carrier.DecodeOnly, Type: binaryEquality},
+			{Name: "BinaryOrderCarrier", Key: "carrier/value/binary-order", Capability: carrier.DecodeOnly, Type: binaryOrder},
+			{Name: "PresenceRefinementCarrier", Key: "carrier/value/presence-refinement", Capability: carrier.DecodeOnly, Type: valueGoType("PresenceRefinement")},
+			{Name: "SourceSeedCarrier", Key: "carrier/value/source-seed", Capability: carrier.DecodeOnly, Type: valueGoType("SourceSeed")},
+			{Name: "ClosedOperandsCarrier", Key: "carrier/value/closed-operands", Capability: carrier.DecodeOnly, Type: valueGoType("ClosedOperands")},
+			{Name: "ClosedOperandCarrier", Key: "carrier/value/closed-operand", Capability: carrier.DecodeOnly, Type: valueGoType("ClosedOperand")},
 			// The owner answers this row by POINTER everywhere it answers it -
 			// resolver, dense accessor, and the materializer that turns one
 			// into a fact - so the carrier is the pointer, not the struct. A
 			// carrier that named the value would derive a call shape no symbol
 			// on either side of it has.
-			{Name: "GlobalBootstrapResultCarrier", Key: "carrier/value/global-bootstrap-result", Type: valueGoPointerType("GlobalBootstrapResult")},
+			{Name: "GlobalBootstrapResultCarrier", Key: "carrier/value/global-bootstrap-result", Capability: carrier.DecodeOnly, Type: valueGoPointerType("GlobalBootstrapResult")},
 			// These are the owner-issued candidate relationships whose
 			// transformed carries write the Value factor. Each is the subject of
 			// its own published directory below; no receipt or callback is
 			// retained in the cold catalog.
-			{Name: "AllocationResultCarrier", Key: "carrier/value/allocation-result", Type: allocationResult},
-			{Name: "FreshResultCallCarrier", Key: "carrier/value/fresh-result-call", Type: freshResultCall},
-			{Name: "MountedCallArgumentCarrier", Key: "carrier/value/mounted-call-argument", Type: mountedCallArgument},
+			{Name: "AllocationResultCarrier", Key: "carrier/value/allocation-result", Capability: carrier.DecodeOnly, Type: allocationResult},
+			{Name: "FreshResultCallCarrier", Key: "carrier/value/fresh-result-call", Capability: carrier.DecodeOnly, Type: freshResultCall},
+			{Name: "MountedCallArgumentCarrier", Key: "carrier/value/mounted-call-argument", Capability: carrier.DecodeOnly, Type: mountedCallArgument},
 			// The return boundary and its member rows. Both types are declared by
 			// the value package, so the relations that subject them are Value's
 			// own; a placement rule that joins a return's members names these
 			// rows rather than rebuilding the topology from Program occurrences.
-			{Name: "ReturnBoundaryCarrier", Key: "carrier/value/return-boundary", Type: returnBoundary},
-			{Name: "ReturnBoundaryMemberCarrier", Key: "carrier/value/return-boundary-member", Type: returnBoundaryMember},
+			{Name: "ReturnBoundaryCarrier", Key: "carrier/value/return-boundary", Capability: carrier.DecodeOnly, Type: returnBoundary},
+			{Name: "ReturnBoundaryMemberCarrier", Key: "carrier/value/return-boundary-member", Capability: carrier.DecodeOnly, Type: returnBoundaryMember},
 			// The address a member is reached by under its return. A child that
 			// never sees Value's Go symbols still addresses member k through this
 			// carrier, which is why the nested set declares it beside its parent.
-			{Name: "ReturnBoundaryMemberOrdinalCarrier", Key: "carrier/value/return-boundary-member-ordinal", Type: builtinGoType("uint64")},
-			{Name: "MountedCallActualsCarrier", Key: "carrier/value/mounted-call-actuals", Type: mountedCallActuals},
-			{Name: "MountedCallActualTagCarrier", Key: "carrier/value/mounted-call-actual-tag", Type: builtinGoType("uint64")},
+			{Name: "ReturnBoundaryMemberOrdinalCarrier", Key: "carrier/value/return-boundary-member-ordinal", Capability: carrier.DecodeOnly, Type: builtinGoType("uint64")},
+			{Name: "MountedCallActualsCarrier", Key: "carrier/value/mounted-call-actuals", Capability: carrier.DecodeOnly, Type: mountedCallActuals},
+			{Name: "MountedCallActualTagCarrier", Key: "carrier/value/mounted-call-actual-tag", Capability: carrier.DecodeOnly, Type: builtinGoType("uint64")},
+			{Name: "CaptureSourceCarrier", Key: "carrier/value/closure-capture-source", Capability: carrier.DecodeOnly, Type: definition.GoType{PackagePath: capturePackagePath, Name: "Source"}},
+			{Name: "CaptureSourceTagCarrier", Key: "carrier/value/closure-capture-source-tag", Capability: carrier.DecodeOnly, Type: builtinGoType("uint64")},
 			// The address a fresh result is reached by under its mounted call.
-			{Name: "FreshResultTagCarrier", Key: "carrier/value/fresh-result-tag", Type: builtinGoType("uint64")},
+			{Name: "FreshResultTagCarrier", Key: "carrier/value/fresh-result-tag", Capability: carrier.DecodeOnly, Type: builtinGoType("uint64")},
 			// One row of the fresh-result rule's derived route set: a Value
 			// coordinate one mounted call publishes at, and the roots admitted
 			// there. It is the row that rule's routed carry is indexed by.
-			{Name: "FreshResultRouteCarrier", Key: "carrier/value/fresh-result-route", Type: freshResultGoType("Route")},
-			// CallCoordinate is a foreign input coordinate, not a second Call
-			// vocabulary. Repeating its canonical carrier lets Value declare the
-			// correspondence between its parent rows and Call's candidate rows.
-			{Name: "CallCoordinateCarrier", Key: "carrier/call/mounted-call", Type: callGoType("CallCoordinate")},
-			// The two carriers the shared call-result rows below are typed in.
-			// They are the axis owner's because the rows are: a directory two
-			// rules read is a vocabulary neither one owns.
-			MountedCallResultSlotCarrier(),
-			CallFactCarrier(),
+			{Name: "FreshResultRouteCarrier", Key: "carrier/value/fresh-result-route", Capability: carrier.DecodeOnly, Type: freshResultGoType("Route")},
 		},
+		CarrierRefs: []definition.CarrierReference{{
+			Name: "CallCoordinateCarrier", Key: "carrier/call/mounted-call", Ref: carrier.Ref{Owner: axisReference("call"), Carrier: "carrier/call/mounted-call"}, Type: callGoType("CallCoordinate"),
+		}},
 		Enumerations: []definition.Enumeration{
 			{
 				// The atoms one Value relation decomposes to. The census and
@@ -374,11 +374,6 @@ func StorageTransfer() definition.Definition {
 				MemberCount:       valueMethod("MemberCount", "MountedCallActuals", false, 0),
 				MemberAt:          valueMethod("MemberAt", "MountedCallActuals", false, 0),
 			},
-			// The result-zero directory both call-result rules are indexed by.
-			// It is stated here, once, because it is addressed by neither
-			// rule's own coordinate: a row two rules declare is a row a dropped
-			// rule cannot take with it.
-			MountedCallResultSlotCandidates(),
 		},
 		Projections: []definition.Projection{
 			{
@@ -489,9 +484,6 @@ func StorageTransfer() definition.Definition {
 				Result:            "MountedCallActualTagCarrier",
 				Accessor:          valueMethod("ActualTag", "MountedCallArgument", false, -1),
 			},
-			// The coordinate both call-result rules publish at, stated beside
-			// the directory it projects.
-			MountedCallResultSlotCoordinate(),
 		},
 		CarryTransforms: []definition.CarryTransform{
 			{

@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
+	"github.com/wippyai/go-lua/analysis/schema/carrier"
 	"github.com/wippyai/go-lua/analysis/schema/denominator"
 	rule "github.com/wippyai/go-lua/analysis/schema/rule"
 	"github.com/wippyai/go-lua/analysis/schema/rule/program"
@@ -636,7 +637,7 @@ func compileProgram(ruleOrdinal uint32, template *rule.Template, declaration pro
 	// transform are held to. candidateRelation is the axis arm's own row, and
 	// stays absent on the issued arm: an issued Program row has no Factor
 	// relation, so nothing downstream may read one off it.
-	var candidateCarrier member.Carrier
+	var candidateCarrier carrier.Key
 	var candidateRelation member.Relation
 	var candidateAxis axisEntry
 	var candidateCatalog member.Catalog
@@ -683,8 +684,8 @@ func compileProgram(ruleOrdinal uint32, template *rule.Template, declaration pro
 		return Plan{}, compileFailure(template.ID(), rule.LawProgramShape, schema.DispositionMalformed)
 	}
 	compiled.inputCount = uint32(declaration.InputCount())
-	joinFacts := make([]member.Carrier, 0, declaration.JoinCount())
-	joinTags := make([]member.Carrier, 0, declaration.JoinCount())
+	joinFacts := make([]carrier.Key, 0, declaration.JoinCount())
+	joinTags := make([]carrier.Key, 0, declaration.JoinCount())
 
 	if !fitsUint32(declaration.JoinCount()) || !fitsUint32(len(declaration.Fold.Inputs)) || !fitsUint32(len(declaration.Fold.Outputs)) {
 		return Plan{}, compileFailure(template.ID(), rule.LawProgramShape, schema.DispositionMalformed)
@@ -892,7 +893,7 @@ func compileProgram(ruleOrdinal uint32, template *rule.Template, declaration pro
 		// address - "what a CHILD Program consumes", in the catalog's words.
 		// Deriving the tag from only the predicate left a member set foldable
 		// by nothing, because its reducer had no carrier to agree with.
-		var tag member.Carrier
+		var tag carrier.Key
 		switch {
 		case compiledJoin.PredicatePresent:
 			predicate, _ := relationCatalog.Projection(join.Predicate.Member)
@@ -945,11 +946,11 @@ func compileProgram(ruleOrdinal uint32, template *rule.Template, declaration pro
 	}
 	compiled.reducer = ReducerAddr{Axis: reducerAxisOrdinal, Member: mustReducerOrdinal(reducerCatalog, declaration.Fold.Reducer.Member)}
 
-	var outputFact member.Carrier
+	var outputFact carrier.Key
 	// routeSubject is the derived relation's own row type when this rule
 	// publishes a routed output. It is the row a routed carry is indexed by,
 	// resolved once here where the route relation is already open.
-	var routeSubject member.Carrier
+	var routeSubject carrier.Key
 	var routedOutput bool
 	for _, output := range declaration.Fold.Outputs {
 		if !output.Available() || uint64(output.ValueSlot) >= uint64(len(declaration.Fold.Outputs)) {

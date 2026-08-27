@@ -4,9 +4,11 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/relation/schema/algebra"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
+	"github.com/wippyai/go-lua/analysis/schema/carrier"
 	"github.com/wippyai/go-lua/analysis/schema/denominator"
 	"github.com/wippyai/go-lua/analysis/schema/rule"
 	"github.com/wippyai/go-lua/analysis/schema/rule/program"
@@ -19,17 +21,17 @@ const (
 	planAxisKey      schema.Key = "axis/plan-owner"
 	planOtherAxisKey schema.Key = "axis/plan-other"
 
-	planCandidateRelation schema.Key     = "relation/plan-candidate"
-	planJoinRelation      schema.Key     = "relation/plan-join"
-	planJoinKey           schema.Key     = "projection/plan-join-key"
-	planJoinPredicate     schema.Key     = "projection/plan-join-predicate"
-	planDestination       schema.Key     = "projection/plan-destination"
-	planReducer           schema.Key     = "reducer/plan"
-	planCarryTransform    schema.Key     = "transform/plan-carry"
-	planOutput            schema.Key     = "output/plan"
-	planKeyCarrier        member.Carrier = "carrier/plan/key"
-	planFactCarrier       member.Carrier = "carrier/plan/fact"
-	planCandidateCarrier  member.Carrier = "carrier/plan/candidate"
+	planCandidateRelation schema.Key  = "relation/plan-candidate"
+	planJoinRelation      schema.Key  = "relation/plan-join"
+	planJoinKey           schema.Key  = "projection/plan-join-key"
+	planJoinPredicate     schema.Key  = "projection/plan-join-predicate"
+	planDestination       schema.Key  = "projection/plan-destination"
+	planReducer           schema.Key  = "reducer/plan"
+	planCarryTransform    schema.Key  = "transform/plan-carry"
+	planOutput            schema.Key  = "output/plan"
+	planKeyCarrier        carrier.Key = "carrier/plan/key"
+	planFactCarrier       carrier.Key = "carrier/plan/fact"
+	planCandidateCarrier  carrier.Key = "carrier/plan/candidate"
 
 	planDenominator      schema.Key = "coordinates/axis/plan-owner"
 	planOtherDenominator schema.Key = "coordinates/axis/plan-other"
@@ -118,6 +120,12 @@ func newPlanFixture(t *testing.T) *planFixture {
 	}
 
 	catalog, ok := member.NewCatalog(
+		[]carrier.Authority{
+			{Carrier: planCandidateCarrier, Capability: carrier.DecodeOnly},
+			{Carrier: planKeyCarrier, Capability: carrier.Equatable},
+			{Carrier: planFactCarrier, Capability: carrier.Ascending},
+		},
+		[]carrier.Binding{},
 		[]member.Relation{
 			{
 				Key:               planCandidateRelation,
@@ -127,7 +135,7 @@ func newPlanFixture(t *testing.T) *planFixture {
 			{
 				Key:               planJoinRelation,
 				Subject:           planFactCarrier,
-				Inputs:            []member.Carrier{planCandidateCarrier},
+				Inputs:            []carrier.Key{planCandidateCarrier},
 				CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: mainAxis, Member: planCandidateRelation}),
 			},
 		},
@@ -346,6 +354,7 @@ func enablePlanCarry(fixture *planFixture, input program.InputRef, mode program.
 			Axis:   schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: planAxisKey},
 			Member: planCarryTransform,
 		}
+		carry.Output = algebra.ScalarSource(algebra.NewSlotSource(0, 0))
 	}
 	fixture.declaration.Carry = carry
 	fixture.catalog.CarryTransforms = []member.CarryTransform{{
@@ -712,6 +721,7 @@ func TestCompileAcceptsTypedCarryTransformAndRejectsForeignOrMismatched(t *testi
 			Axis:   schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: planAxisKey},
 			Member: "transform/plan-missing",
 		},
+		Output: algebra.ScalarSource(algebra.NewSlotSource(0, 0)),
 	}
 	_, failure = Compile(missing.seal(t))
 	if !failure.Available() {
@@ -735,6 +745,7 @@ func TestCompileRetainsExactTransformIdentityForAllFourRoles(t *testing.T) {
 					Axis:   schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: planAxisKey},
 					Member: role,
 				},
+				Output: algebra.ScalarSource(algebra.NewSlotSource(0, 0)),
 			}
 			fixture.catalog.CarryTransforms = []member.CarryTransform{{
 				Key: role, Candidate: planCandidateCarrier,
@@ -785,6 +796,7 @@ func TestCompileRejectsNearestMalformedProgramDeclarations(t *testing.T) {
 			disposition: schema.DispositionMalformed,
 			mutate: func(fixture *planFixture) {
 				fixture.catalog.Projections[0].Result = "carrier/plan/foreign-key"
+				fixture.catalog.Authorities = append(fixture.catalog.Authorities, carrier.Authority{Carrier: "carrier/plan/foreign-key", Capability: carrier.DecodeOnly})
 			},
 		},
 		{
@@ -803,6 +815,7 @@ func TestCompileRejectsNearestMalformedProgramDeclarations(t *testing.T) {
 			disposition: schema.DispositionMalformed,
 			mutate: func(fixture *planFixture) {
 				fixture.catalog.Reducers[0].Inputs[0].Carrier = "carrier/plan/foreign-fact"
+				fixture.catalog.Authorities = append(fixture.catalog.Authorities, carrier.Authority{Carrier: "carrier/plan/foreign-fact", Capability: carrier.DecodeOnly})
 			},
 		},
 		{
@@ -819,6 +832,7 @@ func TestCompileRejectsNearestMalformedProgramDeclarations(t *testing.T) {
 			disposition: schema.DispositionMalformed,
 			mutate: func(fixture *planFixture) {
 				fixture.catalog.Reducers[0].Outputs[0].Carrier = "carrier/plan/foreign-output"
+				fixture.catalog.Authorities = append(fixture.catalog.Authorities, carrier.Authority{Carrier: "carrier/plan/foreign-output", Capability: carrier.DecodeOnly})
 			},
 		},
 		{
@@ -827,6 +841,7 @@ func TestCompileRejectsNearestMalformedProgramDeclarations(t *testing.T) {
 			disposition: schema.DispositionMalformed,
 			mutate: func(fixture *planFixture) {
 				fixture.catalog.Projections[1].Result = "carrier/plan/foreign-destination"
+				fixture.catalog.Authorities = append(fixture.catalog.Authorities, carrier.Authority{Carrier: "carrier/plan/foreign-destination", Capability: carrier.DecodeOnly})
 			},
 		},
 		{

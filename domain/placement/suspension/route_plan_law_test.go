@@ -135,11 +135,15 @@ func suspensionRoutePlanStructural(t testing.TB) structure.Table {
 	}
 	var specs []structure.Spec
 	for category := structure.CategoryArm; category.Available(); category++ {
+		if category == structure.CategoryRelationGeometryScalar {
+			continue
+		}
 		for ordinal := 1; ordinal <= counts(category); ordinal++ {
 			spelling := fmt.Sprintf("suspension-route/%d/%d", category, ordinal)
 			specs = append(specs, structure.Spec{Key: schema.Key(spelling), Category: category, Ordinal: uint16(ordinal), Spelling: spelling, Accepted: true})
 		}
 	}
+	specs = append(specs, structure.RelationGeometrySpecs()...)
 	entries, entriesOK := structure.Collect(specs)
 	if !entriesOK {
 		t.Fatal("suspension route structure entries")
@@ -265,6 +269,50 @@ func TestSuspensionRoutePlanOverflowAndOwnerFence(t *testing.T) {
 	if _, foreignOK := routePlanForSources(fixture.placement, fixture.values, suspensionSourceFacts(foreignFact)); foreignOK {
 		t.Fatal("suspension route planner accepted foreign Value fact")
 	}
+}
+
+// Two candidate route plans may be live in the same solve. Their summaries
+// must remain on their own immutable route rows: a known source vector for
+// one candidate may not be paired with the unknown source vector of another.
+// This is the hostile shape that a multi-child Apply would cross-pair; the
+// scalar route projection instead keeps each candidate's consequence local.
+func TestSuspensionRoutePlansKeepCandidateSourceSummariesDisjoint(t *testing.T) {
+	fixture := suspensionRoutePlanFixtureFor(t, 2)
+	knownSummary, knownOK := SummarizeSources(suspensionReducerLawVector(t, fixture.values.Bottom()))
+	unknownSummary, unknownOK := SummarizeSources(suspensionReducerLawVector(t, fixture.values.Top()))
+	if !knownOK || !unknownOK || knownSummary != SourceSummaryKnown || unknownSummary != SourceSummaryUnknown {
+		t.Fatalf("candidate source summaries=%v/%t and %v/%t, want Known/true and Unknown/true", knownSummary, knownOK, unknownSummary, unknownOK)
+	}
+
+	knownCandidate := RoutePlan{plan: routePlan{
+		inline:        [routeInlineWidth]route{{key: fixture.keys[0], tag: 1}},
+		size:          1,
+		class:         routeExact,
+		sourceSummary: knownSummary,
+	}}
+	unknownCandidate := RoutePlan{plan: routePlan{
+		inline:        [routeInlineWidth]route{{key: fixture.keys[1], tag: 2}},
+		size:          1,
+		class:         routeExact,
+		sourceSummary: unknownSummary,
+	}}
+
+	assertSummary := func(name string, plan RoutePlan, want SourceSummary) {
+		t.Helper()
+		route, routeOK := SuspensionRouteAt(plan, 0)
+		if !routeOK {
+			t.Fatalf("%s candidate has no route", name)
+		}
+		got, summaryOK := route.SourceSummary()
+		if !summaryOK || got != want {
+			t.Fatalf("%s candidate summary=%v/%t, want %v/true", name, got, summaryOK, want)
+		}
+	}
+	assertSummary("known", knownCandidate, knownSummary)
+	assertSummary("unknown", unknownCandidate, unknownSummary)
+	// Read the first plan again after the second has been materialized. A
+	// shared summary slot would now leak Unknown back into the known route.
+	assertSummary("known after unknown", knownCandidate, knownSummary)
 }
 
 var (

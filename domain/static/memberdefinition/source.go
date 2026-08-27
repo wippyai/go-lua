@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member/definition"
+	"github.com/wippyai/go-lua/analysis/schema/carrier"
 )
 
 const (
@@ -69,9 +70,11 @@ func TypeFactTransfer() definition.Definition {
 			Fact: "TypeFactCarrier",
 		},
 		Carriers: []definition.Carrier{
-			{Name: "CoordinateCarrier", Key: "carrier/value/coordinate", Type: coordinate},
-			{Name: "TypeFactCarrier", Key: "carrier/static-type/fact", Type: typeFact},
-			{Name: "StorageTransferCarrier", Key: "carrier/value/storage-transfer", Type: storageTransfer},
+			{Name: "TypeFactCarrier", Key: "carrier/static-type/fact", Type: typeFact, Capability: carrier.Ascending},
+		},
+		CarrierRefs: []definition.CarrierReference{
+			{Name: "CoordinateCarrier", Key: "carrier/value/coordinate", Ref: carrier.Ref{Owner: axisReference("value"), Carrier: "carrier/value/coordinate"}, Type: coordinate},
+			{Name: "StorageTransferCarrier", Key: "carrier/value/storage-transfer", Ref: carrier.Ref{Owner: axisReference("value"), Carrier: "carrier/value/storage-transfer"}, Type: storageTransfer},
 		},
 		Relations: []definition.Relation{
 			{

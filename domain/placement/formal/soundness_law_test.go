@@ -224,6 +224,9 @@ func formalSoundnessStructuralVocabulary(t testing.TB) structure.Table {
 	}
 	var specs []structure.Spec
 	for category := structure.CategoryArm; category.Available(); category++ {
+		if category == structure.CategoryRelationGeometryScalar {
+			continue
+		}
 		for ordinal := 1; ordinal <= counts(category); ordinal++ {
 			spelling := fmt.Sprintf("formal-soundness/%d/%d", category, ordinal)
 			specs = append(specs, structure.Spec{
@@ -232,6 +235,7 @@ func formalSoundnessStructuralVocabulary(t testing.TB) structure.Table {
 			})
 		}
 	}
+	specs = append(specs, structure.RelationGeometrySpecs()...)
 	entries, entriesOK := structure.Collect(specs)
 	if !entriesOK {
 		t.Fatal("formal soundness structural declarations")

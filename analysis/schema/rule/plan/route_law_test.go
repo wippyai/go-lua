@@ -6,28 +6,29 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
+	"github.com/wippyai/go-lua/analysis/schema/carrier"
 	"github.com/wippyai/go-lua/analysis/schema/rule/program"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 )
 
 const (
-	heteroCandidateRelation schema.Key     = "relation/hetero-candidate"
-	heteroExactRelation     schema.Key     = "relation/hetero-value-exact"
-	heteroRouteRelation     schema.Key     = "relation/hetero-placement-route"
-	heteroSecondRelation    schema.Key     = "relation/hetero-placement-second"
-	heteroExactKey          schema.Key     = "projection/hetero-value-key"
-	heteroRouteKey          schema.Key     = "projection/hetero-route-key"
-	heteroRoutePredicate    schema.Key     = "projection/hetero-route-predicate"
-	heteroRouteSelection    schema.Key     = "selection/hetero-route"
-	heteroSecondKey         schema.Key     = "projection/hetero-second-key"
-	heteroSecondPredicate   schema.Key     = "projection/hetero-second-predicate"
-	heteroSecondSelection   schema.Key     = "selection/hetero-second"
-	heteroRouteDestination  schema.Key     = "projection/hetero-route-destination"
-	heteroReducer           schema.Key     = "reducer/hetero-route"
-	heteroCandidateCarrier  member.Carrier = "carrier/hetero-candidate"
-	heteroFactCarrier       member.Carrier = "carrier/hetero-fact"
-	heteroKeyCarrier        member.Carrier = "carrier/hetero-key"
-	heteroTagCarrier        member.Carrier = "carrier/hetero-tag"
+	heteroCandidateRelation schema.Key  = "relation/hetero-candidate"
+	heteroExactRelation     schema.Key  = "relation/hetero-value-exact"
+	heteroRouteRelation     schema.Key  = "relation/hetero-placement-route"
+	heteroSecondRelation    schema.Key  = "relation/hetero-placement-second"
+	heteroExactKey          schema.Key  = "projection/hetero-value-key"
+	heteroRouteKey          schema.Key  = "projection/hetero-route-key"
+	heteroRoutePredicate    schema.Key  = "projection/hetero-route-predicate"
+	heteroRouteSelection    schema.Key  = "selection/hetero-route"
+	heteroSecondKey         schema.Key  = "projection/hetero-second-key"
+	heteroSecondPredicate   schema.Key  = "projection/hetero-second-predicate"
+	heteroSecondSelection   schema.Key  = "selection/hetero-second"
+	heteroRouteDestination  schema.Key  = "projection/hetero-route-destination"
+	heteroReducer           schema.Key  = "reducer/hetero-route"
+	heteroCandidateCarrier  carrier.Key = "carrier/hetero-candidate"
+	heteroFactCarrier       carrier.Key = "carrier/hetero-fact"
+	heteroKeyCarrier        carrier.Key = "carrier/hetero-key"
+	heteroTagCarrier        carrier.Key = "carrier/hetero-tag"
 )
 
 // configureHeterogeneousRouteFixture is the hard Store-shaped case. The
@@ -42,6 +43,12 @@ func configureHeterogeneousRouteFixture(t *testing.T) *planFixture {
 	placementAxis := schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: planAxisKey}
 
 	valueCatalog, ok := member.NewCatalog(
+		[]carrier.Authority{
+			{Carrier: heteroCandidateCarrier, Capability: carrier.DecodeOnly},
+			{Carrier: heteroKeyCarrier, Capability: carrier.Equatable},
+			{Carrier: heteroFactCarrier, Capability: carrier.Ascending},
+		},
+		[]carrier.Binding{},
 		[]member.Relation{
 			{
 				Key:               heteroCandidateRelation,
@@ -51,7 +58,7 @@ func configureHeterogeneousRouteFixture(t *testing.T) *planFixture {
 			{
 				Key:               heteroExactRelation,
 				Subject:           heteroFactCarrier,
-				Inputs:            []member.Carrier{heteroCandidateCarrier},
+				Inputs:            []carrier.Key{heteroCandidateCarrier},
 				CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: valueAxis, Member: heteroCandidateRelation}),
 			},
 		},
@@ -68,17 +75,26 @@ func configureHeterogeneousRouteFixture(t *testing.T) *planFixture {
 		t.Fatal("Value member catalog rejected")
 	}
 	placementCatalog, ok := member.NewCatalog(
+		[]carrier.Authority{
+			{Carrier: heteroKeyCarrier, Capability: carrier.Equatable},
+			{Carrier: heteroFactCarrier, Capability: carrier.Ascending},
+			{Carrier: heteroTagCarrier, Capability: carrier.DecodeOnly},
+		},
+		[]carrier.Binding{{
+			Use: heteroCandidateCarrier,
+			Ref: carrier.Ref{Owner: valueAxis, Carrier: heteroCandidateCarrier},
+		}},
 		[]member.Relation{
 			{
 				Key:               heteroRouteRelation,
 				Subject:           heteroFactCarrier,
-				Inputs:            []member.Carrier{heteroCandidateCarrier, heteroFactCarrier},
+				Inputs:            []carrier.Key{heteroCandidateCarrier, heteroFactCarrier},
 				CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: valueAxis, Member: heteroCandidateRelation}),
 			},
 			{
 				Key:               heteroSecondRelation,
 				Subject:           heteroFactCarrier,
-				Inputs:            []member.Carrier{heteroCandidateCarrier, heteroFactCarrier},
+				Inputs:            []carrier.Key{heteroCandidateCarrier, heteroFactCarrier},
 				CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: valueAxis, Member: heteroCandidateRelation}),
 			},
 		},

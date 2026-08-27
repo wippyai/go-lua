@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member/definition"
+	"github.com/wippyai/go-lua/analysis/schema/carrier"
 )
 
 const (
@@ -59,10 +60,10 @@ func MountedCall() definition.Definition {
 			Fact: "CallFactCarrier",
 		},
 		Carriers: []definition.Carrier{
-			{Name: "CallKeyCarrier", Key: "carrier/call/key", Type: key},
-			{Name: "CallFactCarrier", Key: "carrier/call/fact", Type: value},
-			{Name: "CallCoordinateCarrier", Key: "carrier/call/mounted-call", Type: coordinate},
-			{Name: "CallTargetCarrier", Key: "carrier/call/target", Type: callGoType("Target")},
+			{Name: "CallKeyCarrier", Key: "carrier/call/key", Capability: carrier.Equatable, Type: key},
+			{Name: "CallFactCarrier", Key: "carrier/call/fact", Capability: carrier.Ascending, Type: value},
+			{Name: "CallCoordinateCarrier", Key: "carrier/call/mounted-call", Capability: carrier.DecodeOnly, Type: coordinate},
+			{Name: "CallTargetCarrier", Key: "carrier/call/target", Capability: carrier.DecodeOnly, Type: callGoType("Target")},
 		},
 		// How a Call value decomposes is Call's own answer, so the two
 		// sequences a consumer reads out of one are declared here once rather

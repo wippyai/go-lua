@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
+	"github.com/wippyai/go-lua/analysis/schema/carrier"
 	"github.com/wippyai/go-lua/analysis/schema/rule/program"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 )
@@ -31,6 +32,12 @@ func configureCorrespondenceFixture(t *testing.T, correspond bool) *planFixture 
 	candidate := member.RelationRef{Axis: occurrenceAxis, Member: heteroCandidateRelation}
 
 	occurrenceCatalog, ok := member.NewCatalog(
+		[]carrier.Authority{
+			{Carrier: heteroCandidateCarrier, Capability: carrier.DecodeOnly},
+			{Carrier: heteroKeyCarrier, Capability: carrier.Equatable},
+			{Carrier: heteroFactCarrier, Capability: carrier.Ascending},
+		},
+		[]carrier.Binding{},
 		[]member.Relation{{
 			Key: heteroCandidateRelation, Subject: heteroCandidateCarrier,
 			CandidateProvider: member.AxisRelationCandidate(candidate),
@@ -48,13 +55,21 @@ func configureCorrespondenceFixture(t *testing.T, correspond bool) *planFixture 
 	own := member.RelationRef{Axis: consumerAxis, Member: correspondingRelation}
 	relation := member.Relation{
 		Key: correspondingRelation, Subject: heteroFactCarrier,
-		Inputs:            []member.Carrier{heteroCandidateCarrier},
+		Inputs:            []carrier.Key{heteroCandidateCarrier},
 		CandidateProvider: member.AxisRelationCandidate(own),
 	}
 	if correspond {
 		relation.Correspondences = []member.RelationRef{candidate}
 	}
 	consumerCatalog, ok := member.NewCatalog(
+		[]carrier.Authority{
+			{Carrier: heteroKeyCarrier, Capability: carrier.Equatable},
+			{Carrier: heteroFactCarrier, Capability: carrier.Ascending},
+		},
+		[]carrier.Binding{{
+			Use: heteroCandidateCarrier,
+			Ref: carrier.Ref{Owner: occurrenceAxis, Carrier: heteroCandidateCarrier},
+		}},
 		[]member.Relation{relation},
 		[]member.Projection{
 			{
@@ -154,7 +169,7 @@ func TestACorrespondenceToAnotherOrderDoesNotAdmitTheJoin(t *testing.T) {
 	occurrenceAxis := schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: planOtherAxisKey}
 	relations := append([]member.Relation(nil), fixture.catalog.Relations...)
 	relations[0].Correspondences = []member.RelationRef{{Axis: occurrenceAxis, Member: heteroExactRelation}}
-	restated, ok := member.NewCatalog(relations, fixture.catalog.Projections, fixture.catalog.Reducers, fixture.catalog.CarryTransforms)
+	restated, ok := member.NewCatalog(fixture.catalog.Authorities, fixture.catalog.CarrierRefs, relations, fixture.catalog.Projections, fixture.catalog.Reducers, fixture.catalog.CarryTransforms)
 	if !ok {
 		t.Fatal("restated consumer catalog rejected")
 	}

@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member/definition"
+	"github.com/wippyai/go-lua/analysis/schema/carrier"
 	valuebase "github.com/wippyai/go-lua/domain/value/memberdefinition"
 )
 
@@ -42,8 +43,8 @@ func returnRouteMethod(name string) definition.GoSymbol {
 // return member of a body this call reaches, and the tag it is correlated by.
 func returnRouteCarriers() []definition.Carrier {
 	return []definition.Carrier{
-		{Name: "BodyReturnRouteCarrier", Key: "carrier/value/body-return-route", Type: goType(returnRoutePackagePath, "Route")},
-		{Name: "BodyReturnRouteTagCarrier", Key: "carrier/value/body-return-route-tag", Type: definition.GoType{Name: "uint64"}},
+		{Name: "BodyReturnRouteCarrier", Key: "carrier/value/body-return-route", Capability: carrier.DecodeOnly, Type: goType(returnRoutePackagePath, "Route")},
+		{Name: "BodyReturnRouteTagCarrier", Key: "carrier/value/body-return-route-tag", Capability: carrier.DecodeOnly, Type: definition.GoType{Name: "uint64"}},
 	}
 }
 
@@ -73,18 +74,19 @@ func returnRoutes() definition.Relation {
 
 // Contribution is the body-result rule's whole share of the member
 // vocabulary: the return route set it selects over and the fold that answers
-// it. The result-zero directory it is indexed by and the coordinate it
-// publishes at are the axis owner's, stated in the value base, because the
-// result-alias rule reads the same two.
+// it, beside the shared call-result rows it is addressed and publishes
+// through.
 func Contribution() definition.Contribution {
 	value := axisReference("value")
 	call := axisReference("call")
 	return definition.Contribution{
-		Axis:      "value",
-		Rule:      "value-callresult-body",
-		Carriers:  append([]definition.Carrier{valuebase.MountedCallResultSlotCarrier(), valuebase.CallFactCarrier()}, returnRouteCarriers()...),
-		Relations: []definition.Relation{valuebase.CallResultSites(), returnRoutes()},
+		Axis:        "value",
+		Rule:        "value-callresult-body",
+		Carriers:    append([]definition.Carrier{valuebase.MountedCallResultSlotCarrier()}, returnRouteCarriers()...),
+		CarrierRefs: []definition.CarrierReference{valuebase.CallFactReference()},
+		Relations:   []definition.Relation{valuebase.MountedCallResultSlotCandidates(), valuebase.CallResultSites(), returnRoutes()},
 		Projections: []definition.Projection{
+			valuebase.MountedCallResultSlotCoordinate(),
 			valuebase.CallResultSiteKey(),
 			{
 				Name: "BodyReturnRouteKey", Key: "value/body-result/route-key",
@@ -101,10 +103,11 @@ func Contribution() definition.Contribution {
 		// before them delivered, so they are published through this
 		// selection and stamped with the tag the reading rule joins on.
 		Selections: []definition.Selection{{
-			Name:     "BodyReturnRouteSelection",
-			Key:      "value/body-result/route-selection",
-			Relation: "BodyReturnRoutes",
-			Tag:      "BodyReturnRouteTag",
+			Name:           "BodyReturnRouteSelection",
+			Key:            "value/body-result/route-selection",
+			Relation:       "BodyReturnRoutes",
+			Tag:            "BodyReturnRouteTag",
+			Implementation: returnRouteFunction("Derive"),
 		}},
 		Reducers: []definition.Reducer{{
 			Name:      "BodyResultReducer",

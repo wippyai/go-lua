@@ -7,7 +7,7 @@ import (
 	ruleprogram "github.com/wippyai/go-lua/analysis/schema/rule/program"
 )
 
-func TestContainmentProgramDeclaresTwoCompleteVectorsAndOneRoutedJoin(t *testing.T) {
+func TestContainmentProgramDeclaresCompleteRoutePrerequisitesAndOneTwoCellRoutedRead(t *testing.T) {
 	declaration := PlacementContainment()
 	if problem, valid := declaration.Check(); !valid {
 		t.Fatalf("containment declaration rejected: %+v", problem)
@@ -30,6 +30,13 @@ func TestContainmentProgramDeclaresTwoCompleteVectorsAndOneRoutedJoin(t *testing
 	}
 	if third.Read.Form != ruleprogram.Selected || third.Predicate.Declared() || third.Read.Contract.DenominatorRef.EntryReference().Key != "coordinates/placement" {
 		t.Fatalf("route join=%+v", third)
+	}
+	if third.Relation.Member != ContainmentRoutes || third.Key.Member != ContainmentRouteKey || third.Selection.Member != ContainmentRouteSelection ||
+		len(third.Sources) != 3 || !third.Sources[0].Candidate || third.Sources[1] != ruleprogram.PriorSource(0) || third.Sources[2] != ruleprogram.PriorSource(1) {
+		t.Fatalf("route derivation=%+v, want candidate plus both complete vector results", third)
+	}
+	if inputs := declaration.Fold.Inputs; len(inputs) != 2 || inputs[0] != 2 || inputs[1] != 2 {
+		t.Fatalf("fold inputs=%v, want the selected route row twice for child and retained parent cells", inputs)
 	}
 	output := declaration.Fold.Outputs[0]
 	if output.Mode != ruleprogram.ModeRoute || !output.RouteJoinPresent || output.RouteJoin != 2 || output.Destination.Member != ContainmentRouteDestination {

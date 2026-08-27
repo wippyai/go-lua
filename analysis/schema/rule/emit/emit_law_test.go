@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/relation/schema/algebra"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
@@ -142,6 +143,7 @@ func specimenSpec() rule.Spec {
 			Carry: &program.CarryDecl{
 				Input: 0, Mode: program.CarryTransform,
 				Transform: member.CarryTransformRef{Axis: specimenAxis(), Member: "specimen/transition"},
+				Output:    algebra.ScalarSource(algebra.NewSlotSource(0, 0)),
 			},
 		},
 	}

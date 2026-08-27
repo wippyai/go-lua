@@ -27,8 +27,20 @@ func TestFormalContributionDeclaresOneRouteRelationAndOneReducer(t *testing.T) {
 	if contribution.Axis != "placement" || contribution.Rule != "placement-formal" {
 		t.Fatalf("contribution identity=%q/%q, want placement/placement-formal", contribution.Axis, contribution.Rule)
 	}
-	if len(contribution.Carriers) != 6 {
-		t.Fatalf("carrier count=%d, want the two Placement carriers, the two Call carriers, and the route row with its tag", len(contribution.Carriers))
+	if len(contribution.Carriers) != 4 || len(contribution.CarrierRefs) != 2 {
+		t.Fatalf("carrier authorities=%d/imports=%d, want four local Placement carriers and two imported Call carriers", len(contribution.Carriers), len(contribution.CarrierRefs))
+	}
+	for index, want := range []struct {
+		name string
+		key  string
+	}{
+		{name: "CallCoordinateCarrier", key: "carrier/call/mounted-call"},
+		{name: "CallFactCarrier", key: "carrier/call/fact"},
+	} {
+		ref := contribution.CarrierRefs[index]
+		if ref.Name != want.name || string(ref.Key) != want.key || ref.Ref.Owner.Key != "call" || string(ref.Ref.Carrier) != want.key {
+			t.Fatalf("carrier ref[%d]=%+v, want Call-owned %s/%s", index, ref, want.name, want.key)
+		}
 	}
 	if len(contribution.Relations) != 1 || len(contribution.Projections) != 3 || len(contribution.Reducers) != 1 {
 		t.Fatalf("relation/projection/reducer counts=%d/%d/%d, want 1/3/1", len(contribution.Relations), len(contribution.Projections), len(contribution.Reducers))

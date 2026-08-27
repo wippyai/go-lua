@@ -7,6 +7,7 @@ package issuance
 
 import (
 	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/carrier"
 	schemaissuance "github.com/wippyai/go-lua/analysis/schema/issuance"
 	programschema "github.com/wippyai/go-lua/analysis/schema/program"
 )
@@ -42,7 +43,16 @@ const (
 	TypeResultSlotConsumer schema.Key = "program-type/result-slot-consumer"
 	TypeGeometryKind       schema.Key = "program-type/geometry-kind"
 	TypeGeometryPosition   schema.Key = "program-type/geometry-position"
+	// TypeSubjectLiveness owns the Program carrier used to decode a published
+	// subject-liveness span. It is a type declaration, not the row relation
+	// that supplies candidate occurrences.
+	TypeSubjectLiveness schema.Key = "program-type/subject-liveness"
 )
+
+// CarrierSubjectLiveness is the one carrier authority owned by the Program's
+// subject-liveness type. The relation that supplies candidate rows owns no
+// authority; it only names the row-space join.
+const CarrierSubjectLiveness carrier.Key = "carrier/program/subject-liveness"
 
 const (
 	InputNone                schema.Key = "program-input/none"
@@ -208,6 +218,7 @@ func Entries(codeFamilies ...CodeFamily) ([]*schemaissuance.Entry, bool) {
 		TypeResultSlotConsumer,
 		TypeGeometryKind,
 		TypeGeometryPosition,
+		TypeSubjectLiveness,
 	}
 	rows := []schema.Key{RowOccurrence, RowCall, RowCallResultSlot, RowClosureProof, RowGeometryPoint, RowPredecessor, RowModuleImport, RowSubjectLivenessSpan}
 	fields := []fieldDeclaration{
@@ -244,7 +255,11 @@ func Entries(codeFamilies ...CodeFamily) ([]*schemaissuance.Entry, bool) {
 	}
 	entries := make([]*schemaissuance.Entry, 0, len(types)+len(rows)+len(fields))
 	for index, key := range types {
-		entry, ok := schemaissuance.New(schemaissuance.Spec{Key: key, Kind: schemaissuance.KindType, Ordinal: uint16(index + 1)})
+		spec := schemaissuance.Spec{Key: key, Kind: schemaissuance.KindType, Ordinal: uint16(index + 1)}
+		if key == TypeSubjectLiveness {
+			spec.Authorities = []carrier.Authority{{Carrier: CarrierSubjectLiveness, Capability: carrier.DecodeOnly}}
+		}
+		entry, ok := schemaissuance.New(spec)
 		if !ok {
 			return nil, false
 		}

@@ -7,11 +7,13 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member/definition"
+	"github.com/wippyai/go-lua/analysis/schema/carrier"
 )
 
 const (
 	heapPackagePath       = "github.com/wippyai/go-lua/domain/heap"
 	callPackagePath       = "github.com/wippyai/go-lua/domain/call"
+	valuePackagePath      = "github.com/wippyai/go-lua/domain/value"
 	freezePackagePath     = "github.com/wippyai/go-lua/domain/heap/formalfreeze"
 	recentPlanPackagePath = "github.com/wippyai/go-lua/domain/heap/internal/recentplan"
 )
@@ -66,13 +68,13 @@ func Contribution() definition.Contribution {
 		Axis: "heap",
 		Rule: "heap-formal-freeze",
 		Carriers: []definition.Carrier{
-			// The two Call carriers this rule's route relation is typed in. They
-			// repeat Call's own declaration verbatim; composition refuses a
-			// repeat that disagrees.
-			{Name: "CallCoordinateCarrier", Key: "carrier/call/mounted-call", Type: goType(callPackagePath, "CallCoordinate")},
-			{Name: "CallFactCarrier", Key: "carrier/call/fact", Type: goType(callPackagePath, "Value")},
-			{Name: "FormalFreezeRouteCarrier", Key: "carrier/heap/formal-freeze-route", Type: goType(recentPlanPackagePath, "Route")},
-			{Name: "FormalFreezeRouteTagCarrier", Key: "carrier/heap/formal-freeze-route-tag", Type: definition.GoType{Name: "uint64"}},
+			{Name: "FormalFreezeRouteCarrier", Key: "carrier/heap/formal-freeze-route", Type: goType(recentPlanPackagePath, "Route"), Capability: carrier.DecodeOnly},
+			{Name: "FormalFreezeRouteTagCarrier", Key: "carrier/heap/formal-freeze-route-tag", Type: definition.GoType{Name: "uint64"}, Capability: carrier.DecodeOnly},
+		},
+		CarrierRefs: []definition.CarrierReference{
+			{Name: "CallCoordinateCarrier", Key: "carrier/call/mounted-call", Ref: carrier.Ref{Owner: axisReference("call"), Carrier: "carrier/call/mounted-call"}, Type: goType(callPackagePath, "CallCoordinate")},
+			{Name: "CallFactCarrier", Key: "carrier/call/fact", Ref: carrier.Ref{Owner: axisReference("call"), Carrier: "carrier/call/fact"}, Type: goType(callPackagePath, "Value")},
+			{Name: "ValueFactCarrier", Key: "carrier/value/fact", Ref: carrier.Ref{Owner: axisReference("value"), Carrier: "carrier/value/fact"}, Type: goType(valuePackagePath, "Value")},
 		},
 		Relations: []definition.Relation{
 			{
@@ -153,10 +155,11 @@ func Contribution() definition.Contribution {
 		// before it delivered, so they are published by the derivation this
 		// package already owns rather than enumerated from a directory.
 		Selections: []definition.Selection{{
-			Name:     "FormalFreezeRouteSelection",
-			Key:      "heap/formal-freeze/route-selection",
-			Relation: "FormalFreezeRoutes",
-			Tag:      "FormalFreezeRouteTag",
+			Name:           "FormalFreezeRouteSelection",
+			Key:            "heap/formal-freeze/route-selection",
+			Relation:       "FormalFreezeRoutes",
+			Tag:            "FormalFreezeRouteTag",
+			Implementation: freezeFunction("DeriveFreezeRoutes"),
 		}},
 		Reducers: []definition.Reducer{{
 			Name: "FormalFreezeReducer",

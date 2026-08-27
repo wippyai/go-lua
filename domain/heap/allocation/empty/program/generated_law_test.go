@@ -33,7 +33,7 @@ join[0].contract     order=canonical sparse=explicit on-opaque=refuse multiplici
 observation          points=1 reads=1
 observation[0]       read=0 point=0
 observation.carry    point=0
-carry                mode=transform input=0 transform=axis/heap:transform/heap/allocation-empty
+carry                mode=transform input=0 transform=axis/heap:transform/heap/allocation-empty output=scalar(0,0)
 fold.reducer         axis/heap:heap/reducer/empty
 fold.inputs          join 0
 output[0]            mode=exact value-slot=0 route=- column=axis/heap:heap/facts destination=axis/heap:heap/empty-allocation/coordinate

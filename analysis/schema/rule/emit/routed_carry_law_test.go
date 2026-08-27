@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/relation/schema/algebra"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member/definition"
@@ -93,6 +94,7 @@ func routedCarryDecl(mode program.CarryMode, transform string, input uint64) *pr
 	decl := &program.CarryDecl{Input: program.InputRef(input), Mode: mode}
 	if mode == program.CarryTransform {
 		decl.Transform = member.CarryTransformRef{Axis: memberSetPlacementAxisRef(), Member: schema.Key(transform)}
+		decl.Output = algebra.ScalarSource(algebra.NewSlotSource(0, 0))
 	}
 	return decl
 }

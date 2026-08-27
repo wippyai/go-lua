@@ -9,6 +9,7 @@
 package program
 
 import (
+	"github.com/wippyai/go-lua/analysis/relation/schema/algebra"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
@@ -105,6 +106,7 @@ func AllocationResult() ruleprogram.Program {
 			Input:     0,
 			Mode:      ruleprogram.CarryTransform,
 			Transform: member.CarryTransformRef{Axis: valueAxis, Member: AllocationCarryTransform},
+			Output:    algebra.ScalarSource(algebra.NewSlotSource(0, 0)),
 		},
 	}
 }

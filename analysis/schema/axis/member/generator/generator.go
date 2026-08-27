@@ -16,6 +16,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member/definition"
+	"github.com/wippyai/go-lua/analysis/schema/carrier"
 )
 
 // The sealed reduction outcome vocabulary the generated bind-time owner reads
@@ -56,7 +57,7 @@ type Artifact struct {
 // KeyBinding is the resolved axis-level key normalization needed by a future
 // composition generator.
 type KeyBinding struct {
-	Carrier member.Carrier
+	Carrier carrier.Key
 	Input   definition.GoType
 	Dense   definition.GoType
 	// Coordinate is the generated dense Factor coordinate type of this axis,
@@ -196,13 +197,32 @@ type Metadata struct {
 	// declaration key, not a second axis identity or digest; code generation
 	// resolves it against the sealed rule-plan directory.
 	Axis            schema.Key
-	FactCarrier     member.Carrier
+	FactCarrier     carrier.Key
 	FactType        definition.GoType
 	Key             KeyBinding
 	Relations       []RelationBinding
 	Projections     []ProjectionBinding
 	Reducers        []ReducerBinding
 	CarryTransforms []CarryTransformBinding
+}
+
+// sourceCarrier is the generator-only typed resolution of one source alias.
+// The cold catalog owns semantic authority through carrier.Authority and
+// carrier.Binding; Go types stay on this side of the split.
+type sourceCarrier struct {
+	Key  carrier.Key
+	Type definition.GoType
+}
+
+func sourceCarrierIndex(source definition.Definition) map[string]sourceCarrier {
+	carriers := make(map[string]sourceCarrier, len(source.Carriers)+len(source.CarrierRefs))
+	for _, carrier := range source.Carriers {
+		carriers[carrier.Name] = sourceCarrier{Key: carrier.Key, Type: carrier.Type}
+	}
+	for _, reference := range source.CarrierRefs {
+		carriers[reference.Name] = sourceCarrier{Key: reference.Key, Type: reference.Type}
+	}
+	return carriers
 }
 
 // Resolve consumes the same owner source as Render and resolves carrier names
@@ -212,10 +232,7 @@ func Resolve(source definition.Definition) (Metadata, error) {
 	if !source.Complete() {
 		return Metadata{}, errors.New("member generator: incomplete member definition")
 	}
-	carriers := make(map[string]definition.Carrier, len(source.Carriers))
-	for _, carrier := range source.Carriers {
-		carriers[carrier.Name] = carrier
-	}
+	carriers := sourceCarrierIndex(source)
 	keyCarrier, keyOK := carriers[source.Binding.Key.Carrier]
 	if !keyOK {
 		return Metadata{}, errors.New("member generator: key carrier is not declared")
@@ -383,7 +400,7 @@ func Resolve(source definition.Definition) (Metadata, error) {
 	coordinateType := definition.GoType{PackagePath: factCarrier.Type.PackagePath, Name: CoordinateType}
 	return Metadata{
 		Axis:            source.Axis,
-		FactCarrier:     member.Carrier(carriers[source.Signature.Fact].Key),
+		FactCarrier:     carriers[source.Signature.Fact].Key,
 		FactType:        carriers[source.Signature.Fact].Type,
 		Key:             KeyBinding{Carrier: keyCarrier.Key, Input: keyCarrier.Type, Dense: source.Binding.Key.Dense, Coordinate: coordinateType, Normalizer: source.Binding.Key.Normalizer},
 		Relations:       relations,
@@ -527,9 +544,12 @@ func fresh(path string, want []byte) error {
 }
 
 func renderCold(packageName string, source definition.Definition) ([]byte, error) {
-	carriers := make(map[string]string, len(source.Carriers))
+	carriers := make(map[string]string, len(source.Carriers)+len(source.CarrierRefs))
 	for _, carrier := range source.Carriers {
 		carriers[carrier.Name] = carrier.Name
+	}
+	for _, reference := range source.CarrierRefs {
+		carriers[reference.Name] = reference.Name
 	}
 	relations := make(map[string]string, len(source.Relations))
 	for _, relation := range source.Relations {
@@ -550,7 +570,7 @@ func renderCold(packageName string, source definition.Definition) ([]byte, error
 		relationsPackageFlag = fmt.Sprintf(" -relations-package %s", source.RelationsPackage)
 	}
 	fmt.Fprintf(&out, "//go:generate go run %sanalysis/schema/axis/member/generator/cmd -source %s -cold rule_members.go -relations %s%s\n\n", generatorPrefix(source), source.Axis, relationsPath, relationsPackageFlag)
-	out.WriteString("import (\n\tschemaapi \"github.com/wippyai/go-lua/analysis/schema\"\n\t\"github.com/wippyai/go-lua/analysis/schema/axis/member\"\n)\n\n")
+	out.WriteString("import (\n\tschemaapi \"github.com/wippyai/go-lua/analysis/schema\"\n\t\"github.com/wippyai/go-lua/analysis/schema/carrier\"\n\t\"github.com/wippyai/go-lua/analysis/schema/axis/member\"\n)\n\n")
 	out.WriteString("const (\n")
 	for _, relation := range source.Relations {
 		fmt.Fprintf(&out, "\t%s schemaapi.Key = %q\n", relation.Name, relation.Key)
@@ -568,7 +588,10 @@ func renderCold(packageName string, source definition.Definition) ([]byte, error
 		fmt.Fprintf(&out, "\t%s schemaapi.Key = %q\n", transform.Name, transform.Key)
 	}
 	for _, carrier := range source.Carriers {
-		fmt.Fprintf(&out, "\t%s member.Carrier = %q\n", carrier.Name, carrier.Key)
+		fmt.Fprintf(&out, "\t%s carrier.Key = %q\n", carrier.Name, carrier.Key)
+	}
+	for _, reference := range source.CarrierRefs {
+		fmt.Fprintf(&out, "\t%s carrier.Key = %q\n", reference.Name, reference.Key)
 	}
 	out.WriteString(")\n\n")
 	fmt.Fprintf(&out, "// AxisMemberCatalog is %s's declaration-only member vocabulary.\n", source.Axis)
@@ -577,11 +600,24 @@ func renderCold(packageName string, source definition.Definition) ([]byte, error
 		fmt.Fprintf(&out, "\tvalueAxis := schemaapi.EntryReference{Surface: schemaapi.SurfaceKindAxis, Key: %q}\n", source.Axis)
 	}
 	out.WriteString("\tcatalog, ok := member.NewCatalog(\n")
+	out.WriteString("\t\t[]carrier.Authority{\n")
+	for _, carrier := range source.Carriers {
+		capability, capabilityOK := capabilityExpression(carrier.Capability)
+		if !capabilityOK {
+			return nil, fmt.Errorf("member generator: unsupported carrier capability %d", carrier.Capability)
+		}
+		fmt.Fprintf(&out, "\t\t\t{Carrier: %s, Capability: %s},\n", carrier.Name, capability)
+	}
+	out.WriteString("\t\t},\n\t\t[]carrier.Binding{\n")
+	for _, reference := range source.CarrierRefs {
+		fmt.Fprintf(&out, "\t\t\t{Use: %s, Ref: %s},\n", reference.Name, carrierReferenceExpression(reference.Ref))
+	}
+	out.WriteString("\t\t},\n")
 	out.WriteString("\t\t[]member.Relation{\n")
 	for _, relation := range source.Relations {
 		fmt.Fprintf(&out, "\t\t\t{Key: %s, Subject: %s, CandidateProvider: %s", relations[relation.Name], carriers[relation.Subject], candidateProviderExpression(relation.CandidateProvider))
 		if len(relation.Inputs) != 0 {
-			out.WriteString(", Inputs: []member.Carrier{")
+			out.WriteString(", Inputs: []carrier.Key{")
 			for index, input := range relation.Inputs {
 				if index != 0 {
 					out.WriteString(", ")
@@ -617,6 +653,11 @@ func renderCold(packageName string, source definition.Definition) ([]byte, error
 		// that the span exists and comes from this directory.
 		if relation.KeyVectorCount.Available() && relation.KeyVectorAt.Available() {
 			out.WriteString(", PublishesKeyVector: true")
+		}
+		if relation.Addressing.Declared() {
+			fmt.Fprintf(&out, ", Addressing: member.Addressing{Address: %q, Parent: %q, Ordinal: %q, Tag: %q, Occurrence: %q}",
+				relation.Addressing.Address, relation.Addressing.Parent, relation.Addressing.Ordinal,
+				relation.Addressing.Tag, relation.Addressing.Occurrence)
 		}
 		out.WriteString("},\n")
 	}
@@ -1055,14 +1096,10 @@ func renderRelations(packageName string, source definition.Definition) ([]byte, 
 	if source.Binding.Key.Normalizer.ReceiverPointer {
 		ownerFieldType = "*" + ownerFieldType
 	}
+	fact, factOK := carrierByName(source, source.Signature.Fact)
 	var factType definition.GoType
-	factOK := false
-	for _, carrier := range source.Carriers {
-		if carrier.Name == source.Signature.Fact {
-			factType = carrier.Type
-			factOK = true
-			break
-		}
+	if factOK {
+		factType = fact.Type
 	}
 	if !factOK {
 		return nil, errors.New("member generator: fact carrier is missing")
@@ -1607,17 +1644,18 @@ func candidateProviderExpression(provider member.CandidateRef) string {
 	return fmt.Sprintf("member.AxisRelationCandidate(%s)", relationProviderExpression(provider.AxisRelation))
 }
 
+func carrierReferenceExpression(reference carrier.Ref) string {
+	return fmt.Sprintf("carrier.Ref{Owner: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(%d), Key: %q}, Carrier: %q}",
+		reference.Owner.Surface, reference.Owner.Key, reference.Carrier)
+}
+
 func relationProviderExpression(reference member.RelationRef) string {
 	return fmt.Sprintf("member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(%d), Key: %q}, Member: %q}", reference.Axis.Surface, reference.Axis.Key, reference.Member)
 }
 
-func carrierByName(source definition.Definition, name string) (definition.Carrier, bool) {
-	for _, carrier := range source.Carriers {
-		if carrier.Name == name {
-			return carrier, true
-		}
-	}
-	return definition.Carrier{}, false
+func carrierByName(source definition.Definition, name string) (sourceCarrier, bool) {
+	carrier, ok := sourceCarrierIndex(source)[name]
+	return carrier, ok
 }
 
 // renderProjectedRow emits the head every projection arm shares: fetch the
@@ -1661,8 +1699,23 @@ func roleExpression(role member.Role) (string, bool) {
 		return "member.Predicate", true
 	case member.Destination:
 		return "member.Destination", true
+	case member.Attribute:
+		return "member.Attribute", true
 	case member.Identity:
 		return "member.Identity", true
+	default:
+		return "", false
+	}
+}
+
+func capabilityExpression(capability carrier.CapabilityKind) (string, bool) {
+	switch capability {
+	case carrier.DecodeOnly:
+		return "carrier.DecodeOnly", true
+	case carrier.Equatable:
+		return "carrier.Equatable", true
+	case carrier.Ascending:
+		return "carrier.Ascending", true
 	default:
 		return "", false
 	}

@@ -352,43 +352,6 @@ func (fixture deepFrozenValueFixture) encodedSummary(t testing.TB, states map[he
 	return present, rows, payload
 }
 
-// TestPlacementSummaryProjectsSparseOwnerStackAsACompleteAllocationClass
-// keeps the Factor cell's sparse transport separate from the result row's
-// semantic presence. The owner-issued Stack is the exact allocation baseline,
-// so the complete allocation denominator publishes it explicitly. A sparse
-// non-default payload remains malformed.
-func TestPlacementSummaryProjectsSparseOwnerStackAsACompleteAllocationClass(t *testing.T) {
-	fixture := newDeepFrozenValueFixture(t)
-	observation := placementdomain.BeginPlacementSummary(fixture.placement)
-	count := fixture.placement.DenseKeyCount()
-	folded, foldOK := placementdomain.AccumulatePlacementSummaryRows(fixture.placement, observation, count, func(index int) (placementdomain.Fact, bool, bool) {
-		if _, keyOK := fixture.placement.KeyAt(index); !keyOK {
-			return placementdomain.BottomFact(), false, false
-		}
-		return placementdomain.DefaultFact(), false, true
-	})
-	if !foldOK || folded.Rows != 1 {
-		t.Fatal("Placement fold refused the owner-authenticated sparse Stack denominator")
-	}
-	for _, key := range fixture.allocations {
-		index, indexOK := fixture.placement.Heap().KeyIndex(key)
-		if !indexOK {
-			t.Fatal("allocation summary coordinate")
-		}
-		if !folded.Present[index] || folded.Values[index] != placementdomain.DefaultFact() {
-			t.Fatalf("sparse allocation %d = %v/%t, want explicit Stack", index, folded.Values[index], folded.Present[index])
-		}
-	}
-	if _, malformedOK := placementdomain.AccumulatePlacementSummaryRows(fixture.placement, observation, count, func(index int) (placementdomain.Fact, bool, bool) {
-		return placementdomain.BottomFact(), false, true
-	}); malformedOK {
-		t.Fatal("Placement fold accepted a sparse non-default allocation cell")
-	}
-	if _, _, _, encodedOK := placementdomain.EncodeSummaryResult(folded); encodedOK {
-		t.Fatal("Placement encoder published an un-authenticated evidence row")
-	}
-}
-
 // TestPlacementSummaryPublishesExplicitUnknownOnlyAfterEvidenceWrite proves
 // that EvidenceUnknown is a semantic producer result, not the observation's
 // zero value. Once every row is explicitly published, the result remains

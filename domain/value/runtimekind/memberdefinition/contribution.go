@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member/definition"
+	"github.com/wippyai/go-lua/analysis/schema/carrier"
 )
 
 const (
@@ -47,7 +48,7 @@ func judgmentType() definition.GoType {
 // relation this rule reads is joined from one of these rows and states so.
 func runtimeKindCarrier() definition.Carrier {
 	return definition.Carrier{
-		Name: "RuntimeKindCallCarrier", Key: "carrier/value/runtime-kind-call",
+		Name: "RuntimeKindCallCarrier", Key: "carrier/value/runtime-kind-call", Capability: carrier.DecodeOnly,
 		Type: definition.GoType{PackagePath: valuePackagePath, Name: "RuntimeKindCall"},
 	}
 }
@@ -55,9 +56,9 @@ func runtimeKindCarrier() definition.Carrier {
 // callFactCarrier is the Call fact this fold reads. It is named here, in the
 // contribution that consumes it, because the reading rule states what it reads
 // and the carrier key is Call's own.
-func callFactCarrier() definition.Carrier {
-	return definition.Carrier{
-		Name: "CallFactCarrier", Key: "carrier/call/fact",
+func callFactReference() definition.CarrierReference {
+	return definition.CarrierReference{
+		Name: "CallFactCarrier", Key: "carrier/call/fact", Ref: carrier.Ref{Owner: axisReference("call"), Carrier: "carrier/call/fact"},
 		Type: definition.GoType{PackagePath: callPackagePath, Name: "Value"},
 	}
 }
@@ -67,7 +68,7 @@ func callFactCarrier() definition.Carrier {
 // is one this analyzer minted and no dense index of either axis carries it.
 func callOccurrenceCarrier() definition.Carrier {
 	return definition.Carrier{
-		Name: "RuntimeKindCallOccurrenceCarrier", Key: "carrier/value/runtime-kind-call-occurrence",
+		Name: "RuntimeKindCallOccurrenceCarrier", Key: "carrier/value/runtime-kind-call-occurrence", Capability: carrier.DecodeOnly,
 		Type: definition.GoType{PackagePath: identityPackagePath, Name: "ContentID"},
 	}
 }
@@ -274,7 +275,8 @@ func Contribution() definition.Contribution {
 	return definition.Contribution{
 		Axis:        "value",
 		Rule:        "value-runtime-kind-call",
-		Carriers:    []definition.Carrier{runtimeKindCarrier(), callFactCarrier(), callOccurrenceCarrier()},
+		Carriers:    []definition.Carrier{runtimeKindCarrier(), callOccurrenceCarrier()},
+		CarrierRefs: []definition.CarrierReference{callFactReference()},
 		Relations:   []definition.Relation{candidates(), subjects(), comparisons(), sites()},
 		Projections: []definition.Projection{subjectKey(), comparisonKey(), writeCoordinate(), callOccurrence(), siteKey()},
 		Reducers:    []definition.Reducer{reducer()},

@@ -16,6 +16,7 @@ import "github.com/wippyai/go-lua/analysis/schema"
 // says where its rows land; it carries no callback, no traversal and no
 // engine handle.
 type Selection struct {
+	id schema.EntryID
 	// Key is this member's own name within its axis catalog.
 	Key schema.Key
 	// Relation is the relation whose rows this operation publishes.
@@ -25,6 +26,10 @@ type Selection struct {
 	// source row it was selected for.
 	Tag schema.Key
 }
+
+// ID returns the immutable identity issued to this selection by its owning
+// axis. Construction rows intentionally return the unavailable zero value.
+func (selection Selection) ID() schema.EntryID { return selection.id }
 
 // Available reports whether the row names an operation, the relation it
 // publishes into, and the tag it stamps.

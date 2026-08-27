@@ -36,7 +36,7 @@ func reprovidedCatalog(t *testing.T, catalog member.Catalog, provider member.Can
 		projection.CandidateProvider = provider
 		projections[index] = projection
 	}
-	restated, ok := member.NewCatalog(relations, projections, catalog.Reducers, catalog.CarryTransforms)
+	restated, ok := member.NewCatalog(catalog.Authorities, catalog.CarrierRefs, relations, projections, catalog.Reducers, catalog.CarryTransforms)
 	if !ok {
 		t.Fatal("restated member catalog rejected")
 	}

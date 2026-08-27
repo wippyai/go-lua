@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member/definition"
+	"github.com/wippyai/go-lua/analysis/schema/carrier"
 )
 
 const (
@@ -38,9 +39,9 @@ func Contribution() definition.Contribution {
 	return definition.Contribution{
 		Axis: "call",
 		Rule: "call-dispatch",
-		Carriers: []definition.Carrier{
-			{Name: "ValueFactCarrier", Key: "carrier/value/fact", Type: goType(valuePackagePath, "Value")},
-		},
+		CarrierRefs: []definition.CarrierReference{{
+			Name: "ValueFactCarrier", Key: "carrier/value/fact", Ref: carrier.Ref{Owner: axisReference("value"), Carrier: "carrier/value/fact"}, Type: goType(valuePackagePath, "Value"),
+		}},
 		Reducers: []definition.Reducer{{
 			Name:      "DispatchReducer",
 			Key:       "call/dispatch/reducer",

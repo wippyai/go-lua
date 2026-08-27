@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/carrier"
 )
 
 // structural_reducer_law_test.go states the one declared exception to "a
@@ -66,6 +67,8 @@ func TestAnOrdinaryFoldStillPublishesACarrier(t *testing.T) {
 // reducer that forgets its marker reads as an ordinary one missing its output.
 func TestAReducerSurvivesTheCatalogWhole(t *testing.T) {
 	catalog, sealed := NewCatalog(
+		testAuthorities("carrier/structural-reducer-law/candidate", "carrier/structural-reducer-law/fact"),
+		[]carrier.Binding{},
 		[]Relation{{
 			Key: "structural-reducer-law/candidates", Subject: "carrier/structural-reducer-law/candidate",
 			CandidateProvider: AxisRelationCandidate(RelationRef{Axis: structuralReducerLawAxis(), Member: "structural-reducer-law/candidates"}),

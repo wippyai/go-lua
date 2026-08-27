@@ -28,6 +28,7 @@ func identityLawProvider() CandidateRef {
 func identityLawCatalog(role Role) Catalog {
 	provider := identityLawProvider()
 	return Catalog{
+		Authorities: testAuthorities("carrier/identity-law/candidate", "carrier/identity-law/module"),
 		Relations: []Relation{{
 			Key: "identity-law/candidates", Subject: "carrier/identity-law/candidate", CandidateProvider: provider,
 		}},

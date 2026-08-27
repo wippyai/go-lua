@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
+	"github.com/wippyai/go-lua/analysis/schema/carrier"
 	"github.com/wippyai/go-lua/analysis/schema/rule/program"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 )
@@ -32,9 +33,15 @@ func configureForeignCandidateFixture(t *testing.T, provider member.RelationRef,
 	candidate := member.RelationRef{Axis: occurrenceAxis, Member: heteroCandidateRelation}
 
 	occurrenceCatalog, ok := member.NewCatalog(
+		[]carrier.Authority{
+			{Carrier: heteroCandidateCarrier, Capability: carrier.DecodeOnly},
+			{Carrier: heteroKeyCarrier, Capability: carrier.Equatable},
+			{Carrier: heteroFactCarrier, Capability: carrier.Ascending},
+		},
+		[]carrier.Binding{},
 		[]member.Relation{
 			{Key: heteroCandidateRelation, Subject: heteroCandidateCarrier, CandidateProvider: member.AxisRelationCandidate(candidate)},
-			{Key: foreignExactRead, Subject: heteroFactCarrier, Inputs: []member.Carrier{heteroCandidateCarrier}, CandidateProvider: member.AxisRelationCandidate(candidate)},
+			{Key: foreignExactRead, Subject: heteroFactCarrier, Inputs: []carrier.Key{heteroCandidateCarrier}, CandidateProvider: member.AxisRelationCandidate(candidate)},
 		},
 		[]member.Projection{{
 			Key: foreignExactKeyed, Relation: foreignExactRead, Role: member.Key,
@@ -46,9 +53,17 @@ func configureForeignCandidateFixture(t *testing.T, provider member.RelationRef,
 		t.Fatal("occurrence-owner member catalog rejected")
 	}
 	consumerCatalog, ok := member.NewCatalog(
+		[]carrier.Authority{
+			{Carrier: heteroKeyCarrier, Capability: carrier.Equatable},
+			{Carrier: heteroFactCarrier, Capability: carrier.Ascending},
+		},
+		[]carrier.Binding{{
+			Use: heteroCandidateCarrier,
+			Ref: carrier.Ref{Owner: occurrenceAxis, Carrier: heteroCandidateCarrier},
+		}},
 		[]member.Relation{
-			{Key: cellRelation, Subject: heteroFactCarrier, Inputs: []member.Carrier{heteroCandidateCarrier}, CandidateProvider: member.AxisRelationCandidate(provider)},
-			{Key: strayRelation, Subject: heteroFactCarrier, Inputs: []member.Carrier{heteroCandidateCarrier}, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: occurrenceAxis, Member: foreignExactRead})},
+			{Key: cellRelation, Subject: heteroFactCarrier, Inputs: []carrier.Key{heteroCandidateCarrier}, CandidateProvider: member.AxisRelationCandidate(provider)},
+			{Key: strayRelation, Subject: heteroFactCarrier, Inputs: []carrier.Key{heteroCandidateCarrier}, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: occurrenceAxis, Member: foreignExactRead})},
 		},
 		[]member.Projection{
 			{Key: cellDestination, Relation: cellRelation, Role: member.Destination, Result: heteroKeyCarrier, CandidateProvider: member.AxisRelationCandidate(provider)},

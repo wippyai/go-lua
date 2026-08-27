@@ -6,6 +6,7 @@
 package program
 
 import (
+	"github.com/wippyai/go-lua/analysis/relation/schema/algebra"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
@@ -166,6 +167,7 @@ func FreshResult() ruleprogram.Program {
 			Input:     1,
 			Mode:      ruleprogram.CarryTransform,
 			Transform: member.CarryTransformRef{Axis: valueAxis, Member: FreshResultRouteCarry},
+			Output:    algebra.ScalarSource(algebra.NewSlotSource(0, 0)),
 		},
 	}
 }

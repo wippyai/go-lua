@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
+	"github.com/wippyai/go-lua/analysis/schema/carrier"
 	"github.com/wippyai/go-lua/analysis/schema/rule/program"
 )
 
@@ -20,9 +21,9 @@ import (
 // a read that resolves nothing. The declaration names the identity instead.
 
 const (
-	addressIdentityKey     schema.Key     = "plan/address-identity"
-	addressIdentityCarrier member.Carrier = "carrier/plan/address-identity"
-	siblingRelationKey     schema.Key     = "plan/other/sibling"
+	addressIdentityKey     schema.Key  = "plan/address-identity"
+	addressIdentityCarrier carrier.Key = "carrier/plan/address-identity"
+	siblingRelationKey     schema.Key  = "plan/other/sibling"
 )
 
 // correspondenceWithAddressIdentity is the corresponded fixture with an
@@ -36,6 +37,9 @@ func correspondenceWithAddressIdentity(t *testing.T, role member.Role, relation 
 	fixture.otherCatalog.Projections = append(fixture.otherCatalog.Projections, member.Projection{
 		Key: addressIdentityKey, Relation: relation, Role: role,
 		Result: addressIdentityCarrier, CandidateProvider: candidate,
+	})
+	fixture.otherCatalog.Authorities = append(fixture.otherCatalog.Authorities, carrier.Authority{
+		Carrier: addressIdentityCarrier, Capability: carrier.DecodeOnly,
 	})
 	if declare {
 		fixture.declaration.Joins[0].AddressIdentity = member.ProjectionRef{Axis: occurrenceAxis, Member: addressIdentityKey}
@@ -98,6 +102,9 @@ func TestAnAddressIdentityBesideABorrowedDirectoryIsRefused(t *testing.T) {
 		Key: addressIdentityKey, Relation: planCandidateRelation, Role: member.Identity,
 		Result: addressIdentityCarrier, CandidateProvider: candidate,
 	})
+	fixture.catalog.Authorities = append(fixture.catalog.Authorities, carrier.Authority{
+		Carrier: addressIdentityCarrier, Capability: carrier.DecodeOnly,
+	})
 	fixture.declaration.Joins[0].AddressIdentity = member.ProjectionRef{Axis: mainAxis, Member: addressIdentityKey}
 	if _, failure := Compile(fixture.seal(t)); !failure.Available() {
 		t.Fatal("an address identity was admitted beside a join that borrows the candidate's own directory")
@@ -135,6 +142,9 @@ func TestAnAddressIdentityOfAnotherRelationIsRefused(t *testing.T) {
 	fixture.otherCatalog.Projections = append(fixture.otherCatalog.Projections, member.Projection{
 		Key: addressIdentityKey, Relation: siblingRelationKey, Role: member.Identity,
 		Result: addressIdentityCarrier, CandidateProvider: member.AxisRelationCandidate(sibling),
+	})
+	fixture.otherCatalog.Authorities = append(fixture.otherCatalog.Authorities, carrier.Authority{
+		Carrier: addressIdentityCarrier, Capability: carrier.DecodeOnly,
 	})
 	fixture.declaration.Joins[0].AddressIdentity = member.ProjectionRef{Axis: occurrenceAxis, Member: addressIdentityKey}
 	if _, failure := Compile(fixture.seal(t)); !failure.Available() {

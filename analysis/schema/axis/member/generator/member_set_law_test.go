@@ -22,8 +22,8 @@ func memberSetDefinition() definition.Definition {
 		return definition.GoSymbol{PackagePath: owner.PackagePath, Name: name, Receiver: receiver, ResultIndex: 0}
 	}
 	source.Carriers = append(source.Carriers,
-		definition.Carrier{Name: "Port", Key: "carrier/self/port", Type: port},
-		definition.Carrier{Name: "PortOrdinalCarrier", Key: "carrier/self/port-ordinal", Type: definition.GoType{Name: "uint32"}})
+		generatorCarrier("Port", "carrier/self/port", port),
+		generatorCarrier("PortOrdinalCarrier", "carrier/self/port-ordinal", definition.GoType{Name: "uint32"}))
 	source.Relations = append(source.Relations, definition.Relation{
 		Name: "Ports", Key: "self/ports", Subject: "Port",
 		CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: axis, Member: "self/ports"}),

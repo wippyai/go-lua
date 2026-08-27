@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/carrier"
 )
 
 // keyedCatalog builds one two-relation catalog whose "heap/routes" relation
@@ -13,6 +14,8 @@ func keyedCatalog(keys ...KeyVector) (Catalog, bool) {
 	routes := baseRelation("heap/routes")
 	routes.Keys = keys
 	return NewCatalog(
+		testAuthorities("coordinate"),
+		[]carrier.Binding{},
 		[]Relation{directory, routes},
 		[]Projection{
 			projectionOf("heap/routes", "heap/route-key", Key),
@@ -45,6 +48,8 @@ func TestAForeignKeyVectorColumnRefuses(t *testing.T) {
 		Columns: []schema.Key{"heap/directory-key"},
 	}}
 	catalog, ok := NewCatalog(
+		testAuthorities("coordinate"),
+		[]carrier.Binding{},
 		[]Relation{directory, routes},
 		[]Projection{
 			projectionOf("heap/directory", "heap/directory-key", Key),

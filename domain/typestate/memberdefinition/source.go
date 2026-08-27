@@ -10,6 +10,7 @@ package memberdefinition
 
 import (
 	"github.com/wippyai/go-lua/analysis/schema/axis/member/definition"
+	"github.com/wippyai/go-lua/analysis/schema/carrier"
 )
 
 const (
@@ -53,8 +54,8 @@ func StateSource() definition.Definition {
 			Fact: "StateCarrier",
 		},
 		Carriers: []definition.Carrier{
-			{Name: "CellCarrier", Key: "carrier/typestate/cell", Type: goType(statecellPackagePath, "Cell")},
-			{Name: "StateCarrier", Key: "carrier/typestate/state", Type: goType(typestatePackagePath, "Abstract")},
+			{Name: "CellCarrier", Key: "carrier/typestate/cell", Type: goType(statecellPackagePath, "Cell"), Capability: carrier.Equatable},
+			{Name: "StateCarrier", Key: "carrier/typestate/state", Type: goType(typestatePackagePath, "Abstract"), Capability: carrier.Ascending},
 		},
 	}
 }

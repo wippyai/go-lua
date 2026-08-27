@@ -503,6 +503,24 @@ func newContainmentFixture(t testing.TB) containmentFixture {
 	return newContainmentFixtureNamed(t, "placement-containment")
 }
 
+// The selected read and routed write both address the child. The parent is a
+// separate authenticated attribute carried by the route row; using it as the
+// route key would read the parent into Current and silently fold the wrong
+// cell whenever parent and child differ.
+func TestContainmentRouteAddressesChildAndCarriesParentSeparately(t *testing.T) {
+	fixture := newContainmentFixture(t)
+	parent, child := fixture.roots[0], fixture.roots[1]
+	parentFact := placementdomain.Fact{Class: placementdomain.OwnedHeap, RetainEscape: placementdomain.EvidenceProven}
+	route := Route{childKey: child, tag: 1, parent: parentFact}
+	key, destination := route.Coordinates()
+	if key != child || destination != child || key == parent {
+		t.Fatalf("containment route coordinates=%v/%v, want child %v distinct from parent %v", key, destination, child, parent)
+	}
+	if got := route.Parent(); !placementdomain.EqualFact(got, parentFact) {
+		t.Fatalf("containment route parent=%#v, want %#v", got, parentFact)
+	}
+}
+
 func newContainmentFixtureNamed(t testing.TB, name string) containmentFixture {
 	t.Helper()
 	heapSchema, placementSchema := newContainmentSchemas(t, name, `
@@ -657,6 +675,9 @@ func syntheticStructuralVocabulary(t testing.TB) structure.Table {
 	}
 	var specs []structure.Spec
 	for category := structure.CategoryArm; category.Available(); category++ {
+		if category == structure.CategoryRelationGeometryScalar {
+			continue
+		}
 		for ordinal := 1; ordinal <= counts(category); ordinal++ {
 			spelling := fmt.Sprintf("placement-containment/%d/%d", category, ordinal)
 			specs = append(specs, structure.Spec{
@@ -665,6 +686,7 @@ func syntheticStructuralVocabulary(t testing.TB) structure.Table {
 			})
 		}
 	}
+	specs = append(specs, structure.RelationGeometrySpecs()...)
 	entries, entriesOK := structure.Collect(specs)
 	if !entriesOK {
 		t.Fatal("synthetic structural declarations")

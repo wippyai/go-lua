@@ -1,12 +1,16 @@
 package member
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/wippyai/go-lua/analysis/schema/carrier"
+)
 
 func selectionCatalog(t *testing.T, selection Selection) (Catalog, bool) {
 	t.Helper()
 	routes := baseRelation("heap/routes")
 	routes.Addressing = Addressing{Address: "heap/route-key", Tag: "heap/route-tag"}
-	base, ok := NewCatalog([]Relation{routes}, []Projection{
+	base, ok := NewCatalog(testAuthorities("coordinate"), []carrier.Binding{}, []Relation{routes}, []Projection{
 		projectionOf("heap/routes", "heap/route-key", Key),
 		projectionOf("heap/routes", "heap/route-tag", Predicate),
 	}, nil, nil)
@@ -52,7 +56,7 @@ func TestASelectionIntoAnUndeclaredRelationRefuses(t *testing.T) {
 func TestASelectionTaggedByAForeignColumnRefuses(t *testing.T) {
 	directory := baseRelation("heap/directory")
 	routes := baseRelation("heap/routes")
-	base, ok := NewCatalog([]Relation{directory, routes}, []Projection{
+	base, ok := NewCatalog(testAuthorities("coordinate"), []carrier.Binding{}, []Relation{directory, routes}, []Projection{
 		projectionOf("heap/directory", "heap/directory-tag", Predicate),
 		projectionOf("heap/routes", "heap/route-tag", Predicate),
 	}, nil, nil)
@@ -102,7 +106,7 @@ func TestSelectionsAreContentAndSurviveTheClone(t *testing.T) {
 	}
 	routes := baseRelation("heap/routes")
 	routes.Addressing = Addressing{Address: "heap/route-key", Tag: "heap/route-tag"}
-	silent, ok := NewCatalog([]Relation{routes}, []Projection{
+	silent, ok := NewCatalog(testAuthorities("coordinate"), []carrier.Binding{}, []Relation{routes}, []Projection{
 		projectionOf("heap/routes", "heap/route-key", Key),
 		projectionOf("heap/routes", "heap/route-tag", Predicate),
 	}, nil, nil)

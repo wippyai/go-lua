@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member/definition"
+	"github.com/wippyai/go-lua/analysis/schema/carrier"
 )
 
 const (
@@ -61,10 +62,10 @@ func Contribution() definition.Contribution {
 		Axis: "call",
 		Rule: "call-activation",
 		Carriers: []definition.Carrier{
-			{Name: "CallActivationBranchCarrier", Key: "carrier/call/activation-branch", Type: goType(callPackagePath, "Body")},
-			{Name: "CallActivationBranchOrdinalCarrier", Key: "carrier/call/activation-branch-ordinal", Type: definition.GoType{Name: "uint32"}},
-			{Name: "CallActivationAxisCarrier", Key: "carrier/call/activation-axis", Type: goType(identityPackagePath, "SemanticKey")},
-			{Name: "CallActivationModuleCarrier", Key: "carrier/call/activation-module", Type: goType(identityPackagePath, "ContentID")},
+			{Name: "CallActivationBranchCarrier", Key: "carrier/call/activation-branch", Capability: carrier.DecodeOnly, Type: goType(callPackagePath, "Body")},
+			{Name: "CallActivationBranchOrdinalCarrier", Key: "carrier/call/activation-branch-ordinal", Capability: carrier.DecodeOnly, Type: definition.GoType{Name: "uint32"}},
+			{Name: "CallActivationAxisCarrier", Key: "carrier/call/activation-axis", Capability: carrier.DecodeOnly, Type: goType(identityPackagePath, "SemanticKey")},
+			{Name: "CallActivationModuleCarrier", Key: "carrier/call/activation-module", Capability: carrier.DecodeOnly, Type: goType(identityPackagePath, "ContentID")},
 		},
 		Relations: []definition.Relation{{
 			Name:    "CallActivationBranches",

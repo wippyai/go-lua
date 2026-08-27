@@ -30,8 +30,8 @@ func identityProjectionDefinition() definition.Definition {
 		return definition.GoType{PackagePath: "github.com/wippyai/go-lua/analysis/identity", Name: name}
 	}
 	source.Carriers = append(source.Carriers,
-		definition.Carrier{Name: "Module", Key: "carrier/self/module", Type: identityType("ContentID")},
-		definition.Carrier{Name: "Endpoint", Key: "carrier/self/endpoint", Type: identityType("SemanticKey")})
+		generatorCarrier("Module", "carrier/self/module", identityType("ContentID")),
+		generatorCarrier("Endpoint", "carrier/self/endpoint", identityType("SemanticKey")))
 	source.Projections = append(source.Projections,
 		definition.Projection{
 			Name: "BodyModule", Key: "self/body-module", Relation: "Candidates", Role: member.Identity,

@@ -4,13 +4,14 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/carrier"
 )
 
 func axisRef(key schema.Key) schema.EntryReference {
 	return schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: key}
 }
 
-func reducerInput(axis schema.EntryReference, carrier, tag Carrier) ReducerInput {
+func reducerInput(axis schema.EntryReference, carrier, tag carrier.Key) ReducerInput {
 	return ReducerInput{
 		Axis:         axis,
 		Carrier:      carrier,
@@ -20,7 +21,7 @@ func reducerInput(axis schema.EntryReference, carrier, tag Carrier) ReducerInput
 	}
 }
 
-func reducerOutput(axis schema.EntryReference, carrier Carrier) ReducerOutput {
+func reducerOutput(axis schema.EntryReference, carrier carrier.Key) ReducerOutput {
 	return ReducerOutput{Axis: axis, Carrier: carrier}
 }
 
@@ -28,10 +29,35 @@ func relationProvider(axis schema.EntryReference, member schema.Key) RelationRef
 	return RelationRef{Axis: axis, Member: member}
 }
 
+// testAuthorities is the frozen carrier ABI used by the raw catalog
+// fixtures in this package. The declaration-only catalog cannot infer a
+// carrier's owner or capability from its spelling, so every carrier occurring
+// in a fixture is listed explicitly as a local authority.
+func testAuthorities(keys ...carrier.Key) []carrier.Authority {
+	authorities := make([]carrier.Authority, 0, len(keys))
+	seen := make(map[carrier.Key]struct{}, len(keys))
+	for _, key := range keys {
+		if !key.Available() {
+			continue
+		}
+		if _, duplicate := seen[key]; duplicate {
+			continue
+		}
+		seen[key] = struct{}{}
+		authorities = append(authorities, carrier.Authority{Carrier: key, Capability: carrier.DecodeOnly})
+	}
+	return authorities
+}
+
 func completeCatalog() Catalog {
 	catalog, ok := NewCatalog(
+		testAuthorities(
+			"subject", "input/key", "input/value", "projection/key/result",
+			"projection/predicate/result", "input/carrier", "output/carrier",
+		),
+		[]carrier.Binding{},
 		[]Relation{{
-			Key: "relation/input", Subject: "subject", Inputs: []Carrier{"input/key", "input/value"},
+			Key: "relation/input", Subject: "subject", Inputs: []carrier.Key{"input/key", "input/value"},
 			CandidateProvider: AxisRelationCandidate(relationProvider(axisRef("axis/source"), "relation/input")),
 		}},
 		[]Projection{
@@ -43,7 +69,7 @@ func completeCatalog() Catalog {
 			Inputs:  []ReducerInput{reducerInput(axisRef("axis/source"), "input/carrier", "")},
 			Outputs: []ReducerOutput{reducerOutput(axisRef("axis/result"), "output/carrier")},
 		}},
-		nil,
+		[]CarryTransform{},
 	)
 	if !ok {
 		panic("complete member catalog rejected")
@@ -75,17 +101,19 @@ func TestNewCatalogAdmitsCompleteDeclaration(t *testing.T) {
 
 func TestNewCatalogRejectsDuplicateKeysAcrossKinds(t *testing.T) {
 	if _, ok := NewCatalog(
+		testAuthorities(),
+		[]carrier.Binding{},
 		[]Relation{{Key: "same"}},
 		[]Projection{{Key: "same", Relation: "same", Role: Key}},
-		nil,
-		nil,
+		[]Reducer{},
+		[]CarryTransform{},
 	); ok {
 		t.Fatal("catalog admitted a relation/projection duplicate key")
 	}
 }
 
 func TestNewCatalogRejectsProjectionWithMissingRelation(t *testing.T) {
-	if _, ok := NewCatalog(nil, []Projection{{Key: "projection", Relation: "missing", Role: Key, Result: "result"}}, nil, nil); ok {
+	if _, ok := NewCatalog(testAuthorities("result"), []carrier.Binding{}, nil, []Projection{{Key: "projection", Relation: "missing", Role: Key, Result: "result"}}, nil, nil); ok {
 		t.Fatal("catalog admitted a projection with a missing relation")
 	}
 }
@@ -110,7 +138,14 @@ func TestNewCatalogRejectsMalformedReducer(t *testing.T) {
 		)}, Outputs: []ReducerOutput{reducerOutput(axisRef("axis/result"), "")}},
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, ok := NewCatalog(nil, nil, []Reducer{reducer}, nil); ok {
+			var carriers []carrier.Key
+			for _, input := range reducer.Inputs {
+				carriers = append(carriers, input.Carrier, input.Tag, input.Route)
+			}
+			for _, output := range reducer.Outputs {
+				carriers = append(carriers, output.Carrier)
+			}
+			if _, ok := NewCatalog(testAuthorities(carriers...), []carrier.Binding{}, nil, nil, []Reducer{reducer}, nil); ok {
 				t.Fatal("catalog admitted malformed reducer")
 			}
 		})
@@ -201,12 +236,15 @@ func TestReducerInputConditionalCarriersFollowTheirReadForm(t *testing.T) {
 }
 
 func TestCatalogCopiesSlicesAndReducerInputs(t *testing.T) {
-	inputs := []Carrier{"input/one", "input/two"}
+	inputs := []carrier.Key{"input/one", "input/two"}
 	relations := []Relation{{Key: "relation", Subject: "subject", Inputs: inputs, CandidateProvider: AxisRelationCandidate(relationProvider(axisRef("axis/source"), "relation"))}}
 	reducerInputs := []ReducerInput{reducerInput(axisRef("axis/source"), "carrier", "")}
 	reducerOutputs := []ReducerOutput{reducerOutput(axisRef("axis/result"), "output")}
 	reducers := []Reducer{{Key: "reducer", Inputs: reducerInputs, Outputs: reducerOutputs}}
-	catalog, ok := NewCatalog(relations, nil, reducers, nil)
+	catalog, ok := NewCatalog(
+		testAuthorities("subject", "input/one", "input/two", "carrier", "output"),
+		[]carrier.Binding{}, relations, nil, reducers, nil,
+	)
 	if !ok {
 		t.Fatal("complete catalog rejected")
 	}
@@ -253,9 +291,11 @@ func TestMemberRefsRequireAxisOwnerAndMember(t *testing.T) {
 func TestCatalogAdmitsCandidateIndexedFactEndomorphism(t *testing.T) {
 	transform := CarryTransform{Key: "transform/value", Candidate: "candidate", Input: "fact", Output: "fact"}
 	catalog, ok := NewCatalog(
+		testAuthorities("candidate", "fact"),
+		[]carrier.Binding{},
 		[]Relation{{Key: "relation", Subject: "candidate", CandidateProvider: AxisRelationCandidate(relationProvider(axisRef("axis/source"), "relation"))}},
-		nil,
-		nil,
+		[]Projection{},
+		[]Reducer{},
 		[]CarryTransform{transform},
 	)
 	if !ok || !catalog.Available() || catalog.CarryTransformCount() != 1 {
@@ -272,7 +312,10 @@ func TestCatalogAdmitsCandidateIndexedFactEndomorphism(t *testing.T) {
 		{Key: "transform/value", Candidate: "candidate", Input: "fact", Output: "other-fact"},
 		{Key: "transform/value", Candidate: "candidate", Input: "fact", Output: ""},
 	} {
-		if _, malformedOK := NewCatalog(nil, nil, nil, []CarryTransform{malformed}); malformedOK {
+		if _, malformedOK := NewCatalog(
+			testAuthorities(malformed.Candidate, malformed.Input, malformed.Output),
+			[]carrier.Binding{}, nil, nil, nil, []CarryTransform{malformed},
+		); malformedOK {
 			t.Fatalf("malformed carry transform admitted: %#v", malformed)
 		}
 	}

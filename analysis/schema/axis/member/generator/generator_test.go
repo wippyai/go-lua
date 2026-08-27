@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member/definition"
+	"github.com/wippyai/go-lua/analysis/schema/carrier"
 )
 
 // composedSource resolves one axis's member definition the way the generator
@@ -30,6 +31,10 @@ func composedSource(t *testing.T, name string) definition.Definition {
 	return composed
 }
 
+func generatorCarrier(name string, key carrier.Key, typ definition.GoType) definition.Carrier {
+	return definition.Carrier{Name: name, Key: key, Type: typ, Capability: carrier.Equatable}
+}
+
 func externalProviderDefinition() definition.Definition {
 	owner := definition.GoType{PackagePath: "example/placement", Name: "Schema"}
 	candidate := definition.GoType{PackagePath: "example/value", Name: "StorageTransfer"}
@@ -41,9 +46,16 @@ func externalProviderDefinition() definition.Definition {
 	provider := member.AxisRelationCandidate(member.RelationRef{Axis: axis("value"), Member: "value/storage-transfer/candidates"})
 	return definition.Definition{
 		Name: "PlacementStore", Axis: "placement",
-		Binding:     definition.Binding{Key: definition.KeyNormalization{Carrier: "Key", Dense: definition.GoType{Name: "uint32"}, Normalizer: definition.GoSymbol{PackagePath: "example/placement", Name: "Normalize", Receiver: owner, ResultIndex: 0}}},
-		Signature:   definition.Signature{Key: "Key", Fact: "Fact"},
-		Carriers:    []definition.Carrier{{Name: "Candidate", Key: "carrier/value/storage-transfer", Type: candidate}, {Name: "Fact", Key: "carrier/placement/fact", Type: fact}, {Name: "Key", Key: "carrier/placement/key", Type: key}},
+		Binding:   definition.Binding{Key: definition.KeyNormalization{Carrier: "Key", Dense: definition.GoType{Name: "uint32"}, Normalizer: definition.GoSymbol{PackagePath: "example/placement", Name: "Normalize", Receiver: owner, ResultIndex: 0}}},
+		Signature: definition.Signature{Key: "Key", Fact: "Fact"},
+		Carriers: []definition.Carrier{
+			generatorCarrier("Fact", "carrier/placement/fact", fact),
+			generatorCarrier("Key", "carrier/placement/key", key),
+		},
+		CarrierRefs: []definition.CarrierReference{{
+			Name: "Candidate", Key: "carrier/placement/storage-transfer",
+			Ref: carrier.Ref{Owner: axis("value"), Carrier: "carrier/value/storage-transfer"}, Type: candidate,
+		}},
 		Relations:   []definition.Relation{{Name: "Route", Key: "placement/store/route", Subject: "Fact", Inputs: []definition.RelationInput{{Carrier: "Candidate"}, {Carrier: "Fact"}}, CandidateProvider: provider}},
 		Projections: []definition.Projection{{Name: "Destination", Key: "placement/store/destination", Relation: "Route", Role: member.Destination, Result: "Key", CandidateProvider: provider, Accessor: definition.GoSymbol{PackagePath: "example/placement", Name: "Destination", Receiver: fact, ResultIndex: 0}}},
 		Reducers:    []definition.Reducer{{Name: "Store", Key: "placement/reducer/store", Inputs: []definition.ReducerInput{{Axis: axis("placement"), Carrier: "Fact", Form: member.ReadFormExact, Multiplicity: member.MultiplicityOne}}, Outputs: []definition.ReducerOutput{{Axis: axis("placement"), Carrier: "Fact"}}, Implementation: definition.GoSymbol{PackagePath: "example/placement", Name: "Store", ResultIndex: 0}}},
@@ -64,7 +76,11 @@ func selfProviderDefinition() definition.Definition {
 		Name: "Self", Axis: "self",
 		Binding:   definition.Binding{Key: definition.KeyNormalization{Carrier: "Key", Dense: definition.GoType{Name: "uint32"}, Normalizer: method("KeyIndex", owner)}},
 		Signature: definition.Signature{Key: "Key", Fact: "Fact"},
-		Carriers:  []definition.Carrier{{Name: "Candidate", Key: "carrier/self/candidate", Type: candidate}, {Name: "Key", Key: "carrier/self/key", Type: key}, {Name: "Fact", Key: "carrier/self/fact", Type: fact}},
+		Carriers: []definition.Carrier{
+			generatorCarrier("Candidate", "carrier/self/candidate", candidate),
+			generatorCarrier("Key", "carrier/self/key", key),
+			generatorCarrier("Fact", "carrier/self/fact", fact),
+		},
 		Relations: []definition.Relation{{
 			Name: "Candidates", Key: "self/candidates", Subject: "Candidate", CandidateProvider: provider,
 			CandidateResolver: method("CandidateForOccurrence", owner), CandidateOrdinal: method("CandidateOrdinal", owner), CandidateAt: method("CandidateAt", owner),
@@ -104,6 +120,30 @@ func TestResolveUsesExplicitCrossAxisCandidateProvider(t *testing.T) {
 	}
 	if metadata.Relations[0].CandidateProviderLocal || metadata.Projections[0].CandidateProviderLocal {
 		t.Fatal("foreign provider was laundered into a local candidate ordinal")
+	}
+}
+
+// TestColdRendererDeclaresAuthoritiesAndImports keeps Go type witnesses on the
+// generator side. The consuming catalog names a distinct local use for its
+// imported candidate, while the authority remains Value-owned.
+func TestColdRendererDeclaresAuthoritiesAndImports(t *testing.T) {
+	artifact, err := Render("placement", externalProviderDefinition())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cold := string(artifact.Cold)
+	for _, want := range []string{
+		"[]carrier.Authority{",
+		"{Carrier: Fact, Capability: carrier.Equatable}",
+		"[]carrier.Binding{",
+		"{Use: Candidate, Ref: carrier.Ref{Owner: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: \"value\"}, Carrier: \"carrier/value/storage-transfer\"}}",
+	} {
+		if !strings.Contains(cold, want) {
+			t.Fatalf("cold output omitted %q:\n%s", want, cold)
+		}
+	}
+	if strings.Contains(cold, "example/value") || strings.Contains(cold, "StorageTransfer\")") {
+		t.Fatalf("cold catalog leaked generator Go type metadata:\n%s", cold)
 	}
 }
 
@@ -225,10 +265,6 @@ func TestResolveKeepsTypedRowsAlignedWithColdKinds(t *testing.T) {
 		// directories, ahead of the fact relations that consume them.
 		"value/mounted-call/parents",
 		"value/mounted-call/actual-members",
-		// The result-zero directory both call-result rules are indexed by. It
-		// is a base row rather than either rule's, so it takes its ordinal
-		// with the owner's rows and not behind the contributions.
-		"value/mounted-call-result/candidates",
 		// The fresh-result rule's own derived route set: the coordinates one
 		// mounted call publishes a fresh result at. It is a dependent relation
 		// over the candidate and that call's fact, so it sits after the member
@@ -242,26 +278,24 @@ func TestResolveKeepsTypedRowsAlignedWithColdKinds(t *testing.T) {
 		// member set, appended by that cut.
 		"value/module-load/candidates",
 		"value/module-load/arguments",
-		// The runtime-kind rule's own three: the calls it answers, the
-		// subjects one call compares, and the comparisons it draws over them.
 		"value/runtime-kind/candidates",
 		"value/runtime-kind/subjects",
 		"value/runtime-kind/comparisons",
-		// The two call-result rules' own route sets, each derived over the
-		// shared directory above and owned by the one rule that folds it.
+		// The two call-result rules share the mounted result slot directory,
+		// then publish their independent route sets.
+		"value/mounted-call-result/candidates",
 		"value/result-alias/routes",
 		"value/body-result/routes",
-		// The Placement rows that name the value axis. A relation over Value
-		// coordinates is value-axis data whichever rule authored it, so the
-		// roster folds these here and they take their ordinals in roster
-		// order, after every rule this axis composes a fold from.
+		// These rows originate in foreign-rule contributions but are folded into
+		// Value because their coordinates and facts are Value-owned.
 		"value/allocation/facts",
 		"value/fresh-result/facts",
 		"value/closure-capture/sources",
+		// The suspension evidence rule's anchor directory and the sources it
+		// parents. Both are Value rows because the coordinate they are
+		// addressed by is Value's own.
+		"value/suspension/anchors",
 		"value/suspension/sources",
-		"value/suspension-evidence/sources",
-		// The closed-allocation rule's parent set and the operands it parents,
-		// folded here from Heap under the same law.
 		"value/closed-allocation/parents",
 		"value/closed-allocation/operands",
 	}
@@ -289,9 +323,6 @@ func TestResolveKeepsTypedRowsAlignedWithColdKinds(t *testing.T) {
 		"value/mounted-call/callee-key",
 		"value/mounted-call/actual-key",
 		"value/mounted-call/actual-tag",
-		// The coordinate both call-result rules publish at, projected from the
-		// base directory it belongs to.
-		"value/mounted-call-result/coordinate",
 		// The route set's three projections: the coordinate it is observed at,
 		// the one it publishes at, and the tag its cell is paired by.
 		"value/fresh-result/route-key",
@@ -310,27 +341,24 @@ func TestResolveKeepsTypedRowsAlignedWithColdKinds(t *testing.T) {
 		"value/binary-order/write",
 		"value/module-load/argument-key",
 		"value/module-load/coordinate",
-		// The runtime-kind rule's four: the subject and comparison it reads,
-		// the coordinate it writes, and the call occurrence it is addressed by.
 		"value/runtime-kind/subject-key",
 		"value/runtime-kind/comparison-key",
 		"value/runtime-kind/coordinate",
 		"value/runtime-kind/call-occurrence",
-		// Each call-result route set's key and the tag its cell is paired by.
+		"value/mounted-call-result/coordinate",
 		"value/result-alias/route-key",
 		"value/result-alias/route-tag",
 		"value/body-result/route-key",
 		"value/body-result/route-tag",
-		// The projections over the folded-in Placement and Heap relations, in
-		// the same roster order their relations take above.
 		"value/allocation/fact-key",
 		"value/fresh-result/fact-key",
 		"value/closure-capture/source-key",
 		"value/closure-capture/source-tag",
+		// The suspension evidence anchor's own key, projected beside the
+		// sources that hang off it.
+		"value/suspension/anchor-key",
 		"value/suspension/source-key",
 		"value/suspension/source-tag",
-		"value/suspension-evidence/source-key",
-		"value/suspension-evidence/source-tag",
 		"value/closed-allocation/operand-key",
 	}
 	if len(metadata.Projections) != len(wantProjections) {
@@ -358,8 +386,6 @@ func TestResolveKeepsTypedRowsAlignedWithColdKinds(t *testing.T) {
 		"value/presence-refinement/reducer",
 		"value/binary-order/reducer",
 		"value/module-load/reducer",
-		// The folds appended after the module-load cut, each contributed by
-		// the package that owns the judgment it states.
 		"value/runtime-kind/reducer",
 		"value/allocation/reducer",
 		"value/result-alias/reducer",

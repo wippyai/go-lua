@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member/definition"
+	"github.com/wippyai/go-lua/analysis/schema/carrier"
 )
 
 const (
@@ -63,15 +64,20 @@ func Contribution() definition.Contribution {
 			// declaration so this rule's fold and projection shapes are
 			// derivable from the contribution alone; composition refuses a
 			// repeat that disagrees.
-			{Name: "PlacementKeyCarrier", Key: "carrier/placement/key", Type: goType(heapPackagePath, "Key")},
-			{Name: "PlacementFactCarrier", Key: "carrier/placement/fact", Type: goType(placementPackagePath, "Fact")},
-			// The two Call carriers this rule's route relation is typed in.
-			// They repeat Call's own declaration verbatim; composition refuses
-			// a repeat that disagrees.
-			{Name: "CallCoordinateCarrier", Key: "carrier/call/mounted-call", Type: goType(callPackagePath, "CallCoordinate")},
-			{Name: "CallFactCarrier", Key: "carrier/call/fact", Type: goType(callPackagePath, "Value")},
-			{Name: "TransferRouteCarrier", Key: "carrier/placement/transfer-route", Type: goType(transferPackagePath, "Route")},
-			{Name: "TransferRouteTagCarrier", Key: "carrier/placement/transfer-route-tag", Type: definition.GoType{Name: "uint64"}},
+			{Name: "PlacementKeyCarrier", Key: "carrier/placement/key", Type: goType(heapPackagePath, "Key"), Capability: carrier.Equatable},
+			{Name: "PlacementFactCarrier", Key: "carrier/placement/fact", Type: goType(placementPackagePath, "Fact"), Capability: carrier.Ascending},
+			// The two route carriers this rule authors: the selected route row
+			// and its owner-issued tag. Call's carriers are imported below;
+			// composition keeps those authorities owned by Call.
+			{Name: "TransferRouteCarrier", Key: "carrier/placement/transfer-route", Type: goType(transferPackagePath, "Route"), Capability: carrier.DecodeOnly},
+			{Name: "TransferRouteTagCarrier", Key: "carrier/placement/transfer-route-tag", Type: definition.GoType{Name: "uint64"}, Capability: carrier.DecodeOnly},
+		},
+		CarrierRefs: []definition.CarrierReference{
+			// The mounted Call coordinate and fact remain Call authorities;
+			// these references are source aliases, not duplicate Placement
+			// carrier declarations.
+			{Name: "CallCoordinateCarrier", Key: "carrier/call/mounted-call", Ref: carrier.Ref{Owner: schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: "call"}, Carrier: "carrier/call/mounted-call"}, Type: goType(callPackagePath, "CallCoordinate")},
+			{Name: "CallFactCarrier", Key: "carrier/call/fact", Ref: carrier.Ref{Owner: schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: "call"}, Carrier: "carrier/call/fact"}, Type: goType(callPackagePath, "Value")},
 		},
 		Relations: []definition.Relation{
 			{
@@ -143,10 +149,11 @@ func Contribution() definition.Contribution {
 		Selections: []definition.Selection{{
 			// The rows of TransferRoutes do not exist until the reads before this
 			// one have delivered their cells, so an operation publishes them
-			// and stamps each with TransferRouteTag. The operation is the
-			// derivation TransferRoutes declares, named there and nowhere else.
+			// and stamps each with TransferRouteTag. Its body is the owner judgment
+			// named here, never a second copy of it.
 			Name: "TransferRouteSelection", Key: "placement/transfer/route-selection",
 			Relation: "TransferRoutes", Tag: "TransferRouteTag",
+			Implementation: transferFunction("DeriveTransferRoutes"),
 		}},
 		Reducers: []definition.Reducer{{
 			Name: "TransferReducer",

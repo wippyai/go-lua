@@ -22,7 +22,7 @@ const memberIdentityDomain = "wippy.analysis/schema/axis/member/identity/v1"
 // identity, which reports itself unavailable rather than passing as a real
 // one.
 func IssueID(axis schema.EntryReference, key schema.Key) schema.EntryID {
-	if !axis.Available() || !key.Available() {
+	if axis.Surface != schema.SurfaceKindAxis || !axis.Key.Available() || !key.Available() {
 		return schema.EntryID{}
 	}
 	entry := schema.NewEntryID(axis.Surface, axis.Key)

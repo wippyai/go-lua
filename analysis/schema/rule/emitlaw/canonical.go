@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/wippyai/go-lua/analysis/relation/schema/algebra"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
@@ -205,8 +206,27 @@ func carryForm(carry *program.CarryDecl) string {
 	if carry == nil {
 		return "none"
 	}
-	return fmt.Sprintf("mode=%s input=%d transform=%s",
+	result := fmt.Sprintf("mode=%s input=%d transform=%s",
 		carryModeName(carry.Mode), carry.Input.Uint64(), transformForm(carry.Transform))
+	if carry.Output.Available() {
+		result += " output=" + outputAddressForm(carry.Output)
+	}
+	return result
+}
+
+func outputAddressForm(address algebra.OutputAddress) string {
+	if address.IsOwnerNamed() {
+		return "owner-named"
+	}
+	source, ok := address.Source()
+	if !ok {
+		return "-"
+	}
+	kind := "scalar"
+	if address.IsSpanSource() {
+		kind = "span"
+	}
+	return fmt.Sprintf("%s(%d,%d)", kind, source.Child(), source.Cell())
 }
 
 func inputsForm(inputs []program.JoinRef) string {

@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member/definition"
+	"github.com/wippyai/go-lua/analysis/schema/carrier"
 )
 
 const (
@@ -36,9 +37,9 @@ func valueMethod(name, receiver string, pointer bool, resultIndex int8) definiti
 func Contribution() definition.Contribution {
 	return definition.Contribution{
 		Axis: "placement", Rule: "placement-allocation-birth",
-		Carriers: []definition.Carrier{
-			{Name: "AllocationResultCarrier", Key: "carrier/value/allocation-result", Type: valuePointerType("AllocationResult")},
-			{Name: "ValueCoordinateCarrier", Key: "carrier/value/coordinate", Type: valueType("Coordinate")},
+		CarrierRefs: []definition.CarrierReference{
+			{Name: "AllocationResultCarrier", Key: "carrier/value/allocation-result", Ref: carrier.Ref{Owner: schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: "value"}, Carrier: "carrier/value/allocation-result"}, Type: valuePointerType("AllocationResult")},
+			{Name: "ValueCoordinateCarrier", Key: "carrier/value/coordinate", Ref: carrier.Ref{Owner: schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: "value"}, Carrier: "carrier/value/coordinate"}, Type: valueType("Coordinate")},
 		},
 		Relations: []definition.Relation{
 			{Name: "AllocationFacts", Key: "value/allocation/facts", Axis: "value", Subject: "ValueFactCarrier", Inputs: []definition.RelationInput{{Carrier: "AllocationResultCarrier"}}, CandidateProvider: member.AxisRelationCandidate(provider())},

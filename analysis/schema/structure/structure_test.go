@@ -169,6 +169,7 @@ func canonicalContributions() [][]Spec {
 		PublicationPlaneSpecs(),
 		PublicationEffectSpecs(),
 		ReductionOutcomeSpecs(),
+		RelationGeometrySpecs(),
 	}
 }
 
@@ -279,8 +280,11 @@ func TestStructureIdentityIsThisSurfaceDerivation(t *testing.T) {
 // authored identity, across categories as well as within one.
 func TestStructureMemberKeyIsUnique(t *testing.T) {
 	entries := canonicalVocabulary(t)
-	entries[len(entries)-1].key = entries[0].key
-	entries[len(entries)-1].id = schema.NewEntryID(schema.SurfaceKindStructure, entries[0].key)
+	// Mutate an ordinary row: changing a geometry key would first invalidate
+	// its owner-issued carrier, correctly tripping the entry-shape fence before
+	// this independent catalog-uniqueness law can run.
+	entries[1].key = entries[0].key
+	entries[1].id = schema.NewEntryID(schema.SurfaceKindStructure, entries[0].key)
 	_, failure := sealEntries(t, entries)
 	if failure.Law != seal.LawEntryUnique || failure.Disposition != schema.DispositionDuplicate {
 		t.Fatalf("duplicate member key sealed: law=%d disposition=%s", failure.Law, failure.Disposition)

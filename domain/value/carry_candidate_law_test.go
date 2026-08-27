@@ -3,7 +3,7 @@ package value_test
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/schema/axis/member"
+	"github.com/wippyai/go-lua/analysis/schema/carrier"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
@@ -26,7 +26,7 @@ func TestEveryValueCarryTransformCandidateIsARelationSubject(t *testing.T) {
 	if len(catalog.CarryTransforms) == 0 {
 		t.Fatal("value declares no carry transform")
 	}
-	subjects := make(map[member.Carrier]struct{}, len(catalog.Relations))
+	subjects := make(map[carrier.Key]struct{}, len(catalog.Relations))
 	for _, relation := range catalog.Relations {
 		subjects[relation.Subject] = struct{}{}
 	}

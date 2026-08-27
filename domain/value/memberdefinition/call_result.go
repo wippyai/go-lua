@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member/definition"
+	"github.com/wippyai/go-lua/analysis/schema/carrier"
 )
 
 // This file declares the rows both call-result transfers are addressed
@@ -46,16 +47,16 @@ func CallResultSiteProvider() member.CandidateRef {
 // read is joined from one of these rows and states so.
 func MountedCallResultSlotCarrier() definition.Carrier {
 	return definition.Carrier{
-		Name: "MountedCallResultSlotCarrier", Key: "carrier/value/mounted-call-result-slot",
+		Name: "MountedCallResultSlotCarrier", Key: "carrier/value/mounted-call-result-slot", Capability: carrier.DecodeOnly,
 		Type: valueGoType("MountedCallResultSlot"),
 	}
 }
 
 // CallFactCarrier is the Call fact both folds read. It is named here, beside
 // the rows that consume it, and the carrier key is Call's own.
-func CallFactCarrier() definition.Carrier {
-	return definition.Carrier{
-		Name: "CallFactCarrier", Key: "carrier/call/fact", Type: callGoType("Value"),
+func CallFactReference() definition.CarrierReference {
+	return definition.CarrierReference{
+		Name: "CallFactCarrier", Key: "carrier/call/fact", Ref: carrier.Ref{Owner: callAxisReference(), Carrier: "carrier/call/fact"}, Type: callGoType("Value"),
 	}
 }
 

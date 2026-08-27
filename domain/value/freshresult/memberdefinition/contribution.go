@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member/definition"
+	"github.com/wippyai/go-lua/analysis/schema/carrier"
 )
 
 const (
@@ -53,12 +54,11 @@ func Contribution() definition.Contribution {
 		Axis: "value",
 		Rule: "value-callresult-freshresult",
 		Carriers: []definition.Carrier{
-			// The two Call carriers this rule's route relation is typed in.
-			// They repeat Call's own declaration verbatim; composition refuses
-			// a repeat that disagrees.
-			{Name: "CallCoordinateCarrier", Key: "carrier/call/mounted-call", Type: goType(callPackagePath, "CallCoordinate")},
-			{Name: "CallFactCarrier", Key: "carrier/call/fact", Type: goType(callPackagePath, "Value")},
-			{Name: "FreshResultRouteTagCarrier", Key: "carrier/value/fresh-result-route-tag", Type: definition.GoType{Name: "uint64"}},
+			{Name: "FreshResultRouteTagCarrier", Key: "carrier/value/fresh-result-route-tag", Capability: carrier.DecodeOnly, Type: definition.GoType{Name: "uint64"}},
+		},
+		CarrierRefs: []definition.CarrierReference{
+			{Name: "CallCoordinateCarrier", Key: "carrier/call/mounted-call", Ref: carrier.Ref{Owner: axisReference("call"), Carrier: "carrier/call/mounted-call"}, Type: goType(callPackagePath, "CallCoordinate")},
+			{Name: "CallFactCarrier", Key: "carrier/call/fact", Ref: carrier.Ref{Owner: axisReference("call"), Carrier: "carrier/call/fact"}, Type: goType(callPackagePath, "Value")},
 		},
 		Relations: []definition.Relation{
 			{
@@ -119,10 +119,11 @@ func Contribution() definition.Contribution {
 		// before them delivered, so they are published through this
 		// selection and stamped with the tag the reading rule joins on.
 		Selections: []definition.Selection{{
-			Name:     "FreshResultRouteSelection",
-			Key:      "value/fresh-result/route-selection",
-			Relation: "FreshResultRoutes",
-			Tag:      "FreshResultRouteTag",
+			Name:           "FreshResultRouteSelection",
+			Key:            "value/fresh-result/route-selection",
+			Relation:       "FreshResultRoutes",
+			Tag:            "FreshResultRouteTag",
+			Implementation: freshResultFunction("DeriveFreshResultRoutes"),
 		}},
 		Reducers: []definition.Reducer{{
 			Name:      "FreshResultReducer",

@@ -5,11 +5,16 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
+	"github.com/wippyai/go-lua/analysis/schema/carrier"
 )
 
 const specimenPackage = "example/axis"
 
 func specimenType(name string) GoType { return GoType{PackagePath: specimenPackage, Name: name} }
+
+func specimenCarrier(name string, key carrier.Key, typ GoType) Carrier {
+	return Carrier{Name: name, Key: key, Type: typ, Capability: carrier.Equatable}
+}
 
 func specimenMethod(name, receiver string) GoSymbol {
 	return GoSymbol{PackagePath: specimenPackage, Name: name, Receiver: specimenType(receiver)}
@@ -35,9 +40,9 @@ func specimenBase() Definition {
 		}},
 		Signature: Signature{Key: "KeyCarrier", Fact: "FactCarrier"},
 		Carriers: []Carrier{
-			{Name: "KeyCarrier", Key: "carrier/specimen/key", Type: specimenType("Key")},
-			{Name: "FactCarrier", Key: "carrier/specimen/fact", Type: specimenType("Fact")},
-			{Name: "SeedCarrier", Key: "carrier/specimen/seed", Type: specimenType("Seed")},
+			specimenCarrier("KeyCarrier", "carrier/specimen/key", specimenType("Key")),
+			specimenCarrier("FactCarrier", "carrier/specimen/fact", specimenType("Fact")),
+			specimenCarrier("SeedCarrier", "carrier/specimen/seed", specimenType("Seed")),
 		},
 		Relations: []Relation{{
 			Name:              "Candidates",
@@ -203,14 +208,69 @@ func TestAnAuthoredContributionStatesTheFoldItClaims(t *testing.T) {
 // repeat that disagrees is two declarations of one name.
 func TestComposeRefusesAContributionCarrierThatContradictsTheBase(t *testing.T) {
 	agreeing := specimenContribution("specimen-first", "First", "specimen/reducer/first")
-	agreeing.Carriers = []Carrier{{Name: "FactCarrier", Key: "carrier/specimen/fact", Type: specimenType("Fact")}}
+	agreeing.Carriers = []Carrier{specimenCarrier("FactCarrier", "carrier/specimen/fact", specimenType("Fact"))}
 	if _, ok := specimenSource(agreeing).Compose(); !ok {
 		t.Fatal("a contribution repeating a base carrier verbatim was refused")
 	}
 	contradicting := specimenContribution("specimen-first", "First", "specimen/reducer/first")
-	contradicting.Carriers = []Carrier{{Name: "FactCarrier", Key: "carrier/specimen/other", Type: specimenType("Fact")}}
+	contradicting.Carriers = []Carrier{specimenCarrier("FactCarrier", "carrier/specimen/other", specimenType("Fact"))}
 	if _, ok := specimenSource(contradicting).Compose(); ok {
 		t.Fatal("a contribution redefined a base carrier")
+	}
+}
+
+// TestCatalogSeparatesLocalAuthoritiesFromForeignBindings keeps capability
+// where it is owned. A source alias has a local use spelling and generator
+// type metadata, but it never gets a capability or a second authority row.
+func TestCatalogSeparatesLocalAuthoritiesFromForeignBindings(t *testing.T) {
+	base := specimenBase()
+	foreignOwner := schema.EntryReference{Surface: schema.SurfaceKindIssuance, Key: "program/subject-liveness"}
+	base.CarrierRefs = []CarrierReference{{
+		Name: "ProgramSubject", Key: "carrier/specimen/program-subject",
+		Ref:  carrier.Ref{Owner: foreignOwner, Carrier: "carrier/program/subject-liveness"},
+		Type: specimenType("ProgramSubject"),
+	}}
+	catalog, ok := base.Catalog()
+	if !ok {
+		t.Fatal("a catalog with one explicit foreign binding was refused")
+	}
+	if catalog.AuthorityCount() != len(base.Carriers) || catalog.CarrierRefCount() != 1 {
+		t.Fatalf("catalog authorities/imports = %d/%d", catalog.AuthorityCount(), catalog.CarrierRefCount())
+	}
+	binding, bindingOK := catalog.CarrierRef("carrier/specimen/program-subject")
+	if !bindingOK || binding.Ref.Owner != foreignOwner || binding.Ref.Carrier != "carrier/program/subject-liveness" {
+		t.Fatalf("foreign binding = %+v found=%t", binding, bindingOK)
+	}
+}
+
+// TestAnImportedKeyCarrierRemainsAnImport is the Static/Value shape: the axis
+// may normalize a foreign key type, but that use must not reissue Value's
+// authority. Facts remain local because the axis itself owns their algebra.
+func TestAnImportedKeyCarrierRemainsAnImport(t *testing.T) {
+	base := specimenBase()
+	base.Carriers = append([]Carrier(nil), base.Carriers[1:]...)
+	base.CarrierRefs = []CarrierReference{{
+		Name: "KeyCarrier", Key: "carrier/specimen/value-coordinate",
+		Ref: carrier.Ref{
+			Owner:   schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: "value"},
+			Carrier: "carrier/value/coordinate",
+		},
+		Type: specimenType("Key"),
+	}}
+	if !base.Complete() {
+		t.Fatal("an axis key imported from its owner was refused")
+	}
+	catalog, ok := base.Catalog()
+	if !ok || catalog.AuthorityCount() != 2 || catalog.CarrierRefCount() != 1 {
+		t.Fatalf("imported-key catalog = %+v ok=%t", catalog, ok)
+	}
+}
+
+func TestDefinitionRefusesAnUnstatedLocalCarrierCapability(t *testing.T) {
+	base := specimenBase()
+	base.Carriers[0].Capability = carrier.CapabilityInvalid
+	if base.Complete() {
+		t.Fatal("a local carrier with no declared capability was admitted")
 	}
 }
 
@@ -242,7 +302,7 @@ func routedContribution(rule schema.Key, relation string, key schema.Key) Contri
 		Axis: "specimen",
 		Rule: rule,
 		Carriers: []Carrier{
-			{Name: "RouteCarrier", Key: "carrier/specimen/route", Type: specimenType("Route")},
+			specimenCarrier("RouteCarrier", "carrier/specimen/route", specimenType("Route")),
 		},
 		Relations: []Relation{{
 			Name:              relation,
@@ -512,9 +572,9 @@ func foreignAxisBase() Definition {
 		}},
 		Signature: Signature{Key: "ForeignKeyCarrier", Fact: "ForeignFactCarrier"},
 		Carriers: []Carrier{
-			{Name: "ForeignKeyCarrier", Key: "carrier/foreign/key", Type: specimenType("ForeignKey")},
-			{Name: "ForeignFactCarrier", Key: "carrier/foreign/fact", Type: specimenType("ForeignFact")},
-			{Name: "ForeignSeedCarrier", Key: "carrier/foreign/seed", Type: specimenType("ForeignSeed")},
+			specimenCarrier("ForeignKeyCarrier", "carrier/foreign/key", specimenType("ForeignKey")),
+			specimenCarrier("ForeignFactCarrier", "carrier/foreign/fact", specimenType("ForeignFact")),
+			specimenCarrier("ForeignSeedCarrier", "carrier/foreign/seed", specimenType("ForeignSeed")),
 		},
 		Relations: []Relation{{
 			Name:              "ForeignCandidates",
@@ -539,7 +599,7 @@ func foreignJoinContribution() Contribution {
 	contribution := specimenContribution("specimen-foreign", "Foreign", "specimen/reducer/foreign")
 	provider := member.AxisRelationCandidate(member.RelationRef{Axis: schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: "foreign"}, Member: "foreign/specimen-joins"})
 	contribution.Carriers = []Carrier{
-		{Name: "JoinCarrier", Key: "carrier/foreign/join", Type: specimenType("ForeignJoin")},
+		specimenCarrier("JoinCarrier", "carrier/foreign/join", specimenType("ForeignJoin")),
 	}
 	contribution.Relations = []Relation{{
 		Name:              "ForeignJoins",
@@ -602,15 +662,105 @@ func TestARowIsFoldedIntoTheSourceOfTheAxisItNames(t *testing.T) {
 	if len(foreign.Reducers) != 0 {
 		t.Fatalf("the reading rule's fold followed its rows into the read axis: %+v", foreign.Reducers)
 	}
-	carried := false
-	for _, carrier := range foreign.Carriers {
-		if carrier.Name == "JoinCarrier" {
-			carried = true
+	if len(foreign.CarrierRefs) != 1 {
+		t.Fatalf("foreign imports = %+v, want one moved subject import", foreign.CarrierRefs)
+	}
+	imported := foreign.CarrierRefs[0]
+	if imported.Name != "JoinCarrier" || imported.Key != "carrier/foreign/join" ||
+		imported.Ref.Owner != specimenAxis() || imported.Ref.Carrier != "carrier/foreign/join" {
+		t.Fatalf("folded subject import = %+v", imported)
+	}
+}
+
+// TestFoldForeignRowsPreservesAnExistingForeignImport proves a Program-owned
+// carrier stays an import when a relation moves again. The receiving axis gets
+// neither a copied Program authority nor a guessed axis owner.
+func TestFoldForeignRowsPreservesAnExistingForeignImport(t *testing.T) {
+	contribution := foreignJoinContribution()
+	programOwner := schema.EntryReference{Surface: schema.SurfaceKindIssuance, Key: "program/subject-liveness"}
+	contribution.CarrierRefs = []CarrierReference{{
+		Name: "ProgramSubject", Key: "carrier/specimen/program-subject",
+		Ref:  carrier.Ref{Owner: programOwner, Carrier: "carrier/program/subject-liveness"},
+		Type: specimenType("ProgramSubject"),
+	}}
+	contribution.Relations[0].Inputs = []RelationInput{{Carrier: "ProgramSubject"}}
+	roster, ok := NewRoster(specimenSource(contribution), foreignSource())
+	if !ok {
+		t.Fatal("a moved relation with a Program import was refused")
+	}
+	_, foreign, resolved := roster.Definition("foreign")
+	if !resolved {
+		t.Fatal("foreign source did not compose")
+	}
+	binding, bindingOK := foreign.Catalog()
+	if !bindingOK {
+		t.Fatal("foreign catalog was not projected")
+	}
+	imported, importedOK := binding.CarrierRef("carrier/specimen/program-subject")
+	if !importedOK || imported.Ref.Owner != programOwner || imported.Ref.Carrier != "carrier/program/subject-liveness" {
+		t.Fatalf("preserved Program import = %+v found=%t", imported, importedOK)
+	}
+	if _, duplicated := binding.Authority("carrier/specimen/program-subject"); duplicated {
+		t.Fatal("a moved foreign import was reissued as a local authority")
+	}
+}
+
+// TestFoldForeignRowsResolvesTheTargetOwnersAuthority covers the return trip:
+// a source may use a destination-owned carrier under its own local use and
+// source alias, but moving the row home must use the destination's existing
+// authority rather than create an owner-self import.
+func TestFoldForeignRowsResolvesTheTargetOwnersAuthority(t *testing.T) {
+	contribution := foreignJoinContribution()
+	contribution.Carriers = nil
+	contribution.CarrierRefs = []CarrierReference{{
+		Name: "TargetJoin", Key: "carrier/specimen/target-join",
+		Ref: carrier.Ref{
+			Owner:   schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: "foreign"},
+			Carrier: "carrier/foreign/target-owned-join",
+		},
+		Type: specimenType("ForeignJoin"),
+	}}
+	contribution.Relations[0].Subject = "TargetJoin"
+
+	foreign := foreignSource()
+	foreign.Base.Carriers = append(foreign.Base.Carriers,
+		specimenCarrier("OwnedForeignJoin", "carrier/foreign/target-owned-join", specimenType("ForeignJoin")))
+
+	roster, ok := NewRoster(specimenSource(contribution), foreign)
+	if !ok {
+		t.Fatal("a moved target-owned carrier use was refused")
+	}
+	_, target, resolved := roster.Definition("foreign")
+	if !resolved {
+		t.Fatal("foreign source did not compose")
+	}
+	relation, found := findRelation(target, "ForeignJoins")
+	if !found || relation.Subject != "OwnedForeignJoin" {
+		t.Fatalf("target-owned moved relation = %+v found=%t", relation, found)
+	}
+	for _, reference := range target.CarrierRefs {
+		if reference.Ref.Owner == (schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: "foreign"}) {
+			t.Fatalf("target re-imported its own authority: %+v", reference)
 		}
 	}
-	if !carried {
-		t.Fatal("a folded row's subject carrier did not travel with it")
-	}
+}
+
+func TestFoldForeignRowsRefusesCarrierConflictOrAbsence(t *testing.T) {
+	t.Run("target-conflict", func(t *testing.T) {
+		foreign := foreignSource()
+		foreign.Base.Carriers = append(foreign.Base.Carriers,
+			specimenCarrier("JoinCarrier", "carrier/foreign/conflicting-join", specimenType("ForeignJoin")))
+		if _, ok := NewRoster(specimenSource(foreignJoinContribution()), foreign); ok {
+			t.Fatal("a moved carrier use conflicting with the target owner was admitted")
+		}
+	})
+	t.Run("absent", func(t *testing.T) {
+		contribution := foreignJoinContribution()
+		contribution.Relations[0].Subject = "AbsentCarrier"
+		if _, ok := NewRoster(specimenSource(contribution), foreignSource()); ok {
+			t.Fatal("a moved carrier use absent from both source and target was admitted")
+		}
+	})
 }
 
 // TestARowNamingAnUnregisteredAxisHasNoHome refuses the roster where the row is

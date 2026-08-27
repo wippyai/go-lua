@@ -8,11 +8,14 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member/definition"
+	"github.com/wippyai/go-lua/analysis/schema/carrier"
 )
 
 const (
-	heapPackagePath   = "github.com/wippyai/go-lua/domain/heap"
-	sourcePackagePath = "github.com/wippyai/go-lua/domain/heap/allocation/internal/source"
+	heapPackagePath     = "github.com/wippyai/go-lua/domain/heap"
+	sourcePackagePath   = "github.com/wippyai/go-lua/domain/heap/allocation/internal/source"
+	identityPackagePath = "github.com/wippyai/go-lua/analysis/identity"
+	summaryPackagePath  = "github.com/wippyai/go-lua/analysis/domain/heap/relation/summary"
 )
 
 func heapGoType(name string) definition.GoType {
@@ -21,6 +24,14 @@ func heapGoType(name string) definition.GoType {
 
 func sourceGoType(name string) definition.GoType {
 	return definition.GoType{PackagePath: sourcePackagePath, Name: name}
+}
+
+func identityGoType(name string) definition.GoType {
+	return definition.GoType{PackagePath: identityPackagePath, Name: name}
+}
+
+func summaryGoType(name string) definition.GoType {
+	return definition.GoType{PackagePath: summaryPackagePath, Name: name}
 }
 
 func builtinGoType(name string) definition.GoType { return definition.GoType{Name: name} }
@@ -55,10 +66,12 @@ func AllocationCarry() definition.Definition {
 		}},
 		Signature: definition.Signature{Key: "HeapKeyCarrier", Fact: "HeapFactCarrier"},
 		Carriers: []definition.Carrier{
-			{Name: "HeapKeyCarrier", Key: "carrier/heap/key", Type: heapGoType("Key")},
-			{Name: "HeapFactCarrier", Key: "carrier/heap/fact", Type: heapGoType("Value")},
-			{Name: "EmptyAllocationCarrier", Key: "carrier/heap/allocation-empty", Type: sourceGoType("Root")},
-			{Name: "ClosedAllocationCarrier", Key: "carrier/heap/allocation-closed", Type: sourceGoType("Closed")},
+			{Name: "HeapKeyCarrier", Key: "carrier/heap/key", Type: heapGoType("Key"), Capability: carrier.Equatable},
+			{Name: "HeapFactCarrier", Key: "carrier/heap/fact", Type: heapGoType("Value"), Capability: carrier.Ascending},
+			{Name: "AllocationIDCarrier", Key: "carrier/heap/allocation-id", Type: identityGoType("ContentID"), Capability: carrier.Equatable},
+			{Name: "AllocationSourceCarrier", Key: "carrier/heap/allocation-source", Type: summaryGoType("Source"), Capability: carrier.DecodeOnly},
+			{Name: "EmptyAllocationCarrier", Key: "carrier/heap/allocation-empty", Type: sourceGoType("Root"), Capability: carrier.DecodeOnly},
+			{Name: "ClosedAllocationCarrier", Key: "carrier/heap/allocation-closed", Type: sourceGoType("Closed"), Capability: carrier.DecodeOnly},
 		},
 		Relations: []definition.Relation{
 			{

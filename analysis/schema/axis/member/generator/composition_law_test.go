@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member/definition"
 	"github.com/wippyai/go-lua/domain/memberroster"
 )
@@ -44,6 +45,43 @@ func withoutContribution(source definition.Source, position int) definition.Sour
 		reduced.Contributions = append(reduced.Contributions, contribution)
 	}
 	return reduced
+}
+
+// sourceDeclaresRelation and sourceDeclaresProjection distinguish a stale row
+// from a row another retained rule independently declares. Source.Compose
+// permits only exact repeated declarations, so a shared row remains owned by
+// each contributor that states it; removing one such contributor must not
+// make the other contributor's row disappear.
+func sourceDeclaresRelation(source definition.Source, key schema.Key) bool {
+	for _, relation := range source.Base.Relations {
+		if relation.Key == key {
+			return true
+		}
+	}
+	for _, contribution := range source.Contributions {
+		for _, relation := range contribution.Relations {
+			if relation.Key == key {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func sourceDeclaresProjection(source definition.Source, key schema.Key) bool {
+	for _, projection := range source.Base.Projections {
+		if projection.Key == key {
+			return true
+		}
+	}
+	for _, contribution := range source.Contributions {
+		for _, projection := range contribution.Projections {
+			if projection.Key == key {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // reducerBlocks splits the rendered reducer vocabulary into one text block per
@@ -124,11 +162,17 @@ func TestGeneratedOutputDiffIsConfinedToTheDroppedRulesRows(t *testing.T) {
 			}
 		}
 		for _, relation := range contribution.Relations {
+			if sourceDeclaresRelation(withoutContribution(source, position), relation.Key) {
+				continue
+			}
 			if strings.Contains(string(reduced.Cold), string(relation.Key)) || strings.Contains(string(reduced.Relations), string(relation.Key)) {
 				t.Fatalf("dropping %q left its relation row %q behind", contribution.Rule, relation.Key)
 			}
 		}
 		for _, projection := range contribution.Projections {
+			if sourceDeclaresProjection(withoutContribution(source, position), projection.Key) {
+				continue
+			}
 			if strings.Contains(string(reduced.Cold), string(projection.Key)) || strings.Contains(string(reduced.Relations), string(projection.Key)) {
 				t.Fatalf("dropping %q left its projection row %q behind", contribution.Rule, projection.Key)
 			}

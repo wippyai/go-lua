@@ -34,9 +34,11 @@
 package axis
 
 import (
+	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/lattice"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
+	"github.com/wippyai/go-lua/analysis/schema/carrier"
 	seal "github.com/wippyai/go-lua/analysis/schema/seal"
 	"github.com/wippyai/go-lua/analysis/schema/structure"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
@@ -107,9 +109,16 @@ const (
 	// executable functions and runtime handles are deliberately outside this
 	// package.
 	LawMemberSignature
-	// LawMemberCatalog states the migration ratchet: a nonempty supplied catalog
-	// must be complete. The zero catalog remains the staged legacy absence.
+	// LawMemberCatalog states that a supplied catalog must be complete. An empty
+	// catalog remains the explicit absence value.
 	LawMemberCatalog
+	// LawCarrierSignature states that the key resolves to a local or imported
+	// authority with key capability, while fact resolves to this axis's local
+	// ascending authority.
+	LawCarrierSignature
+	// LawCarrierReference states that an imported carrier points at one issued
+	// authority in its target owner's catalog.
+	LawCarrierReference
 )
 
 // Storage is the closed catalog of places an axis's facts live. It is the
@@ -380,8 +389,8 @@ type Binding[A, F any] struct {
 // are nominal member carriers, so executable or domain-owned handles cannot
 // enter the declaration stream by structural coincidence.
 type Signature struct {
-	Key  member.Carrier
-	Fact member.Carrier
+	Key  carrier.Key
+	Fact carrier.Key
 }
 
 func (signature Signature) Available() bool {
@@ -412,11 +421,11 @@ type Spec[A any] struct {
 	// of and the principal admitted to write each of them.
 	Frame Frame
 	// Catalog is the owner-issued declaration catalog for this axis. Its zero
-	// value is the staged-migration absence used by legacy callers; once members
-	// are supplied, the catalog must be complete.
+	// value is the explicit absence value; once members are supplied, the
+	// catalog must be complete.
 	Catalog member.Catalog
 	// Signature is the bounded cold carrier signature shared by this axis's
-	// members. A legacy zero signature is admitted only while Catalog is empty.
+	// members. A zero signature is admitted only while Catalog is empty.
 	Signature Signature
 	// Semantic is this axis's canonical identity: the semantic role row it is
 	// declared under. The row's declared spelling derives the identity the
@@ -478,6 +487,18 @@ func New[A any](spec Spec[A]) (*Template[A], bool) {
 	if !specAdmissible(spec) {
 		return nil, false
 	}
+	owner := schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: spec.Key}
+	catalog, catalogOK := spec.Catalog.Issue(owner)
+	if !catalogOK {
+		return nil, false
+	}
+	if spec.Signature != (Signature{}) && !signatureResolves(catalog, owner, spec.Signature) {
+		return nil, false
+	}
+	outputs, outputsOK := issueOutputs(spec.Frame.Outputs, owner, catalog)
+	if !outputsOK {
+		return nil, false
+	}
 	template := &Template[A]{
 		key:          spec.Key,
 		id:           schema.NewEntryID(schema.SurfaceKindAxis, spec.Key),
@@ -487,14 +508,86 @@ func New[A any](spec Spec[A]) (*Template[A], bool) {
 		mutability:   spec.Mutability,
 		concurrency:  spec.Concurrency,
 		dependencies: append([]schema.Key(nil), spec.Dependencies...),
-		outputs:      append([]Output(nil), spec.Frame.Outputs...),
-		catalog:      spec.Catalog.Clone(),
+		outputs:      outputs,
+		catalog:      catalog,
 		signature:    spec.Signature,
 		semantic:     spec.Semantic,
 		roles:        append([]schema.Key(nil), spec.Roles...),
 		mount:        spec.Mount,
 	}
 	return template, template.EntryAvailable() && template.metadataComplete() && template.fieldsComplete()
+}
+
+func signatureResolves(catalog member.Catalog, owner schema.EntryReference, signature Signature) bool {
+	if !signature.Available() {
+		return false
+	}
+	keyBinding, keyResolved := catalog.ResolveCarrier(owner, signature.Key)
+	if !keyResolved {
+		return false
+	}
+	// The fact carrier is the axis's own ascending algebra. A foreign fact
+	// import would let an axis publish under an authority it does not own.
+	factAuthority, factOK := catalog.ResolveLocalCarrier(owner, signature.Fact)
+	factIssued, factIssuedOK := carrier.Issue(owner, carrier.Authority{Carrier: signature.Fact, Capability: factAuthority.Capability})
+	if !factOK || !factAuthority.ID().Available() || !factIssuedOK || factAuthority.ID() != factIssued.ID() || factAuthority.Capability != carrier.Ascending {
+		return false
+	}
+	if keyBinding.Ref.Owner == owner {
+		keyAuthority, local := catalog.ResolveLocalCarrier(owner, signature.Key)
+		keyIssued, keyIssuedOK := carrier.Issue(owner, carrier.Authority{Carrier: signature.Key, Capability: keyAuthority.Capability})
+		if !local || !keyAuthority.ID().Available() || !keyIssuedOK || keyAuthority.ID() != keyIssued.ID() ||
+			(keyAuthority.Capability != carrier.Equatable && keyAuthority.Capability != carrier.Ascending) {
+			return false
+		}
+	}
+	return true
+}
+
+// issueOutputs performs the same one-way owner issuance for frame columns as
+// member.Catalog.Issue performs for nested members. Keeping output identities
+// on the row lets the axis seal detect a column/member collision without a
+// side registry or a second name-derived identity path.
+func issueOutputs(outputs []Output, owner schema.EntryReference, catalog member.Catalog) ([]Output, bool) {
+	issued := append([]Output(nil), outputs...)
+	for index := range issued {
+		if issued[index].ID().Available() {
+			return nil, false
+		}
+		if catalogHasMemberKey(catalog, issued[index].Key) {
+			return nil, false
+		}
+		id := member.IssueID(owner, issued[index].Key)
+		if !id.Available() {
+			return nil, false
+		}
+		for prior := 0; prior < index; prior++ {
+			if issued[prior].ID() == id {
+				return nil, false
+			}
+		}
+		issued[index].id = id
+	}
+	return issued, true
+}
+
+func catalogHasMemberKey(catalog member.Catalog, key schema.Key) bool {
+	if _, ok := catalog.Relation(key); ok {
+		return true
+	}
+	if _, ok := catalog.Projection(key); ok {
+		return true
+	}
+	if _, ok := catalog.Reducer(key); ok {
+		return true
+	}
+	if _, ok := catalog.CarryTransform(key); ok {
+		return true
+	}
+	if _, ok := catalog.Selection(key); ok {
+		return true
+	}
+	return false
 }
 
 func specAdmissible[A any](spec Spec[A]) bool {
@@ -573,8 +666,8 @@ func (template *Template[A]) OutputAt(index int) (Output, bool) {
 	return template.outputs[index], true
 }
 
-// HasMembers reports whether this axis has entered the migrated member-catalog
-// state. A zero catalog is the explicit legacy-absence state.
+// HasMembers reports whether this axis contains any member or carrier
+// declaration. A zero catalog is the explicit absence value.
 func (template *Template[A]) HasMembers() bool {
 	return template != nil && template.catalog.HasMembers()
 }
@@ -594,6 +687,16 @@ func (template *Template[A]) Catalog() member.Catalog {
 		return member.Catalog{}
 	}
 	return template.catalog.Clone()
+}
+
+// CarrierAuthority exposes the one narrow cross-surface lookup the axis can
+// provide to a consumer validating an imported carrier.  The catalog remains
+// the owner of the authority and returns a value copy, never mutable storage.
+func (template *Template[A]) CarrierAuthority(key carrier.Key) (carrier.Authority, bool) {
+	if template == nil {
+		return carrier.Authority{}, false
+	}
+	return template.catalog.CarrierAuthority(key)
 }
 
 // RelationOrdinal resolves a relation's dense catalog ordinal.
@@ -757,6 +860,10 @@ func (template *Template[A]) EntryContent(content *framing.Writer) error {
 		if err := content.String(string(output.Key)); err != nil {
 			return err
 		}
+		outputID := identity.ContentID(output.ID())
+		if err := content.Bytes(outputID[:]); err != nil {
+			return err
+		}
 		if err := content.String(string(output.Writer)); err != nil {
 			return err
 		}
@@ -764,10 +871,10 @@ func (template *Template[A]) EntryContent(content *framing.Writer) error {
 	if !template.catalog.HasMembers() {
 		return nil
 	}
-	// The member signature is a migration suffix. Keeping it behind the
-	// catalog-presence ratchet preserves the exact canonical byte stream of
-	// every unmigrated axis; only an axis that actually declares members moves
-	// to the extended identity.
+	// The member signature remains a migration suffix. Frame output identities
+	// are part of the base stream because outputs share the owner namespace;
+	// only an axis that actually declares members moves to the signature and
+	// catalog suffix.
 	if err := content.String(string(template.signature.Key)); err != nil {
 		return err
 	}
@@ -893,8 +1000,8 @@ func (contribution surface[A]) Seal(view seal.View, sealed seal.Sealed) schema.S
 		if !template.fieldsComplete() {
 			return seal.SurfaceLawFailure(schema.SurfaceKindAxis, id, LawFieldComplete, schema.DispositionIncomplete)
 		}
-		// A zero catalog is the staged legacy-migration state. Once an axis
-		// publishes members, the bounded catalog must be complete and closed.
+		// An empty catalog is the explicit absence value. Once an axis publishes
+		// members, the bounded catalog must be complete and closed.
 		if template.signature != (Signature{}) && !template.signature.Available() {
 			return seal.SurfaceLawFailure(schema.SurfaceKindAxis, id, LawMemberSignature, schema.DispositionIncomplete)
 		}
@@ -903,6 +1010,15 @@ func (contribution surface[A]) Seal(view seal.View, sealed seal.Sealed) schema.S
 		}
 		if template.catalog.HasMembers() && !template.catalog.Complete() {
 			return seal.SurfaceLawFailure(schema.SurfaceKindAxis, id, LawMemberCatalog, schema.DispositionMalformed)
+		}
+		if template.catalog.HasMembers() {
+			owner := schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: template.key}
+			if !template.catalog.Issued(owner) {
+				return seal.SurfaceLawFailure(schema.SurfaceKindAxis, id, LawMemberIdentity, schema.DispositionMalformed)
+			}
+			if template.signature != (Signature{}) && !signatureResolves(template.catalog, owner, template.signature) {
+				return seal.SurfaceLawFailure(schema.SurfaceKindAxis, id, LawCarrierSignature, schema.DispositionIncomplete)
+			}
 		}
 		// Every role an axis names is a declared member of the semantic role
 		// vocabulary. The vocabulary raises the two ways the name fails - one it
@@ -922,6 +1038,17 @@ func (contribution surface[A]) Seal(view seal.View, sealed seal.Sealed) schema.S
 		}
 		semantics[template.semantic] = id
 	}
+	for _, template := range templates {
+		owner := schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: template.key}
+		key := carrier.Key("")
+		if template.signature != (Signature{}) {
+			key = template.signature.Key
+		}
+		if failure := validateCarrierImports(template.catalog, owner, templates, sealed, key); failure.Available() {
+			failure.Entry = template.id
+			return failure
+		}
+	}
 	// One published column has one writer. The pair a publication is admitted
 	// under is exactly the pair sealed here, so a second declaration of one
 	// output name is rejected at the table rather than resolved by whichever
@@ -932,10 +1059,24 @@ func (contribution surface[A]) Seal(view seal.View, sealed seal.Sealed) schema.S
 			if !output.Available() {
 				return seal.SurfaceLawFailure(schema.SurfaceKindAxis, template.id, LawOutputDeclared, schema.DispositionIncomplete)
 			}
+			owner := schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: template.key}
+			if !output.ID().Available() || output.ID() != member.IssueID(owner, output.Key) {
+				return seal.SurfaceLawFailure(schema.SurfaceKindAxis, template.id, LawMemberIdentity, schema.DispositionMalformed)
+			}
 			if prior, duplicate := outputs[output.Key]; duplicate {
 				return seal.SurfaceLawFailure(schema.SurfaceKindAxis, prior, LawOutputUnique, schema.DispositionDuplicate)
 			}
 			outputs[output.Key] = template.id
+		}
+	}
+	// A frame column and a nested member share the same owner-qualified
+	// namespace. Rejecting an authored-key collision here keeps a consumer from
+	// resolving one spelling to two different row kinds.
+	for _, template := range templates {
+		for _, output := range template.outputs {
+			if catalogHasMemberKey(template.catalog, output.Key) {
+				return seal.SurfaceLawFailure(schema.SurfaceKindAxis, template.id, LawOutputUnique, schema.DispositionDuplicate)
+			}
 		}
 	}
 	// A writer is a declared axis, because an axis is a writer principal. A
@@ -965,6 +1106,67 @@ func (contribution surface[A]) Seal(view seal.View, sealed seal.Sealed) schema.S
 	// carries the verdict.
 	if blamed, cyclic := firstCyclicEntry(templates); cyclic {
 		return seal.SurfaceLawFailure(schema.SurfaceKindAxis, blamed, LawDependencyAcyclic, schema.DispositionMalformed)
+	}
+	return schema.SealFailure{}
+}
+
+// validateCarrierImports checks the target side of each imported binding. A
+// foreign reference is accepted only when the target entry exposes an issued
+// local authority for that carrier. Unknown target surfaces are left to their
+// own surface's authority law; this keeps the axis surface generic over the
+// Program/issuance carrier vocabulary.
+func validateCarrierImports[A any](catalog member.Catalog, owner schema.EntryReference, templates []*Template[A], sealed seal.Sealed, signatureKey carrier.Key) schema.SealFailure {
+	for _, binding := range catalog.CarrierRefs {
+		if !binding.Available() || binding.Ref.Owner == owner {
+			return seal.SurfaceLawFailure(schema.SurfaceKindAxis, schema.EntryID{}, LawCarrierReference, schema.DispositionMalformed)
+		}
+		var target schema.Entry
+		var disposition schema.Disposition
+		if binding.Ref.Owner.Surface == schema.SurfaceKindAxis {
+			for _, candidate := range templates {
+				if candidate != nil && candidate.key == binding.Ref.Owner.Key {
+					target = candidate
+					break
+				}
+			}
+			if target == nil {
+				disposition = schema.DispositionIncomplete
+			}
+		} else {
+			// A later surface cannot be inspected through this phase-fenced
+			// resolver. The root's post-surface reference law still proves that
+			// the owner entry exists; its carrier authority is resolved by the
+			// cold relation compiler once the complete schema is available.
+			if !sealed.Registered(binding.Ref.Owner.Surface) {
+				continue
+			}
+			target, disposition = sealed.ResolveReference(binding.Ref.Owner)
+		}
+		if target == nil {
+			if disposition == schema.DispositionAccepted {
+				disposition = schema.DispositionIncomplete
+			}
+			return seal.SurfaceLawFailure(schema.SurfaceKindAxis, schema.EntryID{}, LawCarrierReference, disposition)
+		}
+		provider, knowsAuthorities := target.(interface {
+			CarrierAuthority(carrier.Key) (carrier.Authority, bool)
+		})
+		if !knowsAuthorities {
+			// A lower surface may own a different carrier vocabulary and validate
+			// its authority in its own seal. Axis does not guess that shape.
+			continue
+		}
+		authority, authorityOK := provider.CarrierAuthority(binding.Ref.Carrier)
+		if !authorityOK {
+			return seal.SurfaceLawFailure(schema.SurfaceKindAxis, schema.EntryID{}, LawCarrierReference, schema.DispositionIncomplete)
+		}
+		expected, expectedOK := carrier.Issue(binding.Ref.Owner, carrier.Authority{Carrier: binding.Ref.Carrier, Capability: authority.Capability})
+		if !authority.ID().Available() || !expectedOK || authority.ID() != expected.ID() {
+			return seal.SurfaceLawFailure(schema.SurfaceKindAxis, schema.EntryID{}, LawCarrierReference, schema.DispositionMalformed)
+		}
+		if binding.Use == signatureKey && authority.Capability != carrier.Equatable && authority.Capability != carrier.Ascending {
+			return seal.SurfaceLawFailure(schema.SurfaceKindAxis, schema.EntryID{}, LawCarrierSignature, schema.DispositionMalformed)
+		}
 	}
 	return schema.SealFailure{}
 }

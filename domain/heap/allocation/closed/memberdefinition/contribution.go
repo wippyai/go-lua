@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member/definition"
+	"github.com/wippyai/go-lua/analysis/schema/carrier"
 )
 
 const (
@@ -62,11 +63,13 @@ func Contribution() definition.Contribution {
 		Axis: "heap",
 		Rule: "heap-closed",
 		Carriers: []definition.Carrier{
-			{Name: "ValueFactCarrier", Key: "carrier/value/fact", Type: valueGoType("Value")},
-			{Name: "ValueCoordinateCarrier", Key: "carrier/value/coordinate", Type: valueGoType("Coordinate")},
-			{Name: "HeapKeyCarrier", Key: "carrier/heap/key", Type: definition.GoType{PackagePath: heapPackagePath, Name: "Key"}},
-			{Name: "ClosedOperandsCarrier", Key: "carrier/value/closed-operands", Type: valueGoType("ClosedOperands")},
-			{Name: "ClosedOperandCarrier", Key: "carrier/value/closed-operand", Type: valueGoType("ClosedOperand")},
+			{Name: "HeapKeyCarrier", Key: "carrier/heap/key", Type: definition.GoType{PackagePath: heapPackagePath, Name: "Key"}, Capability: carrier.Equatable},
+		},
+		CarrierRefs: []definition.CarrierReference{
+			{Name: "ValueFactCarrier", Key: "carrier/value/fact", Ref: carrier.Ref{Owner: axisReference("value"), Carrier: "carrier/value/fact"}, Type: valueGoType("Value")},
+			{Name: "ValueCoordinateCarrier", Key: "carrier/value/coordinate", Ref: carrier.Ref{Owner: axisReference("value"), Carrier: "carrier/value/coordinate"}, Type: valueGoType("Coordinate")},
+			{Name: "ClosedOperandsCarrier", Key: "carrier/value/closed-operands", Ref: carrier.Ref{Owner: axisReference("value"), Carrier: "carrier/value/closed-operands"}, Type: valueGoType("ClosedOperands")},
+			{Name: "ClosedOperandCarrier", Key: "carrier/value/closed-operand", Ref: carrier.Ref{Owner: axisReference("value"), Carrier: "carrier/value/closed-operand"}, Type: valueGoType("ClosedOperand")},
 		},
 		// The rows this fold reads are VALUE rows, and they are declared here
 		// because this rule is what reads them - the axis states per row which

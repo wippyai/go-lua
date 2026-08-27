@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member/definition"
+	"github.com/wippyai/go-lua/analysis/schema/carrier"
 )
 
 const (
@@ -28,9 +29,10 @@ func judgmentType() definition.GoType {
 // callFactCarrier is the Call fact these folds read. It is named here, in the
 // contribution that consumes it, because the reading rule states what it reads
 // and the carrier key is Call's own.
-func callFactCarrier() definition.Carrier {
-	return definition.Carrier{
+func callFactCarrier() definition.CarrierReference {
+	return definition.CarrierReference{
 		Name: "CallFactCarrier", Key: "carrier/call/fact",
+		Ref:  carrier.Ref{Owner: axisReference("call"), Carrier: "carrier/call/fact"},
 		Type: definition.GoType{PackagePath: callPackagePath, Name: "Value"},
 	}
 }
@@ -42,7 +44,7 @@ func callFactCarrier() definition.Carrier {
 func mountedCallCarrier() definition.Carrier {
 	return definition.Carrier{
 		Name: "EffectMountedCallCarrier", Key: "carrier/effect/mounted-call",
-		Type: definition.GoType{PackagePath: effectFactorPackagePath, Name: "MountedCall"},
+		Type: definition.GoType{PackagePath: effectFactorPackagePath, Name: "MountedCall"}, Capability: carrier.DecodeOnly,
 	}
 }
 
@@ -136,10 +138,10 @@ func reducer(name string, key schema.Key, build string) definition.Reducer {
 // call resolves to the effect bindings its operation declares.
 func SelectedContribution() definition.Contribution {
 	return definition.Contribution{
-		Axis:     "effect",
-		Rule:     "effect-selected",
-		Carriers: []definition.Carrier{callFactCarrier()},
-		Reducers: []definition.Reducer{reducer("SelectedCallEffectReducer", "effect/callsite-selected/reducer", "DeriveSelected")},
+		Axis:        "effect",
+		Rule:        "effect-selected",
+		CarrierRefs: []definition.CarrierReference{callFactCarrier()},
+		Reducers:    []definition.Reducer{reducer("SelectedCallEffectReducer", "effect/callsite-selected/reducer", "DeriveSelected")},
 	}
 }
 
@@ -150,7 +152,8 @@ func OpaqueContribution() definition.Contribution {
 	return definition.Contribution{
 		Axis:        "effect",
 		Rule:        "effect-opaque",
-		Carriers:    []definition.Carrier{callFactCarrier(), mountedCallCarrier()},
+		Carriers:    []definition.Carrier{mountedCallCarrier()},
+		CarrierRefs: []definition.CarrierReference{callFactCarrier()},
 		Relations:   []definition.Relation{effectSites()},
 		Projections: []definition.Projection{effectSiteKey()},
 		Reducers:    []definition.Reducer{reducer("OpaqueCallEffectReducer", "effect/callsite-opaque/reducer", "DeriveOpaque")},
@@ -161,8 +164,8 @@ func OpaqueContribution() definition.Contribution {
 // one body this call dispatches to, and the tag its root is correlated by.
 func bodyRouteCarriers() []definition.Carrier {
 	return []definition.Carrier{
-		{Name: "BodyRouteCarrier", Key: "carrier/effect/body-route", Type: definition.GoType{PackagePath: bodyRoutePackagePath, Name: "Route"}},
-		{Name: "BodyRouteTagCarrier", Key: "carrier/effect/body-route-tag", Type: definition.GoType{Name: "uint64"}},
+		{Name: "BodyRouteCarrier", Key: "carrier/effect/body-route", Type: definition.GoType{PackagePath: bodyRoutePackagePath, Name: "Route"}, Capability: carrier.DecodeOnly},
+		{Name: "BodyRouteTagCarrier", Key: "carrier/effect/body-route-tag", Type: definition.GoType{Name: "uint64"}, Capability: carrier.DecodeOnly},
 	}
 }
 
@@ -225,9 +228,10 @@ func bodyRoutes() definition.Relation {
 // executable body this call reaches, transported to the site and joined.
 func BodyContribution() definition.Contribution {
 	return definition.Contribution{
-		Axis:     "effect",
-		Rule:     "effect-body",
-		Carriers: append([]definition.Carrier{callFactCarrier(), mountedCallCarrier()}, bodyRouteCarriers()...),
+		Axis:        "effect",
+		Rule:        "effect-body",
+		Carriers:    append([]definition.Carrier{mountedCallCarrier()}, bodyRouteCarriers()...),
+		CarrierRefs: []definition.CarrierReference{callFactCarrier()},
 		Relations: []definition.Relation{
 			effectSites(),
 			bodyRoutes(),

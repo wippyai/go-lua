@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member/definition"
+	"github.com/wippyai/go-lua/analysis/schema/carrier"
 )
 
 const (
@@ -15,6 +16,7 @@ const (
 	heapPackagePath      = "github.com/wippyai/go-lua/domain/heap"
 	storePackagePath     = "github.com/wippyai/go-lua/domain/placement/store"
 	valuePackagePath     = "github.com/wippyai/go-lua/domain/value"
+	identityPackagePath  = "github.com/wippyai/go-lua/analysis/identity"
 )
 
 func placementGoType(name string) definition.GoType {
@@ -31,6 +33,10 @@ func storeGoType(name string) definition.GoType {
 
 func valueGoType(name string) definition.GoType {
 	return definition.GoType{PackagePath: valuePackagePath, Name: name}
+}
+
+func identityGoType(name string) definition.GoType {
+	return definition.GoType{PackagePath: identityPackagePath, Name: name}
 }
 
 func builtinGoType(name string) definition.GoType { return definition.GoType{Name: name} }
@@ -89,12 +95,16 @@ func Storage() definition.Definition {
 			Fact: "PlacementFactCarrier",
 		},
 		Carriers: []definition.Carrier{
-			{Name: "PlacementKeyCarrier", Key: "carrier/placement/key", Type: heapGoType("Key")},
-			{Name: "PlacementFactCarrier", Key: "carrier/placement/fact", Type: placementGoType("Fact")},
-			{Name: "StorageRouteCarrier", Key: "carrier/placement/storage-route", Type: storeGoType("Route")},
-			{Name: "RouteTagCarrier", Key: "carrier/placement/storage-route-tag", Type: builtinGoType("uint64")},
-			{Name: "StorageTransferCarrier", Key: "carrier/value/storage-transfer", Type: valueGoType("StorageTransfer")},
-			{Name: "ValueFactCarrier", Key: "carrier/value/fact", Type: valueGoType("Value")},
+			{Name: "PlacementKeyCarrier", Key: "carrier/placement/key", Type: heapGoType("Key"), Capability: carrier.Equatable},
+			{Name: "PlacementFactCarrier", Key: "carrier/placement/fact", Type: placementGoType("Fact"), Capability: carrier.Ascending},
+			{Name: "AllocationEvidenceCarrier", Key: "carrier/placement/allocation-evidence", Type: placementGoType("AllocationEvidence"), Capability: carrier.DecodeOnly},
+			{Name: "PlacementSchemaIDCarrier", Key: "carrier/placement/schema-id", Type: identityGoType("ContentID"), Capability: carrier.DecodeOnly},
+			{Name: "StorageRouteCarrier", Key: "carrier/placement/storage-route", Type: storeGoType("Route"), Capability: carrier.DecodeOnly},
+			{Name: "RouteTagCarrier", Key: "carrier/placement/storage-route-tag", Type: builtinGoType("uint64"), Capability: carrier.DecodeOnly},
+		},
+		CarrierRefs: []definition.CarrierReference{
+			{Name: "StorageTransferCarrier", Key: "carrier/value/storage-transfer", Ref: carrier.Ref{Owner: schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: "value"}, Carrier: "carrier/value/storage-transfer"}, Type: valueGoType("StorageTransfer")},
+			{Name: "ValueFactCarrier", Key: "carrier/value/fact", Ref: carrier.Ref{Owner: schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: "value"}, Carrier: "carrier/value/fact"}, Type: valueGoType("Value")},
 		},
 		Enumerations: []definition.Enumeration{
 			{

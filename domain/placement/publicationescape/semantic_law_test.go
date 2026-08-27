@@ -486,6 +486,9 @@ func publicationEscapeStructuralVocabulary(t testing.TB) structure.Table {
 	}
 	entries := make([]structure.Spec, 0)
 	for category := structure.CategoryArm; category.Available(); category++ {
+		if category == structure.CategoryRelationGeometryScalar {
+			continue
+		}
 		for ordinal := 1; ordinal <= counts(category); ordinal++ {
 			spelling := fmt.Sprintf("publication-escape/%d/%d", category, ordinal)
 			entries = append(entries, structure.Spec{
@@ -493,6 +496,7 @@ func publicationEscapeStructuralVocabulary(t testing.TB) structure.Table {
 			})
 		}
 	}
+	entries = append(entries, structure.RelationGeometrySpecs()...)
 	collected, collectedOK := structure.Collect(entries)
 	if !collectedOK {
 		t.Fatal("publication escape structural entries")

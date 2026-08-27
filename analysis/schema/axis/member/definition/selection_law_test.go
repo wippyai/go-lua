@@ -21,40 +21,13 @@ func selectionContribution() Contribution {
 		Accessor:          specimenMethod("Tag", "Route"),
 	})
 	contribution.Selections = []Selection{{
-		Name:     "RouteSelection",
-		Key:      "specimen/routes/selection",
-		Relation: "Routes",
-		Tag:      "RouteTag",
+		Name:           "RouteSelection",
+		Key:            "specimen/routes/selection",
+		Relation:       "Routes",
+		Tag:            "RouteTag",
+		Implementation: GoSymbol{PackagePath: specimenPackage, Name: "DeriveRoutes", ResultIndex: 0},
 	}}
 	return contribution
-}
-
-// TestASelectionResolvesItsOperationThroughItsRelation states the single
-// authority: a selection carries no symbol of its own, and the row naming only
-// the relation it publishes into and the tag it stamps is whole. The operation
-// that computes those rows is the derivation that relation declares, so a
-// second symbol beside it would be a second authority over one judgment and
-// there is nowhere on the row to write one.
-func TestASelectionResolvesItsOperationThroughItsRelation(t *testing.T) {
-	contribution := selectionContribution()
-	if !contribution.Available() {
-		t.Fatal("a selection naming its relation and tag is refused at its contribution")
-	}
-	composed, composeOK := specimenSource(contribution).Compose()
-	if !composeOK {
-		t.Fatal("a selection naming its relation and tag does not compose")
-	}
-	catalog, ok := composed.Catalog()
-	if !ok {
-		t.Fatal("a selection naming its relation and tag does not reach a sealed catalog")
-	}
-	if catalog.SelectionCount() != 1 {
-		t.Fatalf("sealed catalog holds %d selections, want the one declared", catalog.SelectionCount())
-	}
-	selection, found := catalog.SelectionAt(0)
-	if !found || selection.Key != "specimen/routes/selection" {
-		t.Fatalf("sealed selection=%+v, want the declared operation", selection)
-	}
 }
 
 // TestASelectionNamingRowsItsAxisDoesNotDeclareRefuses states that the
@@ -79,14 +52,43 @@ func TestASelectionNamingRowsItsAxisDoesNotDeclareRefuses(t *testing.T) {
 	}
 }
 
+// TestASelectionNamesTheOperationThatComputesItsRows states where the
+// operation behind a selection is written: on the selection row itself, as a
+// source-level symbol descriptor. The relation says which rows are published
+// and the selection says what computes them, so the row carries the symbol
+// rather than resolving it from the relation's own derivation.
+func TestASelectionNamesTheOperationThatComputesItsRows(t *testing.T) {
+	contribution := selectionContribution()
+	if !contribution.Available() {
+		t.Fatal("a selection naming its relation, tag and implementation is refused at its contribution")
+	}
+	composed, composeOK := specimenSource(contribution).Compose()
+	if !composeOK {
+		t.Fatal("a selection naming its implementation does not compose")
+	}
+	catalog, ok := composed.Catalog()
+	if !ok {
+		t.Fatal("a selection naming its implementation does not reach a sealed catalog")
+	}
+	if catalog.SelectionCount() != 1 {
+		t.Fatalf("sealed catalog holds %d selections, want the one declared", catalog.SelectionCount())
+	}
+	selection, found := catalog.SelectionAt(0)
+	if !found || selection.Key != "specimen/routes/selection" {
+		t.Fatalf("sealed selection=%+v, want the declared operation", selection)
+	}
+}
+
 // TestAnIncompleteSelectionRefusesAtItsContribution states the row is whole
 // where it is written: a rule that names a selection without saying what it
-// publishes or what it stamps is refused at the contribution.
+// publishes, what it stamps, or what computes its rows is refused at the
+// contribution.
 func TestAnIncompleteSelectionRefusesAtItsContribution(t *testing.T) {
 	for label, mutate := range map[string]func(*Contribution){
-		"no key":      func(c *Contribution) { c.Selections[0].Key = schema.Key("") },
-		"no relation": func(c *Contribution) { c.Selections[0].Relation = "" },
-		"no tag":      func(c *Contribution) { c.Selections[0].Tag = "" },
+		"no key":            func(c *Contribution) { c.Selections[0].Key = schema.Key("") },
+		"no relation":       func(c *Contribution) { c.Selections[0].Relation = "" },
+		"no tag":            func(c *Contribution) { c.Selections[0].Tag = "" },
+		"no implementation": func(c *Contribution) { c.Selections[0].Implementation = GoSymbol{} },
 	} {
 		contribution := selectionContribution()
 		mutate(&contribution)

@@ -7,42 +7,39 @@ package suspension
 import (
 	schemaapi "github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
+	"github.com/wippyai/go-lua/analysis/schema/carrier"
 )
 
 const (
-	EvidenceRoutes                    schemaapi.Key  = "placement/suspension-evidence/routes"
-	EvidenceRouteKey                  schemaapi.Key  = "placement/suspension-evidence/route-key"
-	EvidenceRouteTag                  schemaapi.Key  = "placement/suspension-evidence/route-tag"
-	EvidenceRouteDestination          schemaapi.Key  = "placement/suspension-evidence/route-destination"
-	SuspensionEvidenceReducer         schemaapi.Key  = "placement-suspension-evidence/reducer"
-	EvidenceRouteSelection            schemaapi.Key  = "placement/suspension-evidence/route-selection"
-	PlacementKeyCarrier               member.Carrier = "carrier/placement/key"
-	EvidenceFactCarrier               member.Carrier = "carrier/placement/suspension-evidence/fact"
-	SubjectLivenessCarrier            member.Carrier = "carrier/program/subject-liveness"
-	ValueCoordinateCarrier            member.Carrier = "carrier/value/coordinate"
-	ValueFactCarrier                  member.Carrier = "carrier/value/fact"
-	CallFactCarrier                   member.Carrier = "carrier/call/fact"
-	SuspensionEvidenceRouteTagCarrier member.Carrier = "carrier/placement/suspension-evidence-route-tag"
-	SuspensionSourceCarrier           member.Carrier = "carrier/value/suspension-source"
-	SuspensionRouteCarrier            member.Carrier = "carrier/placement/suspension-route"
+	SuspensionEvidenceReducer schemaapi.Key = "placement-suspension-evidence/reducer"
+	PlacementKeyCarrier       carrier.Key   = "carrier/placement/key"
+	EvidenceFactCarrier       carrier.Key   = "carrier/placement/suspension-evidence/fact"
+	SourceSummaryCarrier      carrier.Key   = "carrier/placement/suspension-source-summary"
+	SuspensionRouteTagCarrier carrier.Key   = "carrier/placement/suspension-route-tag"
+	SubjectLivenessCarrier    carrier.Key   = "carrier/program/subject-liveness"
 )
 
 // AxisMemberCatalog is placement-suspension-evidence's declaration-only member vocabulary.
 func AxisMemberCatalog() member.Catalog {
 	valueAxis := schemaapi.EntryReference{Surface: schemaapi.SurfaceKindAxis, Key: "placement-suspension-evidence"}
 	catalog, ok := member.NewCatalog(
-		[]member.Relation{
-			{Key: EvidenceRoutes, Subject: SuspensionRouteCarrier, CandidateProvider: member.IssuedRowCandidate("program-relation/occurrence-subject-liveness"), Inputs: []member.Carrier{SubjectLivenessCarrier, CallFactCarrier}},
+		[]carrier.Authority{
+			{Carrier: PlacementKeyCarrier, Capability: carrier.Equatable},
+			{Carrier: EvidenceFactCarrier, Capability: carrier.Ascending},
+			{Carrier: SourceSummaryCarrier, Capability: carrier.DecodeOnly},
+			{Carrier: SuspensionRouteTagCarrier, Capability: carrier.DecodeOnly},
 		},
-		[]member.Projection{
-			{Key: EvidenceRouteKey, Relation: EvidenceRoutes, Role: member.Key, Result: PlacementKeyCarrier, CandidateProvider: member.IssuedRowCandidate("program-relation/occurrence-subject-liveness")},
-			{Key: EvidenceRouteTag, Relation: EvidenceRoutes, Role: member.Predicate, Result: SuspensionEvidenceRouteTagCarrier, CandidateProvider: member.IssuedRowCandidate("program-relation/occurrence-subject-liveness")},
-			{Key: EvidenceRouteDestination, Relation: EvidenceRoutes, Role: member.Destination, Result: PlacementKeyCarrier, CandidateProvider: member.IssuedRowCandidate("program-relation/occurrence-subject-liveness")},
+		[]carrier.Binding{
+			{Use: SubjectLivenessCarrier, Ref: carrier.Ref{Owner: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(3), Key: "program-type/subject-liveness"}, Carrier: "carrier/program/subject-liveness"}},
 		},
+		[]member.Relation{},
+		[]member.Projection{},
 		[]member.Reducer{
 			{Key: SuspensionEvidenceReducer, Inputs: []member.ReducerInput{
-				{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKindAxis, Key: "value"}, Carrier: ValueFactCarrier, Form: member.ReadFormSummary, Multiplicity: member.MultiplicityMany, Tag: SuspensionEvidenceRouteTagCarrier},
-				{Axis: valueAxis, Carrier: EvidenceFactCarrier, Form: member.ReadFormSelected, Multiplicity: member.MultiplicityOne, Tag: SuspensionEvidenceRouteTagCarrier, Route: PlacementKeyCarrier},
+				{Axis: valueAxis, Carrier: SourceSummaryCarrier, Form: member.ReadFormSelected, Multiplicity: member.MultiplicityOne, Tag: SuspensionRouteTagCarrier},
+				{Axis: valueAxis, Carrier: PlacementKeyCarrier, Form: member.ReadFormSelected, Multiplicity: member.MultiplicityOne, Tag: SuspensionRouteTagCarrier},
+				{Axis: valueAxis, Carrier: SuspensionRouteTagCarrier, Form: member.ReadFormSelected, Multiplicity: member.MultiplicityOne, Tag: SuspensionRouteTagCarrier},
+				{Axis: valueAxis, Carrier: EvidenceFactCarrier, Form: member.ReadFormSelected, Multiplicity: member.MultiplicityOne, Tag: SuspensionRouteTagCarrier, Route: PlacementKeyCarrier},
 			}, Outputs: []member.ReducerOutput{
 				{Axis: valueAxis, Carrier: EvidenceFactCarrier},
 			}},
@@ -51,12 +48,6 @@ func AxisMemberCatalog() member.Catalog {
 	)
 	if !ok {
 		panic("suspension: invalid axis member catalog")
-	}
-	catalog, ok = catalog.WithSelections([]member.Selection{
-		{Key: EvidenceRouteSelection, Relation: EvidenceRoutes, Tag: EvidenceRouteTag},
-	})
-	if !ok {
-		panic("suspension: invalid axis selection catalog")
 	}
 	return catalog
 }

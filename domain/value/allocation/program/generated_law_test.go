@@ -24,7 +24,7 @@ const allocationResultGeometry = `operand              semantic/operand/value/al
 candidate            relation=axis/value:value/allocation/candidates issued-row=-
 observation          points=1 reads=0
 observation.carry    point=0
-carry                mode=transform input=0 transform=axis/value:transform/value/allocation
+carry                mode=transform input=0 transform=axis/value:transform/value/allocation output=scalar(0,0)
 fold.reducer         axis/value:value/allocation/reducer
 fold.inputs          none
 output[0]            mode=exact value-slot=0 route=- column=axis/value:value/facts destination=axis/value:value/allocation/coordinate

@@ -7,21 +7,28 @@ package pack
 import (
 	schemaapi "github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
+	"github.com/wippyai/go-lua/analysis/schema/carrier"
 )
 
 const (
-	SourceSeeds      schemaapi.Key  = "pack/source/candidates"
-	SourceCoordinate schemaapi.Key  = "pack/source/coordinate"
-	SourceReducer    schemaapi.Key  = "pack/reducer/source"
-	RootCarrier      member.Carrier = "carrier/pack/root"
-	FactCarrier      member.Carrier = "carrier/pack/fact"
-	SourceCarrier    member.Carrier = "carrier/pack/source"
+	SourceSeeds      schemaapi.Key = "pack/source/candidates"
+	SourceCoordinate schemaapi.Key = "pack/source/coordinate"
+	SourceReducer    schemaapi.Key = "pack/reducer/source"
+	RootCarrier      carrier.Key   = "carrier/pack/root"
+	FactCarrier      carrier.Key   = "carrier/pack/fact"
+	SourceCarrier    carrier.Key   = "carrier/pack/source"
 )
 
 // AxisMemberCatalog is pack's declaration-only member vocabulary.
 func AxisMemberCatalog() member.Catalog {
 	valueAxis := schemaapi.EntryReference{Surface: schemaapi.SurfaceKindAxis, Key: "pack"}
 	catalog, ok := member.NewCatalog(
+		[]carrier.Authority{
+			{Carrier: RootCarrier, Capability: carrier.Equatable},
+			{Carrier: FactCarrier, Capability: carrier.Ascending},
+			{Carrier: SourceCarrier, Capability: carrier.DecodeOnly},
+		},
+		[]carrier.Binding{},
 		[]member.Relation{
 			{Key: SourceSeeds, Subject: SourceCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "pack"}, Member: "pack/source/candidates"})},
 		},

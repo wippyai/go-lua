@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
+	"github.com/wippyai/go-lua/analysis/schema/carrier"
 	"github.com/wippyai/go-lua/analysis/schema/denominator"
 	"github.com/wippyai/go-lua/analysis/schema/rule"
 	ruleplan "github.com/wippyai/go-lua/analysis/schema/rule/plan"
@@ -224,9 +225,15 @@ func focusedValueCatalog(t *testing.T) member.Catalog {
 	t.Helper()
 	provider := valueCandidateProvider()
 	catalog, ok := member.NewCatalog(
+		[]carrier.Authority{
+			{Carrier: valuedomain.MountedCallArgumentCarrier, Capability: carrier.DecodeOnly},
+			{Carrier: valuedomain.ValueFactCarrier, Capability: carrier.Ascending},
+			{Carrier: valuedomain.ValueCoordinateCarrier, Capability: carrier.Equatable},
+		},
+		[]carrier.Binding{},
 		[]member.Relation{
 			{Key: MountedCallArgumentCandidates, Subject: valuedomain.MountedCallArgumentCarrier, CandidateProvider: member.AxisRelationCandidate(provider)},
-			{Key: MountedCallArguments, Subject: valuedomain.ValueFactCarrier, Inputs: []member.Carrier{valuedomain.MountedCallArgumentCarrier}, CandidateProvider: member.AxisRelationCandidate(provider)},
+			{Key: MountedCallArguments, Subject: valuedomain.ValueFactCarrier, Inputs: []carrier.Key{valuedomain.MountedCallArgumentCarrier}, CandidateProvider: member.AxisRelationCandidate(provider)},
 		},
 		[]member.Projection{
 			{Key: MountedCallArgumentKey, Relation: MountedCallArguments, Role: member.Key, Result: valuedomain.ValueCoordinateCarrier, CandidateProvider: member.AxisRelationCandidate(provider)},
@@ -254,9 +261,16 @@ func focusedCallCatalog(t *testing.T) member.Catalog {
 	t.Helper()
 	provider := member.AxisRelationCandidate(valueCandidateProvider())
 	catalog, ok := member.NewCatalog(
+		[]carrier.Authority{
+			{Carrier: calldomain.CallCoordinateCarrier, Capability: carrier.DecodeOnly},
+			{Carrier: calldomain.CallKeyCarrier, Capability: carrier.Equatable},
+			{Carrier: calldomain.CallFactCarrier, Capability: carrier.Ascending},
+			{Carrier: valuedomain.MountedCallArgumentCarrier, Capability: carrier.DecodeOnly},
+		},
+		[]carrier.Binding{},
 		[]member.Relation{
 			{Key: TypestateCallSites, Subject: calldomain.CallCoordinateCarrier,
-				Inputs: []member.Carrier{valuedomain.MountedCallArgumentCarrier}, CandidateProvider: provider},
+				Inputs: []carrier.Key{valuedomain.MountedCallArgumentCarrier}, CandidateProvider: provider},
 		},
 		[]member.Projection{
 			{Key: TypestateCallSiteKey, Relation: TypestateCallSites, Role: member.Key,

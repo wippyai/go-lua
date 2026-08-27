@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
+	"github.com/wippyai/go-lua/analysis/schema/carrier"
 )
 
 // identity_projection_law_test.go holds the Identity role to the two carriers
@@ -28,12 +29,12 @@ func identityLawDefinition(role member.Role, result string) Definition {
 		Binding:   Binding{Key: KeyNormalization{Carrier: "Key", Dense: GoType{Name: "uint32"}, Normalizer: method("KeyIndex", owner)}},
 		Signature: Signature{Key: "Key", Fact: "Fact"},
 		Carriers: []Carrier{
-			{Name: "Candidate", Key: "carrier/ident/candidate", Type: candidate},
-			{Name: "Key", Key: "carrier/ident/key", Type: key},
-			{Name: "Fact", Key: "carrier/ident/fact", Type: fact},
-			{Name: "Module", Key: "carrier/ident/module", Type: GoType{PackagePath: identityPackagePath, Name: "ContentID"}},
-			{Name: "Endpoint", Key: "carrier/ident/endpoint", Type: GoType{PackagePath: identityPackagePath, Name: "SemanticKey"}},
-			{Name: "Ordinal", Key: "carrier/ident/ordinal", Type: GoType{Name: "uint32"}},
+			{Name: "Candidate", Key: "carrier/ident/candidate", Type: candidate, Capability: carrier.Equatable},
+			{Name: "Key", Key: "carrier/ident/key", Type: key, Capability: carrier.Equatable},
+			{Name: "Fact", Key: "carrier/ident/fact", Type: fact, Capability: carrier.Equatable},
+			{Name: "Module", Key: "carrier/ident/module", Type: GoType{PackagePath: identityPackagePath, Name: "ContentID"}, Capability: carrier.Equatable},
+			{Name: "Endpoint", Key: "carrier/ident/endpoint", Type: GoType{PackagePath: identityPackagePath, Name: "SemanticKey"}, Capability: carrier.Equatable},
+			{Name: "Ordinal", Key: "carrier/ident/ordinal", Type: GoType{Name: "uint32"}, Capability: carrier.Equatable},
 		},
 		Relations: []Relation{{
 			Name: "Candidates", Key: "ident/candidates", Subject: "Candidate", CandidateProvider: provider,

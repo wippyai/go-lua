@@ -365,6 +365,9 @@ func syntheticStructuralVocabulary(t testing.TB) structure.Table {
 	}
 	var specs []structure.Spec
 	for category := structure.CategoryArm; category.Available(); category++ {
+		if category == structure.CategoryRelationGeometryScalar {
+			continue
+		}
 		for ordinal := 1; ordinal <= counts(category); ordinal++ {
 			spelling := fmt.Sprintf("returnescape/%d/%d", category, ordinal)
 			specs = append(specs, structure.Spec{
@@ -373,6 +376,7 @@ func syntheticStructuralVocabulary(t testing.TB) structure.Table {
 			})
 		}
 	}
+	specs = append(specs, structure.RelationGeometrySpecs()...)
 	entries, entriesOK := structure.Collect(specs)
 	if !entriesOK {
 		t.Fatal("synthetic structural declarations")

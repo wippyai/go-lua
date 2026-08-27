@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member/definition"
+	"github.com/wippyai/go-lua/analysis/schema/carrier"
 )
 
 const (
@@ -57,9 +58,9 @@ func Source() definition.Definition {
 			Fact: "FactCarrier",
 		},
 		Carriers: []definition.Carrier{
-			{Name: "RootCarrier", Key: "carrier/pack/root", Type: root},
-			{Name: "FactCarrier", Key: "carrier/pack/fact", Type: value},
-			{Name: "SourceCarrier", Key: "carrier/pack/source", Type: source},
+			{Name: "RootCarrier", Key: "carrier/pack/root", Type: root, Capability: carrier.Equatable},
+			{Name: "FactCarrier", Key: "carrier/pack/fact", Type: value, Capability: carrier.Ascending},
+			{Name: "SourceCarrier", Key: "carrier/pack/source", Type: source, Capability: carrier.DecodeOnly},
 		},
 		Relations: []definition.Relation{
 			{

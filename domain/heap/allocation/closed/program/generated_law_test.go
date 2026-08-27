@@ -42,7 +42,7 @@ observation          points=2 reads=2
 observation[0]       read=0 point=0
 observation[1]       read=1 point=1
 observation.carry    point=0
-carry                mode=transform input=0 transform=axis/heap:transform/heap/allocation-closed
+carry                mode=transform input=0 transform=axis/heap:transform/heap/allocation-closed output=scalar(0,0)
 fold.reducer         axis/heap:heap/reducer/closed
 fold.inputs          join 0, join 1
 output[0]            mode=exact value-slot=0 route=- column=axis/heap:heap/facts destination=axis/heap:heap/closed-allocation/coordinate

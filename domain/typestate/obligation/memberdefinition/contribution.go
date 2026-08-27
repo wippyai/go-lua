@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member/definition"
+	"github.com/wippyai/go-lua/analysis/schema/carrier"
 	valuedomain "github.com/wippyai/go-lua/domain/value"
 )
 
@@ -70,15 +71,41 @@ func Contribution() definition.Contribution {
 		Axis: "typestate",
 		Rule: "typestate-obligation",
 		Carriers: []definition.Carrier{
-			{Name: "CellCarrier", Key: "carrier/typestate/cell", Type: goType(statecellPackagePath, "Cell")},
-			{Name: "StateCarrier", Key: "carrier/typestate/state", Type: goType(typestatePackagePath, "Abstract")},
-			{Name: "StateCellCarrier", Key: "carrier/typestate/state-cell", Type: goType(obligationPackagePath, "Cell")},
-			{Name: "ProtocolTagCarrier", Key: "carrier/typestate/protocol-tag", Type: definition.GoType{Name: "uint64"}},
-			{Name: "MountedCallArgumentCarrier", Key: "carrier/value/mounted-call-argument", Type: goType(valuePackagePath, "MountedCallArgument")},
-			{Name: "ValueFactCarrier", Key: "carrier/value/fact", Type: goType(valuePackagePath, "Value")},
-			{Name: "CallFactCarrier", Key: "carrier/call/fact", Type: goType(callPackagePath, "Value")},
-			{Name: "CallKeyCarrier", Key: "carrier/call/key", Type: goType(callPackagePath, "Key")},
-			{Name: "CallCoordinateCarrier", Key: "carrier/call/mounted-call", Type: goType(callPackagePath, "CallCoordinate")},
+			{Name: "CellCarrier", Key: "carrier/typestate/cell", Type: goType(statecellPackagePath, "Cell"), Capability: carrier.Equatable},
+			{Name: "StateCarrier", Key: "carrier/typestate/state", Type: goType(typestatePackagePath, "Abstract"), Capability: carrier.Ascending},
+			{Name: "StateCellCarrier", Key: "carrier/typestate/state-cell", Type: goType(obligationPackagePath, "Cell"), Capability: carrier.DecodeOnly},
+			{Name: "ProtocolTagCarrier", Key: "carrier/typestate/protocol-tag", Type: definition.GoType{Name: "uint64"}, Capability: carrier.DecodeOnly},
+		},
+		// The rows this rule declares are addressed by Value's actual and
+		// classified by Call's fact. Both carriers are those axes' own issued
+		// authorities, so they enter here as imports and this rule mints no
+		// second owner for a coordinate it does not number.
+		CarrierRefs: []definition.CarrierReference{
+			{
+				Name: "MountedCallArgumentCarrier", Key: "carrier/value/mounted-call-argument",
+				Ref:  carrier.Ref{Owner: axisReference("value"), Carrier: "carrier/value/mounted-call-argument"},
+				Type: goType(valuePackagePath, "MountedCallArgument"),
+			},
+			{
+				Name: "ValueFactCarrier", Key: "carrier/value/fact",
+				Ref:  carrier.Ref{Owner: axisReference("value"), Carrier: "carrier/value/fact"},
+				Type: goType(valuePackagePath, "Value"),
+			},
+			{
+				Name: "CallFactCarrier", Key: "carrier/call/fact",
+				Ref:  carrier.Ref{Owner: axisReference("call"), Carrier: "carrier/call/fact"},
+				Type: goType(callPackagePath, "Value"),
+			},
+			{
+				Name: "CallKeyCarrier", Key: "carrier/call/key",
+				Ref:  carrier.Ref{Owner: axisReference("call"), Carrier: "carrier/call/key"},
+				Type: goType(callPackagePath, "Key"),
+			},
+			{
+				Name: "CallCoordinateCarrier", Key: "carrier/call/mounted-call",
+				Ref:  carrier.Ref{Owner: axisReference("call"), Carrier: "carrier/call/mounted-call"},
+				Type: goType(callPackagePath, "CallCoordinate"),
+			},
 		},
 		Relations: []definition.Relation{
 			{
@@ -139,6 +166,10 @@ func Contribution() definition.Contribution {
 			{
 				Name: "StateCellSelection", Key: "typestate/state/cell-selection",
 				Relation: "StateCells", Tag: "StateCellProtocol",
+				Implementation: definition.GoSymbol{
+					PackagePath: obligationPackagePath, Name: "DeriveStateCells",
+					Receiver: judgmentType(), ResultIndex: 0,
+				},
 			},
 		},
 		Reducers: []definition.Reducer{{

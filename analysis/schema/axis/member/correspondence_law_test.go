@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
+	"github.com/wippyai/go-lua/analysis/schema/carrier"
 )
 
 func correspondenceOwnAxis() schema.EntryReference {
@@ -46,7 +47,10 @@ func correspondenceKeyProjection() member.Projection {
 
 func correspondenceCatalog(t *testing.T, relation member.Relation, projections []member.Projection) (member.Catalog, bool) {
 	t.Helper()
-	return member.NewCatalog([]member.Relation{relation}, projections, nil, nil)
+	return member.NewCatalog(
+		memberTestAuthorities("MountedCallActualsCarrier", "CallCoordinateCarrier"),
+		[]carrier.Binding{}, []member.Relation{relation}, projections, nil, nil,
+	)
 }
 
 // TestACorrespondenceCarriesTheForeignAxisAsItsUpwardReference holds the
@@ -133,17 +137,18 @@ func TestANestedMemberSetHangsOffItsOwnAxisParent(t *testing.T) {
 		Parent:            correspondenceProvider(),
 		Ordinal:           "MountedCallActualTagCarrier",
 	}
-	if _, ok := member.NewCatalog([]member.Relation{parent, nested}, nil, nil, nil); !ok {
+	authorities := memberTestAuthorities("MountedCallActualsCarrier", "MountedCallArgumentCarrier", "MountedCallActualTagCarrier")
+	if _, ok := member.NewCatalog(authorities, []carrier.Binding{}, []member.Relation{parent, nested}, nil, nil, nil); !ok {
 		t.Fatal("a nested member set parented on a relation of its own axis is declarable")
 	}
 	foreign := nested
 	foreign.Parent = member.RelationRef{Axis: correspondenceForeignAxis(), Member: parent.Key}
-	if _, ok := member.NewCatalog([]member.Relation{parent, foreign}, nil, nil, nil); ok {
+	if _, ok := member.NewCatalog(authorities, []carrier.Binding{}, []member.Relation{parent, foreign}, nil, nil, nil); ok {
 		t.Fatal("a nested member set cannot hang off a parent this owner has no directory for")
 	}
 	absent := nested
 	absent.Parent = correspondenceForeign()
-	if _, ok := member.NewCatalog([]member.Relation{parent, absent}, nil, nil, nil); ok {
+	if _, ok := member.NewCatalog(authorities, []carrier.Binding{}, []member.Relation{parent, absent}, nil, nil, nil); ok {
 		t.Fatal("a nested member set cannot hang off a relation the catalog does not declare")
 	}
 }

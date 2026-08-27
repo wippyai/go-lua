@@ -84,7 +84,7 @@ func TestEvidenceCellAuthenticationOwnsSparseBottom(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			got, ok := authenticateEvidenceCell(test.state, test.present, test.available)
+			got, ok := AuthenticateEvidenceCell(test.state, test.present, test.available)
 			if ok != test.want || ok && got != test.state {
 				t.Fatalf("authenticate %v/%t/%t = %v/%t, want %t", test.state, test.present, test.available, got, ok, test.want)
 			}

@@ -7,25 +7,33 @@ package static
 import (
 	schemaapi "github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
+	"github.com/wippyai/go-lua/analysis/schema/carrier"
 )
 
 const (
-	TypeFactTransfers       schemaapi.Key  = "static-type/storage-transfer/candidates"
-	TypeFactSources         schemaapi.Key  = "static-type/storage-transfer/sources"
-	TypeFactSourceKey       schemaapi.Key  = "static-type/storage-transfer/source-key"
-	IdentityTypeFactReducer schemaapi.Key  = "static-type/reducer/identity"
-	CoordinateCarrier       member.Carrier = "carrier/value/coordinate"
-	TypeFactCarrier         member.Carrier = "carrier/static-type/fact"
-	StorageTransferCarrier  member.Carrier = "carrier/value/storage-transfer"
+	TypeFactTransfers       schemaapi.Key = "static-type/storage-transfer/candidates"
+	TypeFactSources         schemaapi.Key = "static-type/storage-transfer/sources"
+	TypeFactSourceKey       schemaapi.Key = "static-type/storage-transfer/source-key"
+	IdentityTypeFactReducer schemaapi.Key = "static-type/reducer/identity"
+	TypeFactCarrier         carrier.Key   = "carrier/static-type/fact"
+	CoordinateCarrier       carrier.Key   = "carrier/value/coordinate"
+	StorageTransferCarrier  carrier.Key   = "carrier/value/storage-transfer"
 )
 
 // AxisMemberCatalog is static-type's declaration-only member vocabulary.
 func AxisMemberCatalog() member.Catalog {
 	valueAxis := schemaapi.EntryReference{Surface: schemaapi.SurfaceKindAxis, Key: "static-type"}
 	catalog, ok := member.NewCatalog(
+		[]carrier.Authority{
+			{Carrier: TypeFactCarrier, Capability: carrier.Ascending},
+		},
+		[]carrier.Binding{
+			{Use: CoordinateCarrier, Ref: carrier.Ref{Owner: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Carrier: "carrier/value/coordinate"}},
+			{Use: StorageTransferCarrier, Ref: carrier.Ref{Owner: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Carrier: "carrier/value/storage-transfer"}},
+		},
 		[]member.Relation{
 			{Key: TypeFactTransfers, Subject: StorageTransferCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "static-type"}, Member: "static-type/storage-transfer/candidates"}), Correspondences: []member.RelationRef{member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/storage-transfer/candidates"}}},
-			{Key: TypeFactSources, Subject: TypeFactCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "static-type"}, Member: "static-type/storage-transfer/candidates"}), Inputs: []member.Carrier{StorageTransferCarrier}},
+			{Key: TypeFactSources, Subject: TypeFactCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "static-type"}, Member: "static-type/storage-transfer/candidates"}), Inputs: []carrier.Key{StorageTransferCarrier}},
 		},
 		[]member.Projection{
 			{Key: TypeFactSourceKey, Relation: TypeFactSources, Role: member.Key, Result: CoordinateCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "static-type"}, Member: "static-type/storage-transfer/candidates"})},

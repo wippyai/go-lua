@@ -4,8 +4,10 @@
 package issuance
 
 import (
+	"errors"
 	"sort"
 
+	"github.com/wippyai/go-lua/analysis/schema/carrier"
 	seal "github.com/wippyai/go-lua/analysis/schema/seal"
 
 	"github.com/wippyai/go-lua/analysis/schema"
@@ -345,9 +347,13 @@ const (
 )
 
 type Spec struct {
-	Key          schema.Key
-	Kind         Kind
-	Ordinal      uint16
+	Key     schema.Key
+	Kind    Kind
+	Ordinal uint16
+	// Authorities are raw owner-local carrier declarations. New copies and
+	// issues them under the entry's own issuance reference; callers must never
+	// supply an already-issued authority here.
+	Authorities  []carrier.Authority
 	Space        schema.Key
 	Target       schema.Key
 	Type         DataType
@@ -386,6 +392,7 @@ type Entry struct {
 	id            schema.EntryID
 	kind          Kind
 	ordinal       uint16
+	authorities   []carrier.Authority
 	space         schema.Key
 	target        schema.Key
 	typ           DataType
@@ -419,9 +426,13 @@ type Entry struct {
 
 func New(spec Spec) (*Entry, bool) {
 	inputCount := spec.InputCount
+	authorities, authoritiesOK := issueAuthorities(spec.Key, spec.Kind, spec.Authorities)
+	if !authoritiesOK {
+		return nil, false
+	}
 	entry := &Entry{
 		key: spec.Key, id: schema.NewEntryID(schema.SurfaceKindIssuance, spec.Key),
-		kind: spec.Kind, ordinal: spec.Ordinal, space: spec.Space, target: spec.Target,
+		kind: spec.Kind, ordinal: spec.Ordinal, authorities: authorities, space: spec.Space, target: spec.Target,
 		typ: spec.Type, cardinality: spec.Cardinality,
 		joins: append([]JoinField(nil), spec.Joins...), program: cloneProgram(spec.Program),
 		result: spec.Result, outputs: append([]OutputBinding(nil), spec.Outputs...),
@@ -439,10 +450,44 @@ func New(spec Spec) (*Entry, bool) {
 	return entry, entry.EntryAvailable() && entry.declarationComplete()
 }
 
-func (entry *Entry) Key() schema.Key                { return entry.key }
-func (entry *Entry) ID() schema.EntryID             { return entry.id }
-func (entry *Entry) Kind() Kind                     { return entry.kind }
-func (entry *Entry) Ordinal() uint16                { return entry.ordinal }
+func (entry *Entry) Key() schema.Key    { return entry.key }
+func (entry *Entry) ID() schema.EntryID { return entry.id }
+func (entry *Entry) Kind() Kind         { return entry.kind }
+func (entry *Entry) Ordinal() uint16    { return entry.ordinal }
+func (entry *Entry) AuthorityCount() int {
+	if entry == nil {
+		return 0
+	}
+	return len(entry.authorities)
+}
+func (entry *Entry) AuthorityAt(index int) (carrier.Authority, bool) {
+	if entry == nil || index < 0 || index >= len(entry.authorities) {
+		return carrier.Authority{}, false
+	}
+	return entry.authorities[index], true
+}
+
+// CarrierAuthority resolves one owner-issued local authority by its carrier
+// key. The shared name is the schema-level authority-provider contract used
+// by cross-surface validation.
+// The value is returned by copy, so callers cannot mutate sealed storage.
+func (entry *Entry) CarrierAuthority(key carrier.Key) (carrier.Authority, bool) {
+	if entry == nil || !key.Available() {
+		return carrier.Authority{}, false
+	}
+	var result carrier.Authority
+	found := 0
+	for _, authority := range entry.authorities {
+		if authority.Carrier == key {
+			result = authority
+			found++
+		}
+	}
+	if found != 1 {
+		return carrier.Authority{}, false
+	}
+	return result, result.Available() && result.Issued()
+}
 func (entry *Entry) Space() schema.Key              { return entry.space }
 func (entry *Entry) Target() schema.Key             { return entry.target }
 func (entry *Entry) Type() DataType                 { return entry.typ }
@@ -495,7 +540,80 @@ func (entry *Entry) Edges() []StageEdge { return cloneEdges(entry.edges) }
 
 func (entry *Entry) EntryAvailable() bool {
 	return entry != nil && entry.key.Available() && entry.id.Available() &&
-		entry.kind.valid() && entry.ordinal != 0
+		entry.kind.valid() && entry.ordinal != 0 && entry.authoritiesComplete()
+}
+
+// issueAuthorities crosses the only authority issuance boundary owned by an
+// issuance Entry. It intentionally accepts raw values only: an already-issued
+// authority, a duplicate carrier key, or a duplicate resulting identity is a
+// malformed declaration rather than something to repair or look up.
+func issueAuthorities(key schema.Key, kind Kind, raw []carrier.Authority) ([]carrier.Authority, bool) {
+	if len(raw) == 0 {
+		return nil, true
+	}
+	if kind != KindType || !key.Available() {
+		return nil, false
+	}
+	owner := schema.EntryReference{Surface: schema.SurfaceKindIssuance, Key: key}
+	issued := append([]carrier.Authority(nil), raw...)
+	seenCarriers := make(map[carrier.Key]struct{}, len(issued))
+	seenIDs := make(map[schema.EntryID]struct{}, len(issued))
+	for index, authority := range issued {
+		if authority.ID().Available() || !authority.Available() {
+			return nil, false
+		}
+		if _, duplicate := seenCarriers[authority.Carrier]; duplicate {
+			return nil, false
+		}
+		seenCarriers[authority.Carrier] = struct{}{}
+		issuedAuthority, ok := carrier.Issue(owner, authority)
+		if !ok || !issuedAuthority.Issued() {
+			return nil, false
+		}
+		if _, duplicate := seenIDs[issuedAuthority.ID()]; duplicate {
+			return nil, false
+		}
+		seenIDs[issuedAuthority.ID()] = struct{}{}
+		issued[index] = issuedAuthority
+	}
+	return issued, true
+}
+
+// authoritiesComplete authenticates the private authority identity against
+// this Entry's owner. Reconstructing the raw value and asking carrier.Issue
+// for the expected identity catches copied authorities from another owner,
+// field drift, duplicate keys, duplicate IDs, and raw/unissued mutations.
+func (entry *Entry) authoritiesComplete() bool {
+	if entry == nil {
+		return false
+	}
+	if len(entry.authorities) != 0 && entry.kind != KindType {
+		return false
+	}
+	if len(entry.authorities) == 0 {
+		return true
+	}
+	owner := schema.EntryReference{Surface: schema.SurfaceKindIssuance, Key: entry.key}
+	seenCarriers := make(map[carrier.Key]struct{}, len(entry.authorities))
+	seenIDs := make(map[schema.EntryID]struct{}, len(entry.authorities))
+	for _, authority := range entry.authorities {
+		if !authority.Available() || !authority.Issued() {
+			return false
+		}
+		if _, duplicate := seenCarriers[authority.Carrier]; duplicate {
+			return false
+		}
+		seenCarriers[authority.Carrier] = struct{}{}
+		if _, duplicate := seenIDs[authority.ID()]; duplicate {
+			return false
+		}
+		seenIDs[authority.ID()] = struct{}{}
+		expected, ok := carrier.Issue(owner, carrier.Authority{Carrier: authority.Carrier, Capability: authority.Capability})
+		if !ok || authority.ID() != expected.ID() {
+			return false
+		}
+	}
+	return true
 }
 
 func (entry *Entry) declarationComplete() bool {
@@ -789,11 +907,29 @@ func writeDataType(content *framing.Writer, typ DataType) error {
 }
 
 func (entry *Entry) EntryContent(content *framing.Writer) error {
+	if entry == nil || !entry.EntryAvailable() {
+		return errors.New("issuance: incomplete entry authority")
+	}
 	if err := content.Uint(uint64(entry.kind)); err != nil {
 		return err
 	}
 	if err := content.Uint(uint64(entry.ordinal)); err != nil {
 		return err
+	}
+	if err := content.Count(uint64(len(entry.authorities))); err != nil {
+		return err
+	}
+	for _, authority := range entry.authorities {
+		id := authority.ID()
+		if err := content.Bytes(id[:]); err != nil {
+			return err
+		}
+		if err := content.String(string(authority.Carrier)); err != nil {
+			return err
+		}
+		if err := content.Uint(uint64(authority.Capability)); err != nil {
+			return err
+		}
 	}
 	if err := content.String(string(entry.space)); err != nil {
 		return err

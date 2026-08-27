@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member/definition"
+	"github.com/wippyai/go-lua/analysis/schema/carrier"
 )
 
 const returnEscapePackagePath = "github.com/wippyai/go-lua/domain/placement/returnescape"
@@ -79,12 +80,14 @@ func Contribution() definition.Contribution {
 		Axis: "placement",
 		Rule: "placement-return-escape",
 		Carriers: []definition.Carrier{
-			{Name: "PlacementKeyCarrier", Key: "carrier/placement/key", Type: definition.GoType{PackagePath: "github.com/wippyai/go-lua/domain/heap", Name: "Key"}},
-			{Name: "PlacementFactCarrier", Key: "carrier/placement/fact", Type: definition.GoType{PackagePath: "github.com/wippyai/go-lua/domain/placement", Name: "Fact"}},
-			{Name: "ReturnRouteTagCarrier", Key: "carrier/placement/return-route-tag", Type: definition.GoType{Name: "uint64"}},
-			{Name: "ReturnRouteCarrier", Key: "carrier/placement/return-route", Type: returnEscapeGoType("Route")},
-			{Name: "ReturnBoundaryCarrier", Key: "carrier/value/return-boundary", Type: definition.GoType{PackagePath: valuePackagePath, Name: "ReturnBoundary"}},
-			{Name: "ValueFactCarrier", Key: "carrier/value/fact", Type: definition.GoType{PackagePath: valuePackagePath, Name: "Value"}},
+			{Name: "PlacementKeyCarrier", Key: "carrier/placement/key", Type: definition.GoType{PackagePath: "github.com/wippyai/go-lua/domain/heap", Name: "Key"}, Capability: carrier.Equatable},
+			{Name: "PlacementFactCarrier", Key: "carrier/placement/fact", Type: definition.GoType{PackagePath: "github.com/wippyai/go-lua/domain/placement", Name: "Fact"}, Capability: carrier.Ascending},
+			{Name: "ReturnRouteTagCarrier", Key: "carrier/placement/return-route-tag", Type: definition.GoType{Name: "uint64"}, Capability: carrier.DecodeOnly},
+			{Name: "ReturnRouteCarrier", Key: "carrier/placement/return-route", Type: returnEscapeGoType("Route"), Capability: carrier.DecodeOnly},
+		},
+		CarrierRefs: []definition.CarrierReference{
+			{Name: "ReturnBoundaryCarrier", Key: "carrier/value/return-boundary", Ref: carrier.Ref{Owner: schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: "value"}, Carrier: "carrier/value/return-boundary"}, Type: definition.GoType{PackagePath: valuePackagePath, Name: "ReturnBoundary"}},
+			{Name: "ValueFactCarrier", Key: "carrier/value/fact", Ref: carrier.Ref{Owner: schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: "value"}, Carrier: "carrier/value/fact"}, Type: definition.GoType{PackagePath: valuePackagePath, Name: "Value"}},
 		},
 		Relations: []definition.Relation{
 			{
@@ -171,10 +174,11 @@ func Contribution() definition.Contribution {
 		Selections: []definition.Selection{{
 			// The rows of ReturnRoutes do not exist until the reads before this
 			// one have delivered their cells, so an operation publishes them
-			// and stamps each with ReturnRouteTag. The operation is the
-			// derivation ReturnRoutes declares, named there and nowhere else.
+			// and stamps each with ReturnRouteTag. Its body is the owner judgment
+			// named here, never a second copy of it.
 			Name: "ReturnRouteSelection", Key: "placement/return-escape/route-selection",
 			Relation: "ReturnRoutes", Tag: "ReturnRouteTag",
+			Implementation: returnEscapeSymbol("ResolveRoute"),
 		}},
 		Reducers: []definition.Reducer{{
 			Name: "ReturnEscapeReducer",

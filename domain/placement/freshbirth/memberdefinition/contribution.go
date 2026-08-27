@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member/definition"
+	"github.com/wippyai/go-lua/analysis/schema/carrier"
 )
 
 const (
@@ -38,9 +39,9 @@ func Contribution() definition.Contribution {
 	return definition.Contribution{
 		Axis: "placement",
 		Rule: "placement-fresh-birth",
-		Carriers: []definition.Carrier{
-			{Name: "FreshResultCallCarrier", Key: "carrier/value/fresh-result-call", Type: valueType("FreshResultCall")},
-			{Name: "ValueCoordinateCarrier", Key: "carrier/value/coordinate", Type: valueType("Coordinate")},
+		CarrierRefs: []definition.CarrierReference{
+			{Name: "FreshResultCallCarrier", Key: "carrier/value/fresh-result-call", Ref: carrier.Ref{Owner: schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: "value"}, Carrier: "carrier/value/fresh-result-call"}, Type: valueType("FreshResultCall")},
+			{Name: "ValueCoordinateCarrier", Key: "carrier/value/coordinate", Ref: carrier.Ref{Owner: schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: "value"}, Carrier: "carrier/value/coordinate"}, Type: valueType("Coordinate")},
 		},
 		Relations: []definition.Relation{
 			{Name: "FreshResultFacts", Key: "value/fresh-result/facts", Axis: "value", Subject: "ValueFactCarrier", Inputs: []definition.RelationInput{{Carrier: "FreshResultCallCarrier"}}, CandidateProvider: member.AxisRelationCandidate(provider())},

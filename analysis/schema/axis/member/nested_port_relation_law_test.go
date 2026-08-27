@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
+	"github.com/wippyai/go-lua/analysis/schema/carrier"
 )
 
 func portAxis() schema.EntryReference {
@@ -21,6 +22,22 @@ func candidateRelation() member.Relation {
 		Subject:           "CallActivationCandidateCarrier",
 		CandidateProvider: member.AxisRelationCandidate(portProvider()),
 	}
+}
+
+func memberTestAuthorities(keys ...carrier.Key) []carrier.Authority {
+	authorities := make([]carrier.Authority, 0, len(keys))
+	seen := make(map[carrier.Key]struct{}, len(keys))
+	for _, key := range keys {
+		if !key.Available() {
+			continue
+		}
+		if _, duplicate := seen[key]; duplicate {
+			continue
+		}
+		seen[key] = struct{}{}
+		authorities = append(authorities, carrier.Authority{Carrier: key, Capability: carrier.DecodeOnly})
+	}
+	return authorities
 }
 
 // TestANestedRelationDeclaresBothItsParentAndItsOrdinalCarrier is the
@@ -65,17 +82,18 @@ func TestANestedRelationNamesAParentTheCatalogHolds(t *testing.T) {
 		Parent:            member.RelationRef{Axis: portAxis(), Member: parent.Key},
 		Ordinal:           "CallActivationPortOrdinalCarrier",
 	}
-	if _, ok := member.NewCatalog([]member.Relation{parent, nested}, nil, nil, nil); !ok {
+	authorities := memberTestAuthorities("CallActivationCandidateCarrier", "CallActivationPortCarrier", "CallActivationPortOrdinalCarrier")
+	if _, ok := member.NewCatalog(authorities, []carrier.Binding{}, []member.Relation{parent, nested}, nil, nil, nil); !ok {
 		t.Fatal("a nested set whose parent the catalog declares is admissible")
 	}
 	foreign := nested
 	foreign.Parent = member.RelationRef{Axis: portAxis(), Member: "call/activation/absent"}
-	if _, ok := member.NewCatalog([]member.Relation{parent, foreign}, nil, nil, nil); ok {
+	if _, ok := member.NewCatalog(authorities, []carrier.Binding{}, []member.Relation{parent, foreign}, nil, nil, nil); ok {
 		t.Fatal("a nested set may not hang off a relation the catalog never declared")
 	}
 	reflexive := nested
 	reflexive.Parent = member.RelationRef{Axis: portAxis(), Member: nested.Key}
-	if _, ok := member.NewCatalog([]member.Relation{parent, reflexive}, nil, nil, nil); ok {
+	if _, ok := member.NewCatalog(authorities, []carrier.Binding{}, []member.Relation{parent, reflexive}, nil, nil, nil); ok {
 		t.Fatal("a relation addressed by its own rows has no base row to address from")
 	}
 }

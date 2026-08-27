@@ -27,11 +27,14 @@ type Contribution struct {
 	// every composed reducer row carries, so a generated row traces back to
 	// exactly one declaration and a diff is attributable to one rule.
 	Rule schema.Key
-	// Carriers are the carrier rows this contribution's reducer signature needs
-	// and the base does not declare. A carrier the base already declares may be
-	// repeated verbatim; a repeat that disagrees is two declarations of one
-	// name and is refused.
+	// Carriers are axis-local carrier authorities this contribution declares.
+	// A carrier the base already declares may be repeated verbatim; a repeat
+	// that disagrees is two authority declarations of one name and is refused.
 	Carriers []Carrier
+	// CarrierRefs are imported authorities used by this contribution's rows.
+	// They stay imports if rows move to another axis; moving a row never turns
+	// one into a local authority.
+	CarrierRefs []CarrierReference
 	// Relations are the owner-issued relations this rule's fold reads and the
 	// base does not declare. A rule's relations are that rule's declaration for
 	// the same reason its reducer is: the rows it folds over are part of how it
@@ -59,6 +62,7 @@ type Contribution struct {
 // rather than left to comparison.
 func relationsAgree(left, right Relation) bool {
 	if left.Name != right.Name || left.Key != right.Key || left.Subject != right.Subject || left.Axis != right.Axis ||
+		left.Addressing != right.Addressing ||
 		left.CandidateProvider != right.CandidateProvider || left.CandidateResolver != right.CandidateResolver ||
 		left.CandidateOrdinal != right.CandidateOrdinal || left.CandidateAt != right.CandidateAt ||
 		left.CandidateCount != right.CandidateCount || left.Materialize != right.Materialize ||
@@ -116,8 +120,14 @@ func (contribution Contribution) rowsAvailable() bool {
 	if !contribution.Axis.Available() || !contribution.Rule.Available() {
 		return false
 	}
+	declarations := newCarrierDeclarations(axisCarrierOwner(contribution.Axis), len(contribution.Carriers)+len(contribution.CarrierRefs))
 	for _, carrier := range contribution.Carriers {
-		if !identifierAvailable(carrier.Name) || !carrier.Key.Available() || !carrier.Type.Available() {
+		if _, ok := declarations.addAuthority(carrier); !ok {
+			return false
+		}
+	}
+	for _, reference := range contribution.CarrierRefs {
+		if _, ok := declarations.addReference(reference); !ok {
 			return false
 		}
 	}
@@ -133,7 +143,8 @@ func (contribution Contribution) rowsAvailable() bool {
 	}
 	for _, selection := range contribution.Selections {
 		if !identifierAvailable(selection.Name) || !selection.Key.Available() ||
-			!identifierAvailable(selection.Relation) || !identifierAvailable(selection.Tag) {
+			!identifierAvailable(selection.Relation) || !identifierAvailable(selection.Tag) ||
+			!selection.Implementation.Available() {
 			return false
 		}
 	}
@@ -157,12 +168,14 @@ func (contribution Contribution) rowsAvailable() bool {
 func (contribution Contribution) Clone() Contribution {
 	clone := contribution
 	clone.Carriers = append([]Carrier(nil), contribution.Carriers...)
+	clone.CarrierRefs = append([]CarrierReference(nil), contribution.CarrierRefs...)
 	clone.Projections = append([]Projection(nil), contribution.Projections...)
 	clone.Selections = append([]Selection(nil), contribution.Selections...)
 	clone.Relations = make([]Relation, len(contribution.Relations))
 	for index, relation := range contribution.Relations {
 		clone.Relations[index] = relation
 		clone.Relations[index].Inputs = append([]RelationInput(nil), relation.Inputs...)
+		clone.Relations[index].Correspondences = cloneCorrespondences(relation.Correspondences)
 		clone.Relations[index].Derivation.StaticAxes = append([]schema.EntryReference(nil), relation.Derivation.StaticAxes...)
 	}
 	clone.Reducers = make([]Reducer, len(contribution.Reducers))
@@ -202,11 +215,22 @@ func (source Source) Compose() (Definition, bool) {
 	if len(base.Reducers) != 0 || !base.Axis.Available() {
 		return Definition{}, false
 	}
-	carriers := make(map[string]Carrier, len(base.Carriers))
-	keys := make(map[Carrier]struct{}, len(base.Carriers))
+	// The base itself cannot contain a duplicate declaration, even a verbatim
+	// one. Contributions may repeat a base row so independently authored rules
+	// do not depend on registration order; an axis base is one owner statement.
+	if _, _, carriersOK := base.carrierIndex(); !carriersOK {
+		return Definition{}, false
+	}
+	carriers := newCarrierDeclarations(axisCarrierOwner(base.Axis), len(base.Carriers)+len(base.CarrierRefs))
 	for _, carrier := range base.Carriers {
-		carriers[carrier.Name] = carrier
-		keys[carrier] = struct{}{}
+		if added, ok := carriers.addAuthority(carrier); !ok || !added {
+			return Definition{}, false
+		}
+	}
+	for _, reference := range base.CarrierRefs {
+		if added, ok := carriers.addReference(reference); !ok || !added {
+			return Definition{}, false
+		}
 	}
 	relations := make(map[string]Relation, len(base.Relations))
 	for _, relation := range base.Relations {
@@ -233,19 +257,22 @@ func (source Source) Compose() (Definition, bool) {
 		}
 		rules[contribution.Rule] = struct{}{}
 		for _, carrier := range contribution.Carriers {
-			existing, declared := carriers[carrier.Name]
-			if declared {
-				if existing != carrier {
-					return Definition{}, false
-				}
-				continue
-			}
-			if _, taken := keys[carrier]; taken {
+			added, carriersOK := carriers.addAuthority(carrier)
+			if !carriersOK {
 				return Definition{}, false
 			}
-			carriers[carrier.Name] = carrier
-			keys[carrier] = struct{}{}
-			base.Carriers = append(base.Carriers, carrier)
+			if added {
+				base.Carriers = append(base.Carriers, carrier)
+			}
+		}
+		for _, reference := range contribution.CarrierRefs {
+			added, carriersOK := carriers.addReference(reference)
+			if !carriersOK {
+				return Definition{}, false
+			}
+			if added {
+				base.CarrierRefs = append(base.CarrierRefs, reference)
+			}
 		}
 		for _, relation := range contribution.Relations {
 			existing, declared := relations[relation.Name]
@@ -362,17 +389,159 @@ func NewRoster(sources ...Source) (Roster, bool) {
 	return Roster{sources: folded}, true
 }
 
+// sourceCarrierDeclarations preindexes every authority and import a source
+// can contribute before rows are folded. The table is complete rather than
+// sequential: a carrier introduced by one contribution can be referenced by a
+// row introduced by another without turning either contribution into a second
+// authority owner.
+func sourceCarrierDeclarations(source Source) (carrierDeclarations, bool) {
+	if _, _, baseOK := source.Base.carrierIndex(); !baseOK {
+		return carrierDeclarations{}, false
+	}
+	declarations := newCarrierDeclarations(axisCarrierOwner(source.Base.Axis), len(source.Base.Carriers)+len(source.Base.CarrierRefs))
+	for _, carrier := range source.Base.Carriers {
+		if added, ok := declarations.addAuthority(carrier); !ok || !added {
+			return carrierDeclarations{}, false
+		}
+	}
+	for _, reference := range source.Base.CarrierRefs {
+		if added, ok := declarations.addReference(reference); !ok || !added {
+			return carrierDeclarations{}, false
+		}
+	}
+	for _, contribution := range source.Contributions {
+		if contribution.Axis != source.Base.Axis || !contribution.rowsAvailable() {
+			return carrierDeclarations{}, false
+		}
+		for _, carrier := range contribution.Carriers {
+			if _, ok := declarations.addAuthority(carrier); !ok {
+				return carrierDeclarations{}, false
+			}
+		}
+		for _, reference := range contribution.CarrierRefs {
+			if _, ok := declarations.addReference(reference); !ok {
+				return carrierDeclarations{}, false
+			}
+		}
+	}
+	return declarations, true
+}
+
+// appendForeignCarrierReference adds a binding to one received contribution.
+// The target never receives a Carrier here: a moved row may import an
+// authority, but it cannot recreate the authority in a different axis.
+func appendForeignCarrierReference(contribution *Contribution, reference CarrierReference) bool {
+	for _, held := range contribution.CarrierRefs {
+		if held.Name == reference.Name {
+			return held == reference
+		}
+		if held.Key == reference.Key {
+			return false
+		}
+	}
+	contribution.CarrierRefs = append(contribution.CarrierRefs, reference)
+	return true
+}
+
+// targetAuthorityName finds the target's local source alias for one authority
+// it owns. A moved row can then use that existing authority rather than
+// importing it back into the owner under the alias it had in its source axis.
+func targetAuthorityName(target carrierDeclarations, source carrierUse) (string, bool) {
+	for name, candidate := range target.byName {
+		if candidate.Local && candidate.Ref == source.Ref && candidate.Type == source.Type {
+			return name, true
+		}
+	}
+	return "", false
+}
+
+// carryForeignCarrierNames preserves the semantic owner of every source name
+// a moved row uses. A local authority becomes an import to its original axis;
+// an existing import remains exactly that import. If the receiving axis owns
+// the referenced authority already, it resolves its own local declaration and
+// returns that declaration's source alias. A name that resolves differently,
+// or nowhere, is refused rather than guessed from Go type or raw key text.
+func carryForeignCarrierNames(contribution *Contribution, names []string, source, target carrierDeclarations) (map[string]string, bool) {
+	resolved := make(map[string]string, len(names))
+	for _, name := range names {
+		if !identifierAvailable(name) {
+			return nil, false
+		}
+		sourceCarrier, sourceOK := source.byName[name]
+		targetCarrier, targetOK := target.byName[name]
+		if !sourceOK {
+			// A row can name an authority its target base already owns. This is
+			// the target-owner case for a name the contributing source never
+			// declared; no carrier row crosses the axis boundary.
+			if !targetOK {
+				return nil, false
+			}
+			resolved[name] = name
+			continue
+		}
+		if targetOK {
+			if targetCarrier.Ref != sourceCarrier.Ref || targetCarrier.Type != sourceCarrier.Type {
+				return nil, false
+			}
+			resolved[name] = name
+			continue
+		}
+		// The target is the referenced owner, but it has no source alias for
+		// its authority. Resolve the target's local alias rather than importing
+		// an authority back into its owner under the source axis's alias.
+		if sourceCarrier.Ref.Owner == target.owner {
+			targetName, ownerOK := targetAuthorityName(target, sourceCarrier)
+			if !ownerOK {
+				return nil, false
+			}
+			resolved[name] = targetName
+			continue
+		}
+		reference := CarrierReference{
+			Name: name,
+			Key:  sourceCarrier.Key,
+			Ref:  sourceCarrier.Ref,
+			Type: sourceCarrier.Type,
+		}
+		if !carrierReferenceAvailable(reference, target.owner) || !appendForeignCarrierReference(contribution, reference) {
+			return nil, false
+		}
+		resolved[name] = name
+	}
+	return resolved, true
+}
+
+func relationCarrierNames(relation Relation) []string {
+	names := make([]string, 0, len(relation.Inputs)+2)
+	names = append(names, relation.Subject)
+	for _, input := range relation.Inputs {
+		names = append(names, input.Carrier)
+	}
+	if relation.MemberOrdinal != "" {
+		names = append(names, relation.MemberOrdinal)
+	}
+	return names
+}
+
 // foldForeignRows moves every relation and projection to the source of the
-// axis it names, carrying the carrier rows it is typed in. A row naming an axis
-// no source registers has no home and refuses the roster where it is written
-// rather than where a plan later fails to resolve it.
+// axis it names, carrying only the imports its source names resolve through.
+// A row naming an axis no source registers has no home and refuses the roster
+// where it is written rather than where a plan later fails to resolve it.
 func foldForeignRows(sources []Source, axes map[schema.Key]int) ([]Source, bool) {
+	inventories := make([]carrierDeclarations, len(sources))
+	for index, source := range sources {
+		inventory, inventoryOK := sourceCarrierDeclarations(source)
+		if !inventoryOK {
+			return nil, false
+		}
+		inventories[index] = inventory
+	}
 	retained := make([][]Contribution, len(sources))
 	received := make([][]Contribution, len(sources))
 	for index, source := range sources {
 		retained[index] = make([]Contribution, 0, len(source.Contributions))
 		for _, contribution := range source.Contributions {
-			home := contribution
+			home := contribution.Clone()
 			home.Relations = nil
 			home.Projections = nil
 			home.Selections = nil
@@ -396,16 +565,18 @@ func foldForeignRows(sources []Source, axes map[schema.Key]int) ([]Source, bool)
 					row = Contribution{Axis: axis, Rule: contribution.Rule}
 					order = append(order, axis)
 				}
-				row.Relations = append(row.Relations, relation)
-				names := append([]string(nil), relation.Subject)
-				for _, input := range relation.Inputs {
-					names = append(names, input.Carrier)
-				}
-				carriers, carriersOK := namedCarriers(contribution.Carriers, row.Carriers, names)
-				if !carriersOK {
+				aliases, aliasesOK := carryForeignCarrierNames(&row, relationCarrierNames(relation), inventories[index], inventories[target])
+				if !aliasesOK {
 					return nil, false
 				}
-				row.Carriers = carriers
+				relation.Subject = aliases[relation.Subject]
+				for inputIndex := range relation.Inputs {
+					relation.Inputs[inputIndex].Carrier = aliases[relation.Inputs[inputIndex].Carrier]
+				}
+				if relation.MemberOrdinal != "" {
+					relation.MemberOrdinal = aliases[relation.MemberOrdinal]
+				}
+				row.Relations = append(row.Relations, relation)
 				foreign[axis] = row
 			}
 			for _, projection := range contribution.Projections {
@@ -426,12 +597,35 @@ func foldForeignRows(sources []Source, axes map[schema.Key]int) ([]Source, bool)
 					row = Contribution{Axis: axis, Rule: contribution.Rule}
 					order = append(order, axis)
 				}
-				row.Projections = append(row.Projections, projection)
-				carriers, carriersOK := namedCarriers(contribution.Carriers, row.Carriers, []string{projection.Result})
-				if !carriersOK {
+				aliases, aliasesOK := carryForeignCarrierNames(&row, []string{projection.Result}, inventories[index], inventories[target])
+				if !aliasesOK {
 					return nil, false
 				}
-				row.Carriers = carriers
+				projection.Result = aliases[projection.Result]
+				row.Projections = append(row.Projections, projection)
+				foreign[axis] = row
+			}
+			// A selection publishes into one relation and stamps one
+			// projection of it, so it belongs to the axis those rows belong
+			// to. Moving the relation and leaving the operation behind would
+			// leave the operation naming rows its own axis never declares,
+			// which is the refusal this fold exists to prevent.
+			for _, selection := range contribution.Selections {
+				axis := selectionAxis(contribution, selection)
+				if axis == contribution.Axis {
+					home.Selections = append(home.Selections, selection)
+					continue
+				}
+				target, targetOK := axes[axis]
+				if !targetOK || target == index {
+					return nil, false
+				}
+				row, seen := foreign[axis]
+				if !seen {
+					row = Contribution{Axis: axis, Rule: contribution.Rule}
+					order = append(order, axis)
+				}
+				row.Selections = append(row.Selections, selection)
 				foreign[axis] = row
 			}
 			// A selection publishes into one relation and stamps one
@@ -487,35 +681,6 @@ func selectionAxis(contribution Contribution, selection Selection) schema.Key {
 		return contribution.Axis
 	}
 	return contribution.Axis
-}
-
-// namedCarriers appends the declared carriers a routed row is typed in, taking
-// them from the contribution that authored the row. A name the authoring
-// contribution does not declare is the receiving axis's own, and composition
-// refuses it there if it is neither.
-func namedCarriers(declared, carried []Carrier, names []string) ([]Carrier, bool) {
-	for _, name := range names {
-		if !identifierAvailable(name) {
-			return nil, false
-		}
-		held := false
-		for _, carrier := range carried {
-			if carrier.Name == name {
-				held = true
-				break
-			}
-		}
-		if held {
-			continue
-		}
-		for _, carrier := range declared {
-			if carrier.Name == name {
-				carried = append(carried, carrier)
-				break
-			}
-		}
-	}
-	return carried, true
 }
 
 // Count is the number of registered axis sources.

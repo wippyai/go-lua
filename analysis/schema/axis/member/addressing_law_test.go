@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/schema"
+	"github.com/wippyai/go-lua/analysis/schema/carrier"
 	"github.com/wippyai/go-lua/internal/framing"
 )
 
@@ -35,6 +36,8 @@ func TestAnAddressingCoordinateIsAColumnOfItsOwnRelation(t *testing.T) {
 	routes := baseRelation("heap/routes")
 	routes.Addressing = Addressing{Address: "heap/route-key", Tag: "heap/route-tag"}
 	catalog, ok := NewCatalog(
+		testAuthorities("coordinate"),
+		[]carrier.Binding{},
 		[]Relation{directory, routes},
 		[]Projection{
 			projectionOf("heap/routes", "heap/route-key", Key),
@@ -56,6 +59,8 @@ func TestAForeignAddressingColumnRefuses(t *testing.T) {
 	routes := baseRelation("heap/routes")
 	routes.Addressing = Addressing{Address: "heap/directory-key"}
 	catalog, ok := NewCatalog(
+		testAuthorities("coordinate"),
+		[]carrier.Binding{},
 		[]Relation{directory, routes},
 		[]Projection{projectionOf("heap/directory", "heap/directory-key", Key)},
 		nil, nil)
@@ -69,7 +74,7 @@ func TestAForeignAddressingColumnRefuses(t *testing.T) {
 func TestAnUndeclaredAddressingColumnRefuses(t *testing.T) {
 	routes := baseRelation("heap/routes")
 	routes.Addressing = Addressing{Address: "heap/absent-column"}
-	catalog, ok := NewCatalog([]Relation{routes}, nil, nil, nil)
+	catalog, ok := NewCatalog(testAuthorities("coordinate"), []carrier.Binding{}, []Relation{routes}, nil, nil, nil)
 	if ok && catalog.Available() {
 		t.Fatal("a relation was addressed through a column no projection declares")
 	}
@@ -154,19 +159,19 @@ func TestAddressingEntersTheCanonicalStream(t *testing.T) {
 		projectionOf("heap/routes", "heap/route-tag", Predicate),
 	}
 	bare := baseRelation("heap/routes")
-	silent, ok := NewCatalog([]Relation{bare}, projections, nil, nil)
+	silent, ok := NewCatalog(testAuthorities("coordinate"), []carrier.Binding{}, []Relation{bare}, projections, nil, nil)
 	if !ok {
 		t.Fatal("build silent catalog")
 	}
 	addressed := baseRelation("heap/routes")
 	addressed.Addressing = Addressing{Address: "heap/route-key"}
-	first, ok := NewCatalog([]Relation{addressed}, projections, nil, nil)
+	first, ok := NewCatalog(testAuthorities("coordinate"), []carrier.Binding{}, []Relation{addressed}, projections, nil, nil)
 	if !ok {
 		t.Fatal("build addressed catalog")
 	}
 	tagged := baseRelation("heap/routes")
 	tagged.Addressing = Addressing{Address: "heap/route-tag"}
-	second, ok := NewCatalog([]Relation{tagged}, projections, nil, nil)
+	second, ok := NewCatalog(testAuthorities("coordinate"), []carrier.Binding{}, []Relation{tagged}, projections, nil, nil)
 	if !ok {
 		t.Fatal("build re-addressed catalog")
 	}
@@ -185,7 +190,7 @@ func TestAddressingEntersTheCanonicalStream(t *testing.T) {
 func TestAddressingSurvivesTheCatalogClone(t *testing.T) {
 	addressed := baseRelation("heap/routes")
 	addressed.Addressing = Addressing{Address: "heap/route-key", Tag: "heap/route-tag"}
-	catalog, ok := NewCatalog([]Relation{addressed},
+	catalog, ok := NewCatalog(testAuthorities("coordinate"), []carrier.Binding{}, []Relation{addressed},
 		[]Projection{
 			projectionOf("heap/routes", "heap/route-key", Key),
 			projectionOf("heap/routes", "heap/route-tag", Predicate),

@@ -42,7 +42,7 @@ observation          points=2 reads=2
 observation[0]       read=0 point=0
 observation[1]       read=1 point=1
 observation.carry    point=1
-carry                mode=transform input=1 transform=axis/value:transform/value/fresh-result-route
+carry                mode=transform input=1 transform=axis/value:transform/value/fresh-result-route output=scalar(0,0)
 fold.reducer         axis/value:value/reducer/fresh-result
 fold.inputs          join 0, join 1
 output[0]            mode=route value-slot=0 route=join 1 column=axis/value:value/facts destination=axis/value:value/fresh-result/route-destination

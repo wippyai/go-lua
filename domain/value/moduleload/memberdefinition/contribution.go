@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member/definition"
+	"github.com/wippyai/go-lua/analysis/schema/carrier"
 )
 
 const (
@@ -46,7 +47,7 @@ func judgmentType() definition.GoType {
 // rows and states so.
 func moduleLoadCarrier() definition.Carrier {
 	return definition.Carrier{
-		Name: "ModuleLoadCallCarrier", Key: "carrier/value/module-load-call",
+		Name: "ModuleLoadCallCarrier", Key: "carrier/value/module-load-call", Capability: carrier.DecodeOnly,
 		Type: definition.GoType{PackagePath: valuePackagePath, Name: "ModuleLoadCall"},
 	}
 }
@@ -54,9 +55,9 @@ func moduleLoadCarrier() definition.Carrier {
 // callFactCarrier is the Call fact this fold reads. It is named here, in the
 // contribution that consumes it, because the reading rule states what it reads
 // and the carrier key is Call's own.
-func callFactCarrier() definition.Carrier {
-	return definition.Carrier{
-		Name: "CallFactCarrier", Key: "carrier/call/fact",
+func callFactReference() definition.CarrierReference {
+	return definition.CarrierReference{
+		Name: "CallFactCarrier", Key: "carrier/call/fact", Ref: carrier.Ref{Owner: axisReference("call"), Carrier: "carrier/call/fact"},
 		Type: definition.GoType{PackagePath: callPackagePath, Name: "Value"},
 	}
 }
@@ -213,7 +214,8 @@ func Contribution() definition.Contribution {
 	return definition.Contribution{
 		Axis:        "value",
 		Rule:        "value-callresult-moduleload",
-		Carriers:    []definition.Carrier{moduleLoadCarrier(), callFactCarrier()},
+		Carriers:    []definition.Carrier{moduleLoadCarrier()},
+		CarrierRefs: []definition.CarrierReference{callFactReference()},
 		Relations:   []definition.Relation{candidates(), arguments(), sites()},
 		Projections: []definition.Projection{argumentKey(), resultCoordinate(), siteKey()},
 		Reducers:    []definition.Reducer{reducer()},

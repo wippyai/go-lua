@@ -131,7 +131,7 @@ func composeWalk(t *testing.T, spec diagnostic.Spec) (*seal.Schema, schema.SealF
 	}
 	composites, compositesOK := compositeEntries()
 	denominators, denominatorsOK := denominatorEntries(axes, roles)
-	queries, _, queriesOK := queryRegistrations(roles)
+	queries, _, queriesOK := queryRegistrations(roles, queryGeometryTypes(t), queryPlacementSummaryTypes(t))
 	observations, observationsOK := observationEntries(queries)
 	if !compositesOK || !denominatorsOK || !queriesOK || !observationsOK {
 		t.Fatal("a derived analyzer inventory rejected the extended axis and role sets")

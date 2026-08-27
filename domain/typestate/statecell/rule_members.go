@@ -7,32 +7,46 @@ package statecell
 import (
 	schemaapi "github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
+	"github.com/wippyai/go-lua/analysis/schema/carrier"
 )
 
 const (
-	StateCells                 schemaapi.Key  = "typestate/state/cells"
-	StateCellKey               schemaapi.Key  = "typestate/state/cell-key"
-	StateCellProtocol          schemaapi.Key  = "typestate/state/cell-protocol"
-	StateCellDestination       schemaapi.Key  = "typestate/state/cell-destination"
-	JudgmentReducer            schemaapi.Key  = "typestate/reducer/judgment"
-	StateCellSelection         schemaapi.Key  = "typestate/state/cell-selection"
-	CellCarrier                member.Carrier = "carrier/typestate/cell"
-	StateCarrier               member.Carrier = "carrier/typestate/state"
-	StateCellCarrier           member.Carrier = "carrier/typestate/state-cell"
-	ProtocolTagCarrier         member.Carrier = "carrier/typestate/protocol-tag"
-	MountedCallArgumentCarrier member.Carrier = "carrier/value/mounted-call-argument"
-	ValueFactCarrier           member.Carrier = "carrier/value/fact"
-	CallFactCarrier            member.Carrier = "carrier/call/fact"
-	CallKeyCarrier             member.Carrier = "carrier/call/key"
-	CallCoordinateCarrier      member.Carrier = "carrier/call/mounted-call"
+	StateCells                 schemaapi.Key = "typestate/state/cells"
+	StateCellKey               schemaapi.Key = "typestate/state/cell-key"
+	StateCellProtocol          schemaapi.Key = "typestate/state/cell-protocol"
+	StateCellDestination       schemaapi.Key = "typestate/state/cell-destination"
+	JudgmentReducer            schemaapi.Key = "typestate/reducer/judgment"
+	StateCellSelection         schemaapi.Key = "typestate/state/cell-selection"
+	CellCarrier                carrier.Key   = "carrier/typestate/cell"
+	StateCarrier               carrier.Key   = "carrier/typestate/state"
+	StateCellCarrier           carrier.Key   = "carrier/typestate/state-cell"
+	ProtocolTagCarrier         carrier.Key   = "carrier/typestate/protocol-tag"
+	MountedCallArgumentCarrier carrier.Key   = "carrier/value/mounted-call-argument"
+	ValueFactCarrier           carrier.Key   = "carrier/value/fact"
+	CallFactCarrier            carrier.Key   = "carrier/call/fact"
+	CallKeyCarrier             carrier.Key   = "carrier/call/key"
+	CallCoordinateCarrier      carrier.Key   = "carrier/call/mounted-call"
 )
 
 // AxisMemberCatalog is typestate's declaration-only member vocabulary.
 func AxisMemberCatalog() member.Catalog {
 	valueAxis := schemaapi.EntryReference{Surface: schemaapi.SurfaceKindAxis, Key: "typestate"}
 	catalog, ok := member.NewCatalog(
+		[]carrier.Authority{
+			{Carrier: CellCarrier, Capability: carrier.Equatable},
+			{Carrier: StateCarrier, Capability: carrier.Ascending},
+			{Carrier: StateCellCarrier, Capability: carrier.DecodeOnly},
+			{Carrier: ProtocolTagCarrier, Capability: carrier.DecodeOnly},
+		},
+		[]carrier.Binding{
+			{Use: MountedCallArgumentCarrier, Ref: carrier.Ref{Owner: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Carrier: "carrier/value/mounted-call-argument"}},
+			{Use: ValueFactCarrier, Ref: carrier.Ref{Owner: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Carrier: "carrier/value/fact"}},
+			{Use: CallFactCarrier, Ref: carrier.Ref{Owner: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "call"}, Carrier: "carrier/call/fact"}},
+			{Use: CallKeyCarrier, Ref: carrier.Ref{Owner: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "call"}, Carrier: "carrier/call/key"}},
+			{Use: CallCoordinateCarrier, Ref: carrier.Ref{Owner: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "call"}, Carrier: "carrier/call/mounted-call"}},
+		},
 		[]member.Relation{
-			{Key: StateCells, Subject: StateCellCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/mounted-call/argument-candidates"}), Inputs: []member.Carrier{MountedCallArgumentCarrier, ValueFactCarrier, CallFactCarrier}},
+			{Key: StateCells, Subject: StateCellCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/mounted-call/argument-candidates"}), Inputs: []carrier.Key{MountedCallArgumentCarrier, ValueFactCarrier, CallFactCarrier}},
 		},
 		[]member.Projection{
 			{Key: StateCellKey, Relation: StateCells, Role: member.Key, Result: CellCarrier, CandidateProvider: member.AxisRelationCandidate(member.RelationRef{Axis: schemaapi.EntryReference{Surface: schemaapi.SurfaceKind(2), Key: "value"}, Member: "value/mounted-call/argument-candidates"})},

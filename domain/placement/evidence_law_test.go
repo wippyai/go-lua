@@ -148,6 +148,58 @@ func TestAllocationEvidenceRejectsImplicitPresence(t *testing.T) {
 	}
 }
 
+func TestNewAllocationEvidenceProjectsAuthenticatedFact(t *testing.T) {
+	owner := identity.ContentID{1}
+	for _, test := range []struct {
+		name       string
+		kind       AllocationKind
+		fact       Fact
+		frameLocal EvidenceState
+		hasKind    bool
+	}{
+		{name: "stack table", kind: AllocationKindTable, fact: Fact{Class: Stack, RetainEscape: EvidenceRefuted}, frameLocal: EvidenceProven, hasKind: true},
+		{name: "owned closure", kind: AllocationKindClosure, fact: Fact{Class: OwnedHeap, RetainEscape: EvidenceProven}, frameLocal: EvidenceRefuted, hasKind: true},
+		{name: "shared unknown kind", kind: AllocationKindUnknown, fact: Fact{Class: SharedHeap, RetainEscape: EvidenceUnknown}, frameLocal: EvidenceRefuted},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			got, ok := NewAllocationEvidence(owner, test.kind, test.fact)
+			if !ok || !got.Valid() {
+				t.Fatalf("NewAllocationEvidence = %#v/%t, want valid", got, ok)
+			}
+			if !got.HasOwnerIdentity || got.OwnerIdentity != owner || !got.HasClass || got.Class != test.fact.Class || got.RetainEscape != test.fact.RetainEscape {
+				t.Fatalf("base identity/fact projection = %#v, want owner and %#v", got, test.fact)
+			}
+			if got.Kind != test.kind || got.HasKind != test.hasKind || got.FrameLocal != test.frameLocal {
+				t.Fatalf("base kind/frame projection = %#v, want kind %v/%t and frame %v", got, test.kind, test.hasKind, test.frameLocal)
+			}
+			if got.DiesBeforeSuspension != EvidenceAbsent || got.DeepFrozen != EvidenceAbsent || got.HasDepth {
+				t.Fatalf("constructor invented producer refinements: %#v", got)
+			}
+		})
+	}
+}
+
+func TestNewAllocationEvidenceRejectsUnauthenticatedInputs(t *testing.T) {
+	owner := identity.ContentID{1}
+	fact := Fact{Class: Stack, RetainEscape: EvidenceRefuted}
+	for name, test := range map[string]struct {
+		owner identity.ContentID
+		kind  AllocationKind
+		fact  Fact
+	}{
+		"unavailable owner": {owner: identity.ContentID{}, kind: AllocationKindTable, fact: fact},
+		"invalid kind":      {owner: owner, kind: AllocationKind(0xff), fact: fact},
+		"bottom fact":       {owner: owner, kind: AllocationKindTable, fact: BottomFact()},
+		"absent retain":     {owner: owner, kind: AllocationKindTable, fact: Fact{Class: Stack, RetainEscape: EvidenceAbsent}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got, ok := NewAllocationEvidence(test.owner, test.kind, test.fact); ok || got.Valid() {
+				t.Fatalf("unauthenticated constructor input produced %#v/%t", got, ok)
+			}
+		})
+	}
+}
+
 func TestAllocationEvidenceCompositionRejectsConflictingOptionalScalars(t *testing.T) {
 	leftOwner := identity.ContentID{1}
 	rightOwner := identity.ContentID{2}

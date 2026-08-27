@@ -8,6 +8,7 @@
 package program
 
 import (
+	"github.com/wippyai/go-lua/analysis/relation/schema/algebra"
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
@@ -155,6 +156,7 @@ func ClosedAllocation() ruleprogram.Program {
 			Input:     0,
 			Mode:      ruleprogram.CarryTransform,
 			Transform: member.CarryTransformRef{Axis: heapAxis, Member: ClosedAllocationCarryTransfer},
+			Output:    algebra.ScalarSource(algebra.NewSlotSource(0, 0)),
 		},
 	}
 }

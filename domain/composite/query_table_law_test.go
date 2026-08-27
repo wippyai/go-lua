@@ -49,7 +49,7 @@ func TestQueryTableSeals(t *testing.T) {
 		t.Fatal("compilation unavailable")
 	}
 	roles, rolesOK := SemanticRoles(compilation)
-	registrations, _, registrationsOK := queryRegistrations(roles)
+	registrations, _, registrationsOK := queryRegistrations(roles, queryGeometryTypes(t), queryPlacementSummaryTypes(t))
 	if !rolesOK || !registrationsOK {
 		t.Fatal("declared query identities did not resolve")
 	}
@@ -108,7 +108,7 @@ func TestQueryIssuanceIsTheSealedInventory(t *testing.T) {
 		t.Fatal("compilation unavailable")
 	}
 	roles, rolesOK := SemanticRoles(compilation)
-	registrations, _, registrationsOK := queryRegistrations(roles)
+	registrations, _, registrationsOK := queryRegistrations(roles, queryGeometryTypes(t), queryPlacementSummaryTypes(t))
 	if !rolesOK || !registrationsOK {
 		t.Fatal("declared query identities did not resolve")
 	}
@@ -150,7 +150,7 @@ func TestEveryQueryFamilyIsInventoriedOnce(t *testing.T) {
 		t.Fatal("compilation unavailable")
 	}
 	roles, rolesOK := SemanticRoles(compilation)
-	registrations, _, registrationsOK := queryRegistrations(roles)
+	registrations, _, registrationsOK := queryRegistrations(roles, queryGeometryTypes(t), queryPlacementSummaryTypes(t))
 	if !rolesOK || !registrationsOK {
 		t.Fatal("declared query identities did not resolve")
 	}
@@ -183,7 +183,7 @@ func TestQueryCodecsAreTheSchemaFreezerIdentities(t *testing.T) {
 		t.Fatal("compilation unavailable")
 	}
 	roles, rolesOK := SemanticRoles(compilation)
-	registrations, _, registrationsOK := queryRegistrations(roles)
+	registrations, _, registrationsOK := queryRegistrations(roles, queryGeometryTypes(t), queryPlacementSummaryTypes(t))
 	if !rolesOK || !registrationsOK {
 		t.Fatal("declared query identities did not resolve")
 	}
@@ -219,7 +219,7 @@ func TestCallCalleeSetIsAProducerOnlyIssuedFamily(t *testing.T) {
 		t.Fatal("compilation unavailable")
 	}
 	roles, rolesOK := SemanticRoles(compilation)
-	registrations, contributors, registrationsOK := queryRegistrations(roles)
+	registrations, contributors, registrationsOK := queryRegistrations(roles, queryGeometryTypes(t), queryPlacementSummaryTypes(t))
 	if !rolesOK || !registrationsOK {
 		t.Fatal("declared query identities did not resolve")
 	}
@@ -259,19 +259,20 @@ func TestWithdrawingAContributorRefusesTheFamily(t *testing.T) {
 	if !rolesOK {
 		t.Fatal("declared query identities did not resolve")
 	}
-	if _, _, admitted := wireQuery(valueowner.QuerySpec(), roles, valueowner.DeclareQuery, nil, valueowner.RecoverQuery, engine.NewSummaryQueryAdmission, value.SummaryPublication()); admitted {
+	geometry := queryGeometryTypes(t)
+	if _, _, admitted := wireQuery(valueowner.QuerySpec(geometry), roles, valueowner.DeclareQuery, nil, valueowner.RecoverQuery, engine.NewSummaryQueryAdmission, value.SummaryPublication()); admitted {
 		t.Fatal("value-summary was admitted without the contributor that folds it")
 	}
-	if _, _, admitted := wireQuery(effectowner.QuerySpec(), roles, nil, effectowner.BindQuery, effectowner.RecoverQuery, engine.NewExactQueryAdmission, factor.ExactPublication()); admitted {
+	if _, _, admitted := wireQuery(effectowner.QuerySpec(geometry), roles, nil, effectowner.BindQuery, effectowner.RecoverQuery, engine.NewExactQueryAdmission, factor.ExactPublication()); admitted {
 		t.Fatal("effect-exact was admitted without the contributor that declares its slot")
 	}
-	if _, _, admitted := wireUnplanedQuery(placementquery.QuerySpec(), roles, placementquery.DeclareQuery, nil, placementquery.RecoverQuery, engine.NewHeterogeneousQueryAdmission, placementquery.EncodeQueryAnswer); admitted {
+	if _, _, admitted := wireUnplanedQuery(placementquery.QuerySpec(geometry, queryPlacementSummaryTypes(t)), roles, placementquery.DeclareQuery, nil, placementquery.RecoverQuery, engine.NewHeterogeneousQueryAdmission, placementquery.EncodeQueryAnswer); admitted {
 		t.Fatal("placement-summary was admitted without the contributor that binds it")
 	}
-	if _, _, admitted := wireQuery(valueowner.QuerySpec(), roles, valueowner.DeclareQuery, valueowner.BindQuery, valueowner.RecoverQuery, nil, value.SummaryPublication()); admitted {
+	if _, _, admitted := wireQuery(valueowner.QuerySpec(geometry), roles, valueowner.DeclareQuery, valueowner.BindQuery, valueowner.RecoverQuery, nil, value.SummaryPublication()); admitted {
 		t.Fatal("value-summary was admitted without its owner admission callback")
 	}
-	if _, _, admitted := wireQuery(valueowner.QuerySpec(), roles, valueowner.DeclareQuery, valueowner.BindQuery, valueowner.RecoverQuery, engine.NewSummaryQueryAdmission, plane.Publication[value.ValueSummaryObservation]{}); admitted {
+	if _, _, admitted := wireQuery(valueowner.QuerySpec(geometry), roles, valueowner.DeclareQuery, valueowner.BindQuery, valueowner.RecoverQuery, engine.NewSummaryQueryAdmission, plane.Publication[value.ValueSummaryObservation]{}); admitted {
 		t.Fatal("value-summary was admitted without its publication declaration")
 	}
 }
@@ -283,7 +284,7 @@ func TestWithdrawingAContributorRefusesTheFamily(t *testing.T) {
 // a byte codec or a selected-point row.
 func TestObservationProducerDoesNotNeedResultPublication(t *testing.T) {
 	roles := queryCapabilityLawRoles(t)
-	spec := valueowner.QuerySpec()
+	spec := valueowner.QuerySpec(queryGeometryTypes(t))
 	spec.Family = "value-summary-observation-producer-law"
 	spec.Population = query.PopulationObservation
 	registration, contributor, admitted := wireObservation(spec, roles, valueowner.DeclareQuery, valueowner.BindQuery, valueowner.RecoverQuery)
@@ -309,7 +310,7 @@ func TestObservationProducerDoesNotNeedResultPublication(t *testing.T) {
 // admission/encoder/contract cannot reach the query table.
 func TestSelectedPointProducerRequiresCompleteResultPublication(t *testing.T) {
 	roles := queryCapabilityLawRoles(t)
-	spec := valueowner.QuerySpec()
+	spec := valueowner.QuerySpec(queryGeometryTypes(t))
 	spec.Family = "value-summary-selected-result-law"
 	registration, contributor, admitted := wireQuery(spec, roles, valueowner.DeclareQuery, valueowner.BindQuery, valueowner.RecoverQuery, nil, value.SummaryPublication())
 	if admitted {
@@ -328,7 +329,7 @@ func TestSelectedPointProducerRequiresCompleteResultPublication(t *testing.T) {
 // complete family's contract or its admission eligibility.
 func TestSelectedPointProducerWithResultPublicationRemainsAdmitted(t *testing.T) {
 	roles := queryCapabilityLawRoles(t)
-	spec := valueowner.QuerySpec()
+	spec := valueowner.QuerySpec(queryGeometryTypes(t))
 	spec.Family = "value-summary-selected-complete-law"
 	registration, contributor, admitted := wireQuery(spec, roles, valueowner.DeclareQuery, valueowner.BindQuery, valueowner.RecoverQuery, engine.NewSummaryQueryAdmission, value.SummaryPublication())
 	if !admitted || registration == nil || !contributor.producerComplete() || !contributor.resultComplete() || !contributor.complete() {
@@ -345,7 +346,7 @@ func TestSelectedPointProducerWithResultPublicationRemainsAdmitted(t *testing.T)
 // callback that cannot publish a canonical cell.
 func TestObservationPartialResultCapabilityDoesNotSilentlyPass(t *testing.T) {
 	roles := queryCapabilityLawRoles(t)
-	spec := valueowner.QuerySpec()
+	spec := valueowner.QuerySpec(queryGeometryTypes(t))
 	spec.Family = "value-summary-observation-partial-result-law"
 	spec.Population = query.PopulationObservation
 	if _, _, admitted := wireQuery(spec, roles, valueowner.DeclareQuery, valueowner.BindQuery, valueowner.RecoverQuery, nil, value.SummaryPublication()); admitted {
@@ -355,7 +356,7 @@ func TestObservationPartialResultCapabilityDoesNotSilentlyPass(t *testing.T) {
 
 func TestUnknownQueryPopulationDoesNotAcquireProducerOnlyAdmission(t *testing.T) {
 	roles := queryCapabilityLawRoles(t)
-	spec := valueowner.QuerySpec()
+	spec := valueowner.QuerySpec(queryGeometryTypes(t))
 	spec.Family = "value-summary-unknown-population-law"
 	spec.Population = "semantic/query/population/unknown-law"
 	if _, _, admitted := wireObservation(spec, roles, valueowner.DeclareQuery, valueowner.BindQuery, valueowner.RecoverQuery); admitted {
@@ -389,7 +390,7 @@ func TestObservationProducersAreIssuedQueryFamilies(t *testing.T) {
 		t.Fatal("compilation unavailable")
 	}
 	roles, rolesOK := SemanticRoles(compilation)
-	queries, _, queriesOK := queryRegistrations(roles)
+	queries, _, queriesOK := queryRegistrations(roles, queryGeometryTypes(t), queryPlacementSummaryTypes(t))
 	specs, specsOK := observationSpecs(queries)
 	if !rolesOK || !queriesOK || !specsOK {
 		t.Fatal("observation inventory did not derive from the sealed query families")
@@ -420,7 +421,7 @@ func TestObservationIssuanceIsTheSealedInventory(t *testing.T) {
 		t.Fatal("compilation unavailable")
 	}
 	roles, rolesOK := SemanticRoles(compilation)
-	queries, _, queriesOK := queryRegistrations(roles)
+	queries, _, queriesOK := queryRegistrations(roles, queryGeometryTypes(t), queryPlacementSummaryTypes(t))
 	entries, entriesOK := observationEntries(queries)
 	if !rolesOK || !queriesOK || !entriesOK {
 		t.Fatal("observation inventory did not derive from the sealed query families")

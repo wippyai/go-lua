@@ -3,6 +3,8 @@ package query
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/analysis/relation/schema/authority"
+	"github.com/wippyai/go-lua/analysis/relation/schema/region"
 	seal "github.com/wippyai/go-lua/analysis/schema/seal"
 
 	"github.com/wippyai/go-lua/analysis/identity"
@@ -128,28 +130,53 @@ func (foreignSurface) Seal(view seal.View, sealed seal.Sealed) schema.SealFailur
 
 func summarySpec(family schema.Key) Spec {
 	return Spec{
-		Family:     family,
-		Semantic:   "semantic/query/value-summary",
-		Codec:      "semantic/query-result/value-summary",
-		Fold:       FoldDistributive,
-		Contract:   "semantic/fold-contract/value-summary",
-		Subjects:   []schema.Key{"value"},
-		Population: PopulationSelectedPoint,
-		Projection: ProjectionSummary,
+		Family:      family,
+		Semantic:    "semantic/query/value-summary",
+		Codec:       "semantic/query-result/value-summary",
+		Fold:        FoldDistributive,
+		Contract:    "semantic/fold-contract/value-summary",
+		Subjects:    []schema.Key{"value"},
+		Population:  PopulationSelectedPoint,
+		Projection:  ProjectionSummary,
+		Declaration: scratchDeclaration(family),
 	}
 }
 
 func exactSpec(family schema.Key) Spec {
 	return Spec{
-		Family:     family,
-		Semantic:   "semantic/query/effect-exact",
-		Codec:      "semantic/query-result/effect-exact",
-		Fold:       FoldGeneral,
-		Contract:   "semantic/fold-contract/effect-exact",
-		Subjects:   []schema.Key{"effect", "value"},
-		Population: PopulationSelectedPoint,
-		Projection: ProjectionExact,
+		Family:      family,
+		Semantic:    "semantic/query/effect-exact",
+		Codec:       "semantic/query-result/effect-exact",
+		Fold:        FoldGeneral,
+		Contract:    "semantic/fold-contract/effect-exact",
+		Subjects:    []schema.Key{"effect", "value"},
+		Population:  PopulationSelectedPoint,
+		Projection:  ProjectionExact,
+		Declaration: scratchDeclaration(family),
 	}
+}
+
+// scratchDeclaration is the minimal nonempty owner-independent authority a
+// query registration carries in these surface laws. Q is deliberately a
+// row-only relation: it has no columns, keys, denominators, or addressing, but
+// still has the scope required by the relation declaration graph.
+func scratchDeclaration(family schema.Key) authority.Declaration {
+	relationToken, relationOK := identity.DeriveContentID("query/test/relation", []byte(family))
+	scopeToken, scopeOK := identity.DeriveContentID("query/test/scope", []byte(family))
+	if !relationOK || !scopeOK {
+		panic("query test authority token derivation failed")
+	}
+	declaration, declarationOK := authority.NewDeclaration(
+		[]authority.RelationSpec{{Name: "Q", Token: relationToken, Scope: "QScope"}},
+		nil,
+		nil,
+		[]authority.ScopeSpec{{Name: "QScope", Token: scopeToken, Region: region.True()}},
+		nil,
+	)
+	if !declarationOK {
+		panic("query test authority declaration rejected")
+	}
+	return declaration
 }
 
 func mustRegistration(t *testing.T, spec Spec) *Registration {
@@ -190,6 +217,139 @@ func TestQuerySurfaceSealsCompleteInventory(t *testing.T) {
 	if subject, ok := registration.SubjectAt(0); !ok || subject != "effect" {
 		t.Fatal("the sealed subject list aliases its authored spec")
 	}
+}
+
+// TestQueryRegistrationOwnsAnAuthority states the atomic attachment: a
+// registration retains the catalog sealed from its declaration, and the
+// catalog's owner token is the exact registration contract identity.
+func TestQueryRegistrationOwnsAnAuthority(t *testing.T) {
+	registration := mustRegistration(t, summarySpec("value-summary"))
+	catalog, ok := registration.Authority()
+	if !ok || !catalog.Available() || catalog.RelationCount() != 1 {
+		t.Fatalf("query authority = available=%t relations=%d, want one sealed relation", ok, catalog.RelationCount())
+	}
+	relation, relationOK := catalog.RelationByName("Q")
+	if !relationOK || !relation.Available() {
+		t.Fatal("query authority lost its row-only Q relation")
+	}
+	wantOwner := authority.Owner{
+		Entry: schema.EntryReference{Surface: schema.SurfaceKindQuery, Key: registration.Key()},
+		Token: identity.ContentID(registration.EntryID()),
+	}
+	if catalog.Owner() != wantOwner {
+		t.Fatalf("query authority owner = %#v, want %#v", catalog.Owner(), wantOwner)
+	}
+	var provider authority.Provider = registration
+	provided, providedOK := provider.Authority()
+	if !providedOK || provided.Digest() != catalog.Digest() {
+		t.Fatal("registration did not expose its retained authority through authority.Provider")
+	}
+}
+
+// TestNewRegistrationRejectsAbsentAndEmptyAuthority states that query
+// construction has no absent/default authority path. The generic authority
+// package permits an empty attachment for owners that need one; queries do
+// not.
+func TestNewRegistrationRejectsAbsentAndEmptyAuthority(t *testing.T) {
+	absent := summarySpec("authority-absent")
+	absent.Declaration = authority.Declaration{}
+	if registration, ok := New(absent, scratchRoles(t)); ok || registration != nil {
+		t.Fatal("query registration admitted an absent authority declaration")
+	}
+	emptyDeclaration, emptyOK := authority.NewDeclaration(nil, nil, nil, nil, nil)
+	if !emptyOK || !emptyDeclaration.Available() {
+		t.Fatal("authority fixture's valid-empty declaration was unavailable")
+	}
+	empty := summarySpec("authority-empty")
+	empty.Declaration = emptyDeclaration
+	if registration, ok := New(empty, scratchRoles(t)); ok || registration != nil {
+		t.Fatal("query registration admitted a valid-empty authority declaration")
+	}
+}
+
+// TestQueryAuthoritySealRejectsHostileAttachments states the query surface's
+// authority laws independently: no catalog, no empty relation set, a foreign
+// owner fence, or a catalog/declaration digest drift can cross the boundary.
+func TestQueryAuthoritySealRejectsHostileAttachments(t *testing.T) {
+	tests := map[string]struct {
+		mutate func(*Registration)
+		law    schema.LawID
+		kind   schema.Disposition
+	}{
+		"missing catalog": {
+			mutate: func(registration *Registration) { registration.catalog = authority.Catalog{} },
+			law:    LawAuthorityDeclared,
+			kind:   schema.DispositionIncomplete,
+		},
+		"empty catalog": {
+			mutate: func(registration *Registration) {
+				declaration, declarationOK := authority.NewDeclaration(nil, nil, nil, nil, nil)
+				if !declarationOK {
+					panic("valid-empty authority fixture rejected")
+				}
+				catalog, catalogOK := declaration.Seal(registration.catalog.Owner())
+				if !catalogOK {
+					panic("empty authority fixture did not seal")
+				}
+				registration.catalog = catalog
+			},
+			law:  LawAuthorityNonEmpty,
+			kind: schema.DispositionIncomplete,
+		},
+		"foreign owner": {
+			mutate: func(registration *Registration) {
+				foreignOwner, ownerOK := authority.NewOwner(
+					schema.EntryReference{Surface: schema.SurfaceKindQuery, Key: "foreign-family"},
+					scratchAuthorityID("foreign-owner"),
+				)
+				if !ownerOK {
+					panic("foreign authority owner unavailable")
+				}
+				catalog, catalogOK := registration.declaration.Seal(foreignOwner)
+				if !catalogOK {
+					panic("foreign authority fixture did not seal")
+				}
+				registration.catalog = catalog
+			},
+			law:  LawAuthorityOwner,
+			kind: schema.DispositionMalformed,
+		},
+		"mutated declaration": {
+			mutate: func(registration *Registration) {
+				registration.declaration = scratchDeclaration("authority-mutated")
+			},
+			law:  LawAuthorityDigest,
+			kind: schema.DispositionMalformed,
+		},
+		"mutated catalog": {
+			mutate: func(registration *Registration) {
+				changed := scratchDeclaration("authority-catalog-mutated")
+				catalog, catalogOK := changed.Seal(registration.catalog.Owner())
+				if !catalogOK {
+					panic("mutated authority fixture did not seal")
+				}
+				registration.catalog = catalog
+			},
+			law:  LawAuthorityDigest,
+			kind: schema.DispositionMalformed,
+		},
+	}
+	for name, test := range tests {
+		registration := mustRegistration(t, summarySpec(schema.Key("authority-"+name)))
+		test.mutate(registration)
+		failure := sealRegistrations(t, []*Registration{registration})
+		if failure.Law != test.law || failure.Disposition != test.kind {
+			t.Fatalf("%s: law=%d disposition=%s, want law=%d disposition=%s", name, failure.Law, failure.Disposition, test.law, test.kind)
+		}
+	}
+}
+
+func scratchAuthorityID(label string) identity.ContentID {
+	value, ok := identity.DeriveContentID("query/test/authority", []byte(label))
+	if !ok {
+		panic("query test authority token derivation failed")
+	}
+	return value
 }
 
 // TestQueryRegistrationIdentityIsThisSurfaceDerivation states that a family
@@ -346,6 +506,14 @@ func TestNewRegistrationRejectsIncompleteSpec(t *testing.T) {
 	type damaged = Spec
 	cases := map[string]func(*damaged){
 		"family":           func(spec *damaged) { spec.Family = "" },
+		"authority absent": func(spec *damaged) { spec.Declaration = authority.Declaration{} },
+		"authority empty": func(spec *damaged) {
+			declaration, ok := authority.NewDeclaration(nil, nil, nil, nil, nil)
+			if !ok {
+				panic("valid-empty authority fixture rejected")
+			}
+			spec.Declaration = declaration
+		},
 		"semantic":         func(spec *damaged) { spec.Semantic = "semantic/query/absent" },
 		"codec":            func(spec *damaged) { spec.Codec = "" },
 		"fold":             func(spec *damaged) { spec.Fold = FoldInvalid },

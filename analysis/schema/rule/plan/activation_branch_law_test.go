@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
+	"github.com/wippyai/go-lua/analysis/schema/carrier"
 	"github.com/wippyai/go-lua/analysis/schema/rule/program"
 	"github.com/wippyai/go-lua/analysis/schema/vocabulary"
 )
@@ -19,12 +20,12 @@ import (
 // name of something it did not mint belongs.
 
 const (
-	branchIdentityCarrier member.Carrier = "carrier/plan/branch-identity"
-	branchApplicationKey  schema.Key     = "projection/plan-branch-application"
-	branchTargetKey       schema.Key     = "projection/plan-branch-target"
-	branchEndpointKey     schema.Key     = "projection/plan-branch-endpoint"
-	branchMountKey        schema.Key     = "projection/plan-branch-mount"
-	branchBodyKey         schema.Key     = "projection/plan-branch-body"
+	branchIdentityCarrier carrier.Key = "carrier/plan/branch-identity"
+	branchApplicationKey  schema.Key  = "projection/plan-branch-application"
+	branchTargetKey       schema.Key  = "projection/plan-branch-target"
+	branchEndpointKey     schema.Key  = "projection/plan-branch-endpoint"
+	branchMountKey        schema.Key  = "projection/plan-branch-mount"
+	branchBodyKey         schema.Key  = "projection/plan-branch-body"
 )
 
 // newActivationBranchFixture is the whole A form at the plan layer: the cold
@@ -50,6 +51,9 @@ func newActivationBranchFixture(t *testing.T) *planFixture {
 		identity(branchMountKey, nestedMemberRelation),
 		identity(branchBodyKey, nestedMemberRelation),
 	)
+	fixture.catalog.Authorities = append(fixture.catalog.Authorities, carrier.Authority{
+		Carrier: branchIdentityCarrier, Capability: carrier.DecodeOnly,
+	})
 	// The base fixture's one exact read is the trigger's, and it is the only
 	// read the A form declares: the branch set is named by the vocabulary and
 	// enumerated through the relation's own owner.

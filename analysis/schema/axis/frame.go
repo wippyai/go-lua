@@ -61,6 +61,7 @@ func (frame Frame) Available() bool { return len(frame.Outputs) > 0 }
 // Output is one published column: the name a consumer reads it under, and the
 // principal admitted to write it.
 type Output struct {
+	id schema.EntryID
 	// Key names one published column across the whole axis surface. Two
 	// declarations under one name would leave a consumer reading one name
 	// without knowing whose rows it holds, so the surface seals a name to one
@@ -76,6 +77,11 @@ type Output struct {
 	// to be held to.
 	Writer schema.Key
 }
+
+// ID returns the immutable identity issued to this output by its owning axis.
+// Authored frame rows carry the unavailable zero value until axis.New seals
+// the owner-qualified frame.
+func (output Output) ID() schema.EntryID { return output.id }
 
 // Available reports whether this output declares both halves. An output with a
 // name and no writer is a column nothing may fill; an output with a writer and

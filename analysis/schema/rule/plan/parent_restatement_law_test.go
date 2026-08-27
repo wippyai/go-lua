@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
+	"github.com/wippyai/go-lua/analysis/schema/carrier"
 	"github.com/wippyai/go-lua/analysis/schema/rule"
 	"github.com/wippyai/go-lua/analysis/schema/rule/program"
 )
@@ -26,12 +27,12 @@ import (
 //     nested Summary read itself to carry a reducer tag.
 
 const (
-	nestedMemberRelation      schema.Key     = "relation/plan-nested-member"
-	nestedMemberKey           schema.Key     = "projection/plan-nested-member-key"
-	nestedMemberOrdinal       member.Carrier = "carrier/plan/nested-member-ordinal"
-	consumerRelationKey       schema.Key     = "relation/plan-nested-consumer"
-	consumerRelationProj      schema.Key     = "projection/plan-nested-consumer-key"
-	consumerRelationSelection schema.Key     = "selection/plan-nested-consumer"
+	nestedMemberRelation      schema.Key  = "relation/plan-nested-member"
+	nestedMemberKey           schema.Key  = "projection/plan-nested-member-key"
+	nestedMemberOrdinal       carrier.Key = "carrier/plan/nested-member-ordinal"
+	consumerRelationKey       schema.Key  = "relation/plan-nested-consumer"
+	consumerRelationProj      schema.Key  = "projection/plan-nested-consumer-key"
+	consumerRelationSelection schema.Key  = "selection/plan-nested-consumer"
 )
 
 // addNestedMemberSetCatalog extends fixture's member catalog with a nested
@@ -42,12 +43,15 @@ const (
 func addNestedMemberSetCatalog(fixture *planFixture) {
 	mainAxis := schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: planAxisKey}
 	candidate := member.AxisRelationCandidate(member.RelationRef{Axis: mainAxis, Member: planCandidateRelation})
+	fixture.catalog.Authorities = append(fixture.catalog.Authorities, carrier.Authority{
+		Carrier: nestedMemberOrdinal, Capability: carrier.DecodeOnly,
+	})
 
 	fixture.catalog.Relations = append(fixture.catalog.Relations,
 		member.Relation{
 			Key:               nestedMemberRelation,
 			Subject:           planFactCarrier,
-			Inputs:            []member.Carrier{planCandidateCarrier},
+			Inputs:            []carrier.Key{planCandidateCarrier},
 			CandidateProvider: candidate,
 			Parent:            member.RelationRef{Axis: mainAxis, Member: planCandidateRelation},
 			Ordinal:           nestedMemberOrdinal,
@@ -55,7 +59,7 @@ func addNestedMemberSetCatalog(fixture *planFixture) {
 		member.Relation{
 			Key:               consumerRelationKey,
 			Subject:           planFactCarrier,
-			Inputs:            []member.Carrier{planFactCarrier},
+			Inputs:            []carrier.Key{planFactCarrier},
 			CandidateProvider: candidate,
 		},
 	)

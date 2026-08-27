@@ -1,7 +1,7 @@
 // Package program owns Placement containment's callback-free cold declaration.
-// The route relation is intentionally named here before the dependent-relation
-// issuer is wired: the current shared ABI can seal Complete/Selected geometry,
-// while FT-25 still owns vector argument and one-shot relation materialization.
+// It states the complete vector derivation inputs and the selected route tuple
+// separately, so the fold is never asked to recreate either route geometry or
+// a vector view.
 package program
 
 import (
@@ -34,6 +34,7 @@ const (
 	ContainmentRouteSelection   schema.Key = "placement/containment/route-selection"
 	ContainmentRouteTag         schema.Key = "placement/containment/route-tag"
 	ContainmentRouteDestination schema.Key = "placement/containment/route-destination"
+	ContainmentRouteParent      schema.Key = "placement/containment/route-parent"
 	ContainmentReducer          schema.Key = "placement/containment/reducer"
 )
 
@@ -58,9 +59,11 @@ func denominatorReference(key schema.Key) ruleprogram.DenominatorRef {
 	return ruleprogram.DenominatorRef{Surface: schema.SurfaceKindDenominator, Key: key}
 }
 
-// PlacementContainment returns the sealed three-join geometry.  The first two joins
-// are complete owner vectors; the third is the single selected/routed
-// relation.  No route or Unknown value is fabricated by this declaration.
+// PlacementContainment returns the sealed three-join geometry. The first two
+// joins are complete owner vectors consumed only by the derived route
+// relation. The third selected route delivers both the child Fact and the
+// parent Fact retained by that relation, so no downstream lookup, route-tag
+// decoding, or local vector rebuild is part of the fold.
 func PlacementContainment() ruleprogram.Program {
 	placementAxis := axisReference(AxisKey)
 	heapAxis := axisReference(heapAxisKey)
@@ -122,7 +125,7 @@ func PlacementContainment() ruleprogram.Program {
 		},
 		Fold: ruleprogram.FoldDecl{
 			Reducer: member.ReducerRef{Axis: placementAxis, Member: ContainmentReducer},
-			Inputs:  []ruleprogram.JoinRef{0, 1, 2},
+			Inputs:  []ruleprogram.JoinRef{2, 2},
 			Outputs: []ruleprogram.OutputDecl{{
 				Column:      axis.OutputRef{Axis: placementAxis, Key: OutputKey},
 				Destination: member.ProjectionRef{Axis: placementAxis, Member: ContainmentRouteDestination},

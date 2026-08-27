@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member/definition"
+	"github.com/wippyai/go-lua/analysis/schema/carrier"
 )
 
 const (
@@ -103,12 +104,14 @@ func Contribution() definition.Contribution {
 		Axis: "heap",
 		Rule: "heap-publication-freeze",
 		Carriers: []definition.Carrier{
-			{Name: "CallCoordinateCarrier", Key: "carrier/call/mounted-call", Type: goType(callPackagePath, "CallCoordinate")},
-			{Name: "CallFactCarrier", Key: "carrier/call/fact", Type: goType(callPackagePath, "Value")},
-			{Name: "ValueFactCarrier", Key: "carrier/value/fact", Type: goType(valuePackagePath, "Value")},
-			{Name: "ValueCoordinateCarrier", Key: "carrier/value/coordinate", Type: goType(valuePackagePath, "Coordinate")},
-			{Name: "PublicationFreezeRouteCarrier", Key: "carrier/heap/publication-freeze-route", Type: goType(recentPlanPackagePath, "Route")},
-			{Name: "PublicationFreezeRouteTagCarrier", Key: "carrier/heap/publication-freeze-route-tag", Type: definition.GoType{Name: "uint64"}},
+			{Name: "PublicationFreezeRouteCarrier", Key: "carrier/heap/publication-freeze-route", Type: goType(recentPlanPackagePath, "Route"), Capability: carrier.DecodeOnly},
+			{Name: "PublicationFreezeRouteTagCarrier", Key: "carrier/heap/publication-freeze-route-tag", Type: definition.GoType{Name: "uint64"}, Capability: carrier.DecodeOnly},
+		},
+		CarrierRefs: []definition.CarrierReference{
+			{Name: "CallCoordinateCarrier", Key: "carrier/call/mounted-call", Ref: carrier.Ref{Owner: axisReference("call"), Carrier: "carrier/call/mounted-call"}, Type: goType(callPackagePath, "CallCoordinate")},
+			{Name: "CallFactCarrier", Key: "carrier/call/fact", Ref: carrier.Ref{Owner: axisReference("call"), Carrier: "carrier/call/fact"}, Type: goType(callPackagePath, "Value")},
+			{Name: "ValueFactCarrier", Key: "carrier/value/fact", Ref: carrier.Ref{Owner: axisReference("value"), Carrier: "carrier/value/fact"}, Type: goType(valuePackagePath, "Value")},
+			{Name: "ValueCoordinateCarrier", Key: "carrier/value/coordinate", Ref: carrier.Ref{Owner: axisReference("value"), Carrier: "carrier/value/coordinate"}, Type: goType(valuePackagePath, "Coordinate")},
 		},
 		Relations: []definition.Relation{
 			publicationFreezeRoutes(),
@@ -155,10 +158,11 @@ func Contribution() definition.Contribution {
 		// before them delivered, so they are published through this
 		// selection and stamped with the tag the reading rule joins on.
 		Selections: []definition.Selection{{
-			Name:     "PublicationFreezeRouteSelection",
-			Key:      "heap/publication-freeze/route-selection",
-			Relation: "PublicationFreezeRoutes",
-			Tag:      "PublicationFreezeRouteTag",
+			Name:           "PublicationFreezeRouteSelection",
+			Key:            "heap/publication-freeze/route-selection",
+			Relation:       "PublicationFreezeRoutes",
+			Tag:            "PublicationFreezeRouteTag",
+			Implementation: freezeFunction("DerivePublicationFreezeRoutes"),
 		}},
 		Reducers: []definition.Reducer{{
 			Name: "PublicationFreezeReducer",

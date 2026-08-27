@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
+	"github.com/wippyai/go-lua/analysis/schema/carrier"
 )
 
 func testReducerInput(axis schema.EntryReference) member.ReducerInput {
@@ -17,10 +18,38 @@ func testReducerInput(axis schema.EntryReference) member.ReducerInput {
 	}
 }
 
+func axisTestAuthorities(keys ...carrier.Key) []carrier.Authority {
+	authorities := make([]carrier.Authority, 0, len(keys))
+	seen := make(map[carrier.Key]struct{}, len(keys))
+	for _, key := range keys {
+		if !key.Available() {
+			continue
+		}
+		if _, duplicate := seen[key]; duplicate {
+			continue
+		}
+		seen[key] = struct{}{}
+		capability := carrier.DecodeOnly
+		switch key {
+		case "axis/key":
+			capability = carrier.Equatable
+		case "axis/fact", "axis/other-fact":
+			capability = carrier.Ascending
+		}
+		authorities = append(authorities, carrier.Authority{Carrier: key, Capability: capability})
+	}
+	return authorities
+}
+
 func testMemberCatalog() member.Catalog {
 	provider := member.RelationRef{Axis: schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: "value"}, Member: "relation/input"}
 	catalog, ok := member.NewCatalog(
-		[]member.Relation{{Key: "relation/input", Subject: "relation/subject", Inputs: []member.Carrier{"relation/input"}, CandidateProvider: member.AxisRelationCandidate(provider)}},
+		axisTestAuthorities(
+			"relation/subject", "relation/input", "projection/result", "input/carrier",
+			"output/carrier", "axis/key", "axis/fact", "axis/other-fact",
+		),
+		[]carrier.Binding{},
+		[]member.Relation{{Key: "relation/input", Subject: "relation/subject", Inputs: []carrier.Key{"relation/input"}, CandidateProvider: member.AxisRelationCandidate(provider)}},
 		[]member.Projection{{Key: "projection/key", Relation: "relation/input", Role: member.Key, Result: "projection/result", CandidateProvider: member.AxisRelationCandidate(provider)}},
 		[]member.Reducer{{
 			Key:     "reducer/output",

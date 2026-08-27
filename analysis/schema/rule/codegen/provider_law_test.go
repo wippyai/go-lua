@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
 	memberdefinition "github.com/wippyai/go-lua/analysis/schema/axis/member/definition"
 	membergenerator "github.com/wippyai/go-lua/analysis/schema/axis/member/generator"
+	"github.com/wippyai/go-lua/analysis/schema/carrier"
 	"github.com/wippyai/go-lua/analysis/schema/denominator"
 	"github.com/wippyai/go-lua/analysis/schema/rule"
 	ruleplan "github.com/wippyai/go-lua/analysis/schema/rule/plan"
@@ -149,6 +150,12 @@ func providerCatalogsFor(t *testing.T, spareJoin bool) (member.Catalog, member.C
 	t.Helper()
 	valueProvider := member.RelationRef{Axis: providerAxisRef(providerValueAxis), Member: providerCandidates}
 	valueCatalog, valueOK := member.NewCatalog(
+		[]carrier.Authority{
+			{Carrier: "carrier/value/storage-transfer", Capability: carrier.DecodeOnly},
+			{Carrier: "carrier/value/key", Capability: carrier.Equatable},
+			{Carrier: "carrier/value/fact", Capability: carrier.Ascending},
+		},
+		[]carrier.Binding{},
 		[]member.Relation{{Key: providerCandidates, Subject: "carrier/value/storage-transfer", CandidateProvider: member.AxisRelationCandidate(valueProvider)}},
 		nil, nil, nil,
 	)
@@ -157,7 +164,16 @@ func providerCatalogsFor(t *testing.T, spareJoin bool) (member.Catalog, member.C
 	}
 	placementProvider := member.RelationRef{Axis: providerAxisRef(providerValueAxis), Member: providerCandidates}
 	placementCatalog, placementOK := member.NewCatalog(
-		[]member.Relation{{Key: providerRoutes, Subject: "carrier/placement/fact", Inputs: []member.Carrier{"carrier/value/storage-transfer"}, CandidateProvider: member.AxisRelationCandidate(placementProvider)}},
+		[]carrier.Authority{
+			{Carrier: "carrier/placement/fact", Capability: carrier.Ascending},
+			{Carrier: "carrier/placement/key", Capability: carrier.Equatable},
+			{Carrier: "carrier/placement/tag", Capability: carrier.DecodeOnly},
+		},
+		[]carrier.Binding{{
+			Use: "carrier/value/storage-transfer",
+			Ref: carrier.Ref{Owner: providerAxisRef(providerValueAxis), Carrier: "carrier/value/storage-transfer"},
+		}},
+		[]member.Relation{{Key: providerRoutes, Subject: "carrier/placement/fact", Inputs: []carrier.Key{"carrier/value/storage-transfer"}, CandidateProvider: member.AxisRelationCandidate(placementProvider)}},
 		[]member.Projection{
 			{Key: providerRouteKey, Relation: providerRoutes, Role: member.Key, Result: "carrier/placement/key", CandidateProvider: member.AxisRelationCandidate(placementProvider)},
 			{Key: providerPredicate, Relation: providerRoutes, Role: member.Predicate, Result: "carrier/placement/tag", CandidateProvider: member.AxisRelationCandidate(placementProvider)},

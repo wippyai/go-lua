@@ -12,6 +12,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/schema"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
+	"github.com/wippyai/go-lua/analysis/schema/carrier"
 )
 
 // GoType is a source-level reference to one Go type. PackagePath is empty only
@@ -93,14 +94,134 @@ func derivationOptional(derivation RelationDerivation) bool {
 
 func cloneSymbol(symbol GoSymbol) GoSymbol { return symbol }
 
-// Carrier names one exported Go constant, its owner-issued carrier key, and
-// the Go type carried by that key. Type is the single source of identity for
-// member-level signature derivation; relation/projection/reducer rows never
-// repeat it.
+// Carrier is one authority this axis owns. Its Go type is generator-only
+// source metadata; the cold catalog carries the key and capability that this
+// owner declares. A consumer names an authority owned elsewhere through
+// CarrierReference rather than restating its capability here.
 type Carrier struct {
+	Name       string
+	Key        carrier.Key
+	Type       GoType
+	Capability carrier.CapabilityKind
+}
+
+// CarrierReference is one source-level alias for a carrier authority owned by
+// another sealed entry. The alias keeps relation, projection, and reducer rows
+// compact source declarations while Ref remains the only semantic ownership
+// statement. Type is generator-only metadata and never crosses into the cold
+// catalog.
+type CarrierReference struct {
 	Name string
-	Key  member.Carrier
+	// Key is the consuming catalog's local spelling. It deliberately need not
+	// equal Ref.Carrier: the latter is the declaring owner's key.
+	Key  carrier.Key
+	Ref  carrier.Ref
 	Type GoType
+}
+
+// carrierUse is the combined source-name resolution used by the existing row
+// declarations. Rows keep naming a source alias, while projection to a cold
+// catalog uses Key and cross-owner checks use Ref.
+type carrierUse struct {
+	Key   carrier.Key
+	Ref   carrier.Ref
+	Type  GoType
+	Local bool
+}
+
+func axisCarrierOwner(axis schema.Key) schema.EntryReference {
+	return schema.EntryReference{Surface: schema.SurfaceKindAxis, Key: axis}
+}
+
+func capabilityAvailable(capability carrier.CapabilityKind) bool {
+	switch capability {
+	case carrier.DecodeOnly, carrier.Equatable, carrier.Ascending:
+		return true
+	default:
+		return false
+	}
+}
+
+func carrierAvailable(carrier Carrier) bool {
+	return identifierAvailable(carrier.Name) && carrier.Key.Available() && carrier.Type.Available() &&
+		capabilityAvailable(carrier.Capability)
+}
+
+func carrierReferenceAvailable(reference CarrierReference, owner schema.EntryReference) bool {
+	return identifierAvailable(reference.Name) && reference.Key.Available() && reference.Ref.Owner.Available() &&
+		reference.Ref.Carrier.Available() && reference.Ref.Owner != owner && reference.Type.Available()
+}
+
+// carrierDeclarations owns the no-shadowing law shared by a definition, its
+// contributions, and the roster's pre-fold carrier inventory. A use spelling
+// is unique in one source: an imported binding cannot silently overwrite a
+// local authority, and two aliases cannot make one raw row key ambiguous.
+type carrierDeclarations struct {
+	owner     schema.EntryReference
+	byName    map[string]carrierUse
+	byUse     map[carrier.Key]carrierUse
+	authority map[string]Carrier
+	reference map[string]CarrierReference
+}
+
+func newCarrierDeclarations(owner schema.EntryReference, capacity int) carrierDeclarations {
+	return carrierDeclarations{
+		owner:     owner,
+		byName:    make(map[string]carrierUse, capacity),
+		byUse:     make(map[carrier.Key]carrierUse, capacity),
+		authority: make(map[string]Carrier, capacity),
+		reference: make(map[string]CarrierReference, capacity),
+	}
+}
+
+// addAuthority adds one local declaration. A verbatim repeat is useful when a
+// contribution repeats its base's carrier, but a separate name or an import
+// under the same local use is a second authority claim and refuses.
+func (declarations *carrierDeclarations) addAuthority(declaration Carrier) (added bool, ok bool) {
+	if !carrierAvailable(declaration) {
+		return false, false
+	}
+	if existing, held := declarations.authority[declaration.Name]; held {
+		return false, existing == declaration
+	}
+	if _, held := declarations.reference[declaration.Name]; held {
+		return false, false
+	}
+	if _, held := declarations.byUse[declaration.Key]; held {
+		return false, false
+	}
+	resolved := carrierUse{
+		Key:   declaration.Key,
+		Ref:   carrier.Ref{Owner: declarations.owner, Carrier: declaration.Key},
+		Type:  declaration.Type,
+		Local: true,
+	}
+	declarations.authority[declaration.Name] = declaration
+	declarations.byName[declaration.Name] = resolved
+	declarations.byUse[declaration.Key] = resolved
+	return true, true
+}
+
+// addReference adds one foreign binding. The authority-bearing owner is never
+// reconstructed from a Go type or an axis key; it is the explicit Ref.Owner.
+func (declarations *carrierDeclarations) addReference(reference CarrierReference) (added bool, ok bool) {
+	if !carrierReferenceAvailable(reference, declarations.owner) {
+		return false, false
+	}
+	if existing, held := declarations.reference[reference.Name]; held {
+		return false, existing == reference
+	}
+	if _, held := declarations.authority[reference.Name]; held {
+		return false, false
+	}
+	if _, held := declarations.byUse[reference.Key]; held {
+		return false, false
+	}
+	resolved := carrierUse{Key: reference.Key, Ref: reference.Ref, Type: reference.Type}
+	declarations.reference[reference.Name] = reference
+	declarations.byName[reference.Name] = resolved
+	declarations.byUse[reference.Key] = resolved
+	return true, true
 }
 
 // Relation is a named owner-issued relation declaration. Subject and Inputs
@@ -112,6 +233,11 @@ type Relation struct {
 	Key     schema.Key
 	Subject string
 	Inputs  []RelationInput
+	// Addressing is the relation owner's complete statement of the columns
+	// through which its rows may be correlated. It must survive into the cold
+	// member catalog: a child Program cannot recover an address from a Go
+	// accessor or fabricate one from a projection role.
+	Addressing member.Addressing
 	// Axis is the axis whose rows these are. A relation over call coordinates
 	// is call-axis data whichever rule declares it, so a contribution states
 	// the axis per row rather than per contribution and the roster folds the
@@ -221,7 +347,7 @@ func (relation Relation) keyVectorDeclared() bool {
 // present and be methods on this relation's own subject - the row that holds
 // the coordinates - because a directory publishes the vector its own rows
 // carry and no other.
-func (relation Relation) keyVectorComplete(carriers map[string]Carrier) bool {
+func (relation Relation) keyVectorComplete(carriers map[string]carrierUse) bool {
 	if !relation.keyVectorDeclared() {
 		return true
 	}
@@ -239,7 +365,7 @@ func (relation Relation) keyVectorComplete(carriers map[string]Carrier) bool {
 // names. The parent must be a declared relation of this axis, this relation
 // must be self-provided so its members are addressed by its own directory, and
 // both accessors must be methods on the parent's subject.
-func (relation Relation) memberSetComplete(relations map[string]Relation, byKey map[schema.Key]Relation, carriers map[string]Carrier) bool {
+func (relation Relation) memberSetComplete(relations map[string]Relation, byKey map[schema.Key]Relation, carriers map[string]carrierUse) bool {
 	if !relation.memberSetDeclared() {
 		return true
 	}
@@ -753,8 +879,9 @@ type CarryTransform struct {
 
 // Selection is a named owner-issued operation that publishes the rows of one
 // of this axis's relations. Relation and Tag refer to a relation and a
-// projection in this same definition, and the operation itself is the
-// derivation that relation declares.
+// projection in this same definition; the implementation is kept as a
+// source-level Go symbol descriptor and never crosses into the runtime schema
+// as a callback.
 //
 // It is how a produced read stops being a callback the declaration never
 // mentioned: the rows a selection returns depend on values earlier reads
@@ -767,10 +894,11 @@ type CarryTransform struct {
 // that those derived rows are SELECTED: they carry a tag a reading rule
 // correlates them by.
 type Selection struct {
-	Name     string
-	Key      schema.Key
-	Relation string
-	Tag      string
+	Name           string
+	Key            schema.Key
+	Relation       string
+	Tag            string
+	Implementation GoSymbol
 }
 
 // KeyNormalization is the one axis-level conversion from an owner key carrier
@@ -816,11 +944,15 @@ type Signature struct {
 // projected separately by member/generator, so generated outputs cannot
 // become a second schema.
 type Definition struct {
-	Name            string
-	Axis            schema.Key
-	Binding         Binding
-	Signature       Signature
-	Carriers        []Carrier
+	Name      string
+	Axis      schema.Key
+	Binding   Binding
+	Signature Signature
+	Carriers  []Carrier
+	// CarrierRefs are source aliases for authorities owned by another sealed
+	// entry. They project to catalog imports; they never carry a capability or
+	// become local authority rows merely because a relation uses them.
+	CarrierRefs     []CarrierReference
 	Relations       []Relation
 	Projections     []Projection
 	Reducers        []Reducer
@@ -905,23 +1037,19 @@ func identifierAvailable(name string) bool {
 	return name != "" && name != "_" && token.IsIdentifier(name)
 }
 
-func (definition Definition) carrierIndex() (map[string]Carrier, map[member.Carrier]struct{}, bool) {
-	byName := make(map[string]Carrier, len(definition.Carriers))
-	byKey := make(map[member.Carrier]struct{}, len(definition.Carriers))
+func (definition Definition) carrierIndex() (map[string]carrierUse, map[carrier.Key]carrierUse, bool) {
+	declarations := newCarrierDeclarations(axisCarrierOwner(definition.Axis), len(definition.Carriers)+len(definition.CarrierRefs))
 	for _, carrier := range definition.Carriers {
-		if !identifierAvailable(carrier.Name) || !carrier.Key.Available() || !carrier.Type.Available() {
+		if added, ok := declarations.addAuthority(carrier); !ok || !added {
 			return nil, nil, false
 		}
-		if _, duplicate := byName[carrier.Name]; duplicate {
-			return nil, nil, false
-		}
-		if _, duplicate := byKey[carrier.Key]; duplicate {
-			return nil, nil, false
-		}
-		byName[carrier.Name] = carrier
-		byKey[carrier.Key] = struct{}{}
 	}
-	return byName, byKey, true
+	for _, reference := range definition.CarrierRefs {
+		if added, ok := declarations.addReference(reference); !ok || !added {
+			return nil, nil, false
+		}
+	}
+	return declarations.byName, declarations.byUse, true
 }
 
 // Catalog projects the named cold declarations into the declaration-only
@@ -939,8 +1067,16 @@ func (definition Definition) Catalog() (member.Catalog, bool) {
 		return member.Catalog{}, false
 	} else if _, keyOK := carriers[signature.Key]; !keyOK {
 		return member.Catalog{}, false
-	} else if _, factOK := carriers[signature.Fact]; !factOK {
+	} else if fact, factOK := carriers[signature.Fact]; !factOK || !fact.Local {
 		return member.Catalog{}, false
+	}
+	authorities := make([]carrier.Authority, len(definition.Carriers))
+	for index, declaration := range definition.Carriers {
+		authorities[index] = carrier.Authority{Carrier: declaration.Key, Capability: declaration.Capability}
+	}
+	bindings := make([]carrier.Binding, len(definition.CarrierRefs))
+	for index, reference := range definition.CarrierRefs {
+		bindings[index] = carrier.Binding{Use: reference.Key, Ref: reference.Ref}
 	}
 	relations := make([]member.Relation, len(definition.Relations))
 	relationNames := make(map[string]schema.Key, len(definition.Relations))
@@ -959,7 +1095,7 @@ func (definition Definition) Catalog() (member.Catalog, bool) {
 		if !subjectOK {
 			return member.Catalog{}, false
 		}
-		inputs := make([]member.Carrier, len(relation.Inputs))
+		inputs := make([]carrier.Key, len(relation.Inputs))
 		for inputIndex, declared := range relation.Inputs {
 			inputName := declared.Carrier
 			input, inputOK := carriers[inputName]
@@ -968,7 +1104,11 @@ func (definition Definition) Catalog() (member.Catalog, bool) {
 			}
 			inputs[inputIndex] = input.Key
 		}
-		row := member.Relation{Key: relation.Key, Subject: subject.Key, Inputs: inputs, CandidateProvider: relation.CandidateProvider}
+		row := member.Relation{
+			Key: relation.Key, Subject: subject.Key, Inputs: inputs,
+			CandidateProvider: relation.CandidateProvider,
+			Addressing:        relation.Addressing,
+		}
 		// A correspondence survives into the cold catalog for the same reason a
 		// nested set does: it is what a CHILD Program consumes to know that a
 		// foreign candidate addresses these rows, and a consumer that never
@@ -1031,11 +1171,11 @@ func (definition Definition) Catalog() (member.Catalog, bool) {
 		}
 		inputs := make([]member.ReducerInput, len(reducer.Inputs))
 		for inputIndex, input := range reducer.Inputs {
-			carrier, carrierOK := carriers[input.Carrier]
-			if !carrierOK {
+			inputCarrier, inputCarrierOK := carriers[input.Carrier]
+			if !inputCarrierOK {
 				return member.Catalog{}, false
 			}
-			var tag member.Carrier
+			var tag carrier.Key
 			if input.Tag != "" {
 				tagged, tagOK := carriers[input.Tag]
 				if !tagOK {
@@ -1043,7 +1183,7 @@ func (definition Definition) Catalog() (member.Catalog, bool) {
 				}
 				tag = tagged.Key
 			}
-			var routed member.Carrier
+			var routed carrier.Key
 			if input.Route != "" {
 				route, routeOK := carriers[input.Route]
 				if !routeOK {
@@ -1051,7 +1191,7 @@ func (definition Definition) Catalog() (member.Catalog, bool) {
 				}
 				routed = route.Key
 			}
-			inputs[inputIndex] = member.ReducerInput{Axis: input.Axis, Carrier: carrier.Key, Form: input.Form, Multiplicity: input.Multiplicity, Tag: tag, Route: routed}
+			inputs[inputIndex] = member.ReducerInput{Axis: input.Axis, Carrier: inputCarrier.Key, Form: input.Form, Multiplicity: input.Multiplicity, Tag: tag, Route: routed}
 		}
 		outputs := make([]member.ReducerOutput, len(reducer.Outputs))
 		for outputIndex, output := range reducer.Outputs {
@@ -1082,7 +1222,7 @@ func (definition Definition) Catalog() (member.Catalog, bool) {
 		transforms[index] = member.CarryTransform{Key: transform.Key, Candidate: candidate.Key, Input: input.Key, Output: output.Key}
 		transformKeys[transform.Key] = struct{}{}
 	}
-	catalog, ok := member.NewCatalog(relations, projections, reducers, transforms)
+	catalog, ok := member.NewCatalog(authorities, bindings, relations, projections, reducers, transforms)
 	if !ok {
 		return member.Catalog{}, false
 	}
@@ -1092,7 +1232,7 @@ func (definition Definition) Catalog() (member.Catalog, bool) {
 	selections := make([]member.Selection, len(definition.Selections))
 	selectionKeys := make(map[schema.Key]struct{}, len(definition.Selections))
 	for index, selection := range definition.Selections {
-		if !identifierAvailable(selection.Name) || !selection.Key.Available() {
+		if !identifierAvailable(selection.Name) || !selection.Key.Available() || !selection.Implementation.Available() {
 			return member.Catalog{}, false
 		}
 		if _, duplicate := selectionKeys[selection.Key]; duplicate {
@@ -1109,7 +1249,7 @@ func (definition Definition) Catalog() (member.Catalog, bool) {
 	return catalog.WithSelections(selections)
 }
 
-func (binding Binding) complete(carriers map[string]Carrier) bool {
+func (binding Binding) complete(carriers map[string]carrierUse) bool {
 	keyCarrier, keyOK := carriers[binding.Key.Carrier]
 	return keyOK && denseWidthAvailable(binding.Key.Dense) && binding.Key.Normalizer.Available() && keyCarrier.Type.Available()
 }
@@ -1409,7 +1549,7 @@ func IdentityCarrier(typ GoType) (framed bool, issued bool) {
 // The converse half is what keeps Attribute's own statement true: an identity
 // spelled in a local role would be read through Project and truncated to a
 // coordinate of a directory it was never an index into.
-func identityRoleAgrees(projection Projection, carriers map[string]Carrier) bool {
+func identityRoleAgrees(projection Projection, carriers map[string]carrierUse) bool {
 	result, resultOK := carriers[projection.Result]
 	if !resultOK {
 		return false
@@ -1418,7 +1558,7 @@ func identityRoleAgrees(projection Projection, carriers map[string]Carrier) bool
 	return issued == (projection.Role == member.Identity)
 }
 
-func projectionReceiverMatches(accessor GoSymbol, relation Relation, carriers map[string]Carrier) bool {
+func projectionReceiverMatches(accessor GoSymbol, relation Relation, carriers map[string]carrierUse) bool {
 	if accessor.Receiver.Name == "" {
 		return false
 	}
@@ -1438,10 +1578,12 @@ func projectionReceiverMatches(accessor GoSymbol, relation Relation, carriers ma
 func (definition Definition) Clone() Definition {
 	clone := definition
 	clone.Carriers = append([]Carrier(nil), definition.Carriers...)
+	clone.CarrierRefs = append([]CarrierReference(nil), definition.CarrierRefs...)
 	clone.Relations = make([]Relation, len(definition.Relations))
 	for index, relation := range definition.Relations {
 		clone.Relations[index] = relation
 		clone.Relations[index].Inputs = append([]RelationInput(nil), relation.Inputs...)
+		clone.Relations[index].Correspondences = cloneCorrespondences(relation.Correspondences)
 		clone.Relations[index].CandidateProvider = relation.CandidateProvider
 		clone.Relations[index].CandidateResolver = cloneSymbol(relation.CandidateResolver)
 		clone.Relations[index].CandidateOrdinal = cloneSymbol(relation.CandidateOrdinal)
@@ -1470,7 +1612,11 @@ func (definition Definition) Clone() Definition {
 		clone.Reducers[index].Derivation.Build = cloneSymbol(reducer.Derivation.Build)
 		clone.Reducers[index].Derivation.StaticAxes = append([]schema.EntryReference(nil), reducer.Derivation.StaticAxes...)
 	}
-	clone.Selections = append([]Selection(nil), definition.Selections...)
+	clone.Selections = make([]Selection, len(definition.Selections))
+	for index, selection := range definition.Selections {
+		clone.Selections[index] = selection
+		clone.Selections[index].Implementation = cloneSymbol(selection.Implementation)
+	}
 	clone.CarryTransforms = make([]CarryTransform, len(definition.CarryTransforms))
 	for index, transform := range definition.CarryTransforms {
 		clone.CarryTransforms[index] = transform
@@ -1678,7 +1824,7 @@ func (definition Definition) ReducerSignature(reducer Reducer, outcome, cell, ve
 	if !carriersOK {
 		return nil, nil, false
 	}
-	var candidate Carrier
+	var candidate carrierUse
 	if reducer.Candidate != "" {
 		var candidateOK bool
 		candidate, candidateOK = carriers[reducer.Candidate]
