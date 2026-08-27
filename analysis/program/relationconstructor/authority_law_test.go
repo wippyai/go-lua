@@ -45,6 +45,22 @@ func providerOf(member_ schema.Key) member.CandidateRef {
 	return member.AxisRelationCandidate(member.RelationRef{Axis: axisRef("heap"), Member: member_})
 }
 
+// localAuthorities states the owner-issued carrier vocabulary for this axis.
+// Every carrier occurrence in the member declarations resolves through one of
+// these local authorities; there are no foreign aliases in this fixture.
+func localAuthorities(secondNested member.RelationRef) []carrier.Authority {
+	authorities := []carrier.Authority{
+		{Carrier: "carrier/heap/route", Capability: carrier.DecodeOnly},
+		{Carrier: "carrier/heap/source", Capability: carrier.DecodeOnly},
+	}
+	if secondNested.Available() {
+		authorities = append(authorities, carrier.Authority{
+			Carrier: "carrier/heap/ordinal", Capability: carrier.Equatable,
+		})
+	}
+	return authorities
+}
+
 // sharedCatalog declares two relations produced under one candidate provider,
 // each with its own declared column, and gives the first a key vector.
 func sharedCatalog(t *testing.T, secondProvider member.CandidateRef, secondNested member.RelationRef) member.Catalog {
@@ -65,13 +81,14 @@ func sharedCatalog(t *testing.T, secondProvider member.CandidateRef, secondNeste
 		sources.Ordinal = "carrier/heap/ordinal"
 	}
 	catalog, ok := member.NewCatalog(
+		localAuthorities(secondNested), []carrier.Binding{},
 		[]member.Relation{routes, sources},
 		[]member.Projection{
 			{Key: "heap/route-key", Relation: "heap/routes", Role: member.Key,
 				Result: "carrier/heap/route", CandidateProvider: providerOf("heap/directory")},
 			{Key: "heap/source-key", Relation: "heap/sources", Role: member.Key,
 				Result: "carrier/heap/source", CandidateProvider: providerOf("heap/directory")},
-		}, nil, nil)
+		}, []member.Reducer{}, []member.CarryTransform{})
 	if !ok {
 		t.Fatal("the member catalog was refused")
 	}
@@ -186,4 +203,3 @@ func TestADeclaredKeyVectorBecomesAKeyAndItsDenominator(t *testing.T) {
 		t.Fatal("the denominator does not pair the relation with its declared key")
 	}
 }
-
