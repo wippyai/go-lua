@@ -4,16 +4,22 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/analysis/identity"
+	"github.com/wippyai/go-lua/analysis/relation/schema/region"
 )
+
+func scopeDecision(value byte) pointDecisionDraft {
+	atom, _ := region.NewAtom(valuesLawID(value))
+	return pointDecisionDraft{semantic: valuesLawID(value), atom: atom}
+}
 
 func TestColdPointPlanesShareDecisionScopesInSortedRowOrder(t *testing.T) {
 	baseA, stageA := valuesLawID(20), valuesLawID(10)
 	baseB, stageB := valuesLawID(40), valuesLawID(30)
 	rows := []pointDraft{
 		{id: stageA, decisionScope: baseA},
-		{id: baseA, decisionScope: baseA, decisions: []identity.ContentID{valuesLawID(2), valuesLawID(4)}, initial: true},
+		{id: baseA, decisionScope: baseA, decisions: []pointDecisionDraft{scopeDecision(2), scopeDecision(4)}, initial: true},
 		{id: stageB, decisionScope: baseB},
-		{id: baseB, decisionScope: baseB, decisions: []identity.ContentID{valuesLawID(3)}},
+		{id: baseB, decisionScope: baseB, decisions: []pointDecisionDraft{scopeDecision(3)}},
 	}
 	points, decisions, ok := coldPointPlanes(rows)
 	if !ok || len(points) != len(rows) || len(decisions) != 3 {
@@ -25,6 +31,9 @@ func TestColdPointPlanesShareDecisionScopesInSortedRowOrder(t *testing.T) {
 		}
 		if points[index].Initial() != row.initial {
 			t.Fatalf("point %d initial = %v, want %v", index, points[index].Initial(), row.initial)
+		}
+		if points[index].ScopeID() != row.decisionScope {
+			t.Fatalf("point %d scope = %v, want exact owner %v", index, points[index].ScopeID(), row.decisionScope)
 		}
 	}
 	firstOffset, firstCount, firstOK := points[0].DecisionSpan()
@@ -51,8 +60,8 @@ func TestColdPointPlanesRejectUnownedOrCopiedDecisionScopes(t *testing.T) {
 		t.Fatal("scope without its base owner was accepted")
 	}
 	if _, _, ok := coldPointPlanes([]pointDraft{
-		{id: owner, decisionScope: owner, decisions: []identity.ContentID{valuesLawID(5)}},
-		{id: stage, decisionScope: owner, decisions: []identity.ContentID{valuesLawID(5)}},
+		{id: owner, decisionScope: owner, decisions: []pointDecisionDraft{scopeDecision(5)}},
+		{id: stage, decisionScope: owner, decisions: []pointDecisionDraft{scopeDecision(5)}},
 	}); ok {
 		t.Fatal("synthetic row carrying a copied decision vector was accepted")
 	}

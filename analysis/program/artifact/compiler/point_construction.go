@@ -1,9 +1,13 @@
 package compiler
 
 import (
+	"bytes"
+	"sort"
+
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/flow/causal"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/relation/schema/region"
 )
 
 func (compiler *compiler) copyLocalWTOFailure() CompileFailure {
@@ -162,7 +166,7 @@ func (compiler *compiler) installPoint(point causal.WTOPoint) bool {
 	if !bodyOK || !entryOK || !entrySite.Available() {
 		return false
 	}
-	decisions := make(map[identity.ContentID]struct{})
+	decisions := make(map[identity.ContentID]region.Atom)
 	initial := false
 	for index := 0; index < point.SiteCount(); index++ {
 		site, siteOK := point.SiteAt(index)
@@ -180,17 +184,23 @@ func (compiler *compiler) installPoint(point causal.WTOPoint) bool {
 		for guardIndex := 0; guardIndex < count; guardIndex++ {
 			guard, guardOK := compiler.input.Flow().Continuation().GuardAt(subject, guardIndex)
 			decisionID, decisionOK := compiler.input.Flow().SemanticTermPath(guard)
-			if !guardOK || !decisionOK || !decisionID.Available() {
+			decisionAtom, atomOK := compiler.input.Flow().SemanticTermAtom(guard)
+			if !guardOK || !decisionOK || !decisionID.Available() || !atomOK || !decisionAtom.Available() {
 				return false
 			}
-			decisions[decisionID] = struct{}{}
+			if prior, exists := decisions[decisionID]; exists && prior != decisionAtom {
+				return false
+			}
+			decisions[decisionID] = decisionAtom
 		}
 	}
-	ordered := make([]identity.ContentID, 0, len(decisions))
-	for decision := range decisions {
-		ordered = append(ordered, decision)
+	ordered := make([]pointDecisionDraft, 0, len(decisions))
+	for decision, atom := range decisions {
+		ordered = append(ordered, pointDecisionDraft{semantic: decision, atom: atom})
 	}
-	identity.SortContentIDs(ordered)
+	sort.Slice(ordered, func(left, right int) bool {
+		return bytes.Compare(ordered[left].semantic[:], ordered[right].semantic[:]) < 0
+	})
 	compiler.pointGeometry[point.PathID()] = pointDraft{id: point.PathID(), decisionScope: point.PathID(), decisions: ordered, initial: initial}
 	return true
 }

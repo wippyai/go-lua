@@ -3,6 +3,7 @@ package compiler
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/flow/causal"
+	"github.com/wippyai/go-lua/analysis/relation/schema/region"
 )
 
 // pointDraft is an exact parent-issued LocalWTO phase vertex path. The base
@@ -12,8 +13,13 @@ import (
 type pointDraft struct {
 	id            identity.ContentID
 	decisionScope identity.ContentID
-	decisions     []identity.ContentID
+	decisions     []pointDecisionDraft
 	initial       bool
+}
+
+type pointDecisionDraft struct {
+	semantic identity.ContentID
+	atom     region.Atom
 }
 
 func (point pointDraft) ID() identity.ContentID { return point.id }
@@ -30,7 +36,14 @@ func (point pointDraft) DecisionAt(index int) (identity.ContentID, bool) {
 	if !point.Available() || index < 0 || index >= len(point.decisions) {
 		return identity.ContentID{}, false
 	}
-	return point.decisions[index], true
+	return point.decisions[index].semantic, true
+}
+func (point pointDraft) DecisionAtomAt(index int) (region.Atom, bool) {
+	if !point.Available() || index < 0 || index >= len(point.decisions) {
+		return region.Atom{}, false
+	}
+	atom := point.decisions[index].atom
+	return atom, atom.Available()
 }
 func (point pointDraft) Initial() (bool, bool) { return point.initial, point.Available() }
 

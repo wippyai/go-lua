@@ -1,11 +1,14 @@
 package compiler
 
 import (
+	"bytes"
 	"crypto/sha256"
+	"sort"
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/flow/causal"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
+	"github.com/wippyai/go-lua/analysis/relation/schema/region"
 	"github.com/wippyai/go-lua/internal/framing"
 )
 
@@ -80,8 +83,11 @@ func recordEnvironmentRoute(index map[identity.ContentID]environmentRouteIndex, 
 // ambient continuation guards, while the route proof is the sole authority
 // for its edge-local guard. Keeping both sources in one canonical set avoids
 // reconstructing scope from Terms at Link time.
-func (compiler *compiler) admitPointDecision(point, decision identity.ContentID) bool {
+func (compiler *compiler) admitPointDecision(point, decision identity.ContentID, atom region.Atom) bool {
 	if compiler == nil || !decision.Available() {
+		return false
+	}
+	if !atom.Available() {
 		return false
 	}
 	geometry, exists := compiler.pointGeometry[point]
@@ -93,7 +99,7 @@ func (compiler *compiler) admitPointDecision(point, decision identity.ContentID)
 	if !ownerExists || !owner.Available() || owner.id != ownerID || owner.decisionScope != ownerID {
 		return false
 	}
-	owner.decisions = append(owner.decisions, decision)
+	owner.decisions = append(owner.decisions, pointDecisionDraft{semantic: decision, atom: atom})
 	compiler.pointGeometry[ownerID] = owner
 	return true
 }
@@ -111,19 +117,27 @@ func (compiler *compiler) canonicalizePointDecisionsFailure() CompileFailure {
 			return compileFailure(CompileStageRoutes, CompileRowRoute, -1, -1, CompileReasonRouteGuard)
 		}
 		for _, decision := range geometry.decisions {
-			if !decision.Available() {
+			if !decision.semantic.Available() || !decision.atom.Available() {
 				return compileFailure(CompileStageRoutes, CompileRowRoute, -1, -1, CompileReasonRouteGuard)
 			}
 		}
-		identity.SortContentIDs(geometry.decisions)
-		unique := 0
-		for _, decision := range geometry.decisions {
-			if unique == 0 || geometry.decisions[unique-1] != decision {
-				geometry.decisions[unique] = decision
-				unique++
+		pairs := append([]pointDecisionDraft(nil), geometry.decisions...)
+		// Keep each neutral atom attached to the semantic identity it arrived
+		// with while canonicalizing the owner vector.
+		sort.Slice(pairs, func(left, right int) bool {
+			return bytes.Compare(pairs[left].semantic[:], pairs[right].semantic[:]) < 0
+		})
+		uniquePairs := pairs[:0]
+		for _, pair := range pairs {
+			if len(uniquePairs) != 0 && uniquePairs[len(uniquePairs)-1].semantic == pair.semantic {
+				if uniquePairs[len(uniquePairs)-1].atom != pair.atom {
+					return compileFailure(CompileStageRoutes, CompileRowRoute, -1, -1, CompileReasonRouteGuard)
+				}
+				continue
 			}
+			uniquePairs = append(uniquePairs, pair)
 		}
-		geometry.decisions = geometry.decisions[:unique]
+		geometry.decisions = uniquePairs
 		compiler.pointGeometry[point] = geometry
 	}
 	return CompileFailure{}
@@ -183,7 +197,9 @@ func (compiler *compiler) admitEnvironmentFailure(route causal.FinalRoute, rowIn
 		}
 		var decisionOK bool
 		decisionID, decisionOK = guard.DecisionPathID()
-		if !decisionOK || !decisionID.Available() || !compiler.admitPointDecision(from.PathID(), decisionID) {
+		decisionTerm, decisionTermOK := guard.Decision()
+		decisionAtom, atomOK := compiler.input.Flow().SemanticTermAtom(decisionTerm)
+		if !decisionOK || !decisionID.Available() || !decisionTermOK || !atomOK || !decisionAtom.Available() || !compiler.admitPointDecision(from.PathID(), decisionID, decisionAtom) {
 			return compileFailure(CompileStageRoutes, CompileRowRoute, rowIndex, -1, CompileReasonRouteGuard)
 		}
 		identityValue, identityOK := route.Identity()

@@ -19,6 +19,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/flow/outcome"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
+	"github.com/wippyai/go-lua/analysis/relation/schema/region"
 )
 
 // Certificate owns the body-qualified structural path planes for exactly one
@@ -34,6 +35,7 @@ type certificateState struct {
 	moduleID identity.ContentID
 	roots    [keyspace.FamilyCount][]identity.ContentID
 	terms    [keyspace.FamilyCount][]identity.ContentID
+	atoms    [keyspace.FamilyCount][]region.Atom
 }
 
 // Seal's failure classes remain intentionally narrow: assembly reports the
@@ -79,6 +81,17 @@ func (c *Certificate) TermPathAt(sourceID, flowID, staticID, moduleID identity.C
 	return id, id.Available()
 }
 
+// TermAtomAt returns the exact owner-issued neutral atom stored beside one
+// semantic term at Flow seal. It never creates an atom from the returned
+// semantic identity, so consumers cannot silently re-derive a proposition.
+func (c *Certificate) TermAtomAt(sourceID, flowID, staticID, moduleID identity.ContentID, family keyspace.Family, ordinal uint32) (region.Atom, bool) {
+	if !c.Matches(sourceID, flowID, staticID, moduleID) || family <= keyspace.FamilyInvalid || family >= keyspace.FamilyCount || ordinal == 0 || uint64(ordinal) >= uint64(len(c.state.atoms[family])) {
+		return region.Atom{}, false
+	}
+	atom := c.state.atoms[family][ordinal]
+	return atom, atom.Available()
+}
+
 // Seal is the single Flow assembly cut for structural semantic identities.
 // It derives its planes directly from exact Source/Authored/Body/Containment/
 // Outcome proofs. No ContentID plane crosses this boundary, so an adjacent
@@ -115,6 +128,18 @@ func Seal(cellRoles source.CellRoles, view source.View, authoredView authored.Vi
 		}
 		certificate.state.roots[family] = append([]identity.ContentID(nil), planes.roots[family]...)
 		certificate.state.terms[family] = append([]identity.ContentID(nil), planes.terms[family]...)
+		certificate.state.atoms[family] = make([]region.Atom, len(planes.terms[family]))
+		for ordinal := 1; ordinal < len(planes.terms[family]); ordinal++ {
+			path := planes.terms[family][ordinal]
+			if !path.Available() {
+				continue
+			}
+			atom, atomOK := region.NewAtom(path)
+			if !atomOK {
+				return nil, fmt.Errorf("%w: family %d ordinal %d atom is unavailable", ErrFamilyPlaneShape, family, ordinal)
+			}
+			certificate.state.atoms[family][ordinal] = atom
+		}
 		for ordinal := 0; ordinal < count; ordinal++ {
 			// A direct root may be absent from the route plane only when it can
 			// never be a causal term.  SourceControl independently proves the

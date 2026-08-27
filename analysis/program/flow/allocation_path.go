@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/program/flow/semanticpath"
 	"github.com/wippyai/go-lua/analysis/program/keyspace"
 	"github.com/wippyai/go-lua/analysis/program/source"
+	"github.com/wippyai/go-lua/analysis/relation/schema/region"
 )
 
 const (
@@ -135,6 +136,22 @@ func (view View) SemanticTermPath(term keyspace.Term) (identity.ContentID, bool)
 	}
 	p := view.component.provenance
 	return view.component.semanticPaths.TermPathAt(p.Source, p.Flow, p.Static, p.Module, family, ordinal)
+}
+
+// SemanticTermAtom forwards the neutral Boolean proposition sealed beside one
+// exact semantic Flow term. The atom is issued once with the path certificate;
+// callers never derive it from a runtime coordinate, scope ordinal, or
+// physical digest.
+func (view View) SemanticTermAtom(term keyspace.Term) (region.Atom, bool) {
+	if !view.available() || view.component.semanticPaths == nil {
+		return region.Atom{}, false
+	}
+	family, ordinal := keyspace.TermFamily(term), keyspace.TermOrdinal(term)
+	if family <= keyspace.FamilyInvalid || family >= keyspace.FamilyCount || ordinal == 0 {
+		return region.Atom{}, false
+	}
+	p := view.component.provenance
+	return view.component.semanticPaths.TermAtomAt(p.Source, p.Flow, p.Static, p.Module, family, ordinal)
 }
 func certificateTerm(paths *semanticpath.Certificate, sourceID, flowID, staticID, moduleID identity.ContentID, term keyspace.Term) (identity.ContentID, bool) {
 	return paths.TermPathAt(sourceID, flowID, staticID, moduleID, keyspace.TermFamily(term), keyspace.TermOrdinal(term))

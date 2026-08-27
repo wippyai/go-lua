@@ -28,6 +28,17 @@ func TestAllocationPathsUseTheSealedFlowCertificate(t *testing.T) {
 	if got, ok := flow.SemanticTermPath(entry); !ok || got != path {
 		t.Fatalf("SemanticTermPath(%v) = %v/%v, want BodyPath %v", entry, got, ok, path)
 	}
+	atom, atomOK := flow.SemanticTermAtom(entry)
+	if !atomOK || !atom.Available() || atom.ID() != path {
+		t.Fatalf("SemanticTermAtom(%v) = %v/%v, want the sealed atom for %v", entry, atom, atomOK, path)
+	}
+	secondAtom, secondAtomOK := flow.SemanticTermAtom(entry)
+	if !secondAtomOK || secondAtom != atom {
+		t.Fatal("SemanticTermAtom did not replay the same sealed atom")
+	}
+	if _, ok := flow.SemanticTermAtom(0); ok {
+		t.Fatal("SemanticTermAtom accepted the invalid term")
+	}
 	if _, ok := flow.BodyPath(keyspace.MakeTerm(keyspace.FamilyCall, 1)); ok {
 		t.Fatal("BodyPath accepted a non-Body term")
 	}

@@ -105,7 +105,7 @@ func (compiler *compiler) sealArtifact() (*programartifact.Artifact, CompileFail
 // reuses the same span.
 type pointDecisionScopePlane struct {
 	owner     identity.ContentID
-	decisions []identity.ContentID
+	decisions []pointDecisionDraft
 	offset    uint32
 	count     uint32
 	emitted   bool
@@ -151,7 +151,7 @@ func coldPointPlanes(rows []pointDraft) ([]programschema.Point, []programschema.
 			scope.offset = uint32(len(decisions))
 			scope.count = uint32(len(scope.decisions))
 			for _, decision := range scope.decisions {
-				converted, ok := programschema.NewPointDecision(decision)
+				converted, ok := programschema.NewPointDecision(decision.semantic, decision.atom)
 				if !ok {
 					return nil, nil, false
 				}
@@ -160,7 +160,7 @@ func coldPointPlanes(rows []pointDraft) ([]programschema.Point, []programschema.
 			scope.emitted = true
 			scopes[row.decisionScope] = scope
 		}
-		point, ok := programschema.NewPoint(row.id, row.initial, scope.offset, scope.count)
+		point, ok := programschema.NewPoint(row.id, row.decisionScope, row.initial, scope.offset, scope.count)
 		if !ok {
 			return nil, nil, false
 		}

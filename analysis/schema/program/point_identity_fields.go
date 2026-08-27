@@ -5,7 +5,7 @@ import "github.com/wippyai/go-lua/analysis/identity"
 // These versions remain part of the Artifact preimage, but the Program point
 // publication owns the row shape and therefore the versioned stream.
 const (
-	PointGeometryLawVersion   uint64 = 2
+	PointGeometryLawVersion   uint64 = 3
 	PointAttachmentLawVersion uint64 = 2
 )
 
@@ -23,7 +23,7 @@ func (row Program) WritePointIdentityFields(writer identity.IdentityWriter) bool
 	for index := 0; index < pointCount; index++ {
 		point, held := PointFamily().At(&row.Frozen, catalog, index)
 		offset, decisions, spanOK := point.DecisionSpan()
-		if !held || !spanOK || !writer.WriteContentID(point.ID()) || !writer.WriteBool(point.Initial()) || !writer.WriteUint(uint64(decisions)) {
+		if !held || !spanOK || !writer.WriteContentID(point.ID()) || !writer.WriteContentID(point.ScopeID()) || !writer.WriteBool(point.Initial()) || !writer.WriteUint(uint64(decisions)) {
 			return false
 		}
 		for position := uint32(0); position < decisions; position++ {

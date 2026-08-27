@@ -3,9 +3,14 @@ package compiler
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/program/flow/causal"
+	"github.com/wippyai/go-lua/analysis/relation/schema/region"
 )
+
+func pointDecision(value byte) pointDecisionDraft {
+	atom, _ := region.NewAtom(valuesLawID(value))
+	return pointDecisionDraft{semantic: valuesLawID(value), atom: atom}
+}
 
 func TestPointRowsUseFlowBoundaryArmsAndKeepTransferSeparate(t *testing.T) {
 	if causal.BoundaryLocal != 1 || causal.BoundaryCancel != 8 {
@@ -28,7 +33,7 @@ func TestPointRowsUseFlowBoundaryArmsAndKeepTransferSeparate(t *testing.T) {
 		}
 	}
 	pointID := valuesLawID(1)
-	point := pointDraft{id: pointID, decisionScope: pointID, decisions: []identity.ContentID{valuesLawID(2)}, initial: true}
+	point := pointDraft{id: pointID, decisionScope: pointID, decisions: []pointDecisionDraft{pointDecision(2)}, initial: true}
 	if !point.Available() || point.DecisionCount() != 1 {
 		t.Fatal("valid point row unavailable")
 	}
