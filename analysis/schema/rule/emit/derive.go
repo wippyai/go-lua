@@ -554,7 +554,7 @@ func deriveCandidate(built *plan, resolver *axisResolver, declaration program.Pr
 		return unexpressible(ruleKey, "a candidate directory with no dense accessor",
 			fmt.Sprintf("relation %q declares no CandidateAt symbol, so one dense candidate cannot be read", relation.Name))
 	}
-	subject, subjectOK := carrierType(axis.source, relation.Subject)
+	subject, subjectOK := axis.source.CarrierType(relation.Subject)
 	if !subjectOK {
 		return unexpressible(ruleKey, "a candidate relation whose subject carrier is undeclared", relation.Subject)
 	}
@@ -667,7 +667,7 @@ func deriveKeyVector(built *plan, resolver *axisResolver, join program.JoinDecl,
 		return nil, unexpressible(ruleKey, fmt.Sprintf("join %d over a key vector of the written axis", position),
 			"a published span is sealed one exact read per coordinate through the read axis's foreign handle, and a rule's own Factor publishes no such handle")
 	}
-	if _, subjectOK := carrierType(relationAxis.source, relation.Subject); !subjectOK {
+	if _, subjectOK := relationAxis.source.CarrierType(relation.Subject); !subjectOK {
 		return nil, unexpressible(ruleKey, "a key-vector relation whose subject carrier is undeclared", relation.Subject)
 	}
 	return &vectorSpanPlan{}, nil
@@ -731,7 +731,7 @@ func deriveMemberSet(built *plan, declaration program.Program, join program.Join
 		return nil, unexpressible(ruleKey, fmt.Sprintf("join %d over a member set of the written axis", position),
 			"a member set is sealed one exact read per ordinal through the read axis's foreign handle, and a rule's own Factor publishes no such handle")
 	}
-	if _, memberOK := carrierType(relationAxis.source, relation.Subject); !memberOK {
+	if _, memberOK := relationAxis.source.CarrierType(relation.Subject); !memberOK {
 		return nil, unexpressible(ruleKey, "a member relation whose subject carrier is undeclared", relation.Subject)
 	}
 	return &vectorSpanPlan{}, nil
@@ -771,7 +771,7 @@ func deriveRelation(built *plan, resolver *axisResolver, join program.JoinDecl, 
 	for index, source := range join.Sources {
 		declared := relation.Inputs[index]
 		argument := derivationArg{many: declared.Many, form: declared.Form}
-		if carrier, carrierOK := carrierType(relationAxis.source, declared.Carrier); carrierOK {
+		if carrier, carrierOK := relationAxis.source.CarrierType(declared.Carrier); carrierOK {
 			argument.element = carrier
 		}
 		if source.Candidate {
@@ -820,7 +820,7 @@ func derivedSinkName(position int) string  { return fmt.Sprintf("derived%dRowsSi
 func deriveDeclared(built *plan, resolver *axisResolver, relation definition.Relation, relationAxis *axisPlan, derivation *derivationPlan, key, predicate definition.Projection, hasPredicate bool, position int) (*declaredPlan, error) {
 	ruleKey := built.target.Spec.Key
 	declaration := relation.Derivation
-	subject, subjectOK := carrierType(relationAxis.source, relation.Subject)
+	subject, subjectOK := relationAxis.source.CarrierType(relation.Subject)
 	if !subjectOK {
 		return nil, unexpressible(ruleKey, "a derived member set whose subject carrier is undeclared", relation.Subject)
 	}
@@ -852,7 +852,7 @@ func deriveDeclared(built *plan, resolver *axisResolver, relation definition.Rel
 	// enumeration is given when what it reads is one of the declared inputs.
 	given := sources[0].delivery != 0
 	for _, input := range relation.Inputs {
-		carrier, carrierOK := carrierType(relationAxis.source, input.Carrier)
+		carrier, carrierOK := relationAxis.source.CarrierType(input.Carrier)
 		if carrierOK && !input.Many && sameGoType(carrier, sources[0].over) {
 			given = true
 		}
@@ -869,7 +869,7 @@ func deriveDeclared(built *plan, resolver *axisResolver, relation definition.Rel
 		return nil, unexpressible(ruleKey, "a derived member set whose members carry no address",
 			fmt.Sprintf("relation %q declares no predicate projection, so two members on one coordinate cannot be told apart", relation.Name))
 	}
-	predicateType, predicateTypeOK := carrierType(relationAxis.source, predicate.Result)
+	predicateType, predicateTypeOK := relationAxis.source.CarrierType(predicate.Result)
 	if !predicateTypeOK {
 		return nil, unexpressible(ruleKey, "a derived member set whose predicate carrier is undeclared", predicate.Result)
 	}
@@ -884,7 +884,7 @@ func deriveDeclared(built *plan, resolver *axisResolver, relation definition.Rel
 		declared.sourceArgument = sources[0].delivery - 1
 	}
 	for index, input := range relation.Inputs {
-		carrier, carrierOK := carrierType(relationAxis.source, input.Carrier)
+		carrier, carrierOK := relationAxis.source.CarrierType(input.Carrier)
 		if carrierOK && !input.Many && sameGoType(carrier, sources[0].over) && declared.sourceArgument < 0 {
 			declared.sourceArgument = index
 		}
@@ -1008,7 +1008,7 @@ func deriveEnumerations(built *plan, resolver *axisResolver, relation definition
 				return nil, unexpressible(ruleKey, "a derived member set reading a delivery of an input that delivers one value",
 					fmt.Sprintf("relation %q reads input %d as a delivery, and that input is not many-valued", relation.Name, source.Delivery))
 			}
-			element, elementOK := carrierType(relationAxis.source, relation.Inputs[source.Delivery-1].Carrier)
+			element, elementOK := relationAxis.source.CarrierType(relation.Inputs[source.Delivery-1].Carrier)
 			if !elementOK {
 				return nil, unexpressible(ruleKey, "a derived member set whose delivered carrier is undeclared", relation.Inputs[source.Delivery-1].Carrier)
 			}
@@ -1024,13 +1024,13 @@ func deriveEnumerations(built *plan, resolver *axisResolver, relation definition
 			return nil, unexpressible(ruleKey, "a source enumeration its axis does not declare",
 				fmt.Sprintf("axis %q declares no enumeration %q", string(axis.key), source.Name))
 		}
-		element, elementOK := carrierType(axis.source, enumeration.Item)
+		element, elementOK := axis.source.CarrierType(enumeration.Item)
 		if !elementOK {
 			return nil, unexpressible(ruleKey, "a source enumeration whose element carrier is undeclared", enumeration.Item)
 		}
 		over := axis.schemaType
 		if !enumeration.OverSchema() {
-			carrier, carrierOK := carrierType(axis.source, enumeration.Over)
+			carrier, carrierOK := axis.source.CarrierType(enumeration.Over)
 			if !carrierOK {
 				return nil, unexpressible(ruleKey, "a source enumeration whose subject carrier is undeclared", enumeration.Over)
 			}
@@ -1100,12 +1100,12 @@ func deriveShape(built *plan, resolver *axisResolver, declaration program.Progra
 			return unexpressible(ruleKey, "a routed output whose destination is not a projection of its route relation",
 				fmt.Sprintf("projection %q belongs to relation %q, route relation %q", destination.Name, destination.Relation, route.relation.Name))
 		}
-		destinationType, destinationCarrierOK := carrierType(route.axis.source, destination.Result)
+		destinationType, destinationCarrierOK := route.axis.source.CarrierType(destination.Result)
 		if !destinationCarrierOK {
 			return unexpressible(ruleKey, "a routed output whose destination carrier is undeclared",
 				destination.Result)
 		}
-		keyType, keyCarrierOK := carrierType(route.axis.source, route.axis.source.Binding.Key.Carrier)
+		keyType, keyCarrierOK := route.axis.source.CarrierType(route.axis.source.Binding.Key.Carrier)
 		if !keyCarrierOK || !sameGoType(destinationType, keyType) {
 			return unexpressible(ruleKey, "a routed output whose destination carrier is not the routed axis key type",
 				fmt.Sprintf("destination %s, routed key %s", destinationType.Name, keyType.Name))
@@ -1355,7 +1355,7 @@ func deriveRoutedCarry(built *plan, resolver *axisResolver, declaration program.
 		return nil, unexpressible(ruleKey, "a carry transform with no row-bound implementation",
 			fmt.Sprintf("transform %q declares no method on the route relation's subject, so a published row has no closure to seal", transform.Name))
 	}
-	subject, subjectOK := carrierType(route.axis.source, route.relation.Subject)
+	subject, subjectOK := route.axis.source.CarrierType(route.relation.Subject)
 	if !subjectOK {
 		return nil, unexpressible(ruleKey, "a route relation whose subject carrier is undeclared", route.relation.Subject)
 	}
@@ -1471,7 +1471,7 @@ func (resolver *axisResolver) axis(key schema.Key) (*axisPlan, error) {
 		return nil, unexpressible(resolver.rule, "an axis that declares no schema type",
 			fmt.Sprintf("axis %q declares no key normalizer receiver", string(key)))
 	}
-	fact, factOK := carrierType(source, source.Signature.Fact)
+	fact, factOK := source.CarrierType(source.Signature.Fact)
 	if !factOK {
 		return nil, unexpressible(resolver.rule, "an axis whose fact carrier is undeclared", string(key))
 	}
@@ -1569,17 +1569,8 @@ func findCarryTransform(source definition.Definition, key schema.Key) (definitio
 	return definition.CarryTransform{}, false
 }
 
-func carrierType(source definition.Definition, name string) (definition.GoType, bool) {
-	for _, carrier := range source.Carriers {
-		if carrier.Name == name {
-			return carrier.Type, true
-		}
-	}
-	return definition.GoType{}, false
-}
-
 func mustCarrier(source definition.Definition, name string) definition.GoType {
-	carrier, _ := carrierType(source, name)
+	carrier, _ := source.CarrierType(name)
 	return carrier
 }
 

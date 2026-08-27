@@ -1052,6 +1052,23 @@ func (definition Definition) carrierIndex() (map[string]carrierUse, map[carrier.
 	return declarations.byName, declarations.byUse, true
 }
 
+// CarrierType resolves one carrier source name to the Go type this axis reads
+// that carrier as. It answers over every carrier the axis declares: the ones it
+// authors and the ones it references from the axis that owns them. An axis may
+// not author another axis's carrier, so a reference is how a row names a
+// foreign carrier, and it is declared here exactly as an authored one is.
+func (definition Definition) CarrierType(name string) (GoType, bool) {
+	carriers, _, carriersOK := definition.carrierIndex()
+	if !carriersOK {
+		return GoType{}, false
+	}
+	use, useOK := carriers[name]
+	if !useOK {
+		return GoType{}, false
+	}
+	return use.Type, true
+}
+
 // Catalog projects the named cold declarations into the declaration-only
 // member catalog. It is the semantic bridge used by the generator and is also
 // useful to owner-side admission tests.
