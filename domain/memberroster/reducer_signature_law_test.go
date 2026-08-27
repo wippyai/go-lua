@@ -47,13 +47,14 @@ func cellGoType() memberdefinition.GoType {
 // receiver is not counted as a parameter here. That is the whole reason the
 // signature cannot grow plumbing.
 //
-// This law is RED on heap/reducer/closed and is left red rather than narrowed.
-// resultClosed takes the Heap schema, the Value schema and a selector
-// projection alongside its carriers - three positions of exactly the plumbing
-// the call shape exists to forbid - and delivers its many-valued input through
-// the engine's own ordered-cell type rather than the view the execution layer
-// materializes. Every one of those is the heap-closed cutover's work, and
-// narrowing this law would hide the measurement of it.
+// This law is RED on four placement folds and is left red rather than
+// narrowed. Each is one disagreement between a declaration and the fold it
+// names: closure-capture and containment declare fewer positions than their
+// fold takes, so the route and the tag each one authenticates its cell by are
+// carried by no declared row; suspension and suspension-evidence declare more,
+// stating a route and a tag for every input and a SourceSummary fact where the
+// fold reads one delivered vector. Which side moves is the placement cutover's
+// work, and narrowing this law would hide the measurement of it.
 func TestEveryDeclaredFoldHasTheDerivedCallShape(t *testing.T) {
 	root := moduleRoot(t)
 	roster, rosterOK := memberroster.Composition()
