@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/axis"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member/definition"
+	"github.com/wippyai/go-lua/analysis/schema/carrier"
 	"github.com/wippyai/go-lua/analysis/schema/rule"
 	"github.com/wippyai/go-lua/analysis/schema/rule/program"
 )
@@ -59,8 +60,8 @@ func exactProductRoster(t testing.TB, reads int) definition.Roster {
 		}},
 		Signature: definition.Signature{Key: "KeyCarrier", Fact: "FactCarrier"},
 		Carriers: []definition.Carrier{
-			{Name: "KeyCarrier", Key: "carrier/specimen/key", Type: specimenType("Key")},
-			{Name: "FactCarrier", Key: "carrier/specimen/fact", Type: specimenType("Fact")},
+			{Name: "KeyCarrier", Key: "carrier/specimen/key", Type: specimenType("Key"), Capability: carrier.Equatable},
+			{Name: "FactCarrier", Key: "carrier/specimen/fact", Type: specimenType("Fact"), Capability: carrier.Ascending},
 		},
 		Relations: []definition.Relation{
 			{
@@ -112,10 +113,10 @@ func exactProductRoster(t testing.TB, reads int) definition.Roster {
 		}},
 		Signature: definition.Signature{Key: "ConsumerKeyCarrier", Fact: "ConsumerFactCarrier"},
 		Carriers: []definition.Carrier{
-			{Name: "ConsumerKeyCarrier", Key: "carrier/consumer/key", Type: consumerType("Key")},
-			{Name: "ConsumerFactCarrier", Key: "carrier/consumer/fact", Type: consumerType("Fact")},
-			{Name: "SpecimenKeyCarrier", Key: "carrier/specimen/key", Type: specimenType("Key")},
-			{Name: "SpecimenFactCarrier", Key: "carrier/specimen/fact", Type: specimenType("Fact")},
+			{Name: "ConsumerKeyCarrier", Key: "carrier/consumer/key", Type: consumerType("Key"), Capability: carrier.Equatable},
+			{Name: "ConsumerFactCarrier", Key: "carrier/consumer/fact", Type: consumerType("Fact"), Capability: carrier.Ascending},
+			{Name: "SpecimenKeyCarrier", Key: "carrier/specimen/key", Type: specimenType("Key"), Capability: carrier.Equatable},
+			{Name: "SpecimenFactCarrier", Key: "carrier/specimen/fact", Type: specimenType("Fact"), Capability: carrier.Ascending},
 		},
 		Relations: []definition.Relation{
 			{

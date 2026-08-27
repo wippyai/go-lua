@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/axis"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member/definition"
+	"github.com/wippyai/go-lua/analysis/schema/carrier"
 	"github.com/wippyai/go-lua/analysis/schema/rule"
 	"github.com/wippyai/go-lua/analysis/schema/rule/program"
 )
@@ -75,13 +76,13 @@ func siteBase() definition.Definition {
 		}},
 		Signature: definition.Signature{Key: "SiteKeyCarrier", Fact: "SiteFactCarrier"},
 		Carriers: []definition.Carrier{
-			{Name: "SiteKeyCarrier", Key: "carrier/site/key", Type: siteType("Key")},
-			{Name: "SiteFactCarrier", Key: "carrier/site/fact", Type: siteType("Fact")},
-			{Name: "SiteMountedCarrier", Key: "carrier/site/mounted", Type: siteType("Mounted")},
-			{Name: "WireFactCarrier", Key: "carrier/wire/fact", Type: wireType("Value")},
-			{Name: "WireSubjectCarrier", Key: "carrier/wire/coordinate", Type: wireType("Coordinate")},
-			{Name: "SiteRouteCarrier", Key: "carrier/site/route", Type: siteType("Route")},
-			{Name: "SiteTagCarrier", Key: "carrier/site/route-tag", Type: definition.GoType{Name: "uint64"}},
+			{Name: "SiteKeyCarrier", Key: "carrier/site/key", Type: siteType("Key"), Capability: carrier.Equatable},
+			{Name: "SiteFactCarrier", Key: "carrier/site/fact", Type: siteType("Fact"), Capability: carrier.Ascending},
+			{Name: "SiteMountedCarrier", Key: "carrier/site/mounted", Type: siteType("Mounted"), Capability: carrier.DecodeOnly},
+			{Name: "WireFactCarrier", Key: "carrier/wire/fact", Type: wireType("Value"), Capability: carrier.Ascending},
+			{Name: "WireSubjectCarrier", Key: "carrier/wire/coordinate", Type: wireType("Coordinate"), Capability: carrier.DecodeOnly},
+			{Name: "SiteRouteCarrier", Key: "carrier/site/route", Type: siteType("Route"), Capability: carrier.DecodeOnly},
+			{Name: "SiteTagCarrier", Key: "carrier/site/route-tag", Type: definition.GoType{Name: "uint64"}, Capability: carrier.DecodeOnly},
 		},
 		Enumerations: []definition.Enumeration{
 			{
@@ -166,9 +167,9 @@ func wireBase() definition.Definition {
 		}},
 		Signature: definition.Signature{Key: "WireKeyCarrier", Fact: "WireValueCarrier"},
 		Carriers: []definition.Carrier{
-			{Name: "WireKeyCarrier", Key: "carrier/wire/key", Type: wireType("Key")},
-			{Name: "WireValueCarrier", Key: "carrier/wire/fact", Type: wireType("Value")},
-			{Name: "WireCoordinateCarrier", Key: "carrier/wire/coordinate", Type: wireType("Coordinate")},
+			{Name: "WireKeyCarrier", Key: "carrier/wire/key", Type: wireType("Key"), Capability: carrier.Equatable},
+			{Name: "WireValueCarrier", Key: "carrier/wire/fact", Type: wireType("Value"), Capability: carrier.Ascending},
+			{Name: "WireCoordinateCarrier", Key: "carrier/wire/coordinate", Type: wireType("Coordinate"), Capability: carrier.DecodeOnly},
 		},
 		Relations: []definition.Relation{
 			{

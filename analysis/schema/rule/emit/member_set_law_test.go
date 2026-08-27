@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/axis"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member/definition"
+	"github.com/wippyai/go-lua/analysis/schema/carrier"
 	"github.com/wippyai/go-lua/analysis/schema/rule"
 	"github.com/wippyai/go-lua/analysis/schema/rule/program"
 )
@@ -56,11 +57,11 @@ func memberSetValueDefinition() definition.Definition {
 		}},
 		Signature: definition.Signature{Key: "ValueKey", Fact: "ValueFact"},
 		Carriers: []definition.Carrier{
-			{Name: "ValueKey", Key: "carrier/value/key", Type: specimenType("ValueKey")},
-			{Name: "ValueFact", Key: "carrier/value/fact", Type: specimenType("ValueFact")},
-			{Name: "ReturnBoundaryCarrier", Key: "carrier/value/boundary", Type: specimenType("ReturnBoundary")},
-			{Name: "ReturnBoundaryMemberCarrier", Key: "carrier/value/member", Type: specimenType("ReturnBoundaryMember")},
-			{Name: "ReturnBoundaryMemberOrdinalCarrier", Key: "carrier/value/member-ordinal", Type: definition.GoType{Name: "int"}},
+			{Name: "ValueKey", Key: "carrier/value/key", Type: specimenType("ValueKey"), Capability: carrier.Equatable},
+			{Name: "ValueFact", Key: "carrier/value/fact", Type: specimenType("ValueFact"), Capability: carrier.Ascending},
+			{Name: "ReturnBoundaryCarrier", Key: "carrier/value/boundary", Type: specimenType("ReturnBoundary"), Capability: carrier.DecodeOnly},
+			{Name: "ReturnBoundaryMemberCarrier", Key: "carrier/value/member", Type: specimenType("ReturnBoundaryMember"), Capability: carrier.DecodeOnly},
+			{Name: "ReturnBoundaryMemberOrdinalCarrier", Key: "carrier/value/member-ordinal", Type: definition.GoType{Name: "int"}, Capability: carrier.DecodeOnly},
 		},
 		Enumerations: []definition.Enumeration{{
 			// The POSITIONS a boundary names, not the values at them. It is
@@ -133,13 +134,13 @@ func memberSetPlacementDefinition() definition.Definition {
 		}},
 		Signature: definition.Signature{Key: "PlacementKey", Fact: "PlacementFact"},
 		Carriers: []definition.Carrier{
-			{Name: "PlacementKey", Key: "carrier/placement/key", Type: specimenType("PlacementKey")},
-			{Name: "PlacementFact", Key: "carrier/placement/fact", Type: specimenType("PlacementFact")},
-			{Name: "RouteTagCarrier", Key: "carrier/placement/route-tag", Type: definition.GoType{Name: "uint64"}},
-			{Name: "RouteCarrier", Key: "carrier/placement/route", Type: specimenType("Route")},
-			{Name: "ReturnBoundaryCarrier", Key: "carrier/placement/boundary", Type: specimenType("ReturnBoundary")},
-			{Name: "ValueFactCarrier", Key: "carrier/placement/value-fact", Type: specimenType("ValueFact")},
-			{Name: "SelfOrdinalCarrier", Key: "carrier/placement/self-ordinal", Type: definition.GoType{Name: "int"}},
+			{Name: "PlacementKey", Key: "carrier/placement/key", Type: specimenType("PlacementKey"), Capability: carrier.Equatable},
+			{Name: "PlacementFact", Key: "carrier/placement/fact", Type: specimenType("PlacementFact"), Capability: carrier.Ascending},
+			{Name: "RouteTagCarrier", Key: "carrier/placement/route-tag", Type: definition.GoType{Name: "uint64"}, Capability: carrier.DecodeOnly},
+			{Name: "RouteCarrier", Key: "carrier/placement/route", Type: specimenType("Route"), Capability: carrier.DecodeOnly},
+			{Name: "ReturnBoundaryCarrier", Key: "carrier/placement/boundary", Type: specimenType("ReturnBoundary"), Capability: carrier.DecodeOnly},
+			{Name: "ValueFactCarrier", Key: "carrier/placement/value-fact", Type: specimenType("ValueFact"), Capability: carrier.Ascending},
+			{Name: "SelfOrdinalCarrier", Key: "carrier/placement/self-ordinal", Type: definition.GoType{Name: "int"}, Capability: carrier.DecodeOnly},
 		},
 		Relations: []definition.Relation{
 			{

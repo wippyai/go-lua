@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/analysis/schema/axis"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member"
 	"github.com/wippyai/go-lua/analysis/schema/axis/member/definition"
+	"github.com/wippyai/go-lua/analysis/schema/carrier"
 	"github.com/wippyai/go-lua/analysis/schema/rule"
 	"github.com/wippyai/go-lua/analysis/schema/rule/program"
 )
@@ -48,8 +49,8 @@ func specimenRoster(t testing.TB) definition.Roster {
 		}},
 		Signature: definition.Signature{Key: "KeyCarrier", Fact: "FactCarrier"},
 		Carriers: []definition.Carrier{
-			{Name: "KeyCarrier", Key: "carrier/specimen/key", Type: specimenType("Key")},
-			{Name: "FactCarrier", Key: "carrier/specimen/fact", Type: specimenType("Fact")},
+			{Name: "KeyCarrier", Key: "carrier/specimen/key", Type: specimenType("Key"), Capability: carrier.Equatable},
+			{Name: "FactCarrier", Key: "carrier/specimen/fact", Type: specimenType("Fact"), Capability: carrier.Ascending},
 		},
 		Relations: []definition.Relation{
 			{
