@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/relation/semantic/binding"
+	"github.com/wippyai/go-lua/analysis/schema/rule/relbindgen"
 	"github.com/wippyai/go-lua/analysis/schema/rule/relbindgen/harness"
 	calldomain "github.com/wippyai/go-lua/domain/call"
 	heapdomain "github.com/wippyai/go-lua/domain/heap"
@@ -134,7 +135,11 @@ func TestTheRawGetDecoderReadsTheRowItWasDelivered(t *testing.T) {
 		}
 		cells = append(cells, place.Cell(t, cellAddress, row, valueType, token))
 	}
-	span := harness.BorrowSpan(t, place, cells, column)
+	frame := place.Frame(t, harness.SpanSlot(t, cells))
+	span, ok := relbindgen.SpanAtFrame(frame, 0, column)
+	if !ok {
+		t.Fatal("borrow span")
+	}
 
 	for index := 0; index < span.Len(); index++ {
 		delivered, ok := span.RowKeyAt(index)

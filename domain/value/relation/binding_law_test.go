@@ -395,7 +395,11 @@ func TestMaterializingADeliveredSpanIsAllocationFreeWhenWarm(t *testing.T) {
 		}
 		cells = append(cells, place.Cell(t, cellAddress, row, valueType, token))
 	}
-	span := harness.BorrowSpan(t, place, cells, valueColumn)
+	frame := place.Frame(t, harness.SpanSlot(t, cells))
+	span, ok := relbindgen.SpanAtFrame(frame, 0, valueColumn)
+	if !ok {
+		t.Fatal("borrow span")
+	}
 
 	members, ok := relbindgen.NewMembers[valuedomain.Value](coordinates)
 	if !ok {
