@@ -1,22 +1,11 @@
 package relbindgen
 
 import (
-	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/relation/schema/model"
 	"github.com/wippyai/go-lua/analysis/relation/semantic/binding"
 	"github.com/wippyai/go-lua/analysis/relation/semantic/outcome"
 	"github.com/wippyai/go-lua/analysis/relation/semantic/signature"
 )
-
-// KeyedDestination declares that the operation names each destination row by
-// the owner's own content identity rather than reading it from an input slot.
-// It is the address form a finite expansion uses.
-const KeyedDestination = -1
-
-// NoDestination is the address a family declares when it publishes no fact at
-// all. Its signature declares no output column, so there is no row for an
-// address to name.
-const NoDestination = -2
 
 // Spec is the declaration a generated binding hands this substrate.
 type Spec[A, R any] struct {
@@ -26,9 +15,6 @@ type Spec[A, R any] struct {
 	Decoder   Decoder[A]
 	Encoder   Encoder[R]
 	Operation Operation[A, R]
-	// Address names the scalar input slot whose row addresses every proposal,
-	// or KeyedDestination for an owner-named expansion.
-	Address int
 	// Refusal is the owner-issued reason this binding refuses with.
 	Refusal model.RefusalID
 }
@@ -37,65 +23,59 @@ type Spec[A, R any] struct {
 // the exact sealed signature it was constructed with, so binding.Admit refuses
 // a foreign or drifted contract without any runtime form inspection.
 func Bind[A, R any](spec Spec[A, R]) (binding.Factory, bool) {
-	if !spec.Signature.Available() || spec.Decoder == nil || spec.Operation == nil || !spec.Refusal.Available() {
-		return nil, false
-	}
-	authority := spec.Signature.Authority()
-	if !authority.Available() {
+	if !spec.Signature.Available() || spec.Decoder == nil || spec.Encoder == nil || spec.Operation == nil || !spec.Refusal.Available() {
 		return nil, false
 	}
 	outputs := spec.Signature.Outputs()
 	if len(outputs) == 0 {
-		// A signature that declares no output column is an operation that
-		// answers with its disposition and publishes no fact. The ABI already
-		// carries a closed outcome vocabulary on the output side, so this is a
-		// signature form and not a capability: it is read off the contract the
-		// same way scalar shape is read off delivery and expansion off
-		// cardinality.
-		//
-		// Nothing about it is permissive. There is no encoder because there is
-		// nothing to encode, no address because there is no row to address,
-		// and the emitter is opened at a capacity of none, so an operation
-		// that tries to publish refuses the whole invocation.
-		if spec.Encoder != nil || spec.Address != NoDestination {
-			return nil, false
-		}
-		return factory[A, R]{spec: spec, outputs: nil, limit: 0}, true
+		return nil, false
 	}
 	for _, declared := range outputs {
-		if !declared.Available() || declared.Relation != authority.Denominator.Relation() {
+		if !declared.Available() {
 			return nil, false
 		}
 	}
-	limit, ok := rowLimit(spec.Signature.Cardinality())
+	cardinality := spec.Signature.Cardinality()
+	if !cardinality.Available() {
+		return nil, false
+	}
+	if cardinality.Kind() == model.CompleteDenominator {
+		if !completeOutputs(outputs) {
+			return nil, false
+		}
+		// CompleteDenominator has no static numeric limit. The mounted
+		// ProposalBuffer supplies the exact witness-backed capacity and rejects
+		// any row outside that witness.
+		return factory[A, R]{spec: spec, outputs: outputs, cardinality: cardinality.Kind()}, true
+	}
+	limit, ok := rowLimit(cardinality)
 	if !ok || limit == 0 {
 		return nil, false
 	}
-	if spec.Address != KeyedDestination {
-		input, inputOK := spec.Signature.InputAt(spec.Address)
-		if !inputOK || !input.Delivery.IsScalar() {
-			return nil, false
-		}
-		if limit != 1 {
-			return nil, false
-		}
-	}
-	return factory[A, R]{spec: spec, outputs: outputs, limit: int(limit)}, true
+	return factory[A, R]{spec: spec, outputs: outputs, cardinality: cardinality.Kind(), limit: int(limit)}, true
 }
 
-// publishes reports whether one settled disposition carries rows.
-//
-// Produced and Opaque both answer with a fact: an operation that proved its
-// answer publishes it present, and one that authenticated an answer it could
-// not follow publishes it opaque. The remaining dispositions answer that there
-// is no fact, so a row staged under one of them is a contradiction the
-// invocation refuses.
-//
-// An opaque answer is the one a soundness judgment leans on hardest. Dropping
-// its row would report the occurrence clean by omission, so the rule is stated
-// here once rather than left to a comparison against a single code.
-func publishes(code outcome.Code) bool {
-	return code == outcome.Produced || code == outcome.Opaque
+func completeOutputs(outputs []signature.Output) bool {
+	if len(outputs) == 0 || !outputs[0].Available() || !outputs[0].Denominator.Available() {
+		return false
+	}
+	denominator := outputs[0].Denominator
+	type outputKey struct {
+		relation model.RelationID
+		column   model.ColumnID
+	}
+	seen := make(map[outputKey]struct{}, len(outputs))
+	for _, output := range outputs {
+		if !output.Available() || output.Denominator != denominator || output.Relation != denominator.Relation() {
+			return false
+		}
+		key := outputKey{relation: output.Relation, column: output.Column}
+		if _, exists := seen[key]; exists {
+			return false
+		}
+		seen[key] = struct{}{}
+	}
+	return true
 }
 
 func rowLimit(cardinality model.Cardinality) (uint32, bool) {
@@ -113,9 +93,10 @@ func rowLimit(cardinality model.Cardinality) (uint32, bool) {
 }
 
 type factory[A, R any] struct {
-	spec    Spec[A, R]
-	outputs []signature.Output
-	limit   int
+	spec        Spec[A, R]
+	outputs     []signature.Output
+	cardinality model.CardinalityKind
+	limit       int
 }
 
 func (value factory[A, R]) Bind(operation signature.Signature) (binding.Binding, bool) {
@@ -139,19 +120,11 @@ func (value bound[A, R]) NewWorker(fence binding.Fence) (binding.Worker, bool) {
 	if !ok {
 		return nil, false
 	}
-	operation := value.factory.spec.Operation
-	if local, ok := operation.(SolveLocal[A, R]); ok {
-		operation = local.NewOperation()
-		if operation == nil {
-			return nil, false
-		}
-	}
 	return &worker[A, R]{
-		factory:   value.factory,
-		operation: operation,
-		fence:     fence,
-		issuer:    issuer,
-		emitter:   Emitter[R]{rows: make([]emission[R], 0, value.factory.limit), limit: value.factory.limit},
+		factory: value.factory,
+		fence:   fence,
+		issuer:  issuer,
+		emitter: Emitter[R]{rows: make([]emission[R], 0, value.factory.limit), limit: value.factory.limit, unbounded: value.factory.cardinality == model.CompleteDenominator},
 	}, true
 }
 
@@ -159,12 +132,9 @@ func (value bound[A, R]) NewWorker(fence binding.Fence) (binding.Worker, bool) {
 // across invocations; nothing it holds can name a relation outside the frame.
 type worker[A, R any] struct {
 	factory factory[A, R]
-	// operation is this worker's own when the family said it carries
-	// per-invocation storage, and the shared one otherwise.
-	operation Operation[A, R]
-	fence     binding.Fence
-	issuer    binding.Issuer
-	emitter   Emitter[R]
+	fence   binding.Fence
+	issuer  binding.Issuer
+	emitter Emitter[R]
 }
 
 func (value *worker[A, R]) Evaluate(frame binding.Frame, buffer *binding.ProposalBuffer) outcome.Result {
@@ -176,31 +146,23 @@ func (value *worker[A, R]) Evaluate(frame binding.Frame, buffer *binding.Proposa
 		return value.refuse(nil)
 	}
 	inputs := Inputs{frame: frame}
-	var fallback identity.ContentID
-	// A family that publishes no fact resolves no destination. Its emitter is
-	// opened at a capacity of none, so it stays closed to a row either way.
-	keyed := value.factory.spec.Address == KeyedDestination
-	if !keyed && value.factory.spec.Address != NoDestination {
-		key, ok := inputs.RowKeyAt(value.factory.spec.Address)
-		if !ok {
-			return value.refuse(nil)
-		}
-		fallback = key
-	}
-	value.emitter.reset(fallback, keyed)
+	value.emitter.reset(buffer.Destination())
 	argument, ok := value.factory.spec.Decoder.Decode(inputs)
 	if !ok {
 		return value.refuse(nil)
 	}
-	code := value.operation.Evaluate(argument, &value.emitter)
+	code := value.factory.spec.Operation.Evaluate(argument, &value.emitter)
 	if value.emitter.overflow || !operation.Allows(code) {
-		return value.refuse(nil)
+		return value.refuse(buffer)
 	}
-	if !publishes(code) {
+	if !code.Publishes() {
 		if value.emitter.Len() != 0 {
 			return value.refuse(nil)
 		}
 		return value.settle(code)
+	}
+	if !value.factory.validEmissionCount(value.emitter.Len()) {
+		return value.refuse(buffer)
 	}
 	for index := range value.emitter.rows {
 		staged := value.emitter.rows[index]
@@ -208,7 +170,7 @@ func (value *worker[A, R]) Evaluate(frame binding.Frame, buffer *binding.Proposa
 			declared: value.factory.outputs,
 			buffer:   buffer,
 			issuer:   value.issuer,
-			rowKey:   staged.key,
+			row:      staged.row,
 			presence: staged.presence,
 		}
 		if !value.factory.spec.Encoder.Encode(outputs, staged.value) {
@@ -216,6 +178,21 @@ func (value *worker[A, R]) Evaluate(frame binding.Frame, buffer *binding.Proposa
 		}
 	}
 	return value.settle(code)
+}
+
+func (value factory[A, R]) validEmissionCount(count int) bool {
+	switch value.cardinality {
+	case model.ExactlyOne:
+		return count == 1
+	case model.Optional, model.BoundedMany:
+		return count <= value.limit
+	case model.CompleteDenominator:
+		// The mounted destination witness, not the schema, determines the
+		// complete row count. ProposalBuffer.Seal proves exact coverage.
+		return true
+	default:
+		return false
+	}
 }
 
 // settle returns the operation's own closed disposition. The binding never

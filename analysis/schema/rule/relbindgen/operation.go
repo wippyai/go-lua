@@ -3,6 +3,7 @@ package relbindgen
 import (
 	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/relation/schema/model"
+	"github.com/wippyai/go-lua/analysis/relation/semantic/binding"
 	"github.com/wippyai/go-lua/analysis/relation/semantic/outcome"
 )
 
@@ -33,37 +34,27 @@ type Operation[A, R any] interface {
 	Evaluate(A, *Emitter[R]) outcome.Code
 }
 
-// SolveLocal is an operation that carries per-invocation storage.
-//
-// Most operations hold only sealed owner state and are safe to share, so the
-// substrate shares one. An operation that materializes a delivered span into
-// the operand vocabulary a fold reads holds storage it refills, and sharing
-// that across solve-local workers would be a race. Such an operation says so
-// by answering with its own, and the substrate gives each worker one.
-type SolveLocal[A, R any] interface {
-	Operation[A, R]
-	NewOperation() Operation[A, R]
-}
-
 type emission[R any] struct {
-	key      identity.ContentID
+	row      model.RowID
 	value    R
 	presence model.Presence
 }
 
-// Emitter is the operation's bounded typed result sink. Its capacity is the
-// sealed signature's declared output cardinality, so an expansion is finite
-// under its declared denominator by construction: the emitter refuses the row
-// that would exceed the bound and the invocation refuses as a whole.
+// Emitter is the operation's typed result sink. Numeric cardinalities give it
+// their sealed static limit. CompleteDenominator deliberately has no numeric
+// limit here: the mounted ProposalBuffer supplies the witness-backed capacity
+// and proves exact row/column coverage when the operation settles.
 type Emitter[R any] struct {
-	rows     []emission[R]
-	limit    int
-	keyed    bool
-	fallback identity.ContentID
-	overflow bool
+	rows        []emission[R]
+	limit       int
+	unbounded   bool
+	destination binding.DestinationView
+	overflow    bool
 }
 
-// Cap returns the declared output row bound.
+// Cap returns the declared numeric output row bound. A CompleteDenominator
+// emitter has no static numeric bound and reports zero; its mounted proposal
+// buffer supplies the witness-backed capacity.
 func (emitter *Emitter[R]) Cap() int {
 	if emitter == nil {
 		return 0
@@ -79,22 +70,22 @@ func (emitter *Emitter[R]) Len() int {
 	return len(emitter.rows)
 }
 
-// Put emits one present row at the destination addressed by the binding's
-// declared address slot. A keyed expansion has no such address and refuses.
+// Put emits one present row at the next row of the plan-resolved scalar or
+// span destination. OwnerNamed operations must use PutAt instead.
 func (emitter *Emitter[R]) Put(value R) bool {
-	return emitter.addressed(value, model.Present)
+	return emitter.sequential(value, model.Present)
 }
 
 // PutOpaque emits one authenticated but intentionally opaque row.
 func (emitter *Emitter[R]) PutOpaque(value R) bool {
-	return emitter.addressed(value, model.AuthenticatedOpaque)
+	return emitter.sequential(value, model.AuthenticatedOpaque)
 }
 
 // PutAbsent emits proven absence at the addressed destination. Absence is a
 // published fact, never a fabricated bottom value.
 func (emitter *Emitter[R]) PutAbsent() bool {
 	var zero R
-	return emitter.addressed(zero, model.ProvenAbsent)
+	return emitter.sequential(zero, model.ProvenAbsent)
 }
 
 // PutAt emits one present row at the destination row the owner names by its
@@ -114,31 +105,43 @@ func (emitter *Emitter[R]) PutAbsentAt(key identity.ContentID) bool {
 	return emitter.named(key, zero, model.ProvenAbsent)
 }
 
-func (emitter *Emitter[R]) addressed(value R, kind model.PresenceKind) bool {
-	if emitter == nil || emitter.keyed {
+func (emitter *Emitter[R]) sequential(value R, kind model.PresenceKind) bool {
+	if emitter == nil || (!emitter.destination.IsScalar() && !emitter.destination.IsSpan()) {
 		return emitter.fail()
 	}
-	return emitter.append(emitter.fallback, value, kind)
+	cell, ok := emitter.destination.Next()
+	if !ok || !cell.Row().Available() {
+		return emitter.fail()
+	}
+	return emitter.append(cell.Row(), value, kind)
 }
 
 func (emitter *Emitter[R]) named(key identity.ContentID, value R, kind model.PresenceKind) bool {
-	if emitter == nil || !emitter.keyed || !key.Available() {
+	if emitter == nil || !emitter.destination.IsOwnerNamed() || !key.Available() {
 		return emitter.fail()
 	}
-	return emitter.append(key, value, kind)
+	relation, ok := emitter.destination.OwnerRelation()
+	if !ok {
+		return emitter.fail()
+	}
+	row, ok := model.IssueRowID(relation, key)
+	if !ok {
+		return emitter.fail()
+	}
+	return emitter.append(row, value, kind)
 }
 
-func (emitter *Emitter[R]) append(key identity.ContentID, value R, kind model.PresenceKind) bool {
+func (emitter *Emitter[R]) append(row model.RowID, value R, kind model.PresenceKind) bool {
 	presence, ok := model.NewPresence(kind)
-	if !ok || emitter.overflow || len(emitter.rows) == emitter.limit {
+	if !ok || emitter.overflow || (!emitter.unbounded && len(emitter.rows) == emitter.limit) {
 		return emitter.fail()
 	}
 	for _, staged := range emitter.rows {
-		if staged.key == key {
+		if staged.row == row {
 			return emitter.fail()
 		}
 	}
-	emitter.rows = append(emitter.rows, emission[R]{key: key, value: value, presence: presence})
+	emitter.rows = append(emitter.rows, emission[R]{row: row, value: value, presence: presence})
 	return true
 }
 
@@ -150,9 +153,8 @@ func (emitter *Emitter[R]) fail() bool {
 	return false
 }
 
-func (emitter *Emitter[R]) reset(fallback identity.ContentID, keyed bool) {
+func (emitter *Emitter[R]) reset(destination binding.DestinationView) {
 	emitter.rows = emitter.rows[:0]
-	emitter.fallback = fallback
-	emitter.keyed = keyed
+	emitter.destination = destination
 	emitter.overflow = false
 }

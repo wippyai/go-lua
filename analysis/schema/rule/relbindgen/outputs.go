@@ -1,7 +1,6 @@
 package relbindgen
 
 import (
-	"github.com/wippyai/go-lua/analysis/identity"
 	"github.com/wippyai/go-lua/analysis/relation/schema/model"
 	"github.com/wippyai/go-lua/analysis/relation/semantic/binding"
 	"github.com/wippyai/go-lua/analysis/relation/semantic/signature"
@@ -15,7 +14,7 @@ type Outputs struct {
 	declared []signature.Output
 	buffer   *binding.ProposalBuffer
 	issuer   binding.Issuer
-	rowKey   identity.ContentID
+	row      model.RowID
 	presence model.Presence
 }
 
@@ -75,11 +74,24 @@ func (outputs Outputs) destination(index int, typeID model.TypeID) (signature.Ou
 	if typeID.Available() && declared.Type != typeID {
 		return signature.Output{}, binding.CellToken{}, false
 	}
-	row, ok := model.IssueRowID(declared.Relation, outputs.rowKey)
+	if !outputs.row.Available() {
+		return signature.Output{}, binding.CellToken{}, false
+	}
+	// ScalarSource and SpanSource identify an output coordinate through an
+	// authenticated input row. RowID is nominally fenced by its relation, so
+	// the source row itself can never be used as an output row when the
+	// publication targets another relation. Preserve the owner-issued content
+	// coordinate and issue the corresponding row under the signature-declared
+	// output relation. OwnerNamed rows take the same path idempotently.
+	destinationRow, ok := model.IssueRowID(declared.Relation, outputs.row.Content())
 	if !ok {
 		return signature.Output{}, binding.CellToken{}, false
 	}
-	destination, ok := outputs.issuer.IssueCell(outputs.buffer.Witness(), outputs.buffer.Scope(), declared.Column, row)
+	witness, ok := outputs.buffer.DestinationWitness(declared.Denominator)
+	if !ok {
+		return signature.Output{}, binding.CellToken{}, false
+	}
+	destination, ok := outputs.issuer.IssueCell(witness, outputs.buffer.Scope(), declared.Column, destinationRow)
 	if !ok {
 		return signature.Output{}, binding.CellToken{}, false
 	}
