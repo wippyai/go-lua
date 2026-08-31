@@ -3042,7 +3042,11 @@ func callGFunction(L *LState, tailcall bool) bool {
 		wantret = int16(gfnret)
 	}
 
-	if tailcall && L.Parent != nil && L.stack.Sp() == 1 {
+	// A sole Go frame is the coroutine entry frame. This is also how a
+	// tail-called Go function looks after yielding: the initial tail call
+	// collapsed its Lua caller, and resume invokes the continuation with
+	// tailcall=false. Either path must transfer final results to the resumer.
+	if L.Parent != nil && L.stack.Sp() == 1 {
 		switchToParentThread(L, int(wantret), false, true)
 		return true
 	}

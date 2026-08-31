@@ -2223,8 +2223,20 @@ func (ls *LState) removeCallerFrame() *callFrame {
 	sp := cs.Sp()
 	parentFrame := cs.At(sp - 2)
 	currentFrame := cs.At(sp - 1)
+	parentIdx := parentFrame.Idx
+	currentIdx := currentFrame.Idx
 	*parentFrame = *currentFrame
-	parentFrame.Idx = int16(sp - 2)
+	parentFrame.Idx = parentIdx
+	if ls.frameExt != nil {
+		// Tail calls replace the caller frame with the callee frame. Move the
+		// callee's lazily stored continuation/error-handler metadata with it;
+		// leaving it keyed by the popped index loses yielding CallK state.
+		delete(ls.frameExt, parentIdx)
+		if ext := ls.frameExt[currentIdx]; ext != nil {
+			ls.frameExt[parentIdx] = ext
+		}
+		delete(ls.frameExt, currentIdx)
+	}
 	cs.Pop()
 	return parentFrame
 }
