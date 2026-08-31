@@ -171,20 +171,16 @@ func basePCall(L *LState) int {
 		}()
 
 		if err != nil {
-			L.stack.SetSp(sp)
-			L.currentFrame = L.stack.Last()
+			L.unwindCallFrames(sp)
 			L.reg.SetTop(base)
 			L.currentFrame.Protected = false
-			// Clear continuation info after error
-			if ext := L.getFrameExt(L.currentFrame); ext != nil {
-				ext.Continuation = nil
-				ext.ContinuationCtx = nil
-			}
+			L.clearFrameExt(L.currentFrame)
 			L.Push(LFalse)
 			L.Push(err.(*ApiError).Object)
 			return 2
 		}
 		L.currentFrame.Protected = false
+		L.clearFrameExt(L.currentFrame)
 	} else {
 		// In coroutine - use continuation for yield-transparency
 		// Still need defer/recover for error handling
@@ -211,20 +207,16 @@ func basePCall(L *LState) int {
 		}
 
 		if err != nil {
-			L.stack.SetSp(sp)
-			L.currentFrame = L.stack.Last()
+			L.unwindCallFrames(sp)
 			L.reg.SetTop(base)
 			L.currentFrame.Protected = false
-			// Clear continuation info after error
-			if ext := L.getFrameExt(L.currentFrame); ext != nil {
-				ext.Continuation = nil
-				ext.ContinuationCtx = nil
-			}
+			L.clearFrameExt(L.currentFrame)
 			L.Push(LFalse)
 			L.Push(err.(*ApiError).Object)
 			return 2
 		}
 		L.currentFrame.Protected = false
+		L.clearFrameExt(L.currentFrame)
 	}
 
 	L.Insert(LTrue, 1)
@@ -404,28 +396,89 @@ func xpcallContinuation(L *LState, ctx interface{}, _ ResumeState) int {
 func baseXPCall(L *LState) int {
 	fn := L.CheckFunction(1)
 	errfunc := L.CheckFunction(2)
+	protectedFrame := L.currentFrame
 
-	// Mark the xpcall frame as protected for error handling
-	L.currentFrame.Protected = true
-	L.setFrameExt(L.currentFrame).ErrFunc = errfunc
+	// Mark the xpcall frame as protected. handleProtectedError (in threadRun)
+	// honors this for errors that surface after a yield inside a coroutine.
+	// The inline recover below is the boundary for synchronous errors and is
+	// the only recover layer present under a direct DoString/PCall call, which
+	// is why xpcall previously leaked its error in non-coroutine contexts.
+	protectedFrame.Protected = true
+	L.setFrameExt(protectedFrame).ErrFunc = errfunc
 
 	top := L.GetTop()
+	sp := L.stack.Sp()
 	L.Push(fn)
+	base := L.reg.Top() - 1 // nargs == 0 for xpcall's protected call
 
-	// Use CallK with continuation for yield-transparent xpcall
-	L.CallK(0, MultRet, xpcallContinuation, top)
+	var errValue LValue
+	func() {
+		defer func() {
+			if rcv := recover(); rcv != nil {
+				errValue = errorObjectFromRecover(rcv)
+			}
+		}()
+		L.CallK(0, MultRet, xpcallContinuation, top)
+	}()
 
-	// Check for yield before any cleanup
+	// Check for yield before any cleanup.
 	if L.yieldState != yieldNone {
 		return -1
 	}
 
-	L.currentFrame.Protected = false
-	if ext := L.getFrameExt(L.currentFrame); ext != nil {
-		ext.ErrFunc = nil
+	if errValue != nil {
+		// Invoke the handler BEFORE resetting the stack, while the errored
+		// frames are still on L.stack. This matches standard Lua semantics so
+		// the handler can inspect the throw site (debug.getlocal,
+		// debug.traceback, etc.). PCall's own errfunc path does the same.
+		handled := invokeErrorHandler(L, errfunc, errValue)
+
+		L.unwindCallFrames(sp)
+		L.reg.SetTop(base)
+		protectedFrame.Protected = false
+		L.clearFrameExt(protectedFrame)
+		L.Push(LFalse)
+		L.Push(handled)
+		return 2
 	}
+
+	protectedFrame.Protected = false
+	L.clearFrameExt(protectedFrame)
 	L.Insert(LTrue, top+1)
 	return L.GetTop() - top
+}
+
+// errorObjectFromRecover extracts the Lua value carried by a recovered panic.
+// Lua errors panic with *ApiError; anything else is stringified.
+func errorObjectFromRecover(rcv any) LValue {
+	if aerr, ok := rcv.(*ApiError); ok {
+		return aerr.Object
+	}
+
+	return LString(fmt.Sprint(rcv))
+}
+
+// invokeErrorHandler calls the xpcall error handler with the caught error
+// value while the throw-site frames are still on the stack. If the handler
+// itself raises, its error value is surfaced instead of the original. Stack
+// cleanup belongs to baseXPCall so both handler outcomes use the same unwind.
+func invokeErrorHandler(L *LState, errfunc *LFunction, errValue LValue) LValue {
+	L.Push(errfunc)
+	L.Push(errValue)
+
+	handled := errValue
+	func() {
+		defer func() {
+			if rcv := recover(); rcv != nil {
+				handled = errorObjectFromRecover(rcv)
+			}
+		}()
+
+		L.Call(1, 1)
+		handled = L.Get(-1)
+	}()
+
+	return handled
 }
 
 /* }}} */
