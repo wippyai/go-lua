@@ -2070,7 +2070,7 @@ func (ls *LState) Resume(th *LState, fn *LFunction, args ...LValue) (ResumeState
 	if th.ctx != nil {
 		select {
 		case <-th.ctx.Done():
-			return ResumeError, nil, newApiErrorS(ApiErrorRun, th.ctx.Err().Error())
+			return ls.abortCanceledResume(th)
 		default:
 		}
 	}
@@ -2089,6 +2089,11 @@ func (ls *LState) Resume(th *LState, fn *LFunction, args ...LValue) (ResumeState
 
 	if haserror {
 		return ResumeError, nil, newApiError(ApiErrorRun, ret[0])
+	} else if th.yieldState != yieldNone {
+		if th.stack.IsEmpty() || th.currentFrame == nil {
+			return ls.abortInvalidResume(th, "yielded thread has no resumable frame")
+		}
+		return ResumeYield, ret, nil
 	} else if th.stack.IsEmpty() {
 		return ResumeOK, ret, nil
 	}
@@ -2148,7 +2153,7 @@ func (ls *LState) ResumeInto(th *LState, fn *LFunction, retBuf []LValue, args ..
 	if th.ctx != nil {
 		select {
 		case <-th.ctx.Done():
-			return ResumeError, nil, newApiErrorS(ApiErrorRun, th.ctx.Err().Error())
+			return ls.abortCanceledResume(th)
 		default:
 		}
 	}
@@ -2175,10 +2180,30 @@ func (ls *LState) ResumeInto(th *LState, fn *LFunction, retBuf []LValue, args ..
 
 	if haserror {
 		return ResumeError, nil, newApiError(ApiErrorRun, ret[0])
+	} else if th.yieldState != yieldNone {
+		if th.stack.IsEmpty() || th.currentFrame == nil {
+			return ls.abortInvalidResume(th, "yielded thread has no resumable frame")
+		}
+		return ResumeYield, ret, nil
 	} else if th.stack.IsEmpty() {
 		return ResumeOK, ret, nil
 	}
 	return ResumeYield, ret, nil
+}
+
+// abortCanceledResume restores the resumer relationship established before
+// the context check. Context cancellation during execution follows the same
+// terminal path through threadRun, so a pre-canceled resume must also leave the
+// child dead and the parent current rather than stranding a "running" thread.
+func (ls *LState) abortCanceledResume(th *LState) (ResumeState, []LValue, error) {
+	return ls.abortInvalidResume(th, th.ctx.Err().Error())
+}
+
+func (ls *LState) abortInvalidResume(th *LState, message string) (ResumeState, []LValue, error) {
+	th.Parent = nil
+	th.kill()
+	ls.G.CurrentThread = ls
+	return ResumeError, nil, newApiErrorS(ApiErrorRun, message)
 }
 
 func (ls *LState) XMoveTo(other *LState, n int) {
