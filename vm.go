@@ -3028,7 +3028,11 @@ func callGFunction(L *LState, tailcall bool) bool {
 		// Subsequent Go functions returning -1 (pcall, xpcall, coResume) detect
 		// the yield via yieldState and propagate it without a second thread switch.
 		if L.yieldState == yieldNone {
-			switchToParentThread(L, L.GetTop(), false, false)
+			if L.Parent != nil && L.stack.Sp() == 1 {
+				preserveSoleGoYield(L)
+			} else {
+				switchToParentThread(L, L.GetTop(), false, false)
+			}
 			// -2 = user yield (coroutine.yield), -1 = system yield (Go function)
 			if gfnret == -2 {
 				L.yieldState = yieldUser
@@ -3087,6 +3091,33 @@ func callGFunction(L *LState, tailcall bool) bool {
 	L.stack.Pop()
 	L.currentFrame = L.stack.Last()
 	return false
+}
+
+// preserveSoleGoYield transfers a root or tail-called Go function's yield
+// values without discarding its only frame. The continuation turns the next
+// Resume arguments into the function's final results, matching how a surviving
+// Lua caller receives resume values after a non-root Go function yields.
+func preserveSoleGoYield(L *LState) {
+	parent := L.Parent
+	if parent == nil {
+		L.RaiseError("can not yield from outside of a coroutine")
+	}
+
+	if !L.wrapped {
+		parent.Push(LTrue)
+	}
+	L.XMoveTo(parent, L.GetTop())
+	L.G.CurrentThread = parent
+	L.Parent = nil
+	L.yieldState = yieldSystem
+
+	ext := L.setFrameExt(L.currentFrame)
+	ext.Continuation = resumeYieldedGoFunction
+	ext.ContinuationCtx = nil
+}
+
+func resumeYieldedGoFunction(L *LState, _ any, _ ResumeState) int {
+	return L.GetTop()
 }
 
 func threadRun(L *LState) {

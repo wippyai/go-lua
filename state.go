@@ -2089,6 +2089,12 @@ func (ls *LState) Resume(th *LState, fn *LFunction, args ...LValue) (ResumeState
 
 	if haserror {
 		return ResumeError, nil, newApiError(ApiErrorRun, ret[0])
+	} else if th.yieldState != yieldNone {
+		if th.stack.IsEmpty() || th.currentFrame == nil {
+			th.kill()
+			return ResumeError, nil, newApiErrorS(ApiErrorRun, "yielded thread has no resumable frame")
+		}
+		return ResumeYield, ret, nil
 	} else if th.stack.IsEmpty() {
 		return ResumeOK, ret, nil
 	}
@@ -2175,6 +2181,12 @@ func (ls *LState) ResumeInto(th *LState, fn *LFunction, retBuf []LValue, args ..
 
 	if haserror {
 		return ResumeError, nil, newApiError(ApiErrorRun, ret[0])
+	} else if th.yieldState != yieldNone {
+		if th.stack.IsEmpty() || th.currentFrame == nil {
+			th.kill()
+			return ResumeError, nil, newApiErrorS(ApiErrorRun, "yielded thread has no resumable frame")
+		}
+		return ResumeYield, ret, nil
 	} else if th.stack.IsEmpty() {
 		return ResumeOK, ret, nil
 	}
