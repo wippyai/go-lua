@@ -2,6 +2,7 @@ package lua
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -259,6 +260,112 @@ func TestTailCallYieldThroughCoroutineResume(t *testing.T) {
 	}
 	if calls != 1 {
 		t.Fatalf("yielding Go function invoked %d times, want 1", calls)
+	}
+}
+
+func TestTailCallYieldThroughCoroutineWrap(t *testing.T) {
+	L := NewState()
+	defer L.Close()
+
+	calls := 0
+	L.SetGlobal("yield_api", L.NewFunction(func(L *LState) int {
+		calls++
+		return L.Yield(LString("token"))
+	}))
+	if err := L.DoString(`
+		function wrapped_tail()
+			local wrapped = coroutine.wrap(function()
+				return yield_api("arg")
+			end)
+			return wrapped()
+		end
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	fn := L.GetGlobal("wrapped_tail").(*LFunction)
+	co := L.NewThreadWithContext(context.Background())
+	state, values, err := L.Resume(co, fn)
+	if err != nil || state != ResumeYield || len(values) != 1 || values[0] != LString("token") {
+		t.Fatalf("first resume = (%v, %v, %v), want (ResumeYield, [token], nil)", state, values, err)
+	}
+	state, values, err = L.Resume(co, fn, LString("result"))
+	if err != nil || state != ResumeOK || len(values) != 1 || values[0] != LString("result") {
+		t.Fatalf("second resume = (%v, %v, %v), want (ResumeOK, [result], nil)", state, values, err)
+	}
+	if calls != 1 {
+		t.Fatalf("yielding Go function invoked %d times, want 1", calls)
+	}
+	assertNoContinuationMetadata(t, co)
+}
+
+func TestTailCallYieldAcrossRegistrySizesAndReuse(t *testing.T) {
+	tests := []struct {
+		name    string
+		options Options
+	}{
+		{name: "default", options: Options{}},
+		{name: "minimum", options: Options{RegistrySize: 128, RegistryMaxSize: 512, RegistryGrowStep: 8}},
+		{name: "larger", options: Options{RegistrySize: 384, RegistryMaxSize: 768, RegistryGrowStep: 64}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			L := NewState(test.options)
+			defer L.Close()
+
+			calls := 0
+			L.SetGlobal("yield_api", L.NewFunction(func(L *LState) int {
+				calls++
+				return L.Yield(LString("token"))
+			}))
+			args := make([]string, 160)
+			for i := range args {
+				args[i] = fmt.Sprintf("%d", i+1)
+			}
+			source := "tail = function() return yield_api(" + strings.Join(args, ",") + ") end"
+			if err := L.DoString(source); err != nil {
+				t.Fatal(err)
+			}
+			fn := L.GetGlobal("tail").(*LFunction)
+
+			for cycle := 0; cycle < 30; cycle++ {
+				co := L.NewThreadWithContext(context.Background())
+				state, values, err := L.Resume(co, fn)
+				if err != nil || state != ResumeYield || len(values) != 1 || values[0] != LString("token") {
+					t.Fatalf("cycle %d first resume = (%v, %v, %v)", cycle, state, values, err)
+				}
+
+				var resumeValues []LValue
+				switch cycle % 3 {
+				case 1:
+					resumeValues = []LValue{LString("one")}
+				case 2:
+					resumeValues = []LValue{LString("one"), LString("two"), LString("three")}
+				}
+				state, values, err = L.Resume(co, fn, resumeValues...)
+				if err != nil || state != ResumeOK {
+					t.Fatalf("cycle %d second resume = (%v, %v, %v)", cycle, state, values, err)
+				}
+				if len(resumeValues) == 0 {
+					if len(values) != 1 || values[0] != LNil {
+						t.Fatalf("cycle %d zero-value resume returned %v, want [nil]", cycle, values)
+					}
+				} else if len(values) != len(resumeValues) {
+					t.Fatalf("cycle %d returned %v, want %v", cycle, values, resumeValues)
+				} else {
+					for i := range values {
+						if values[i] != resumeValues[i] {
+							t.Fatalf("cycle %d returned %v, want %v", cycle, values, resumeValues)
+						}
+					}
+				}
+				assertNoContinuationMetadata(t, co)
+			}
+			if calls != 30 {
+				t.Fatalf("yielding Go function invoked %d times, want 30", calls)
+			}
+		})
 	}
 }
 
