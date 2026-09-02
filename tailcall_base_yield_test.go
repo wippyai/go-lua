@@ -381,8 +381,6 @@ func TestResumeRejectsYieldWithoutResumableFrame(t *testing.T) {
 
 			fn := L.NewFunction(func(thread *LState) int {
 				parent := thread.Parent
-				thread.G.CurrentThread = parent
-				thread.Parent = nil
 				parent.Push(LTrue)
 				parent.Push(LString("token"))
 
@@ -408,6 +406,12 @@ func TestResumeRejectsYieldWithoutResumableFrame(t *testing.T) {
 			}
 			if !co.Dead {
 				t.Fatal("corrupt yielded thread remained restartable")
+			}
+			if co.Parent != nil {
+				t.Fatalf("corrupt yielded thread retained parent %p", co.Parent)
+			}
+			if L.G.CurrentThread != L {
+				t.Fatalf("current thread = %p, want parent %p", L.G.CurrentThread, L)
 			}
 		})
 	}
