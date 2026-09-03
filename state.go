@@ -108,6 +108,7 @@ type Options struct {
 	SkipOpenLibs bool
 	// Tells whether a Go stacktrace should be included in a Lua stacktrace when panics occur.
 	IncludeGoStackTrace bool
+	PanicHandler        func(*LState, string)
 	// If `MinimizeStackMemory` is set, the call stack will be automatically grown or shrank up to a limit of
 	// `CallStackSize` in order to minimize memory usage. This does incur a slight performance penalty.
 	MinimizeStackMemory bool

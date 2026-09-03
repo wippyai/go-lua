@@ -7,7 +7,13 @@ import (
 )
 
 func TestResumePanicIncludesGoStack(t *testing.T) {
-	L := NewState(Options{IncludeGoStackTrace: true})
+	var logged string
+	L := NewState(Options{
+		IncludeGoStackTrace: true,
+		PanicHandler: func(_ *LState, message string) {
+			logged = message
+		},
+	})
 	defer L.Close()
 
 	L.SetGlobal("panic_from_go", L.NewFunction(func(*LState) int {
@@ -31,5 +37,8 @@ func TestResumePanicIncludesGoStack(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "TestResumePanicIncludesGoStack") {
 		t.Fatalf("resume error = %q, want Go stack", err)
+	}
+	if logged != err.Error() {
+		t.Fatalf("panic handler message = %q, want returned error", logged)
 	}
 }

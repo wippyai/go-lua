@@ -3140,6 +3140,9 @@ func threadRun(L *LState) {
 				if L.Options.IncludeGoStackTrace {
 					message += "\n" + string(debug.Stack())
 				}
+				if L.Options.PanicHandler != nil {
+					L.Options.PanicHandler(L, message)
+				}
 				lv = LString(message)
 			}
 
