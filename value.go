@@ -239,6 +239,13 @@ type LState struct {
 	yieldContRA  int32                   // target register for continuation result
 	yieldContRB  int32                   // call's ReturnBase (where the result lands)
 	yieldContIdx int16                   // frame Idx that owns this continuation
+
+	hook         LValue // debug hook function, or nil (see hook.go)
+	hookMask     uint8  // active HookMaskXxx bits
+	hookCount    int    // count-hook period, 0 = disabled
+	hookCounter  int    // instructions since the last count hook fired
+	hookLastLine int32  // last source line the line-hook fired on
+	inHook       bool   // true while the hook function itself is running
 }
 
 func (ls *LState) String() string   { return fmt.Sprintf("thread: %p", ls) }
