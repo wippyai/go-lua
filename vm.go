@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"runtime/debug"
 	"strings"
 	"sync"
 )
@@ -3135,7 +3136,11 @@ func threadRun(L *LState) {
 					SetErrorMetatable(L, e)
 				}
 			} else {
-				lv = LString(fmt.Sprint(rcv))
+				message := fmt.Sprint(rcv)
+				if L.Options.IncludeGoStackTrace {
+					message += "\n" + string(debug.Stack())
+				}
+				lv = LString(message)
 			}
 
 			// Check if there's a protected frame that should catch this error
