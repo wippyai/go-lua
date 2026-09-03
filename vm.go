@@ -3140,9 +3140,7 @@ func threadRun(L *LState) {
 				if L.Options.IncludeGoStackTrace {
 					message += "\n" + string(debug.Stack())
 				}
-				if L.Options.PanicHandler != nil {
-					L.Options.PanicHandler(L, message)
-				}
+				reportPanic(L, message)
 				lv = LString(message)
 			}
 
@@ -3169,6 +3167,16 @@ func threadRun(L *LState) {
 		}
 	}()
 	L.mainLoop(L, nil)
+}
+
+func reportPanic(L *LState, message string) {
+	if L.Options.PanicHandler == nil {
+		return
+	}
+	defer func() {
+		_ = recover()
+	}()
+	L.Options.PanicHandler(L, message)
 }
 
 // handleProtectedError searches for a protected (pcall) frame and handles the error.
