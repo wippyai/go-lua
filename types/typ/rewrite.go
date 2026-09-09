@@ -184,6 +184,13 @@ func rewriteDepth(t Type, fn func(Type) (Type, bool), guard internal.RecursionGu
 			break
 		}
 		out = NewAlias(tt.Name, target)
+	case *Meta:
+		of := rewriteDepth(tt.Of, fn, next, memo)
+		if of == tt.Of {
+			out = t
+			break
+		}
+		out = NewMeta(of)
 	case *Instantiated:
 		var args []Type
 		for idx, a := range tt.TypeArgs {
@@ -250,6 +257,7 @@ func rewriteCanDescend(t Type) bool {
 		kind.Function,
 		kind.Record,
 		kind.Alias,
+		kind.Meta,
 		kind.Instantiated,
 		kind.Interface:
 		return true

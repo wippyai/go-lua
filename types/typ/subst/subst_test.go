@@ -47,6 +47,18 @@ func TestSubstitute(t *testing.T) {
 			t.Error("return type should be substituted")
 		}
 	})
+
+	t.Run("in meta", func(t *testing.T) {
+		tp := typ.NewTypeParam("T", nil)
+		result := Substitute(typ.NewMeta(tp), map[string]typ.Type{"T": typ.Number})
+		meta, ok := result.(*typ.Meta)
+		if !ok {
+			t.Fatalf("result should be meta, got %T", result)
+		}
+		if meta.Of != typ.Number {
+			t.Errorf("meta type should be substituted, got %v", meta.Of)
+		}
+	})
 }
 
 func TestParams(t *testing.T) {

@@ -424,6 +424,88 @@ func TestInferCall_UnionAggregatesExpectedArgsAcrossMembers(t *testing.T) {
 	}
 }
 
+func TestInferCall_UnionSelectsMostSpecificGenericOverload(t *testing.T) {
+	paramT := typ.NewTypeParam("T", nil)
+	typedOptions := typ.NewRecord().
+		Field("message", typ.True).
+		Field("type", typ.NewMeta(paramT)).
+		Build()
+	messageOptions := typ.NewRecord().Field("message", typ.True).Build()
+	typed := typ.Func().
+		TypeParam("T", nil).
+		Param("topic", typ.String).
+		Param("options", typedOptions).
+		Returns(paramT).
+		Build()
+	untyped := typ.Func().
+		Param("topic", typ.String).
+		Param("options", messageOptions).
+		Returns(typ.Any).
+		Build()
+	options := typ.NewRecord().
+		Field("message", typ.True).
+		Field("type", typ.NewMeta(typ.String)).
+		Build()
+
+	ctx := db.NewQueryContext(db.New())
+	infer := InferCall(ctx, CallDef{
+		Callee: typ.NewUnion(typed, untyped),
+		Args:   []typ.Type{typ.String, options},
+	})
+
+	if infer.Kind != InferKindFunction {
+		t.Fatalf("expected most-specific function overload, got %v", infer.Kind)
+	}
+	if len(infer.TypeArgs) != 1 || !typ.TypeEquals(infer.TypeArgs[0], typ.String) {
+		t.Fatalf("T = %v, want string", infer.TypeArgs)
+	}
+	wantOptions := typ.NewRecord().
+		Field("message", typ.True).
+		Field("type", typ.NewMeta(typ.String)).
+		Build()
+	if len(infer.ExpectedArgs) != 2 || !typ.TypeEquals(infer.ExpectedArgs[1], wantOptions) {
+		t.Fatalf("expected typed options %v, got %v", wantOptions, infer.ExpectedArgs)
+	}
+
+	result := FinishCall(ctx, CallDef{
+		Callee: typ.NewUnion(typed, untyped),
+		Args:   []typ.Type{typ.String, options},
+	}, infer)
+	if len(result.Errors) != 0 || !typ.TypeEquals(result.Type, typ.String) {
+		t.Fatalf("expected precise string result without errors, got %v (%v)", result.Type, result.Errors)
+	}
+}
+
+func TestInferCall_UnionSelectsOnlyViableOverload(t *testing.T) {
+	messageOptions := typ.NewRecord().Field("message", typ.True).Build()
+	rawOptions := typ.NewRecord().OptField("message", typ.False).Build()
+	message := typ.Func().
+		Param("topic", typ.String).
+		Param("options", messageOptions).
+		Returns(typ.String).
+		Build()
+	raw := typ.Func().
+		Param("topic", typ.String).
+		OptParam("options", rawOptions).
+		Returns(typ.Any).
+		Build()
+
+	ctx := db.NewQueryContext(db.New())
+	infer := InferCall(ctx, CallDef{
+		Callee: typ.NewUnion(message, raw),
+		Args: []typ.Type{
+			typ.String,
+			typ.NewRecord().Field("message", typ.True).Build(),
+		},
+	})
+	if infer.Kind != InferKindFunction || infer.Instantiated != message {
+		t.Fatalf("expected only viable message overload, got %+v", infer)
+	}
+	if len(infer.ExpectedArgs) != 2 || !typ.TypeEquals(infer.ExpectedArgs[1], messageOptions) {
+		t.Fatalf("expected message options %v, got %v", messageOptions, infer.ExpectedArgs)
+	}
+}
+
 func TestFinishCall_ShortCircuit(t *testing.T) {
 	ctx := db.NewQueryContext(db.New())
 	def := CallDef{
