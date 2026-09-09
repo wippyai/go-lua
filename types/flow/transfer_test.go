@@ -205,6 +205,58 @@ func TestWidenWithIndexer_ExistingMap(t *testing.T) {
 	}
 }
 
+func TestMergeMapValueDomain_PreservesAcceptedRefinement(t *testing.T) {
+	domain := typ.NewRecord().
+		Field("id", typ.String).
+		Field("updated_at", typ.NewOptional(typ.Number)).
+		Build()
+	refined := typ.NewRecord().
+		Field("id", typ.String).
+		Field("updated_at", typ.Number).
+		Build()
+
+	for _, tt := range []struct {
+		name   string
+		domain typ.Type
+	}{
+		{name: "record", domain: domain},
+		{name: "alias", domain: typ.NewAlias("Order", domain)},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := mergeMapValueDomain(tt.domain, refined); !typ.TypeEquals(got, tt.domain) {
+				t.Fatalf("mergeMapValueDomain = %v, want original domain %v", got, tt.domain)
+			}
+			// Both map representations must use the same domain-preserving merge.
+			for _, container := range []typ.Type{
+				typ.NewMap(typ.String, tt.domain),
+				typ.NewRecord().Field("name", typ.String).MapComponent(typ.String, tt.domain).Build(),
+			} {
+				if got := widenWithIndexer(container, typ.String, refined); !typ.TypeEquals(got, container) {
+					t.Errorf("widenWithIndexer = %v, want original container %v", got, container)
+				}
+			}
+		})
+	}
+}
+
+func TestMergeMapValueDomain_WidensUnrelatedValuesAndReplacesPlaceholders(t *testing.T) {
+	for _, tt := range []struct {
+		name               string
+		existing, incoming typ.Type
+		want               typ.Type
+	}{
+		{"unrelated", typ.String, typ.Number, typ.NewUnion(typ.String, typ.Number)},
+		{"unknown", typ.Unknown, typ.String, typ.String},
+		{"any", typ.Any, typ.String, typ.String},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := mergeMapValueDomain(tt.existing, tt.incoming); !typ.TypeEquals(got, tt.want) {
+				t.Fatalf("mergeMapValueDomain = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestWidenMapValueArray_NilBase(t *testing.T) {
 	result := WidenMapValueArray(nil, typ.String, typ.Integer)
 	m, ok := result.(*typ.Map)
