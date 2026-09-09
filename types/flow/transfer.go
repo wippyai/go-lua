@@ -507,7 +507,7 @@ func (s *Solution) iterVarTypeAt(p cfg.Point, iter *IteratorSource) typ.Type {
 				sourceElem = s.elementTypeForIter(srcType, iter)
 			}
 			if sourceElem == nil {
-				if declType := s.lookupDeclaredType(iter.Path); declType != nil {
+				if declType := s.declaredTypeAtPath(iter.Path); declType != nil {
 					sourceElem = s.elementTypeForIter(declType, iter)
 				}
 			}
@@ -525,7 +525,7 @@ func (s *Solution) iterVarTypeAt(p cfg.Point, iter *IteratorSource) typ.Type {
 	// When flow type is missing or imprecise, prefer the declared type
 	// so that annotated element types are preserved through widening.
 	if srcType == nil || srcType.Kind().IsPlaceholder() {
-		if declType := s.lookupDeclaredType(iter.Path); declType != nil {
+		if declType := s.declaredTypeAtPath(iter.Path); declType != nil {
 			if elem := s.elementTypeForIter(declType, iter); elem != nil {
 				return elem
 			}
@@ -673,7 +673,7 @@ func (s *Solution) mapElementTypeAt(p cfg.Point, src *MapElementSource) typ.Type
 		}
 	}
 	if mapType == nil {
-		if declType := s.lookupDeclaredType(src.MapPath); declType != nil {
+		if declType := s.declaredTypeAtPath(src.MapPath); declType != nil {
 			mapType = declType
 		}
 	}
@@ -755,15 +755,20 @@ func (s *Solution) processIndexerAssignmentReturnKey(p cfg.Point, ia IndexerAssi
 		return ""
 	}
 
-	// Get current type of the root
+	// Get the current type of the indexed container, which is the value at the
+	// full path (root plus segments), not the root the path hangs off.
 	currentType := s.values[string(pathKey)]
 	if currentType == nil {
-		currentType = s.joinPredecessorRootTypes(p, ia.Symbol)
+		currentType = s.joinPredecessorPathTypes(p, ia.Symbol, ia.Segments)
 	}
-	currentType = preferDeclaredTemplateForWiden(currentType, s.lookupDeclaredType(constraint.Path{
-		Root:   ia.Root,
-		Symbol: ia.Symbol,
-	}))
+	if currentType == nil && len(ia.Segments) > 0 {
+		if root := s.joinPredecessorPathTypes(p, ia.Symbol, nil); root != nil {
+			if derived, ok := s.deriveTypeFrom(root, ia.Segments); ok {
+				currentType = derived
+			}
+		}
+	}
+	currentType = preferDeclaredTemplateForWiden(currentType, s.declaredTypeAtPath(iaPath))
 
 	// Compute the widened type
 	newType := widenWithIndexer(currentType, keyType, valueType)
@@ -775,7 +780,26 @@ func (s *Solution) processIndexerAssignmentReturnKey(p cfg.Point, ia IndexerAssi
 	return string(pathKey)
 }
 
-func (s *Solution) joinPredecessorRootTypes(p cfg.Point, sym cfg.SymbolID) typ.Type {
+// declaredTypeAtPath returns the declared type of the value the path denotes.
+//
+// lookupDeclaredType answers for the root symbol only, so a path carrying
+// segments must be resolved by walking those segments through the root's
+// declared type.
+func (s *Solution) declaredTypeAtPath(path constraint.Path) typ.Type {
+	declared := s.lookupDeclaredType(path)
+	if declared == nil || len(path.Segments) == 0 {
+		return declared
+	}
+	derived, ok := s.deriveTypeFrom(declared, path.Segments)
+	if !ok {
+		return nil
+	}
+	return derived
+}
+
+// joinPredecessorPathTypes joins the types recorded for a path across the
+// predecessor versions of its root symbol visible at p.
+func (s *Solution) joinPredecessorPathTypes(p cfg.Point, sym cfg.SymbolID, segs []constraint.Segment) typ.Type {
 	if s == nil || s.inputs == nil || s.inputs.Graph == nil || s.pkResolver == nil || sym == 0 {
 		return nil
 	}
@@ -791,7 +815,7 @@ func (s *Solution) joinPredecessorRootTypes(p cfg.Point, sym cfg.SymbolID) typ.T
 		if ver.Symbol == 0 || ver.ID == 0 {
 			continue
 		}
-		key := s.pkResolver.KeyAtVersion(ver.Symbol, ver.ID, nil)
+		key := s.pkResolver.KeyAtVersion(ver.Symbol, ver.ID, segs)
 		if key == "" {
 			continue
 		}
@@ -1209,6 +1233,24 @@ func WidenMapValueArray(mapType typ.Type, keyType, elementType typ.Type) typ.Typ
 	})
 }
 
+// mergeMapValueDomain merges an assigned value into a container's value domain.
+//
+// Widening exists to accommodate values the container cannot already hold, so a
+// value the domain already accepts leaves the domain unchanged. Joining it in
+// would union a declared type with its own refinement and lose the declaration.
+func mergeMapValueDomain(existing, incoming typ.Type) typ.Type {
+	if existing == nil {
+		return incoming
+	}
+	if incoming == nil {
+		return existing
+	}
+	if !existing.Kind().IsPlaceholder() && subtype.IsSubtype(incoming, existing) {
+		return existing
+	}
+	return typ.JoinPreferNonSoft(existing, incoming)
+}
+
 func mergeMapKeyDomain(existing, incoming typ.Type) typ.Type {
 	if existing == nil {
 		return incoming
@@ -1298,7 +1340,7 @@ func widenWithIndexer(t typ.Type, keyType, valType typ.Type) typ.Type {
 			// Record with fields: add or widen map component
 			if r.HasMapComponent() {
 				newKey := mergeMapKeyDomain(r.MapKey, keyType)
-				newVal := typ.JoinPreferNonSoft(r.MapValue, valType)
+				newVal := mergeMapValueDomain(r.MapValue, valType)
 				if typ.TypeEquals(r.MapKey, newKey) && typ.TypeEquals(r.MapValue, newVal) {
 					return t
 				}
@@ -1310,7 +1352,7 @@ func widenWithIndexer(t typ.Type, keyType, valType typ.Type) typ.Type {
 		Map: func(m *typ.Map) typ.Type {
 			// Widen existing map by unioning key/value types, preferring non-soft.
 			newKey := mergeMapKeyDomain(m.Key, keyType)
-			newVal := typ.JoinPreferNonSoft(m.Value, valType)
+			newVal := mergeMapValueDomain(m.Value, valType)
 			if typ.TypeEquals(m.Key, newKey) && typ.TypeEquals(m.Value, newVal) {
 				return t
 			}
