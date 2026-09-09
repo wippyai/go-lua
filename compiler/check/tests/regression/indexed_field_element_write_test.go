@@ -6,6 +6,73 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
 )
 
+func TestIndexedFieldElementWritePaths(t *testing.T) {
+	testutil.RunCases(t, []testutil.Case{
+		{
+			Name: "bracket field",
+			Code: `
+				type Report = {kinds: {string}}
+				local function describe(): Report
+					return {kinds = {"a"}}
+				end
+				local report = describe()
+				local before: {string} = report["kinds"]
+				report["kinds"][1] = "changed"
+				local after: {string} = report.kinds
+			`,
+		},
+		{
+			Name: "branch join",
+			Code: `
+				type Report = {kinds: {string}}
+				local function describe(): Report
+					return {kinds = {"a"}}
+				end
+				local function run(choice: boolean): {string}
+					local report = describe()
+					if choice then
+						report.kinds[1] = "left"
+					else
+						report.kinds[2] = "right"
+					end
+					local after: {string} = report.kinds
+					return after
+				end
+			`,
+		},
+		{
+			Name: "loop",
+			Code: `
+				type Report = {kinds: {string}}
+				local function describe(): Report
+					return {kinds = {"a"}}
+				end
+				local report = describe()
+				for index = 1, 3 do
+					local before: {string} = report.kinds
+					report.kinds[index] = "changed"
+				end
+				local after: {string} = report.kinds
+			`,
+		},
+		{
+			Name: "guarded optional",
+			Code: `
+				type Report = {kinds: {string}?}
+				local function describe(): Report
+					return {kinds = {"a"}}
+				end
+				local report = describe()
+				if report.kinds then
+					local before: {string} = report.kinds
+					report.kinds[1] = "changed"
+					local after: {string} = report.kinds
+				end
+			`,
+		},
+	})
+}
+
 // Regression guard: writing an element through a record field path
 // (described.kinds[1] = ...) widens the list held by that field, not the record
 // that owns it. Earlier reads of the field must still see the field type.
