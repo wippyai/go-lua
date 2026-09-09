@@ -269,7 +269,7 @@ func (cd *codeStore) AddASbx(op int, a int, sbx int, line int) {
 
 func (cd *codeStore) PropagateKMV(top int, save *int, reg *int, inc int) {
 	lastinst := cd.Last()
-	if opGetArgA(lastinst) >= top {
+	if opGetArgA(lastinst) >= top && cd.CanPop() {
 		switch opGetOpCode(lastinst) {
 		case OP_LOADK:
 			cindex := opGetArgBx(lastinst)
@@ -291,7 +291,7 @@ func (cd *codeStore) PropagateKMV(top int, save *int, reg *int, inc int) {
 
 func (cd *codeStore) PropagateMV(top int, save *int, reg *int, inc int) {
 	lastinst := cd.Last()
-	if opGetArgA(lastinst) >= top {
+	if opGetArgA(lastinst) >= top && cd.CanPop() {
 		switch opGetOpCode(lastinst) {
 		case OP_MOVE:
 			cd.Pop()
@@ -310,9 +310,17 @@ func (cd *codeStore) MarkLabelPc(pc int) {
 	}
 }
 
+// CanPop reports whether the last emitted instruction may be removed by a
+// peephole. An instruction at or before a jump-label boundary is the landing
+// site of a jump that is already resolved, so removing it makes that jump skip
+// whatever instruction the caller emits next.
+func (cd *codeStore) CanPop() bool {
+	return cd.LastPC() > cd.lastTarget
+}
+
 func (cd *codeStore) AddLoadNil(a, b, line int) {
 	last := cd.Last()
-	if opGetOpCode(last) == OP_LOADNIL && (opGetArgB(last)+1) == a && cd.LastPC() > cd.lastTarget {
+	if opGetOpCode(last) == OP_LOADNIL && (opGetArgB(last)+1) == a && cd.CanPop() {
 		cd.SetB(cd.LastPC(), b)
 	} else {
 		cd.AddABC(OP_LOADNIL, a, b, 0, line)
@@ -845,15 +853,9 @@ func compileAssignStmtRight(context *funcContext, stmt *ast.AssignStmt, reg int,
 		if expr == nil {
 			expr = stmt.Rhs[namesassigned]
 		}
-		idx := reg
 		reginc := compileExpr(context, reg, expr, ec)
 		if ec.ctype == ecTable {
-			if _, ok := expr.(*ast.LogicalOpExpr); !ok {
-				context.Code.PropagateKMV(context.RegTop(), &ac.valuerk, &reg, reginc)
-			} else {
-				ac.valuerk = idx
-				reg += reginc
-			}
+			context.Code.PropagateKMV(context.RegTop(), &ac.valuerk, &reg, reginc)
 		} else {
 			ac.needmove = reginc != 0
 			reg += reginc
@@ -1349,12 +1351,7 @@ func compileExpr(context *funcContext, reg int, expr ast.Expr, ec *expcontext) i
 
 func compileExprWithPropagation(context *funcContext, expr ast.Expr, reg *int, save *int, propergator func(int, *int, *int, int)) { // {{{
 	reginc := compileExpr(context, *reg, expr, ecnone(0))
-	if _, ok := expr.(*ast.LogicalOpExpr); ok {
-		*save = *reg
-		*reg = *reg + reginc
-	} else {
-		propergator(context.RegTop(), save, reg, reginc)
-	}
+	propergator(context.RegTop(), save, reg, reginc)
 } // }}}
 
 func compileExprWithKMVPropagation(context *funcContext, expr ast.Expr, reg *int, save *int) { // {{{
