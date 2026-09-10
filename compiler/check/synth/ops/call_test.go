@@ -424,6 +424,138 @@ func TestInferCall_UnionAggregatesExpectedArgsAcrossMembers(t *testing.T) {
 	}
 }
 
+func TestInferCall_UnionSelectsMostSpecificGenericOverload(t *testing.T) {
+	paramT := typ.NewTypeParam("T", nil)
+	typedOptions := typ.NewRecord().
+		Field("message", typ.True).
+		Field("type", typ.NewMeta(paramT)).
+		Build()
+	messageOptions := typ.NewRecord().Field("message", typ.True).Build()
+	typed := typ.Func().
+		TypeParam("T", nil).
+		Param("topic", typ.String).
+		Param("options", typedOptions).
+		Returns(paramT).
+		Build()
+	untyped := typ.Func().
+		Param("topic", typ.String).
+		Param("options", messageOptions).
+		Returns(typ.Any).
+		Build()
+	options := typ.NewRecord().
+		Field("message", typ.True).
+		Field("type", typ.NewMeta(typ.String)).
+		Build()
+
+	wantOptions := typ.NewRecord().
+		Field("message", typ.True).
+		Field("type", typ.NewMeta(typ.String)).
+		Build()
+	orders := []struct {
+		name    string
+		members []typ.Type
+	}{
+		{name: "typed first", members: []typ.Type{typed, untyped}},
+		{name: "typed last", members: []typ.Type{untyped, typed}},
+	}
+	for _, order := range orders {
+		t.Run(order.name, func(t *testing.T) {
+			ctx := db.NewQueryContext(db.New())
+			callee := typ.NewUnion(order.members...)
+			def := CallDef{Callee: callee, Args: []typ.Type{typ.String, options}}
+			infer := InferCall(ctx, def)
+
+			if infer.Kind != InferKindFunction {
+				t.Fatalf("expected most-specific function overload, got %v", infer.Kind)
+			}
+			if len(infer.TypeArgs) != 1 || !typ.TypeEquals(infer.TypeArgs[0], typ.String) {
+				t.Fatalf("T = %v, want string", infer.TypeArgs)
+			}
+			if len(infer.ExpectedArgs) != 2 || !typ.TypeEquals(infer.ExpectedArgs[1], wantOptions) {
+				t.Fatalf("expected typed options %v, got %v", wantOptions, infer.ExpectedArgs)
+			}
+
+			result := FinishCall(ctx, def, infer)
+			if len(result.Errors) != 0 || !typ.TypeEquals(result.Type, typ.String) {
+				t.Fatalf("expected precise string result without errors, got %v (%v)", result.Type, result.Errors)
+			}
+		})
+	}
+}
+
+func TestInferCall_UnionSelectsOnlyViableOverload(t *testing.T) {
+	messageOptions := typ.NewRecord().Field("message", typ.True).Build()
+	rawOptions := typ.NewRecord().OptField("message", typ.False).Build()
+	message := typ.Func().
+		Param("topic", typ.String).
+		Param("options", messageOptions).
+		Returns(typ.String).
+		Build()
+	raw := typ.Func().
+		Param("topic", typ.String).
+		OptParam("options", rawOptions).
+		Returns(typ.Any).
+		Build()
+
+	ctx := db.NewQueryContext(db.New())
+	infer := InferCall(ctx, CallDef{
+		Callee: typ.NewUnion(message, raw),
+		Args: []typ.Type{
+			typ.String,
+			typ.NewRecord().Field("message", typ.True).Build(),
+		},
+	})
+	if infer.Kind != InferKindFunction || infer.Instantiated != message {
+		t.Fatalf("expected only viable message overload, got %+v", infer)
+	}
+	if len(infer.ExpectedArgs) != 2 || !typ.TypeEquals(infer.ExpectedArgs[1], messageOptions) {
+		t.Fatalf("expected message options %v, got %v", messageOptions, infer.ExpectedArgs)
+	}
+}
+
+func TestInferCall_UnionKeepsAmbiguousOverloads(t *testing.T) {
+	tests := []struct {
+		name   string
+		callee typ.Type
+		args   []typ.Type
+	}{
+		{
+			name: "equally specific",
+			callee: typ.NewUnion(
+				typ.Func().Param("value", typ.String).Returns(typ.String).Build(),
+				typ.Func().Param("value", typ.String).Returns(typ.Number).Build(),
+			),
+			args: []typ.Type{typ.String},
+		},
+		{
+			name: "variadic",
+			callee: typ.NewUnion(
+				typ.Func().Param("value", typ.String).Returns(typ.String).Build(),
+				typ.Func().Variadic(typ.String).Returns(typ.Number).Build(),
+			),
+			args: []typ.Type{typ.String},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := db.NewQueryContext(db.New())
+			def := CallDef{Callee: tt.callee, Args: tt.args}
+			infer := InferCall(ctx, def)
+			if infer.Kind != InferKindUnion {
+				t.Fatalf("expected ambiguous overloads to remain a union, got %v", infer.Kind)
+			}
+			result := FinishCall(ctx, def, infer)
+			if len(result.Errors) != 0 {
+				t.Fatalf("expected viable overloads without errors, got %v", result.Errors)
+			}
+			if _, ok := result.Type.(*typ.Union); !ok {
+				t.Fatalf("expected merged union return, got %T (%v)", result.Type, result.Type)
+			}
+		})
+	}
+}
+
 func TestFinishCall_ShortCircuit(t *testing.T) {
 	ctx := db.NewQueryContext(db.New())
 	def := CallDef{

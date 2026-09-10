@@ -133,6 +133,26 @@ func TestInferTypeArgs_RecordField(t *testing.T) {
 	}
 }
 
+func TestInferTypeArgs_MetaParam(t *testing.T) {
+	paramT := typ.NewTypeParam("T", nil)
+	fn := typ.Func().
+		TypeParam("T", nil).
+		Param("type", typ.NewMeta(paramT)).
+		Returns(paramT).
+		Build()
+
+	typeArgs, err := InferTypeArgsWithExpectedAndMode(fn, []typ.Type{typ.NewMeta(typ.String)}, false, nil, nil, false)
+	if err != nil {
+		t.Fatalf("InferTypeArgs error: %v", err)
+	}
+	if len(typeArgs) != 1 {
+		t.Fatalf("type args len = %d, want 1", len(typeArgs))
+	}
+	if !typ.TypeEquals(typeArgs[0], typ.String) {
+		t.Fatalf("T = %v, want string", typeArgs[0])
+	}
+}
+
 func TestInferTypeArgs_NonGeneric(t *testing.T) {
 	fn := typ.Func().
 		Param("a", typ.String).

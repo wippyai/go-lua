@@ -1008,6 +1008,12 @@ func matchDepth(pattern, concrete typ.Type, cs *InferSet, variance subtype.Varia
 			}
 			return struct{}{}
 		},
+		Meta: func(p *typ.Meta) struct{} {
+			if c, ok := concrete.(*typ.Meta); ok {
+				matchDepth(p.Of, c.Of, cs, variance, depth+1)
+			}
+			return struct{}{}
+		},
 		Instantiated: func(p *typ.Instantiated) struct{} {
 			if c, ok := concrete.(*typ.Instantiated); ok {
 				if p.Generic.Name == c.Generic.Name {

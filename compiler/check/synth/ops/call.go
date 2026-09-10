@@ -191,6 +191,14 @@ type InferResult struct {
 	ShortCircuit typ.Type
 }
 
+type unionCallCandidate struct {
+	fn       *typ.Function
+	typeArgs []typ.Type
+	inst     *typ.Function
+	expected []typ.Type
+	variadic typ.Type
+}
+
 // resolvedCallee is the result of resolving a call target.
 type resolvedCallee struct {
 	callee   typ.Type
@@ -434,8 +442,15 @@ func inferUnion(ctx *db.QueryContext, u *typ.Union, def CallDef, isMethod bool, 
 	}
 
 	// Aggregate expected argument types across all callable union members.
-	// Selecting only the first member is order-dependent and can over-specialize
-	// contextual typing for overloaded built-ins (for example pairs/ipairs).
+	// When the already-synthesized arguments identify a unique most-specific
+	// overload, use it directly. This keeps contextual re-synthesis from
+	// widening a table literal to every overload's parameter type and losing a
+	// generic type argument inferred from the literal.
+	//
+	// If no candidate is uniquely more specific, retain the merged expected
+	// types. Selecting the first matching member would make ordinary overloads
+	// order-dependent.
+	var candidates []unionCallCandidate
 	var (
 		aggExpected []typ.Type
 		aggVariadic typ.Type
@@ -463,6 +478,16 @@ func inferUnion(ctx *db.QueryContext, u *typ.Union, def CallDef, isMethod bool, 
 		}
 
 		expectedArgs, expectedVariadic := computeExpectedArgs(ctx, def.Query, instantiated, isMethod, receiver, def.ForceMethodReceiver)
+		candidateResult := callFunction(ctx, def.Query, instantiated, def.Args, receiver, isMethod, def.ForceMethodReceiver, nil)
+		if !hasHardErrors(candidateResult.Errors) {
+			candidates = append(candidates, unionCallCandidate{
+				fn:       fn,
+				typeArgs: typeArgs,
+				inst:     instantiated,
+				expected: expectedArgs,
+				variadic: expectedVariadic,
+			})
+		}
 		if !found {
 			found = true
 			result.Function = fn
@@ -481,7 +506,72 @@ func inferUnion(ctx *db.QueryContext, u *typ.Union, def CallDef, isMethod bool, 
 		result.ExpectedVariadic = aggVariadic
 	}
 
+	if selected, ok := uniqueMostSpecificCandidate(ctx, def.Query, candidates); ok {
+		result.Kind = InferKindFunction
+		result.Callee = selected.fn
+		result.Function = selected.fn
+		result.TypeArgs = selected.typeArgs
+		result.Instantiated = selected.inst
+		result.ExpectedArgs = selected.expected
+		result.ExpectedVariadic = selected.variadic
+	}
+
 	return result
+}
+
+// uniqueMostSpecificCandidate returns the candidate whose fixed arguments are
+// subtypes of every other viable candidate's fixed arguments, with at least one
+// strict subtype. Candidates with different fixed arities or variadics remain
+// ambiguous because neither provides a safe contextual replacement for the
+// other.
+func uniqueMostSpecificCandidate(ctx *db.QueryContext, query core.TypeOps, candidates []unionCallCandidate) (unionCallCandidate, bool) {
+	var zero unionCallCandidate
+	if len(candidates) == 0 {
+		return zero, false
+	}
+	if len(candidates) == 1 {
+		return candidates[0], true
+	}
+
+	var selected = -1
+	for i, candidate := range candidates {
+		moreSpecific := false
+		matchesAll := true
+		for j, other := range candidates {
+			if i == j {
+				continue
+			}
+			if !candidateMoreSpecific(ctx, query, candidate.expected, candidate.variadic, other.expected, other.variadic) {
+				matchesAll = false
+				break
+			}
+			if !candidateMoreSpecific(ctx, query, other.expected, other.variadic, candidate.expected, candidate.variadic) {
+				moreSpecific = true
+			}
+		}
+		if matchesAll && moreSpecific {
+			if selected >= 0 {
+				return zero, false
+			}
+			selected = i
+		}
+	}
+	if selected < 0 {
+		return zero, false
+	}
+	return candidates[selected], true
+}
+
+func candidateMoreSpecific(ctx *db.QueryContext, query core.TypeOps, a []typ.Type, aVariadic typ.Type, b []typ.Type, bVariadic typ.Type) bool {
+	if len(a) != len(b) || aVariadic != nil || bVariadic != nil {
+		return false
+	}
+	for i := range a {
+		if !isSubtypeCheck(ctx, query, a[i], b[i]) {
+			return false
+		}
+	}
+	return true
 }
 
 func mergeExpectedArgVectors(a, b []typ.Type) []typ.Type {
