@@ -33,12 +33,18 @@ var (
 // Global function type definitions.
 var (
 	// assert(v, message?) -> v
-	// When assert returns, v is truthy (not nil/false)
+	// When assert returns, v is truthy (not nil/false). The return effect
+	// preserves the argument's structural type through the call; the
+	// refinement separately records the normal-return truthiness proof.
 	Assert = typ.Func().
 		Param("v", typ.Any).
 		OptParam("message", typ.String).
 		Returns(typ.Any).
 		Effects(effect.Throws()).
+		Spec(contract.NewSpec().WithEffects(effect.Return{
+			ReturnIndex: 0,
+			Transform:   effect.SameAs{Source: effect.ParamRef{Index: 0}},
+		})).
 		WithRefinement(&constraint.FunctionRefinement{
 			OnReturn: constraint.FromConstraints(
 				constraint.Truthy{Path: constraint.ParamPath(0)},

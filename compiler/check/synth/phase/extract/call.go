@@ -10,9 +10,11 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	"github.com/wippyai/go-lua/compiler/check/synth/transform"
 	"github.com/wippyai/go-lua/types/cfg"
+	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/effect"
+	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
@@ -479,6 +481,7 @@ func (s *Synthesizer) applyPostCallTransforms(calleeType typ.Type, args []typ.Ty
 	var result []typ.Type
 	for i := range returns {
 		transformed := transform.ApplyEffectTransform(fn, args, i, returns[i])
+		transformed = applyTruthyIdentityReturn(fn, args, i, transformed)
 		if transformed == nil || transformed == returns[i] {
 			continue
 		}
@@ -493,6 +496,49 @@ func (s *Synthesizer) applyPostCallTransforms(calleeType typ.Type, args []typ.Ty
 	}
 
 	return returns
+}
+
+// applyTruthyIdentityReturn narrows a return value only when the function's
+// contract proves both parts of the identity:
+//
+//   - the return slot is SameAs a parameter; and
+//   - normal return requires that parameter to be truthy.
+//
+// This keeps assertion-style builtins precise without treating an arbitrary
+// function returning T as a truthy T. In particular, Any and Unknown remain
+// gradual, while optional concrete values lose nil/false on the normal path.
+func applyTruthyIdentityReturn(fn *typ.Function, args []typ.Type, returnIdx int, result typ.Type) typ.Type {
+	if fn == nil || result == nil || fn.Spec == nil || fn.Refinement == nil {
+		return result
+	}
+	spec, ok := fn.Spec.(*contract.Spec)
+	if !ok || spec == nil {
+		return result
+	}
+	ret := spec.Effects.GetReturn(returnIdx)
+	if ret == nil {
+		return result
+	}
+	same, ok := ret.Transform.(effect.SameAs)
+	if !ok {
+		return result
+	}
+	paramIdx, ok := effect.ResolveParamIndex(same.Source, len(args))
+	if !ok || paramIdx < 0 || paramIdx >= len(args) {
+		return result
+	}
+	refinement, ok := fn.Refinement.(*constraint.FunctionRefinement)
+	if !ok || refinement == nil {
+		return result
+	}
+	paramPath := constraint.ParamPath(paramIdx)
+	for _, c := range refinement.OnReturn.MustConstraints() {
+		truthy, ok := c.(constraint.Truthy)
+		if ok && truthy.Path.Equal(paramPath) {
+			return narrow.ToTruthy(result)
+		}
+	}
+	return result
 }
 
 // callbackAwareReSynth creates an ArgReSynth that applies EnvOverlay from callback specs.
