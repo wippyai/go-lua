@@ -9,10 +9,13 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/synth/intercept"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	"github.com/wippyai/go-lua/compiler/check/synth/transform"
+	"github.com/wippyai/go-lua/internal"
 	"github.com/wippyai/go-lua/types/cfg"
+	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/effect"
+	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
@@ -479,6 +482,7 @@ func (s *Synthesizer) applyPostCallTransforms(calleeType typ.Type, args []typ.Ty
 	var result []typ.Type
 	for i := range returns {
 		transformed := transform.ApplyEffectTransform(fn, args, i, returns[i])
+		transformed = applyTruthyIdentityReturn(fn, args, i, transformed)
 		if transformed == nil || transformed == returns[i] {
 			continue
 		}
@@ -493,6 +497,139 @@ func (s *Synthesizer) applyPostCallTransforms(calleeType typ.Type, args []typ.Ty
 	}
 
 	return returns
+}
+
+// applyTruthyIdentityReturn narrows a return value only when the function's
+// contract proves both parts of the identity:
+//
+//   - the return slot is SameAs a parameter; and
+//   - normal return requires that parameter to be truthy.
+//
+// This keeps assertion-style builtins precise without treating an arbitrary
+// function returning T as a truthy T. In particular, Any and Unknown remain
+// gradual, while optional concrete values lose nil/false on the normal path.
+func applyTruthyIdentityReturn(fn *typ.Function, args []typ.Type, returnIdx int, result typ.Type) typ.Type {
+	if fn == nil || result == nil || fn.Spec == nil || fn.Refinement == nil {
+		return result
+	}
+	spec, ok := fn.Spec.(*contract.Spec)
+	if !ok || spec == nil {
+		return result
+	}
+	ret := spec.Effects.GetReturn(returnIdx)
+	if ret == nil {
+		return result
+	}
+	same, ok := ret.Transform.(effect.SameAs)
+	if !ok {
+		return result
+	}
+	paramIdx, ok := effect.ResolveParamIndex(same.Source, len(args))
+	if !ok || paramIdx < 0 || paramIdx >= len(args) {
+		return result
+	}
+	refinement, ok := fn.Refinement.(*constraint.FunctionRefinement)
+	if !ok || refinement == nil {
+		return result
+	}
+	paramPath := constraint.ParamPath(paramIdx)
+	for _, c := range refinement.OnReturn.MustConstraints() {
+		truthy, ok := c.(constraint.Truthy)
+		if ok && truthy.Path.Equal(paramPath) {
+			return narrowTruthyIdentity(result)
+		}
+	}
+	return result
+}
+
+// narrowTruthyIdentity removes falsy members while retaining instantiated
+// types whose expanded shape is already definitely truthy. Generic
+// instantiations carry the identity used by type-level effects (for example,
+// Channel<Event> in channel.select); expanding one during a truthiness check
+// loses those type arguments and can turn a correlated value into any.
+func narrowTruthyIdentity(t typ.Type) typ.Type {
+	return narrowTruthyIdentityGuard(t, typ.NewGuard().WithSeen())
+}
+
+func narrowTruthyIdentityGuard(t typ.Type, guard internal.RecursionGuard) typ.Type {
+	if t == nil {
+		return nil
+	}
+	next, ok := guard.Enter(t)
+	if !ok {
+		return narrow.ToTruthy(t)
+	}
+
+	switch v := t.(type) {
+	case *typ.Instantiated:
+		expanded := unwrap.Instantiated(v)
+		if expanded == v {
+			return narrow.ToTruthy(t)
+		}
+		if definitelyTruthyExpanded(expanded) {
+			return t
+		}
+		return narrowTruthyIdentityGuard(expanded, next)
+	case *typ.Alias:
+		inner := narrowTruthyIdentityGuard(v.Target, next)
+		if inner == nil || inner.Kind().IsNever() {
+			return inner
+		}
+		if inner == v.Target {
+			return t
+		}
+		return typ.NewAlias(v.Name, inner)
+	case *typ.Optional:
+		return narrowTruthyIdentityGuard(v.Inner, next)
+	case *typ.Union:
+		members := make([]typ.Type, 0, len(v.Members))
+		for _, member := range v.Members {
+			narrowed := narrowTruthyIdentityGuard(member, next)
+			if narrowed != nil && !narrowed.Kind().IsNever() {
+				members = append(members, narrowed)
+			}
+		}
+		return typ.NewUnion(members...)
+	default:
+		return narrow.ToTruthy(t)
+	}
+}
+
+// definitelyTruthyExpanded checks truthiness after resolving transparent
+// generic wrappers, without treating an unresolved instantiation as a plain
+// concrete type. Union members are checked individually because an
+// instantiation nested in a union can itself expand to an optional value.
+func definitelyTruthyExpanded(t typ.Type) bool {
+	return definitelyTruthyExpandedGuard(t, typ.NewGuard().WithSeen())
+}
+
+func definitelyTruthyExpandedGuard(t typ.Type, guard internal.RecursionGuard) bool {
+	if t == nil {
+		return false
+	}
+	next, ok := guard.Enter(t)
+	if !ok {
+		return false
+	}
+
+	switch v := t.(type) {
+	case *typ.Instantiated:
+		expanded := unwrap.Instantiated(v)
+		return expanded != v && definitelyTruthyExpandedGuard(expanded, next)
+	case *typ.Alias:
+		return definitelyTruthyExpandedGuard(v.Target, next)
+	case *typ.Optional:
+		return false
+	case *typ.Union:
+		for _, member := range v.Members {
+			if !definitelyTruthyExpandedGuard(member, next) {
+				return false
+			}
+		}
+		return true
+	default:
+		return ops.IsTruthy(t)
+	}
 }
 
 // callbackAwareReSynth creates an ArgReSynth that applies EnvOverlay from callback specs.
