@@ -74,6 +74,11 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			continue
 		}
 
+		if L.hookMask != 0 {
+			L.callHook(cf)
+			cf = L.currentFrame
+		}
+
 		// Note: Some opcodes (CALL, TAILCALL, RETURN) may need to `return` from mainLoop
 		// Others just `continue` to next instruction
 		switch int(inst >> 26) {
