@@ -35,6 +35,7 @@ type Solution struct {
 	pointConditions        map[cfg.Point]constraint.Condition
 	numericStates          map[cfg.Point]*numeric.State
 	iterations             int
+	capped                 bool
 
 	// Scratch buffers to reduce allocations in hot paths
 	scratchTypes           []typ.Type
@@ -466,6 +467,13 @@ func (s *Solution) DebugIterations() int {
 	return s.iterations
 }
 
+// Converged reports whether the worklist emptied on its own. A solve that runs
+// into its iteration cap stops with types that are still in motion, so every
+// query against it answers from a partial solution.
+func (s *Solution) Converged() bool {
+	return s != nil && !s.capped
+}
+
 // DebugVersionValues returns the version values for debugging.
 func (s *Solution) DebugVersionValues() map[string]typ.Type {
 	return s.values
@@ -511,6 +519,11 @@ func (s *Solution) UnreachableEdges() []cfg.Edge {
 // The algorithm iterates over CFG points in reverse postorder, processing
 // assignments, phi nodes, and applying edge conditions. When a type changes,
 // dependent points are added back to the worklist until convergence.
+// maxIterationsPerPoint bounds the worklist: a solve may visit each program
+// point this many times before it is treated as non-convergent. Overridden in
+// tests to exercise the capped path.
+var maxIterationsPerPoint = 100
+
 func (s *Solution) solve() {
 	if s.inputs == nil {
 		return
@@ -535,7 +548,7 @@ func (s *Solution) solve() {
 		}
 	}
 
-	maxIterations := g.Size() * 100
+	maxIterations := g.Size() * maxIterationsPerPoint
 	for len(worklist) > 0 {
 		// FIFO queue: process in forward RPO order for correct dataflow
 		p := worklist[0]
@@ -559,6 +572,7 @@ func (s *Solution) solve() {
 
 		s.iterations++
 		if s.iterations > maxIterations {
+			s.capped = true
 			break
 		}
 	}
