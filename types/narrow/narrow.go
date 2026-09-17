@@ -624,30 +624,6 @@ func distributeIntersect(members []typ.Type, other typ.Type) typ.Type {
 	return typ.NewUnion(kept...)
 }
 
-// filterUnionByOverlap filters a union to members that overlap with another type.
-//
-// This helper is used by [Intersect] to narrow unions. It keeps only those
-// union members that have some overlap with the other type.
-//
-// Returns Never if no members overlap. Returns nil if the union is nil.
-func filterUnionByOverlap(u *typ.Union, other typ.Type) typ.Type {
-	if u == nil || other == nil {
-		return nil
-	}
-
-	var kept []typ.Type
-	for _, m := range u.Members {
-		if TypesOverlap(m, other) {
-			kept = append(kept, m)
-		}
-	}
-
-	if len(kept) == 0 {
-		return typ.Never
-	}
-	return typ.NewUnion(kept...)
-}
-
 // FilterByKind narrows a type to keep only parts matching the target kind.
 //
 // This operation narrows after a positive typeof check like "type(x) == 'string'".
