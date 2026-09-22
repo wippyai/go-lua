@@ -572,7 +572,7 @@ func (s *Solution) solve() {
 
 		s.iterations++
 		if s.iterations > maxIterations {
-			s.capped = true
+			s.capped = len(worklist) > 0
 			break
 		}
 	}

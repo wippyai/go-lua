@@ -519,8 +519,8 @@ func KindMatches(t typ.Type, target kind.Kind) bool {
 //  1. If either type is a placeholder (Any, Unknown), return the other.
 //  2. Unwrap aliases and instantiated generics.
 //  3. If either is an intersection, merge members.
-//  4. If a <: b, return a (more specific); if b <: a, return b.
-//  5. For unions, filter to overlapping members.
+//  4. Distribute unions and optionals over overlapping branches.
+//  5. If a <: b, return a (more specific); if b <: a, return b.
 //  6. Otherwise, create a new intersection type.
 //
 // # Examples
