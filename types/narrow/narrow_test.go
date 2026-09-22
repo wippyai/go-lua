@@ -975,9 +975,62 @@ func TestIntersect_OptionalTypes(t *testing.T) {
 	opt1 := typ.NewOptional(typ.String)
 	opt2 := typ.NewOptional(typ.Number)
 
+	// string? and number? share exactly one value, nil: the meet distributes
+	// over each optional's branches and string & number is empty.
 	got := narrow.Intersect(opt1, opt2)
-	if got.Kind() != kind.Intersection {
-		t.Errorf("Intersect(string?, number?) kind = %v, want Intersection", got.Kind())
+	if !typ.TypeEquals(got, typ.Nil) {
+		t.Errorf("Intersect(string?, number?) = %v, want nil", got)
+	}
+}
+
+// A meet distributes over a join, so narrowing a union or an optional narrows
+// each branch instead of wrapping the whole type in an intersection. Two
+// spellings of one type (T? and nil | T) must give the same answer: when they
+// did not, flow joins saw a fresh "change" on every pass and the solver ran to
+// its iteration cap instead of converging.
+func TestIntersect_DistributesOverJoin(t *testing.T) {
+	// {[integer | string]: "x", ...}: an open record with a map component.
+	mapped := typ.NewRecord().SetOpen(true).
+		MapComponent(typ.NewUnion(typ.Integer, typ.String), typ.LiteralString("x")).Build()
+	// {...}: the "some table" shape a table-ness refinement narrows to.
+	anyTable := typ.NewRecord().SetOpen(true).Build()
+
+	optional := typ.NewOptional(mapped)
+	spelledOut := typ.NewUnion(typ.Nil, mapped)
+
+	fromOptional := narrow.Intersect(optional, anyTable)
+	if !typ.TypeEquals(fromOptional, mapped) {
+		t.Errorf("Intersect(T?, {...}) = %v, want %v", fromOptional, mapped)
+	}
+
+	fromUnion := narrow.Intersect(spelledOut, anyTable)
+	if !typ.TypeEquals(fromUnion, mapped) {
+		t.Errorf("Intersect(nil | T, {...}) = %v, want %v", fromUnion, mapped)
+	}
+
+	if !typ.TypeEquals(fromOptional, fromUnion) {
+		t.Errorf("T? and nil | T narrowed differently: %v vs %v", fromOptional, fromUnion)
+	}
+}
+
+func TestIntersect_DistributesOverUnionMembers(t *testing.T) {
+	union := typ.NewUnion(typ.String, typ.Number, typ.Boolean)
+
+	got := narrow.Intersect(union, typ.NewUnion(typ.String, typ.Boolean))
+	want := typ.NewUnion(typ.String, typ.Boolean)
+	if !typ.TypeEquals(got, want) {
+		t.Errorf("Intersect(string|number|boolean, string|boolean) = %v, want %v", got, want)
+	}
+
+	if got := narrow.Intersect(union, typ.String); !typ.TypeEquals(got, typ.String) {
+		t.Errorf("Intersect(string|number|boolean, string) = %v, want string", got)
+	}
+}
+
+func TestIntersect_DisjointOptionalsMeetAtNil(t *testing.T) {
+	got := narrow.Intersect(typ.NewOptional(typ.String), typ.NewOptional(typ.Number))
+	if !typ.TypeEquals(got, typ.Nil) {
+		t.Errorf("Intersect(string?, number?) = %v, want nil", got)
 	}
 }
 

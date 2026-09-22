@@ -519,8 +519,8 @@ func KindMatches(t typ.Type, target kind.Kind) bool {
 //  1. If either type is a placeholder (Any, Unknown), return the other.
 //  2. Unwrap aliases and instantiated generics.
 //  3. If either is an intersection, merge members.
-//  4. If a <: b, return a (more specific); if b <: a, return b.
-//  5. For unions, filter to overlapping members.
+//  4. Distribute unions and optionals over overlapping branches.
+//  5. If a <: b, return a (more specific); if b <: a, return b.
 //  6. Otherwise, create a new intersection type.
 //
 // # Examples
@@ -565,6 +565,19 @@ func Intersect(a, b typ.Type) typ.Type {
 		return typ.NewIntersection(members...)
 	}
 
+	// A meet distributes over a join: (A | B) & C = (A & C) | (B & C).
+	// Narrowing a union or an optional therefore narrows each member and drops
+	// the ones that cannot overlap, rather than wrapping the whole type in an
+	// intersection. Without this, narrowing T? by a shape refinement yields
+	// `shape & T?` instead of plain T, and the two spellings of one type make
+	// flow joins produce a different result for equal inputs.
+	if members, ok := joinMembers(a); ok {
+		return distributeIntersect(members, b)
+	}
+	if members, ok := joinMembers(b); ok {
+		return distributeIntersect(members, a)
+	}
+
 	if subtype.IsSubtype(a, b) {
 		return a
 	}
@@ -572,42 +585,41 @@ func Intersect(a, b typ.Type) typ.Type {
 		return b
 	}
 
-	if ua, ok := a.(*typ.Union); ok {
-		filtered := filterUnionByOverlap(ua, b)
-		if filtered != nil {
-			return filtered
-		}
-	}
-	if ub, ok := b.(*typ.Union); ok {
-		filtered := filterUnionByOverlap(ub, a)
-		if filtered != nil {
-			return filtered
-		}
-	}
-
 	return typ.NewIntersection(a, b)
 }
 
-// filterUnionByOverlap filters a union to members that overlap with another type.
-//
-// This helper is used by [Intersect] to narrow unions. It keeps only those
-// union members that have some overlap with the other type.
-//
-// Returns Never if no members overlap. Returns nil if the union is nil.
-func filterUnionByOverlap(u *typ.Union, other typ.Type) typ.Type {
-	if u == nil || other == nil {
-		return nil
+// joinMembers returns the members of a union or optional, which are the
+// branches a meet distributes over. Optional(T) contributes T and nil.
+func joinMembers(t typ.Type) ([]typ.Type, bool) {
+	switch v := t.(type) {
+	case *typ.Union:
+		return v.Members, true
+	case *typ.Optional:
+		return []typ.Type{v.Inner, typ.Nil}, true
+	default:
+		return nil, false
 	}
+}
 
-	var kept []typ.Type
-	for _, m := range u.Members {
-		if TypesOverlap(m, other) {
-			kept = append(kept, m)
+// distributeIntersect intersects other with every member, keeping the members
+// that still overlap it.
+func distributeIntersect(members []typ.Type, other typ.Type) typ.Type {
+	kept := make([]typ.Type, 0, len(members))
+	for _, m := range members {
+		if m == nil || !TypesOverlap(m, other) {
+			continue
 		}
+		narrowed := Intersect(m, other)
+		if narrowed == nil || typ.IsNever(narrowed) {
+			continue
+		}
+		kept = append(kept, narrowed)
 	}
-
 	if len(kept) == 0 {
 		return typ.Never
+	}
+	if len(kept) == 1 {
+		return kept[0]
 	}
 	return typ.NewUnion(kept...)
 }

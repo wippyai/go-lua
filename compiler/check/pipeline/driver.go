@@ -168,6 +168,7 @@ func (d *Driver) checkFunctionFixpoint(sess api.AnalysisSession, fn *ast.Functio
 	results := sess.ResultsMap()
 	d.recordFunctionResult(sess, fn, result, results)
 	d.emitScopeDepthDiagnostic(sess, fn, result)
+	d.emitFlowConvergenceDiagnostic(sess, fn, result)
 
 	funcSym := cfg.SymbolID(0)
 	if store != nil {
@@ -349,6 +350,32 @@ func (d *Driver) emitScopeDepthDiagnostic(sess api.AnalysisSession, fn *ast.Func
 		Message:  fmt.Sprintf("scope depth limit exceeded (max=%d); analysis may be incomplete", d.cfg.MaxScopeDepth),
 	})
 	scopeState[fn] = true
+}
+
+// emitFlowConvergenceDiagnostic reports a flow solve that stopped at its
+// iteration cap. The types it produced are whatever the last pass left behind,
+// and the solve costs the full cap in time, so this must not pass unnoticed.
+func (d *Driver) emitFlowConvergenceDiagnostic(sess api.AnalysisSession, fn *ast.FunctionExpr, result *api.FuncResult) {
+	if result == nil || result.FlowSolution == nil || result.FlowSolution.Converged() {
+		return
+	}
+	pos := diag.Position{File: sess.Source()}
+	span := diag.Span{}
+	if fn != nil && fn.Line() > 0 {
+		pos.Line = fn.Line()
+		pos.Column = fn.Column()
+		span.StartLine = fn.Line()
+		span.StartCol = fn.Column()
+		span.EndLine = fn.LastLine()
+		span.EndCol = fn.LastColumn()
+	}
+	sess.AppendDiagnostics(diag.Diagnostic{
+		Position: pos,
+		Span:     span,
+		Severity: diag.SeverityWarning,
+		Message: fmt.Sprintf("flow fixpoint did not converge after %d iterations; narrowing in this function may be incomplete",
+			result.FlowSolution.DebugIterations()),
+	})
 }
 
 func (d *Driver) storeFunctionRefinement(store api.IterationStore, result *api.FuncResult, funcSym cfg.SymbolID) {
