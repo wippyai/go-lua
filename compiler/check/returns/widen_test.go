@@ -442,7 +442,7 @@ func TestJoinParamHint_WidenedFieldJoinsToUpperBound(t *testing.T) {
 		Field("route", typ.Func().Returns(typ.NewOptional(typ.Boolean)).Build()).
 		Build()
 
-	for _, got := range []typ.Type{joinParamHint(narrow, wide), joinParamHint(wide, narrow)} {
+	for _, got := range []typ.Type{joinIterationFact(narrow, wide), joinIterationFact(wide, narrow)} {
 		if !typ.TypeEquals(got, wide) {
 			t.Fatalf("expected the wider record %s, got %s", wide, got)
 		}
@@ -458,7 +458,7 @@ func TestJoinParamHint_KeepsFieldsDiscoveredByEitherIteration(t *testing.T) {
 		Field("name", typ.String).
 		Build()
 
-	for _, got := range []typ.Type{joinParamHint(earlier, later), joinParamHint(later, earlier)} {
+	for _, got := range []typ.Type{joinIterationFact(earlier, later), joinIterationFact(later, earlier)} {
 		if !typ.TypeEquals(got, later) {
 			t.Fatalf("expected %s, got %s", later, got)
 		}
@@ -476,7 +476,7 @@ func TestJoinParamHint_UnknownFieldYieldsToResolvedField(t *testing.T) {
 		Field("limit", typ.Integer).
 		Build()
 
-	for _, got := range []typ.Type{joinParamHint(earlier, later), joinParamHint(later, earlier)} {
+	for _, got := range []typ.Type{joinIterationFact(earlier, later), joinIterationFact(later, earlier)} {
 		if !typ.TypeEquals(got, later) {
 			t.Fatalf("expected %s, got %s", later, got)
 		}
@@ -492,10 +492,10 @@ func TestJoinParamHint_KeepsPreviousHintWhenItAdmitsTheCurrentOne(t *testing.T) 
 		t.Fatal("test hints must be equivalent")
 	}
 
-	if got := joinParamHint(previous, current); got != previous {
+	if got := joinIterationFact(previous, current); got != previous {
 		t.Fatalf("expected the previous hint %s, got %s", previous, got)
 	}
-	if got := joinParamHint(current, previous); got != current {
+	if got := joinIterationFact(current, previous); got != current {
 		t.Fatalf("expected the previous hint %s, got %s", current, got)
 	}
 }
@@ -503,7 +503,7 @@ func TestJoinParamHint_KeepsPreviousHintWhenItAdmitsTheCurrentOne(t *testing.T) 
 func TestJoinParamHint_UnknownYieldsToHintWithPlaceholderMembers(t *testing.T) {
 	withPlaceholder := typ.NewUnion(typ.NewRecord().SetOpen(true).Build(), typ.NewMap(typ.String, typ.Any))
 
-	for _, got := range []typ.Type{joinParamHint(typ.Unknown, withPlaceholder), joinParamHint(withPlaceholder, typ.Unknown)} {
+	for _, got := range []typ.Type{joinIterationFact(typ.Unknown, withPlaceholder), joinIterationFact(withPlaceholder, typ.Unknown)} {
 		if !typ.TypeEquals(got, withPlaceholder) {
 			t.Fatalf("expected %s, got %s", withPlaceholder, got)
 		}

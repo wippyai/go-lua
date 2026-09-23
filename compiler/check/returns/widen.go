@@ -401,22 +401,23 @@ func joinParamHintVectors(a, b []typ.Type) []typ.Type {
 		if i < len(b) {
 			bi = b[i]
 		}
-		result[i] = joinParamHint(ai, bi)
+		result[i] = joinIterationFact(ai, bi)
 	}
 	return result
 }
 
-// joinParamHint joins the hint for one parameter from the previous iteration
-// with the hint from the current one. Both describe the same call sites, the
-// current one under better-resolved facts, so the join follows the
-// information order of inference:
-//   - an unresolved hint (nil, unknown or a soft placeholder) yields to a
+// joinIterationFact joins a fact from the previous fixpoint iteration with the
+// same fact from the current one: a parameter hint, a captured variable type,
+// a captured field or container write, a constructor field. Both describe the
+// same program values, the current one under better-resolved facts, so the
+// join follows the information order of inference:
+//   - an unresolved fact (nil, unknown or a soft placeholder) yields to a
 //     resolved one, and soft placeholder members drop out of unions;
 //   - records join field by field, keeping fields that only one iteration
 //     has discovered;
-//   - resolved types otherwise join to their upper bound, so a hint that
-//     widened between iterations admits the arguments of both.
-func joinParamHint(a, b typ.Type) typ.Type {
+//   - resolved types otherwise join to their upper bound, so a fact that
+//     widened between iterations admits the values of both.
+func joinIterationFact(a, b typ.Type) typ.Type {
 	if a == nil {
 		return b
 	}
@@ -445,7 +446,7 @@ func joinParamHint(a, b typ.Type) typ.Type {
 	if softB && !softA {
 		return a
 	}
-	if joined, ok := joinRecordParamHints(a, b); ok {
+	if joined, ok := joinIterationRecords(a, b); ok {
 		return joined
 	}
 	// The previous hint stays while it admits the current one, so equivalent
@@ -459,10 +460,10 @@ func joinParamHint(a, b typ.Type) typ.Type {
 	return typ.JoinPreferNonSoft(a, b)
 }
 
-// joinRecordParamHints joins two record hints field by field with
-// joinParamHint. Records with different map-component shapes or conflicting
+// joinIterationRecords joins two record hints field by field with
+// joinIterationFact. Records with different map-component shapes or conflicting
 // metatables are not joined here.
-func joinRecordParamHints(a, b typ.Type) (typ.Type, bool) {
+func joinIterationRecords(a, b typ.Type) (typ.Type, bool) {
 	ar, ok := a.(*typ.Record)
 	if !ok {
 		return nil, false
@@ -492,8 +493,8 @@ func joinRecordParamHints(a, b typ.Type) (typ.Type, bool) {
 		builder.Metatable(metatable)
 	}
 	if ar.HasMapComponent() {
-		key := joinParamHint(ar.MapKey, br.MapKey)
-		value := joinParamHint(ar.MapValue, br.MapValue)
+		key := joinIterationFact(ar.MapKey, br.MapKey)
+		value := joinIterationFact(ar.MapValue, br.MapValue)
 		sameAsA = sameAsA && key == ar.MapKey && value == ar.MapValue
 		sameAsB = sameAsB && key == br.MapKey && value == br.MapValue
 		builder.MapComponent(key, value)
@@ -502,18 +503,18 @@ func joinRecordParamHints(a, b typ.Type) (typ.Type, bool) {
 		field := fa
 		fb := br.GetField(fa.Name)
 		if fb != nil {
-			field.Type = joinParamHint(fa.Type, fb.Type)
+			field.Type = joinIterationFact(fa.Type, fb.Type)
 			field.Optional = fa.Optional || fb.Optional
 			field.Readonly = fa.Readonly && fb.Readonly
 		}
 		sameAsA = sameAsA && field == fa
 		sameAsB = sameAsB && fb != nil && field == *fb
-		addParamHintField(builder, field)
+		addIterationField(builder, field)
 	}
 	for _, fb := range br.Fields {
 		if ar.GetField(fb.Name) == nil {
 			sameAsA = false
-			addParamHintField(builder, fb)
+			addIterationField(builder, fb)
 		}
 	}
 	switch {
@@ -525,7 +526,7 @@ func joinRecordParamHints(a, b typ.Type) (typ.Type, bool) {
 	return builder.Build(), true
 }
 
-func addParamHintField(builder *typ.RecordBuilder, f typ.Field) {
+func addIterationField(builder *typ.RecordBuilder, f typ.Field) {
 	switch {
 	case f.Optional && f.Readonly:
 		builder.OptReadonlyField(f.Name, f.Type)
@@ -604,7 +605,7 @@ func WidenCapturedTypes(prev, next api.CapturedTypes) api.CapturedTypes {
 	for _, sym := range cfg.SortedSymbolIDs(next) {
 		t := next[sym]
 		if existing := merged[sym]; existing != nil {
-			merged[sym] = maybeWidenTypeForConvergence(typ.JoinPreferNonSoft(existing, t))
+			merged[sym] = maybeWidenTypeForConvergence(joinIterationFact(existing, t))
 		} else {
 			merged[sym] = maybeWidenTypeForConvergence(t)
 		}
@@ -636,7 +637,7 @@ func WidenCapturedFieldAssigns(prev, next api.CapturedFieldAssigns) api.Captured
 		}
 		merged[callee] = MergeCapturedFieldSymbolMaps(existing, captured, func(prev typ.Type, next typ.Type) typ.Type {
 			if prev != nil {
-				return maybeWidenTypeForConvergence(typ.JoinPreferNonSoft(prev, next))
+				return maybeWidenTypeForConvergence(joinIterationFact(prev, next))
 			}
 			return maybeWidenTypeForConvergence(next)
 		})
@@ -664,7 +665,7 @@ func WidenCapturedContainerMutations(prev, next api.CapturedContainerMutations) 
 		existing := merged[sym]
 		merged[sym] = MergeCapturedContainerMutationMaps(existing, muts, func(prev *api.ContainerMutation, next api.ContainerMutation) api.ContainerMutation {
 			if prev != nil {
-				next.ValueType = maybeWidenTypeForConvergence(typ.JoinPreferNonSoft(prev.ValueType, next.ValueType))
+				next.ValueType = maybeWidenTypeForConvergence(joinIterationFact(prev.ValueType, next.ValueType))
 			} else {
 				next.ValueType = maybeWidenTypeForConvergence(next.ValueType)
 			}
@@ -703,7 +704,7 @@ func WidenConstructorFields(prev, next api.ConstructorFields) api.ConstructorFie
 		for _, name := range cfg.SortedFieldNames(fields) {
 			t := fields[name]
 			if prevType := out[name]; prevType != nil {
-				out[name] = maybeWidenTypeForConvergence(typ.JoinPreferNonSoft(prevType, t))
+				out[name] = maybeWidenTypeForConvergence(joinIterationFact(prevType, t))
 			} else {
 				out[name] = maybeWidenTypeForConvergence(t)
 			}
