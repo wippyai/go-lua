@@ -417,8 +417,12 @@ func fixtureTimeManifest() *io.Manifest {
 	m.DefineType("Time", timeType)
 	m.DefineType("Duration", durationType)
 
+	channelGeneric, _ := testutil.ChannelManifest().LookupType("Channel")
+	timeChannel := typ.Instantiate(channelGeneric.(*typ.Generic), timeType)
+
 	moduleType := typ.NewInterface("time", []typ.Method{
 		{Name: "now", Type: typ.Func().Returns(timeType).Build()},
+		{Name: "after", Type: typ.Func().Param("d", typ.Any).Returns(timeChannel).Build()},
 	})
 	m.SetExport(moduleType)
 

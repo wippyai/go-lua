@@ -289,7 +289,10 @@ func WithModule(name string, mod *ModuleResult) Option {
 	}
 }
 
-// ChannelManifest creates a channel manifest with proper types and effects.
+// ChannelManifest mirrors the wippy runtime channel module
+// (runtime/lua/engine/channel_types.go): Channel<T> with send/receive/case
+// methods, channel.new returning Channel<unknown>, and channel.select deriving
+// its result from the select cases.
 func ChannelManifest() *io.Manifest {
 	m := io.NewManifest("channel")
 
@@ -301,10 +304,15 @@ func ChannelManifest() *io.Manifest {
 	channelElem := typ.NewTypeParam("T", nil)
 	channelType := typ.NewInterface("channel.Channel", []typ.Method{
 		{
-			Name: "case_receive",
+			Name: "send",
 			Type: typ.Func().
 				Param("self", typ.Self).
-				Returns(typ.Instantiate(selectCaseGeneric, typ.Self, channelElem)).
+				Param("value", channelElem).
+				Returns(typ.Boolean).
+				Spec(contract.NewSpec().WithEffects(effect.Mutate{
+					Target:    effect.ParamRef{Index: 0},
+					Transform: effect.ContainerElementUnion{Container: effect.ParamRef{Index: 0}, Value: effect.ParamRef{Index: 1}},
+				})).
 				Build(),
 		},
 		{
@@ -312,7 +320,27 @@ func ChannelManifest() *io.Manifest {
 			Type: typ.Func().
 				Param("self", typ.Self).
 				Returns(channelElem, typ.Boolean).
+				Spec(contract.NewSpec().WithEffects(effect.Return{
+					ReturnIndex: 0,
+					Transform:   effect.ElementOf{Source: effect.ParamRef{Index: 0}},
+				})).
 				Build(),
+		},
+		{
+			Name: "case_send",
+			Type: typ.Func().Param("self", typ.Self).Param("value", channelElem).
+				Returns(typ.Instantiate(selectCaseGeneric, typ.Self, channelElem)).
+				Build(),
+		},
+		{
+			Name: "case_receive",
+			Type: typ.Func().Param("self", typ.Self).
+				Returns(typ.Instantiate(selectCaseGeneric, typ.Self, channelElem)).
+				Build(),
+		},
+		{
+			Name: "close",
+			Type: typ.Func().Param("self", typ.Self).Build(),
 		},
 	})
 	channelGeneric := typ.NewGeneric("channel.Channel", []*typ.TypeParam{channelElem}, channelType)
@@ -321,23 +349,34 @@ func ChannelManifest() *io.Manifest {
 		Field("channel", typ.Any).
 		Field("value", typ.Unknown).
 		Field("ok", typ.Boolean).
+		OptField("default", typ.Boolean).
 		Build()
 
 	m.DefineType("Channel", channelGeneric)
 	m.DefineType("SelectCase", selectCaseGeneric)
 	m.DefineType("SelectResult", selectResultType)
 
-	selectFunc := typ.Func().
-		Param("cases", typ.Any).
-		Returns(selectResultType).
-		Spec(contract.NewSpec().WithEffectRow(effect.Returns(0, effect.SelectResultOfCases{
-			Cases:   effect.ParamRef{Index: 0},
-			Default: effect.ParamRef{Index: -1},
-		}))).
-		Build()
-
 	moduleType := typ.NewInterface("channel", []typ.Method{
-		{Name: "select", Type: selectFunc},
+		{
+			Name: "new",
+			Type: typ.Func().OptParam("size", typ.Number).
+				Returns(typ.Instantiate(channelGeneric, typ.Unknown)).
+				Build(),
+		},
+		{
+			Name: "select",
+			Type: typ.Func().Param("cases", typ.Any).
+				OptParam("default", typ.Boolean).
+				Returns(selectResultType).
+				Spec(contract.NewSpec().WithEffects(effect.Return{
+					ReturnIndex: 0,
+					Transform: effect.SelectResultOfCases{
+						Cases:   effect.ParamRef{Index: 0},
+						Default: effect.ParamRef{Index: 1},
+					},
+				})).
+				Build(),
+		},
 	})
 	m.SetExport(moduleType)
 	return m

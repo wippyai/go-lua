@@ -177,6 +177,50 @@ func TestBaseTypeAt_WithSegments_ExplicitPreferred(t *testing.T) {
 	}
 }
 
+func TestTypeAt_PlaceholderFieldFactKeepsConcreteSlot(t *testing.T) {
+	c := cfg.New()
+	g := newMockSSAGraph(c)
+
+	symR := setupSymbol(g, "r", []cfg.Point{c.Entry()})
+	ver := cfg.Version{Root: "r", Symbol: symR, ID: 1}
+	setVersion(g, c.Entry(), symR, ver)
+
+	recordType := typ.NewRecord().Field("count", typ.Number).Field("label", typ.String).Build()
+	countPath := constraint.Path{
+		Root:     "r",
+		Symbol:   symR,
+		Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "count"}},
+	}
+	labelPath := constraint.Path{
+		Root:     "r",
+		Symbol:   symR,
+		Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "label"}},
+	}
+
+	inputs := newInputs(g)
+	inputs.DeclaredTypes[symR] = recordType
+	inputs.Assignments = []UnifiedAssignment{
+		{Point: c.Entry(), TargetPath: constraint.Path{Root: "r", Symbol: symR}, Type: recordType},
+		{Point: c.Entry(), TargetPath: countPath, Type: typ.Any},
+		{Point: c.Entry(), TargetPath: labelPath, Type: typ.LiteralString("x")},
+	}
+
+	s := Solve(inputs, testResolver())
+
+	root := s.TypeAt(c.Entry(), constraint.Path{Root: "r", Symbol: symR})
+	count, ok := testResolver().Field(root, "count")
+	if !ok || !typ.TypeEquals(count, typ.Number) {
+		t.Errorf("r.count in root = %v, want number", count)
+	}
+	label, ok := testResolver().Field(root, "label")
+	if !ok || !typ.TypeEquals(label, typ.LiteralString("x")) {
+		t.Errorf("r.label in root = %v, want \"x\"", label)
+	}
+	if got := s.NarrowedTypeAt(c.Entry(), countPath); !typ.TypeEquals(got, typ.Number) {
+		t.Errorf("NarrowedTypeAt(r.count) = %v, want number", got)
+	}
+}
+
 func TestDerivedTypeAt_FromNarrowedParent(t *testing.T) {
 	c, branch, thenNode, _, _, _ := buildPhiTruthyCFG()
 	g := newMockSSAGraph(c)

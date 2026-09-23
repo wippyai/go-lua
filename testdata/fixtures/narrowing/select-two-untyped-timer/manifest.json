@@ -1,0 +1,4 @@
+{
+  "description": "two channel.new() payloads selected with time.after(): excluding the timer leaves the untyped payloads",
+  "packages": ["channel", "time"]
+}

@@ -109,7 +109,7 @@ func indexDepth(t, keyType typ.Type, depth int) (typ.Type, bool) {
 					return indexResult{t: typ.Nil, ok: true}
 				}
 
-				return indexResult{t: typ.NewOptional(typ.NewUnion(types...)), ok: true}
+				return indexResult{t: typ.NewOptional(joinProjections(types...)), ok: true}
 			}
 			// Placeholder/unknown keys may still resolve to string fields at runtime.
 			// Keep this sound by returning an optional union of field types.
@@ -124,7 +124,7 @@ func indexDepth(t, keyType typ.Type, depth int) (typ.Type, bool) {
 				if len(types) == 0 {
 					return indexResult{t: typ.Nil, ok: true}
 				}
-				return indexResult{t: typ.NewOptional(typ.NewUnion(types...)), ok: true}
+				return indexResult{t: typ.NewOptional(joinProjections(types...)), ok: true}
 			}
 
 			// Map component fallback for non-string-literal keys.
@@ -152,7 +152,7 @@ func indexDepth(t, keyType typ.Type, depth int) (typ.Type, bool) {
 				return indexResult{}
 			}
 
-			return indexResult{t: typ.NewUnion(types...), ok: true}
+			return indexResult{t: joinProjections(types...), ok: true}
 		},
 		Intersection: func(in *typ.Intersection) indexResult {
 			var types []typ.Type
@@ -369,7 +369,7 @@ func indexRecordByExactStringKeyDomain(r *typ.Record, keys []string, depth int) 
 		return indexResult{}
 	}
 
-	out := typ.NewUnion(matched...)
+	out := joinProjections(matched...)
 	if missing && !containsNilOrOptional(out) {
 		out = typ.NewOptional(out)
 	}
