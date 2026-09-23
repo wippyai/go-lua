@@ -725,3 +725,39 @@ func TestRecursiveHashIntersection(t *testing.T) {
 		t.Error("recursive intersection should equal itself")
 	}
 }
+
+// A hash taken while a reachable placeholder has no body must not outlive
+// that placeholder receiving its body.
+func TestRecursiveHashReflectsBodiesSetAfterHashing(t *testing.T) {
+	recA := NewRecursivePlaceholder("X")
+	recB := NewRecursivePlaceholder("Y")
+	recA.SetBody(NewRecord().OptField("ref", recB).Build())
+	partial := recA.Hash()
+	recB.SetBody(NewRecord().OptField("ref", recA).Field("tag", String).Build())
+
+	fresh := NewRecursivePlaceholder("X")
+	freshB := NewRecursivePlaceholder("Y")
+	fresh.SetBody(NewRecord().OptField("ref", freshB).Build())
+	freshB.SetBody(NewRecord().OptField("ref", fresh).Field("tag", String).Build())
+
+	if recA.Hash() != fresh.Hash() {
+		t.Fatalf("hash after SetBody must match an equal type built complete: %d vs %d", recA.Hash(), fresh.Hash())
+	}
+	if recA.Hash() == partial {
+		t.Fatal("hash must reflect the body set after the first hash")
+	}
+}
+
+func TestRecursiveHashReflectsReplacedBody(t *testing.T) {
+	rec := NewRecursivePlaceholder("X")
+	rec.SetBody(NewRecord().OptField("next", rec).Build())
+	provisional := rec.Hash()
+	rec.SetBody(NewRecord().OptField("next", rec).Field("tag", String).Build())
+
+	if rec.Hash() == provisional {
+		t.Fatal("hash must reflect the replaced body")
+	}
+	if rec.Hash() != rec.Hash() {
+		t.Fatal("hash must be deterministic")
+	}
+}

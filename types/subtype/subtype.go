@@ -21,9 +21,20 @@
 //
 // # Cycle Detection
 //
-// Recursive types can form infinite subtype derivations. The checker uses
-// interface-identity seen pairs for coinductive cycle detection: if a pair
-// (A, B) is encountered again, the check succeeds (coinductive assumption).
+// Recursive types can form infinite subtype derivations. The checker decides
+// the greatest fixpoint of the subtype rules with an assumption trail in the
+// style of Gapeyev, Levin and Pierce: entering a pair (A, B) assumes it, so a
+// revisit of (A, B) succeeds coinductively. A derivation that fails rolls the
+// trail back to where it started, withdrawing its own assumption together with
+// every success that was derived under it. Assumptions still on the trail are
+// either on the current derivation path or were derived inside a derivation
+// that has not failed, so the trail doubles as a memo of successes, and a
+// refuted pair is never read back as an assumed success.
+//
+// Refutations are memoized for the whole derivation: the rules are monotone in
+// the assumption set, so a pair refuted under some assumptions is refuted under
+// none. A refutation reached through the recursion depth limit is withdrawn
+// with the trail instead, because the limit is not a semantic refutation.
 //
 // # Type Normalization
 //
@@ -83,16 +94,65 @@ func IsSubtype(sub, super typ.Type) bool {
 }
 
 // checker holds mutable state for a single subtype derivation.
-// It tracks seen type pairs to handle recursive types via coinduction.
 type checker struct {
-	seen map[typePair]bool
+	// assumed holds every pair on the trail.
+	assumed map[typePair]struct{}
+	// trail records assumptions in the order they were made, so a failed
+	// derivation withdraws exactly the assumptions made inside it.
+	trail []typePair
+	// refuted holds pairs whose derivation failed without reaching the depth limit.
+	refuted map[typePair]struct{}
+	// cutoffs counts derivations stopped by the recursion depth limit.
+	cutoffs int
+}
+
+// assume adds pair to the trail.
+func (c *checker) assume(pair typePair) {
+	if c.assumed == nil {
+		c.assumed = make(map[typePair]struct{})
+	}
+	c.assumed[pair] = struct{}{}
+	c.trail = append(c.trail, pair)
+}
+
+// withdraw removes every assumption made after the trail had length mark.
+func (c *checker) withdraw(mark int) {
+	for _, pair := range c.trail[mark:] {
+		delete(c.assumed, pair)
+	}
+	c.trail = c.trail[:mark]
+}
+
+// refute memoizes pair as refuted.
+func (c *checker) refute(pair typePair) {
+	if c.refuted == nil {
+		c.refuted = make(map[typePair]struct{})
+	}
+	c.refuted[pair] = struct{}{}
 }
 
 // check performs the recursive subtype check with depth tracking.
 // Depth is bounded by typ.DefaultRecursionDepth to prevent stack overflow
 // on pathological recursive types.
+//
+// A failed check withdraws every assumption made during it, so successes that
+// relied on a refuted assumption do not outlive it.
 func (c *checker) check(sub, super typ.Type, depth int) bool {
-	if stopDepthPair(sub, super, depth) {
+	mark := len(c.trail)
+	if c.derive(sub, super, depth) {
+		return true
+	}
+	c.withdraw(mark)
+	return false
+}
+
+// derive applies the subtype rules to (sub, super).
+func (c *checker) derive(sub, super typ.Type, depth int) bool {
+	if sub == nil || super == nil {
+		return false
+	}
+	if typ.DepthExceeded(depth) {
+		c.cutoffs++
 		return false
 	}
 
@@ -130,15 +190,28 @@ func (c *checker) check(sub, super typ.Type, depth int) bool {
 	// Cycle detection using interface identity (non-commutative, co-inductive).
 	if needsCycleGuard(sub.Kind()) && needsCycleGuard(super.Kind()) {
 		pair := typePair{sub: sub, super: super}
-		if c.seen == nil {
-			c.seen = make(map[typePair]bool)
+		if _, ok := c.refuted[pair]; ok {
+			return false
 		}
-		if c.seen[pair] {
-			return true // coinductive assumption
+		if _, ok := c.assumed[pair]; ok {
+			return true
 		}
-		c.seen[pair] = true
+		cutoffs := c.cutoffs
+		c.assume(pair)
+		if c.deriveStructural(sub, super, depth) {
+			return true
+		}
+		if c.cutoffs == cutoffs {
+			c.refute(pair)
+		}
+		return false
 	}
 
+	return c.deriveStructural(sub, super, depth)
+}
+
+// deriveStructural applies the subtype rules that decompose sub and super.
+func (c *checker) deriveStructural(sub, super typ.Type, depth int) bool {
 	// Unwrap aliases
 	if aa, ok := sub.(*typ.Alias); ok {
 		return c.check(aa.UnaliasedTarget(), super, depth+1)
@@ -527,7 +600,7 @@ func (c *checker) checkRecord(sub, super *typ.Record, depth int) bool {
 			}
 			// Reverse check with widening: allow literal/refinement types to widen
 			// This is sound for fresh record literals where no narrower-typed alias exists
-			if !c.check(sf.Type, subField.Type, depth+1) && !canWidenTo(subField.Type, sf.Type) {
+			if !c.check(sf.Type, subField.Type, depth+1) && !c.canWidenTo(subField.Type, sf.Type, depth+1) {
 				return false
 			}
 		}
@@ -570,7 +643,14 @@ func (c *checker) checkRecord(sub, super *typ.Record, depth int) bool {
 //
 // This is sound because it only applies to fresh values where no narrower-typed
 // alias can exist to observe the widening.
-func canWidenTo(narrow, wide typ.Type) bool {
+func (c *checker) canWidenTo(narrow, wide typ.Type, depth int) bool {
+	if narrow == nil || wide == nil {
+		return false
+	}
+	if typ.DepthExceeded(depth) {
+		c.cutoffs++
+		return false
+	}
 	// Unwrap aliases to get the underlying types
 	wide = unwrap.Alias(wide)
 	narrow = unwrap.Alias(narrow)
@@ -597,7 +677,7 @@ func canWidenTo(narrow, wide typ.Type) bool {
 
 	// Allow widening into optional types when narrow fits the inner type.
 	if opt, ok := wide.(*typ.Optional); ok {
-		if isSubtype(narrow, opt.Inner) {
+		if c.check(narrow, opt.Inner, depth+1) {
 			return true
 		}
 	}
@@ -610,7 +690,7 @@ func canWidenTo(narrow, wide typ.Type) bool {
 			if m.Kind() == kind.Literal {
 				continue
 			}
-			if isSubtype(narrow, m) || canWidenTo(narrow, m) {
+			if c.check(narrow, m, depth+1) || c.canWidenTo(narrow, m, depth+1) {
 				return true
 			}
 		}
@@ -624,7 +704,7 @@ func canWidenTo(narrow, wide typ.Type) bool {
 			return false
 		}
 		for _, m := range u.Members {
-			if isSubtype(m, wide) || canWidenTo(m, wide) {
+			if c.check(m, wide, depth+1) || c.canWidenTo(m, wide, depth+1) {
 				continue
 			}
 			return false
@@ -659,7 +739,7 @@ func canWidenTo(narrow, wide typ.Type) bool {
 	// Nested records: check if all fields can widen
 	if subRec, ok := narrow.(*typ.Record); ok {
 		if supRec, ok := wide.(*typ.Record); ok {
-			return canWidenRecordTo(subRec, supRec)
+			return c.canWidenRecordTo(subRec, supRec, depth+1)
 		}
 	}
 
@@ -670,8 +750,8 @@ func canWidenTo(narrow, wide typ.Type) bool {
 				return false
 			}
 			for i := range subTuple.Elements {
-				if isSubtype(subTuple.Elements[i], supTuple.Elements[i]) ||
-					canWidenTo(subTuple.Elements[i], supTuple.Elements[i]) {
+				if c.check(subTuple.Elements[i], supTuple.Elements[i], depth+1) ||
+					c.canWidenTo(subTuple.Elements[i], supTuple.Elements[i], depth+1) {
 					continue
 				}
 				return false
@@ -683,14 +763,14 @@ func canWidenTo(narrow, wide typ.Type) bool {
 	// Functions: allow widening when params are equivalent and returns can widen.
 	if subFn, ok := narrow.(*typ.Function); ok {
 		if supFn, ok := wide.(*typ.Function); ok {
-			if !functionParamsEquivalent(subFn, supFn) {
+			if !c.functionParamsEquivalent(subFn, supFn, depth+1) {
 				return false
 			}
 			if len(subFn.Returns) < len(supFn.Returns) {
 				return false
 			}
 			for i := 0; i < len(supFn.Returns); i++ {
-				if isSubtype(subFn.Returns[i], supFn.Returns[i]) || canWidenTo(subFn.Returns[i], supFn.Returns[i]) {
+				if c.check(subFn.Returns[i], supFn.Returns[i], depth+1) || c.canWidenTo(subFn.Returns[i], supFn.Returns[i], depth+1) {
 					continue
 				}
 				return false
@@ -705,7 +785,7 @@ func canWidenTo(narrow, wide typ.Type) bool {
 // functionParamsEquivalent reports whether two functions have equivalent parameter
 // signatures. Used by canWidenTo to allow function widening only when parameters
 // match exactly (no contravariance in widening context).
-func functionParamsEquivalent(a, b *typ.Function) bool {
+func (c *checker) functionParamsEquivalent(a, b *typ.Function, depth int) bool {
 	if a == nil || b == nil {
 		return false
 	}
@@ -718,7 +798,7 @@ func functionParamsEquivalent(a, b *typ.Function) bool {
 		if ap.Optional != bp.Optional {
 			return false
 		}
-		if !isSubtype(ap.Type, bp.Type) || !isSubtype(bp.Type, ap.Type) {
+		if !c.check(ap.Type, bp.Type, depth+1) || !c.check(bp.Type, ap.Type, depth+1) {
 			return false
 		}
 	}
@@ -728,13 +808,13 @@ func functionParamsEquivalent(a, b *typ.Function) bool {
 	if a.Variadic == nil || b.Variadic == nil {
 		return false
 	}
-	return isSubtype(a.Variadic, b.Variadic) && isSubtype(b.Variadic, a.Variadic)
+	return c.check(a.Variadic, b.Variadic, depth+1) && c.check(b.Variadic, a.Variadic, depth+1)
 }
 
 // canWidenRecordTo reports whether all fields in narrow can widen to their
 // corresponding fields in wide. This is the recursive helper for canWidenTo
 // when both types are records.
-func canWidenRecordTo(narrow, wide *typ.Record) bool {
+func (c *checker) canWidenRecordTo(narrow, wide *typ.Record, depth int) bool {
 	for _, wf := range wide.Fields {
 		nf := narrow.GetField(wf.Name)
 		if nf == nil {
@@ -742,7 +822,7 @@ func canWidenRecordTo(narrow, wide *typ.Record) bool {
 		}
 		// Forward direction must hold (already checked by main subtype check)
 		// Check if reverse direction can be satisfied by widening
-		if !isSubtype(wf.Type, nf.Type) && !canWidenTo(nf.Type, wf.Type) {
+		if !c.check(wf.Type, nf.Type, depth+1) && !c.canWidenTo(nf.Type, wf.Type, depth+1) {
 			return false
 		}
 	}

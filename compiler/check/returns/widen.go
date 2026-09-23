@@ -752,7 +752,86 @@ func maybeWidenTypeForConvergence(t typ.Type) typ.Type {
 	if !hasHigherOrderGrowthRisk(t) {
 		return t
 	}
-	return subtype.WidenForInference(t)
+	return foldSelfRecursiveRecords(subtype.WidenForInference(t))
+}
+
+// selfRecursiveRecordName names the recursive types produced by
+// foldSelfRecursiveRecords.
+const selfRecursiveRecordName = "self"
+
+// foldSelfRecursiveRecords closes records whose methods reach an earlier
+// approximation of the record itself.
+//
+// A table whose methods return the table is inferred one level at a time: each
+// fixpoint iteration types the methods against the table type of the previous
+// iteration, so the table type T_n nests T_(n-1) in its method signatures.
+// The chain T_0 <: T_1 <: ... ascends forever. Replacing every nested
+// approximation T' of T (same fields, T' <: T) by a reference to T itself
+// yields mu X. T[T' := X], an upper bound of the whole chain and its limit.
+func foldSelfRecursiveRecords(t typ.Type) typ.Type {
+	folded := make(map[*typ.Record]typ.Type)
+	return typ.Rewrite(t, func(node typ.Type) (typ.Type, bool) {
+		rec, ok := node.(*typ.Record)
+		if !ok {
+			return nil, false
+		}
+		if out, ok := folded[rec]; ok {
+			return out, true
+		}
+		out := foldSelfRecursiveRecord(rec)
+		if out == typ.Type(rec) {
+			return nil, false
+		}
+		folded[rec] = out
+		return out, true
+	})
+}
+
+// foldSelfRecursiveRecord returns mu X. owner[T' := X] for every approximation
+// T' of owner nested in owner, or owner itself when none is nested.
+func foldSelfRecursiveRecord(owner *typ.Record) typ.Type {
+	self := typ.NewRecursivePlaceholder(selfRecursiveRecordName)
+	body := typ.Rewrite(owner, func(node typ.Type) (typ.Type, bool) {
+		if node == owner {
+			return nil, false
+		}
+		if isRecordApproximation(node, owner) {
+			return self, true
+		}
+		return nil, false
+	})
+	if body == owner {
+		return owner
+	}
+	self.SetBody(body)
+	return self
+}
+
+// isRecordApproximation reports whether t is an approximation of owner: a
+// record, or a recursive record, with exactly owner's fields that is a
+// subtype of owner.
+func isRecordApproximation(t typ.Type, owner *typ.Record) bool {
+	shape := unwrap.Alias(t)
+	if rr, ok := shape.(*typ.Recursive); ok {
+		shape = rr.Body
+	}
+	rec, ok := shape.(*typ.Record)
+	if !ok || !sameFieldNames(rec, owner) {
+		return false
+	}
+	return subtype.IsSubtype(t, owner)
+}
+
+func sameFieldNames(a, b *typ.Record) bool {
+	if len(a.Fields) != len(b.Fields) || a.HasMapComponent() != b.HasMapComponent() {
+		return false
+	}
+	for _, f := range a.Fields {
+		if b.GetField(f.Name) == nil {
+			return false
+		}
+	}
+	return true
 }
 
 func maybeWidenFunctionForConvergence(fn *typ.Function) *typ.Function {

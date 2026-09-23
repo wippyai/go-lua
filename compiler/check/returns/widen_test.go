@@ -368,3 +368,68 @@ func TestMethodTypeHasSelfRecursiveReturn_IgnoresInterfaceMethods(t *testing.T) 
 		t.Fatalf("expected interface method signatures to be ignored for self-recursive detection")
 	}
 }
+
+// methodTableApproximation returns the method table after n fixpoint steps
+// of `function t:command() return self end`: step n types command against the
+// table of step n-1, starting from a command that returns nil.
+func methodTableApproximation(n int) *typ.Record {
+	ret := typ.Type(typ.Nil)
+	var table *typ.Record
+	for i := 0; i <= n; i++ {
+		table = typ.NewRecord().
+			Field("command", typ.Func().Param("self", typ.Unknown).Returns(ret, typ.NewOptional(typ.String)).Build()).
+			Field("name", typ.String).
+			Build()
+		ret = typ.NewOptional(table)
+	}
+	return table
+}
+
+func TestMaybeWidenTypeForConvergence_FoldsSelfReturningMethodTable(t *testing.T) {
+	approx := methodTableApproximation(3)
+
+	widened := maybeWidenTypeForConvergence(approx)
+	rec, ok := widened.(*typ.Recursive)
+	if !ok {
+		t.Fatalf("expected a recursive method table, got %s", widened)
+	}
+	for i := 0; i <= 5; i++ {
+		if !subtype.IsSubtype(methodTableApproximation(i), rec) {
+			t.Fatalf("approximation %d must be a subtype of the folded table", i)
+		}
+	}
+	if subtype.IsSubtype(rec, methodTableApproximation(0)) {
+		t.Fatal("folded table must be strictly wider than the first approximation")
+	}
+}
+
+func TestMaybeWidenTypeForConvergence_FoldingReachesFixpoint(t *testing.T) {
+	first := maybeWidenTypeForConvergence(methodTableApproximation(3))
+	second := maybeWidenTypeForConvergence(maybeWidenTypeForConvergence(methodTableApproximation(7)))
+	if !typ.TypeEquals(first, second) {
+		t.Fatalf("folding different approximations must converge:\n%s\n%s", first, second)
+	}
+
+	// The next fixpoint step types command against the folded table.
+	step := typ.NewRecord().
+		Field("command", typ.Func().Param("self", typ.Unknown).Returns(typ.NewOptional(first), typ.NewOptional(typ.String)).Build()).
+		Field("name", typ.String).
+		Build()
+	if again := maybeWidenTypeForConvergence(step); !typ.TypeEquals(again, first) {
+		t.Fatalf("step over the folded table must fold back to it:\n%s\n%s", again, first)
+	}
+}
+
+func TestMaybeWidenTypeForConvergence_KeepsRecordsWithOtherFields(t *testing.T) {
+	inner := typ.NewRecord().
+		Field("command", typ.Func().Param("self", typ.Unknown).Returns(typ.Nil).Build()).
+		Build()
+	outer := typ.NewRecord().
+		Field("command", typ.Func().Param("self", typ.Unknown).Returns(inner).Build()).
+		Field("name", typ.String).
+		Build()
+
+	if widened := maybeWidenTypeForConvergence(outer); !typ.TypeEquals(widened, subtype.WidenForInference(outer)) {
+		t.Fatalf("a nested record with different fields is not an approximation of the table, got %s", widened)
+	}
+}
