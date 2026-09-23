@@ -434,12 +434,12 @@ func TestMaybeWidenTypeForConvergence_KeepsRecordsWithOtherFields(t *testing.T) 
 	}
 }
 
-func TestJoinParamHint_WidenedFieldJoinsToUpperBound(t *testing.T) {
+func TestJoinIterationFact_ReadonlyFieldJoinsToUpperBound(t *testing.T) {
 	narrow := typ.NewRecord().
-		Field("route", typ.Func().Returns(typ.Nil).Build()).
+		ReadonlyField("route", typ.Func().Returns(typ.Nil).Build()).
 		Build()
 	wide := typ.NewRecord().
-		Field("route", typ.Func().Returns(typ.NewOptional(typ.Boolean)).Build()).
+		ReadonlyField("route", typ.Func().Returns(typ.NewOptional(typ.Boolean)).Build()).
 		Build()
 
 	for _, got := range []typ.Type{joinIterationFact(narrow, wide), joinIterationFact(wide, narrow)} {
@@ -449,19 +449,38 @@ func TestJoinParamHint_WidenedFieldJoinsToUpperBound(t *testing.T) {
 	}
 }
 
+// A mutable field is invariant: a stale wider field type would reject the
+// values the current fact describes, so the current field type wins.
+func TestJoinIterationFact_MutableFieldTakesCurrentType(t *testing.T) {
+	previous := typ.NewRecord().Field("days", typ.NewArray(typ.NewOptional(typ.Number))).Build()
+	current := typ.NewRecord().Field("days", typ.NewArray(typ.Number)).Build()
+
+	got := joinIterationFact(previous, current)
+	if !typ.TypeEquals(got, current) {
+		t.Fatalf("expected %s, got %s", current, got)
+	}
+	if !subtype.IsSubtype(current, got) {
+		t.Fatalf("joined fact %s must admit the current values %s", got, current)
+	}
+}
+
 func TestJoinParamHint_KeepsFieldsDiscoveredByEitherIteration(t *testing.T) {
 	earlier := typ.NewRecord().
 		Field("route", typ.Func().Returns(typ.Nil).Build()).
+		Field("id", typ.Integer).
 		Build()
 	later := typ.NewRecord().
 		Field("route", typ.Func().Returns(typ.NewOptional(typ.Boolean)).Build()).
 		Field("name", typ.String).
 		Build()
+	want := typ.NewRecord().
+		Field("route", typ.Func().Returns(typ.NewOptional(typ.Boolean)).Build()).
+		Field("id", typ.Integer).
+		Field("name", typ.String).
+		Build()
 
-	for _, got := range []typ.Type{joinIterationFact(earlier, later), joinIterationFact(later, earlier)} {
-		if !typ.TypeEquals(got, later) {
-			t.Fatalf("expected %s, got %s", later, got)
-		}
+	if got := joinIterationFact(earlier, later); !typ.TypeEquals(got, want) {
+		t.Fatalf("expected %s, got %s", want, got)
 	}
 }
 

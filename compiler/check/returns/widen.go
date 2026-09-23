@@ -414,10 +414,20 @@ func joinParamHintVectors(a, b []typ.Type) []typ.Type {
 //   - an unresolved fact (nil, unknown or a soft placeholder) yields to a
 //     resolved one, and soft placeholder members drop out of unions;
 //   - records join field by field, keeping fields that only one iteration
-//     has discovered;
+//     has discovered; a mutable field is invariant, so differing resolved
+//     field types resolve to the current one;
 //   - resolved types otherwise join to their upper bound, so a fact that
 //     widened between iterations admits the values of both.
 func joinIterationFact(a, b typ.Type) typ.Type {
+	return joinIterationFactAt(a, b, false)
+}
+
+// joinIterationFactAt joins two iteration facts at a covariant position, or
+// at an invariant one such as a mutable record field or a map key or value.
+// At an invariant position an upper bound admits only equivalent types, so
+// resolved facts that are not equivalent resolve to the current one, the
+// fact that describes the values at the position now.
+func joinIterationFactAt(a, b typ.Type, invariant bool) typ.Type {
 	if a == nil {
 		return b
 	}
@@ -449,9 +459,16 @@ func joinIterationFact(a, b typ.Type) typ.Type {
 	if joined, ok := joinIterationRecords(a, b); ok {
 		return joined
 	}
-	// The previous hint stays while it admits the current one, so equivalent
-	// hints with different spellings do not alternate between iterations.
-	if subtype.IsSubtype(b, a) {
+	// The previous fact stays while it admits the current one, so equivalent
+	// facts with different spellings do not alternate between iterations.
+	previousAdmitsCurrent := subtype.IsSubtype(b, a)
+	if invariant {
+		if previousAdmitsCurrent && subtype.IsSubtype(a, b) {
+			return a
+		}
+		return b
+	}
+	if previousAdmitsCurrent {
 		return a
 	}
 	if subtype.IsSubtype(a, b) {
@@ -493,8 +510,8 @@ func joinIterationRecords(a, b typ.Type) (typ.Type, bool) {
 		builder.Metatable(metatable)
 	}
 	if ar.HasMapComponent() {
-		key := joinIterationFact(ar.MapKey, br.MapKey)
-		value := joinIterationFact(ar.MapValue, br.MapValue)
+		key := joinIterationFactAt(ar.MapKey, br.MapKey, true)
+		value := joinIterationFactAt(ar.MapValue, br.MapValue, true)
 		sameAsA = sameAsA && key == ar.MapKey && value == ar.MapValue
 		sameAsB = sameAsB && key == br.MapKey && value == br.MapValue
 		builder.MapComponent(key, value)
@@ -503,9 +520,9 @@ func joinIterationRecords(a, b typ.Type) (typ.Type, bool) {
 		field := fa
 		fb := br.GetField(fa.Name)
 		if fb != nil {
-			field.Type = joinIterationFact(fa.Type, fb.Type)
 			field.Optional = fa.Optional || fb.Optional
 			field.Readonly = fa.Readonly && fb.Readonly
+			field.Type = joinIterationFactAt(fa.Type, fb.Type, !field.Readonly)
 		}
 		sameAsA = sameAsA && field == fa
 		sameAsB = sameAsB && fb != nil && field == *fb
