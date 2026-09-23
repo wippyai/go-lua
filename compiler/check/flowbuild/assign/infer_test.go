@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/parse"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/flow"
+	"github.com/wippyai/go-lua/types/narrow"
 	querycore "github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -202,7 +203,7 @@ func TestJoinInferredType_StabilizesSelfEmbeddingFromUnknown(t *testing.T) {
 	old := typ.Unknown
 	next := typ.NewArray(typ.Unknown)
 
-	got := joinInferredType(old, next)
+	got := joinInferredType(old, next, old)
 	if !typ.TypeEquals(got, next) {
 		t.Fatalf("joinInferredType(unknown, any[]) = %v, want %v", got, next)
 	}
@@ -212,7 +213,7 @@ func TestJoinInferredType_StopsRecursiveNestingGrowth(t *testing.T) {
 	old := typ.NewArray(typ.Unknown)
 	next := typ.NewArray(old)
 
-	got := joinInferredType(old, next)
+	got := joinInferredType(old, next, old)
 	if !typ.TypeEquals(got, old) {
 		t.Fatalf("joinInferredType(any[], any[][]) = %v, want %v", got, old)
 	}
@@ -267,6 +268,57 @@ func TestTypeContains_FindsNeedleBelowDefaultRecursionDepth(t *testing.T) {
 	}
 	if !typeContainsWithin(t, 10*time.Second, nested, leaf) {
 		t.Fatal("expected the leaf record to be found under deep array nesting")
+	}
+}
+
+// inferenceRound applies one SCC round of `if value then value = { key = value } end`
+// for every key: each assignment embeds the truthy narrowing of the round's
+// starting type, and the joins accumulate into the symbol's type.
+func inferenceRound(start typ.Type, keys ...string) typ.Type {
+	embedded := narrow.ToTruthy(start)
+	out := start
+	for _, key := range keys {
+		out = joinInferredType(out, typ.NewRecord().OptField(key, embedded).Build(), start)
+	}
+	return out
+}
+
+func TestJoinInferredType_FoldsTruthyNarrowedSelfEmbedding(t *testing.T) {
+	brief := typ.NewRecord().Field("brief", typ.String).Build()
+	tasks := typ.NewRecord().Field("tasks", typ.Number).Build()
+	start := typ.NewUnion(typ.Nil, brief, tasks)
+
+	got := inferenceRound(start, "brief", "tasks")
+
+	want := typ.NewRecursive(inferredSelfName, func(self typ.Type) typ.Type {
+		return typ.NewUnion(
+			typ.Nil,
+			brief,
+			tasks,
+			typ.NewRecord().OptField("brief", self).Build(),
+			typ.NewRecord().OptField("tasks", self).Build(),
+		)
+	})
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("round 1 = %v, want %v", got, want)
+	}
+
+	again := inferenceRound(got, "brief", "tasks")
+	if !typ.TypeEquals(again, got) {
+		t.Fatalf("round 2 = %v, want the round 1 fixpoint %v", again, got)
+	}
+}
+
+// A scalar is never an approximation of the symbol: joining it keeps the
+// record, and the chain folds once the symbol's type holds a table.
+func TestJoinInferredType_JoinsSelfEmbeddedScalar(t *testing.T) {
+	next := typ.NewRecord().Field("count", typ.Number).Build()
+
+	got := joinInferredType(typ.Number, next, typ.Number)
+
+	want := typ.NewUnion(typ.Number, next)
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("joinInferredType(number, {count: number}) = %v, want %v", got, want)
 	}
 }
 

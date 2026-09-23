@@ -761,3 +761,43 @@ func TestRecursiveHashReflectsReplacedBody(t *testing.T) {
 		t.Fatal("hash must be deterministic")
 	}
 }
+
+func TestFoldApproximationsReplacesGuardedOccurrences(t *testing.T) {
+	leaf := NewRecord().Field("leaf", String).Build()
+	approx := NewUnion(Nil, leaf)
+	owner := NewRecord().OptField("next", approx).Field("leaf", String).Build()
+
+	got := FoldApproximations("self", owner, func(n Type) bool { return n == approx })
+
+	want := NewRecursive("self", func(self Type) Type {
+		return NewRecord().OptField("next", self).Field("leaf", String).Build()
+	})
+	if !TypeEquals(got, want) {
+		t.Fatalf("fold = %v, want %v", got, want)
+	}
+}
+
+// A union member of the root is an unguarded position: replacing it would make
+// the body mu X. X | ..., which is not contractive.
+func TestFoldApproximationsKeepsRootUnionMembers(t *testing.T) {
+	leaf := NewRecord().Field("leaf", String).Build()
+	wrapped := NewRecord().OptField("inner", leaf).Build()
+	root := NewUnion(Nil, leaf, wrapped)
+
+	got := FoldApproximations("self", root, func(n Type) bool { return n == leaf })
+
+	want := NewRecursive("self", func(self Type) Type {
+		return NewUnion(Nil, leaf, NewRecord().OptField("inner", self).Build())
+	})
+	if !TypeEquals(got, want) {
+		t.Fatalf("fold = %v, want %v", got, want)
+	}
+}
+
+func TestFoldApproximationsReturnsInputWithoutApproximations(t *testing.T) {
+	root := NewUnion(Nil, NewRecord().Field("leaf", String).Build())
+
+	if got := FoldApproximations("self", root, func(Type) bool { return false }); got != root {
+		t.Fatalf("fold without approximations = %v, want the input unchanged", got)
+	}
+}

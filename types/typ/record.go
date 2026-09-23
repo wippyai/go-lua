@@ -191,6 +191,20 @@ func (r *Record) HasMapComponent() bool {
 	return r.MapKey != nil && r.MapValue != nil
 }
 
+// HasSameFieldNames reports whether r and other declare the same field names
+// and agree on having a map component.
+func (r *Record) HasSameFieldNames(other *Record) bool {
+	if len(r.Fields) != len(other.Fields) || r.HasMapComponent() != other.HasMapComponent() {
+		return false
+	}
+	for _, f := range r.Fields {
+		if other.GetField(f.Name) == nil {
+			return false
+		}
+	}
+	return true
+}
+
 // GetField returns the field with the given name, or nil.
 func (r *Record) GetField(name string) *Field {
 	if r.sorted {

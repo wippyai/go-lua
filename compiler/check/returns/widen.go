@@ -918,21 +918,9 @@ func foldSelfRecursiveRecords(t typ.Type) typ.Type {
 // foldSelfRecursiveRecord returns mu X. owner[T' := X] for every approximation
 // T' of owner nested in owner, or owner itself when none is nested.
 func foldSelfRecursiveRecord(owner *typ.Record) typ.Type {
-	self := typ.NewRecursivePlaceholder(selfRecursiveRecordName)
-	body := typ.Rewrite(owner, func(node typ.Type) (typ.Type, bool) {
-		if node == owner {
-			return nil, false
-		}
-		if isRecordApproximation(node, owner) {
-			return self, true
-		}
-		return nil, false
+	return typ.FoldApproximations(selfRecursiveRecordName, owner, func(node typ.Type) bool {
+		return isRecordApproximation(node, owner)
 	})
-	if body == owner {
-		return owner
-	}
-	self.SetBody(body)
-	return self
 }
 
 // isRecordApproximation reports whether t is an approximation of owner: a
@@ -944,22 +932,10 @@ func isRecordApproximation(t typ.Type, owner *typ.Record) bool {
 		shape = rr.Body
 	}
 	rec, ok := shape.(*typ.Record)
-	if !ok || !sameFieldNames(rec, owner) {
+	if !ok || !rec.HasSameFieldNames(owner) {
 		return false
 	}
 	return subtype.IsSubtype(t, owner)
-}
-
-func sameFieldNames(a, b *typ.Record) bool {
-	if len(a.Fields) != len(b.Fields) || a.HasMapComponent() != b.HasMapComponent() {
-		return false
-	}
-	for _, f := range a.Fields {
-		if b.GetField(f.Name) == nil {
-			return false
-		}
-	}
-	return true
 }
 
 func maybeWidenFunctionForConvergence(fn *typ.Function) *typ.Function {

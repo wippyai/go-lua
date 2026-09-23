@@ -254,3 +254,66 @@ func IsRecursiveRef(t Type, rec *Recursive) bool {
 	}
 	return false
 }
+
+// FoldApproximations returns mu X. t[T' := X], where T' ranges over the types
+// nested in t that isApprox accepts, or t itself when none is nested.
+//
+// Fixpoint inference approximates a self-embedding type as an ascending chain
+// T_0 <: T_1 <: ..., where T_n nests approximations of T_(n-1). Replacing the
+// nested approximations by the recursion variable yields an upper bound of the
+// whole chain and its limit.
+//
+// Only guarded occurrences are replaced. The root, and the members of a root
+// union or optional, are the unguarded top level of the body: replacing one of
+// them would produce mu X. X | ..., which is not contractive.
+func FoldApproximations(name string, t Type, isApprox func(Type) bool) Type {
+	if t == nil {
+		return t
+	}
+	self := NewRecursivePlaceholder(name)
+	body := foldGuarded(t, self, isApprox)
+	if body == t {
+		return t
+	}
+	self.SetBody(body)
+	return self
+}
+
+// foldGuarded rewrites the guarded positions of top: it descends through the
+// unguarded union and optional structure and replaces approximations only
+// below a type constructor.
+func foldGuarded(top Type, self *Recursive, isApprox func(Type) bool) Type {
+	switch tt := unwrapTransparentWrappers(top).(type) {
+	case *Union:
+		var members []Type
+		for i, m := range tt.Members {
+			folded := foldGuarded(m, self, isApprox)
+			if folded != m && members == nil {
+				members = make([]Type, len(tt.Members))
+				copy(members, tt.Members[:i])
+			}
+			if members != nil {
+				members[i] = folded
+			}
+		}
+		if members == nil {
+			return top
+		}
+		return NewUnion(members...)
+	case *Optional:
+		inner := foldGuarded(tt.Inner, self, isApprox)
+		if inner == tt.Inner {
+			return top
+		}
+		return NewOptional(inner)
+	}
+	return Rewrite(top, func(node Type) (Type, bool) {
+		if node == top {
+			return nil, false
+		}
+		if isApprox(node) {
+			return self, true
+		}
+		return nil, false
+	})
+}
