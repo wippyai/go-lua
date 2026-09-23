@@ -12,9 +12,12 @@ import (
 // namespace an embedder exposes for its builtin modules, so Channel<T> and
 // channel.Channel<T> both name the channel module's type.
 //
-// A name stays unbound when modules define it with different types; code
-// then names it module-qualified. Names already bound in s keep their
-// binding.
+// The types resolve in type positions only (LookupType), never where a type
+// name is written as a value (LookupValueType), so binding them cannot change
+// the meaning of a value expression such as type(x) or a table named like a
+// module type. A name stays unbound when modules define it with different
+// types; code then names it module-qualified. Names already bound in s keep
+// their binding.
 func (s *State) WithModuleTypes(manifests []*io.Manifest) *State {
 	if s == nil {
 		s = New()
@@ -61,7 +64,7 @@ func (s *State) WithModuleTypes(manifests []*io.Manifest) *State {
 		if _, ok := out.LookupType(name); ok {
 			continue
 		}
-		out = out.WithType(name, bound[name])
+		out = out.withModuleType(name, bound[name])
 	}
 	return out
 }

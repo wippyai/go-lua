@@ -405,7 +405,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 									link.OnTruthy = constraint.And(link.OnTruthy, constraint.FromConstraints(constraint.IsNil{Path: valuePath}))
 									var checkType typ.Type
 									if sc != nil {
-										if resolved, ok := sc.LookupType(callInfo.TypeCheckName); ok && resolved != nil {
+										if resolved, ok := sc.LookupValueType(callInfo.TypeCheckName); ok && resolved != nil {
 											checkType = resolve.Ref(resolved, sc)
 										}
 									}

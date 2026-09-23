@@ -309,7 +309,7 @@ func (p *Processor) resolveSelfTypeForMethod(
 	// The receiver value `T` is the class table; the instance/self contract
 	// lives in the type namespace binding with the same name.
 	if info != nil && info.FuncDef != nil && info.FuncDef.ReceiverName != "" && info.DefScope != nil {
-		if named, ok := info.DefScope.LookupType(info.FuncDef.ReceiverName); ok && named != nil {
+		if named, ok := info.DefScope.LookupValueType(info.FuncDef.ReceiverName); ok && named != nil {
 			selfType = named
 		}
 	}

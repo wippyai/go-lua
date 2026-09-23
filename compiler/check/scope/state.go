@@ -83,6 +83,10 @@ type State struct {
 	// Type namespace (complete - includes inherited)
 	types      *internal.HAMT[string, typ.Type]
 	typeParams *internal.HAMT[string, typ.Type]
+	// moduleTypes binds the types of builtin modules. They resolve in type
+	// positions only, after types; a type name written as a value never
+	// refers to them.
+	moduleTypes *internal.HAMT[string, typ.Type]
 
 	// Lexical metadata
 	locals  *internal.HAMT[string, bool]
@@ -107,14 +111,15 @@ type State struct {
 // New creates an empty root scope.
 func New() *State {
 	return &State{
-		types:      internal.New[string, typ.Type](),
-		typeParams: internal.New[string, typ.Type](),
-		locals:     internal.New[string, bool](),
-		mutated:    internal.New[string, bool](),
-		id:         nextScopeID(),
-		stamp:      nextScopeStamp(),
-		depth:      0,
-		parent:     nil,
+		types:       internal.New[string, typ.Type](),
+		typeParams:  internal.New[string, typ.Type](),
+		moduleTypes: internal.New[string, typ.Type](),
+		locals:      internal.New[string, bool](),
+		mutated:     internal.New[string, bool](),
+		id:          nextScopeID(),
+		stamp:       nextScopeStamp(),
+		depth:       0,
+		parent:      nil,
 	}
 }
 
@@ -205,6 +210,7 @@ func (s *State) computeHash() uint64 {
 		h = internal.HashCombine(h, typeHash(t))
 	}
 	h = internal.HashCombine(h, hashTypeMap(s.RangeTypes))
+	h = internal.HashCombine(h, hashTypeMap(s.rangeModuleTypes))
 	h = internal.HashCombine(h, hashTypeMap(s.RangeTypeParams))
 	h = internal.HashCombine(h, hashStringSet(s.RangeLocals))
 	h = internal.HashCombine(h, hashStringSet(s.RangeMutations))
@@ -264,6 +270,7 @@ func (s *State) Child() *State {
 	}
 	return &State{
 		types:        s.types,
+		moduleTypes:  s.moduleTypes,
 		typeParams:   s.typeParams,
 		locals:       internal.New[string, bool](),
 		mutated:      mutated,
@@ -297,6 +304,7 @@ func (s *State) WithLocalName(name string) *State {
 	}
 	return &State{
 		types:        s.types,
+		moduleTypes:  s.moduleTypes,
 		typeParams:   s.typeParams,
 		locals:       s.locals.Set(name, true),
 		mutated:      s.mutated,
@@ -327,6 +335,7 @@ func (s *State) WithLocalNames(names []string) *State {
 	}
 	return &State{
 		types:        s.types,
+		moduleTypes:  s.moduleTypes,
 		typeParams:   s.typeParams,
 		locals:       locals,
 		mutated:      s.mutated,
@@ -360,6 +369,7 @@ func (s *State) WithMutated(name string) *State {
 	}
 	return &State{
 		types:        s.types,
+		moduleTypes:  s.moduleTypes,
 		typeParams:   s.typeParams,
 		locals:       s.locals,
 		mutated:      s.mutated.Set(name, true),
@@ -390,6 +400,7 @@ func (s *State) WithMutatedNames(names []string) *State {
 	}
 	return &State{
 		types:        s.types,
+		moduleTypes:  s.moduleTypes,
 		typeParams:   s.typeParams,
 		locals:       s.locals,
 		mutated:      mutated,
@@ -409,7 +420,28 @@ func (s *State) LookupType(name string) (typ.Type, bool) {
 	if s == nil {
 		return nil, false
 	}
+	if t, ok := s.types.Get(name); ok {
+		return t, true
+	}
+	return s.moduleTypes.Get(name)
+}
+
+// LookupValueType resolves a type name written in value position, as in
+// Point(x), Point:is(x) or a type value exported from a module. Only types
+// the program declares and builtin type names qualify; builtin module types
+// are type-position names and never give a value expression a meaning.
+func (s *State) LookupValueType(name string) (typ.Type, bool) {
+	if s == nil {
+		return nil, false
+	}
 	return s.types.Get(name)
+}
+
+func (s *State) rangeModuleTypes(fn func(name string, t typ.Type) bool) {
+	if s == nil || fn == nil || s.moduleTypes == nil {
+		return
+	}
+	s.moduleTypes.Range(fn)
 }
 
 // MetaForName looks up a type definition by name and wraps it in Meta.
@@ -422,7 +454,7 @@ func (s *State) MetaForName(name string) *typ.Meta {
 			return nil
 		}
 	}
-	if t, ok := s.LookupType(name); ok {
+	if t, ok := s.LookupValueType(name); ok {
 		return typ.NewMeta(t)
 	}
 	return nil
@@ -435,6 +467,29 @@ func (s *State) WithType(name string, t typ.Type) *State {
 	}
 	return &State{
 		types:        s.types.Set(name, t),
+		moduleTypes:  s.moduleTypes,
+		typeParams:   s.typeParams,
+		locals:       s.locals,
+		mutated:      s.mutated,
+		id:           s.id,
+		stamp:        nextScopeStamp(),
+		depth:        s.depth,
+		name:         s.name,
+		parent:       s.parent,
+		selfType:     s.selfType,
+		variadicType: s.variadicType,
+		returnTypes:  s.returnTypes,
+	}
+}
+
+// withModuleType returns new state with a builtin module type bound.
+func (s *State) withModuleType(name string, t typ.Type) *State {
+	if s == nil {
+		s = New()
+	}
+	return &State{
+		types:        s.types,
+		moduleTypes:  s.moduleTypes.Set(name, t),
 		typeParams:   s.typeParams,
 		locals:       s.locals,
 		mutated:      s.mutated,
@@ -460,6 +515,7 @@ func (s *State) WithTypes(types map[string]typ.Type) *State {
 	}
 	return &State{
 		types:        tables,
+		moduleTypes:  s.moduleTypes,
 		typeParams:   s.typeParams,
 		locals:       s.locals,
 		mutated:      s.mutated,
@@ -493,6 +549,7 @@ func (s *State) WithTypeParams(params map[string]typ.Type) *State {
 	}
 	return &State{
 		types:        s.types,
+		moduleTypes:  s.moduleTypes,
 		typeParams:   typeParams,
 		locals:       s.locals,
 		mutated:      s.mutated,
@@ -514,6 +571,7 @@ func (s *State) WithName(name string) *State {
 	}
 	return &State{
 		types:        s.types,
+		moduleTypes:  s.moduleTypes,
 		typeParams:   s.typeParams,
 		locals:       s.locals,
 		mutated:      s.mutated,
@@ -543,6 +601,7 @@ func (s *State) WithSelf(self typ.Type) *State {
 	}
 	return &State{
 		types:        s.types,
+		moduleTypes:  s.moduleTypes,
 		typeParams:   s.typeParams,
 		locals:       s.locals,
 		mutated:      s.mutated,
@@ -572,6 +631,7 @@ func (s *State) WithVariadic(t typ.Type) *State {
 	}
 	return &State{
 		types:        s.types,
+		moduleTypes:  s.moduleTypes,
 		typeParams:   s.typeParams,
 		locals:       s.locals,
 		mutated:      s.mutated,
@@ -605,6 +665,7 @@ func (s *State) WithReturn(types []typ.Type) *State {
 	copy(ret, types)
 	return &State{
 		types:        s.types,
+		moduleTypes:  s.moduleTypes,
 		typeParams:   s.typeParams,
 		locals:       s.locals,
 		mutated:      s.mutated,
