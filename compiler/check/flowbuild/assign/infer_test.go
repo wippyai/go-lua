@@ -2,6 +2,7 @@ package assign
 
 import (
 	"testing"
+	"time"
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
@@ -214,6 +215,58 @@ func TestJoinInferredType_StopsRecursiveNestingGrowth(t *testing.T) {
 	got := joinInferredType(old, next)
 	if !typ.TypeEquals(got, old) {
 		t.Fatalf("joinInferredType(any[], any[][]) = %v, want %v", got, old)
+	}
+}
+
+// sharedLadder builds a type DAG of the given depth in which every level is a
+// union of two records that both point at the previous level. The DAG holds
+// 3*depth nodes while its tree expansion holds 2^depth paths, the shape that
+// SCC inference produces for a local reassigned as `v = { key = v }` in
+// several branches.
+func sharedLadder(depth int, leaf typ.Type) typ.Type {
+	level := leaf
+	for i := 0; i < depth; i++ {
+		level = typ.NewUnion(
+			typ.NewRecord().Field("left", level).Build(),
+			typ.NewRecord().Field("right", level).Build(),
+		)
+	}
+	return level
+}
+
+func typeContainsWithin(t *testing.T, bound time.Duration, haystack, needle typ.Type) bool {
+	t.Helper()
+	done := make(chan bool, 1)
+	go func() { done <- typeContains(haystack, needle) }()
+	select {
+	case got := <-done:
+		return got
+	case <-time.After(bound):
+		t.Fatalf("typeContains did not finish within %v on a %T haystack", bound, haystack)
+		return false
+	}
+}
+
+func TestTypeContains_VisitsSharedSubstructureOnce(t *testing.T) {
+	leaf := typ.NewRecord().Field("leaf", typ.String).Build()
+	haystack := sharedLadder(60, leaf)
+
+	if typeContainsWithin(t, 10*time.Second, haystack, typ.Boolean) {
+		t.Fatal("expected boolean to be absent from the ladder")
+	}
+	if !typeContainsWithin(t, 10*time.Second, haystack, leaf) {
+		t.Fatal("expected the leaf record to be found at the bottom of the ladder")
+	}
+}
+
+func TestTypeContains_FindsNeedleBelowDefaultRecursionDepth(t *testing.T) {
+	leaf := typ.NewRecord().Field("leaf", typ.String).Build()
+	var nested typ.Type = leaf
+	for i := 0; i < 2*typ.DefaultRecursionDepth; i++ {
+		nested = typ.NewArray(nested)
+	}
+	if !typeContainsWithin(t, 10*time.Second, nested, leaf) {
+		t.Fatal("expected the leaf record to be found under deep array nesting")
 	}
 }
 

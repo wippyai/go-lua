@@ -1096,21 +1096,28 @@ func joinInferredType(old, next typ.Type) typ.Type {
 	return typ.JoinPreferNonSoft(old, next)
 }
 
+// typeContains reports whether needle occurs anywhere inside haystack.
+//
+// Inferred types are DAGs: SCC inference of a local reassigned as `v = { k = v }`
+// on several branches builds each round's union from records that all share the
+// previous round's type, so the tree expansion is exponential in the number of
+// rounds while the DAG stays linear. The search is a reachability walk that
+// visits every node once; the visited set also terminates it on cyclic types.
 func typeContains(haystack, needle typ.Type) bool {
 	if haystack == nil || needle == nil {
 		return false
 	}
-	return typeContainsDepth(haystack, needle, typ.NewGuard())
+	return typeContainsVisit(haystack, needle, make(map[typ.Type]struct{}))
 }
 
-func typeContainsDepth(haystack, needle typ.Type, guard internal.RecursionGuard) bool {
-	if haystack == nil || needle == nil {
+func typeContainsVisit(haystack, needle typ.Type, visited map[typ.Type]struct{}) bool {
+	if haystack == nil {
 		return false
 	}
-	next, ok := guard.Enter(haystack)
-	if !ok {
+	if _, seen := visited[haystack]; seen {
 		return false
 	}
+	visited[haystack] = struct{}{}
 	if typ.TypeEquals(haystack, needle) {
 		return true
 	}
@@ -1127,72 +1134,72 @@ func typeContainsDepth(haystack, needle typ.Type, guard internal.RecursionGuard)
 
 	switch tt := node.(type) {
 	case *typ.Optional:
-		return typeContainsDepth(tt.Inner, needle, next)
+		return typeContainsVisit(tt.Inner, needle, visited)
 	case *typ.Union:
 		for _, m := range tt.Members {
-			if typeContainsDepth(m, needle, next) {
+			if typeContainsVisit(m, needle, visited) {
 				return true
 			}
 		}
 		return false
 	case *typ.Intersection:
 		for _, m := range tt.Members {
-			if typeContainsDepth(m, needle, next) {
+			if typeContainsVisit(m, needle, visited) {
 				return true
 			}
 		}
 		return false
 	case *typ.Array:
-		return typeContainsDepth(tt.Element, needle, next)
+		return typeContainsVisit(tt.Element, needle, visited)
 	case *typ.Map:
-		return typeContainsDepth(tt.Key, needle, next) || typeContainsDepth(tt.Value, needle, next)
+		return typeContainsVisit(tt.Key, needle, visited) || typeContainsVisit(tt.Value, needle, visited)
 	case *typ.Tuple:
 		for _, e := range tt.Elements {
-			if typeContainsDepth(e, needle, next) {
+			if typeContainsVisit(e, needle, visited) {
 				return true
 			}
 		}
 		return false
 	case *typ.Function:
 		for _, p := range tt.Params {
-			if typeContainsDepth(p.Type, needle, next) {
+			if typeContainsVisit(p.Type, needle, visited) {
 				return true
 			}
 		}
 		for _, r := range tt.Returns {
-			if typeContainsDepth(r, needle, next) {
+			if typeContainsVisit(r, needle, visited) {
 				return true
 			}
 		}
 		if tt.Variadic != nil {
-			return typeContainsDepth(tt.Variadic, needle, next)
+			return typeContainsVisit(tt.Variadic, needle, visited)
 		}
 		return false
 	case *typ.Record:
 		for _, f := range tt.Fields {
-			if typeContainsDepth(f.Type, needle, next) {
+			if typeContainsVisit(f.Type, needle, visited) {
 				return true
 			}
 		}
-		if tt.Metatable != nil && typeContainsDepth(tt.Metatable, needle, next) {
+		if tt.Metatable != nil && typeContainsVisit(tt.Metatable, needle, visited) {
 			return true
 		}
 		if tt.HasMapComponent() {
-			return typeContainsDepth(tt.MapKey, needle, next) || typeContainsDepth(tt.MapValue, needle, next)
+			return typeContainsVisit(tt.MapKey, needle, visited) || typeContainsVisit(tt.MapValue, needle, visited)
 		}
 		return false
 	case *typ.Alias:
-		return typeContainsDepth(tt.Target, needle, next)
+		return typeContainsVisit(tt.Target, needle, visited)
 	case *typ.Instantiated:
 		for _, a := range tt.TypeArgs {
-			if typeContainsDepth(a, needle, next) {
+			if typeContainsVisit(a, needle, visited) {
 				return true
 			}
 		}
 		return false
 	case *typ.Interface:
 		for _, m := range tt.Methods {
-			if m.Type != nil && typeContainsDepth(m.Type, needle, next) {
+			if m.Type != nil && typeContainsVisit(m.Type, needle, visited) {
 				return true
 			}
 		}
