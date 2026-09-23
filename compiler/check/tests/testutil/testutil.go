@@ -79,19 +79,18 @@ func NewChecker(opts ...Option) *check.Checker {
 		}
 	}
 
+	manifests := make([]*io.Manifest, 0, len(cfg.Manifests))
 	for _, manifest := range cfg.Manifests {
-		if stdlibScope == nil {
-			stdlibScope = scope.New()
-		}
+		manifests = append(manifests, manifest)
 		if manifest.Export != nil {
 			globalTypes[manifest.Path] = manifest.Export
-		}
-		for name, t := range manifest.Types {
-			stdlibScope = stdlibScope.WithType(name, t)
 		}
 		for name, t := range manifest.AllGlobals() {
 			globalTypes[name] = t
 		}
+	}
+	if len(manifests) > 0 {
+		stdlibScope = stdlibScope.WithModuleTypes(manifests)
 	}
 
 	for name, t := range cfg.Types {
