@@ -65,12 +65,6 @@ import (
 
 // isSubtype is the internal implementation of IsSubtype.
 func isSubtype(sub, super typ.Type) bool {
-	if sub != nil {
-		sub = typ.PruneSoftUnionMembers(sub)
-	}
-	if super != nil {
-		super = typ.PruneSoftUnionMembers(super)
-	}
 	c := &checker{}
 	return c.check(sub, super, 0)
 }

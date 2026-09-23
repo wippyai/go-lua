@@ -2261,3 +2261,24 @@ func TestNormalizeIntersectionDeepDistribution(t *testing.T) {
 		t.Error("intersection distribution should produce a result")
 	}
 }
+
+// A map whose values are any is a real member of a union, not a placeholder:
+// the union admits every type its map member admits, and a union holding it
+// is a subtype only if the map member is.
+func TestUnionWithAnyValuedMapMember(t *testing.T) {
+	anyMap := typ.NewMap(typ.String, typ.Any)
+	shape := typ.NewRecord().Field("kind", typ.String).Build()
+
+	if !IsSubtype(shape, anyMap) {
+		t.Fatal("record with string keys must subtype {[string]: any}")
+	}
+	if !IsSubtype(shape, typ.NewUnion(anyMap, typ.Integer)) {
+		t.Fatal("record must subtype a union whose map member it subtypes")
+	}
+	if !IsSubtype(shape, typ.NewOptional(anyMap)) {
+		t.Fatal("record must subtype the optional map")
+	}
+	if IsSubtype(typ.NewUnion(anyMap, typ.Integer), typ.Integer) {
+		t.Fatal("union with a map member must not subtype integer")
+	}
+}
