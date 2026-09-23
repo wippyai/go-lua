@@ -380,6 +380,29 @@ func TestEncodeDecode_Record(t *testing.T) {
 		}
 	})
 
+	t.Run("field-flags", func(t *testing.T) {
+		original := typ.NewRecord().
+			Field("name", typ.String).
+			OptField("age", typ.Integer).
+			ReadonlyField("id", typ.Number).
+			OptReadonlyField("cursor", typ.Integer).
+			Build()
+
+		data, err := Encode(original)
+		if err != nil {
+			t.Fatalf("Encode: %v", err)
+		}
+
+		decoded, err := Decode(data)
+		if err != nil {
+			t.Fatalf("Decode: %v", err)
+		}
+
+		if !typ.TypeEquals(decoded, original) {
+			t.Errorf("expected %s, got %s", original, decoded)
+		}
+	})
+
 	t.Run("with-metatable", func(t *testing.T) {
 		meta := typ.NewRecord().
 			Field("__index", typ.Any).

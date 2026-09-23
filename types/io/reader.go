@@ -299,6 +299,8 @@ func (r *typeReader) readType() typ.Type {
 			readonly := r.readBool()
 
 			switch {
+			case readonly && optional:
+				rb.OptReadonlyField(name, fType)
 			case readonly:
 				rb.ReadonlyField(name, fType)
 			case optional:
