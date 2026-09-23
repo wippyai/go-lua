@@ -433,3 +433,79 @@ func TestMaybeWidenTypeForConvergence_KeepsRecordsWithOtherFields(t *testing.T) 
 		t.Fatalf("a nested record with different fields is not an approximation of the table, got %s", widened)
 	}
 }
+
+func TestJoinParamHint_WidenedFieldJoinsToUpperBound(t *testing.T) {
+	narrow := typ.NewRecord().
+		Field("route", typ.Func().Returns(typ.Nil).Build()).
+		Build()
+	wide := typ.NewRecord().
+		Field("route", typ.Func().Returns(typ.NewOptional(typ.Boolean)).Build()).
+		Build()
+
+	for _, got := range []typ.Type{joinParamHint(narrow, wide), joinParamHint(wide, narrow)} {
+		if !typ.TypeEquals(got, wide) {
+			t.Fatalf("expected the wider record %s, got %s", wide, got)
+		}
+	}
+}
+
+func TestJoinParamHint_KeepsFieldsDiscoveredByEitherIteration(t *testing.T) {
+	earlier := typ.NewRecord().
+		Field("route", typ.Func().Returns(typ.Nil).Build()).
+		Build()
+	later := typ.NewRecord().
+		Field("route", typ.Func().Returns(typ.NewOptional(typ.Boolean)).Build()).
+		Field("name", typ.String).
+		Build()
+
+	for _, got := range []typ.Type{joinParamHint(earlier, later), joinParamHint(later, earlier)} {
+		if !typ.TypeEquals(got, later) {
+			t.Fatalf("expected %s, got %s", later, got)
+		}
+	}
+}
+
+func TestJoinParamHint_UnknownFieldYieldsToResolvedField(t *testing.T) {
+	card := typ.NewRecord().Field("name", typ.String).Build()
+	earlier := typ.NewRecord().SetOpen(true).
+		Field("card", typ.Unknown).
+		Field("limit", typ.Integer).
+		Build()
+	later := typ.NewRecord().SetOpen(true).
+		Field("card", card).
+		Field("limit", typ.Integer).
+		Build()
+
+	for _, got := range []typ.Type{joinParamHint(earlier, later), joinParamHint(later, earlier)} {
+		if !typ.TypeEquals(got, later) {
+			t.Fatalf("expected %s, got %s", later, got)
+		}
+	}
+}
+
+func TestJoinParamHint_KeepsPreviousHintWhenItAdmitsTheCurrentOne(t *testing.T) {
+	narrow := typ.NewRecord().ReadonlyField("size", typ.Integer).Build()
+	wide := typ.NewRecord().ReadonlyField("size", typ.Number).Build()
+	previous := typ.NewUnion(typ.String, narrow, wide)
+	current := typ.NewUnion(typ.String, wide)
+	if !subtype.IsSubtype(previous, current) || !subtype.IsSubtype(current, previous) {
+		t.Fatal("test hints must be equivalent")
+	}
+
+	if got := joinParamHint(previous, current); got != previous {
+		t.Fatalf("expected the previous hint %s, got %s", previous, got)
+	}
+	if got := joinParamHint(current, previous); got != current {
+		t.Fatalf("expected the previous hint %s, got %s", current, got)
+	}
+}
+
+func TestJoinParamHint_UnknownYieldsToHintWithPlaceholderMembers(t *testing.T) {
+	withPlaceholder := typ.NewUnion(typ.NewRecord().SetOpen(true).Build(), typ.NewMap(typ.String, typ.Any))
+
+	for _, got := range []typ.Type{joinParamHint(typ.Unknown, withPlaceholder), joinParamHint(withPlaceholder, typ.Unknown)} {
+		if !typ.TypeEquals(got, withPlaceholder) {
+			t.Fatalf("expected %s, got %s", withPlaceholder, got)
+		}
+	}
+}

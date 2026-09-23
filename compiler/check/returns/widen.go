@@ -406,6 +406,16 @@ func joinParamHintVectors(a, b []typ.Type) []typ.Type {
 	return result
 }
 
+// joinParamHint joins the hint for one parameter from the previous iteration
+// with the hint from the current one. Both describe the same call sites, the
+// current one under better-resolved facts, so the join follows the
+// information order of inference:
+//   - an unresolved hint (nil, unknown or a soft placeholder) yields to a
+//     resolved one, and soft placeholder members drop out of unions;
+//   - records join field by field, keeping fields that only one iteration
+//     has discovered;
+//   - resolved types otherwise join to their upper bound, so a hint that
+//     widened between iterations admits the arguments of both.
 func joinParamHint(a, b typ.Type) typ.Type {
 	if a == nil {
 		return b
@@ -419,13 +429,113 @@ func joinParamHint(a, b typ.Type) typ.Type {
 	if unwrap.IsNilType(b) && !unwrap.IsNilType(a) {
 		return a
 	}
-	if TypeExtendsRecord(a, b) {
+	if typ.IsUnknown(a) {
+		return b
+	}
+	if typ.IsUnknown(b) {
 		return a
 	}
-	if TypeExtendsRecord(b, a) {
+	a = typ.PruneSoftUnionMembers(a)
+	b = typ.PruneSoftUnionMembers(b)
+	softA := typ.IsSoft(a, typ.SoftPlaceholderPolicy)
+	softB := typ.IsSoft(b, typ.SoftPlaceholderPolicy)
+	if softA && !softB {
+		return b
+	}
+	if softB && !softA {
+		return a
+	}
+	if joined, ok := joinRecordParamHints(a, b); ok {
+		return joined
+	}
+	// The previous hint stays while it admits the current one, so equivalent
+	// hints with different spellings do not alternate between iterations.
+	if subtype.IsSubtype(b, a) {
+		return a
+	}
+	if subtype.IsSubtype(a, b) {
 		return b
 	}
 	return typ.JoinPreferNonSoft(a, b)
+}
+
+// joinRecordParamHints joins two record hints field by field with
+// joinParamHint. Records with different map-component shapes or conflicting
+// metatables are not joined here.
+func joinRecordParamHints(a, b typ.Type) (typ.Type, bool) {
+	ar, ok := a.(*typ.Record)
+	if !ok {
+		return nil, false
+	}
+	br, ok := b.(*typ.Record)
+	if !ok {
+		return nil, false
+	}
+	if ar.HasMapComponent() != br.HasMapComponent() {
+		return nil, false
+	}
+	metatable := ar.Metatable
+	switch {
+	case metatable == nil:
+		metatable = br.Metatable
+	case br.Metatable != nil && !typ.TypeEquals(metatable, br.Metatable):
+		return nil, false
+	}
+
+	// The join reuses an input record it equals, so unchanged hints keep their
+	// identity across iterations.
+	sameAsA := ar.Metatable == metatable && ar.Open == (ar.Open || br.Open)
+	sameAsB := br.Metatable == metatable && br.Open == (ar.Open || br.Open)
+
+	builder := typ.NewRecord().SetOpen(ar.Open || br.Open)
+	if metatable != nil {
+		builder.Metatable(metatable)
+	}
+	if ar.HasMapComponent() {
+		key := joinParamHint(ar.MapKey, br.MapKey)
+		value := joinParamHint(ar.MapValue, br.MapValue)
+		sameAsA = sameAsA && key == ar.MapKey && value == ar.MapValue
+		sameAsB = sameAsB && key == br.MapKey && value == br.MapValue
+		builder.MapComponent(key, value)
+	}
+	for _, fa := range ar.Fields {
+		field := fa
+		fb := br.GetField(fa.Name)
+		if fb != nil {
+			field.Type = joinParamHint(fa.Type, fb.Type)
+			field.Optional = fa.Optional || fb.Optional
+			field.Readonly = fa.Readonly && fb.Readonly
+		}
+		sameAsA = sameAsA && field == fa
+		sameAsB = sameAsB && fb != nil && field == *fb
+		addParamHintField(builder, field)
+	}
+	for _, fb := range br.Fields {
+		if ar.GetField(fb.Name) == nil {
+			sameAsA = false
+			addParamHintField(builder, fb)
+		}
+	}
+	switch {
+	case sameAsA:
+		return a, true
+	case sameAsB:
+		return b, true
+	}
+	return builder.Build(), true
+}
+
+func addParamHintField(builder *typ.RecordBuilder, f typ.Field) {
+	switch {
+	case f.Optional && f.Readonly:
+		builder.OptReadonlyField(f.Name, f.Type)
+	case f.Optional:
+		builder.OptField(f.Name, f.Type)
+	case f.Readonly:
+		builder.ReadonlyField(f.Name, f.Type)
+	default:
+		builder.Field(f.Name, f.Type)
+	}
 }
 
 // WidenLiteralSigs merges two literal signature maps.
