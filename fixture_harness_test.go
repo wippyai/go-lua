@@ -14,7 +14,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
 	"github.com/wippyai/go-lua/types/diag"
 	"github.com/wippyai/go-lua/types/io"
-	"github.com/wippyai/go-lua/types/typ"
 )
 
 // Suite describes a fixture suite loaded from manifest.json.
@@ -22,7 +21,7 @@ type fixtureSuite struct {
 	Description string        `json:"description,omitempty"`
 	Files       []string      `json:"files,omitempty"`
 	Stdlib      *bool         `json:"stdlib,omitempty"`
-	Packages    []string      `json:"packages,omitempty"` // predefined system packages: "channel", "process", "time", "funcs"
+	Packages    []string      `json:"packages,omitempty"` // predefined system packages: "channel", "funcs", "process", "time"
 	Check       *fixtureCheck `json:"check,omitempty"`
 	Run         *fixtureRun   `json:"run,omitempty"`
 	Bench       *fixtureBench `json:"bench,omitempty"`
@@ -394,39 +393,13 @@ func resolvePackageManifest(name string) *io.Manifest {
 		return testutil.ChannelManifest()
 	case "funcs":
 		return testutil.FuncsManifest()
+	case "process":
+		return testutil.ProcessManifest()
 	case "time":
-		return fixtureTimeManifest()
+		return testutil.TimeManifest()
 	default:
 		return nil
 	}
-}
-
-func fixtureTimeManifest() *io.Manifest {
-	m := io.NewManifest("time")
-
-	durationType := typ.NewInterface("time.Duration", []typ.Method{
-		{Name: "seconds", Type: typ.Func().Param("self", typ.Self).Returns(typ.Number).Build()},
-	})
-
-	timeType := typ.NewInterface("time.Time", []typ.Method{
-		{Name: "sub", Type: typ.Func().Param("self", typ.Self).Param("t", typ.Self).Returns(durationType).Build()},
-		{Name: "add", Type: typ.Func().Param("self", typ.Self).Param("d", durationType).Returns(typ.Self).Build()},
-		{Name: "unix", Type: typ.Func().Param("self", typ.Self).Returns(typ.Integer).Build()},
-	})
-
-	m.DefineType("Time", timeType)
-	m.DefineType("Duration", durationType)
-
-	channelGeneric, _ := testutil.ChannelManifest().LookupType("Channel")
-	timeChannel := typ.Instantiate(channelGeneric.(*typ.Generic), timeType)
-
-	moduleType := typ.NewInterface("time", []typ.Method{
-		{Name: "now", Type: typ.Func().Returns(timeType).Build()},
-		{Name: "after", Type: typ.Func().Param("d", typ.Any).Returns(timeChannel).Build()},
-	})
-	m.SetExport(moduleType)
-
-	return m
 }
 
 // installRequire sets up a require() global that loads modules from the given source map.

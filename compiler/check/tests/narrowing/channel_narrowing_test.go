@@ -230,20 +230,8 @@ func TestChannelSelectNarrowing_NestedFieldWrongAccess(t *testing.T) {
 // TestChannelSelectNarrowing_FunctionReturnTypes tests with channels from function returns.
 func TestChannelSelectNarrowing_FunctionReturnTypes(t *testing.T) {
 	chManifest := testutil.ChannelManifest()
-	channelGen, _ := chManifest.LookupType("Channel")
-	channelGeneric := channelGen.(*typ.Generic)
-
-	eventType := typ.NewRecord().
-		Field("kind", typ.String).
-		OptField("result", typ.Any).
-		Build()
-
-	timeType := typ.NewInterface("Time", []typ.Method{
-		{Name: "unix", Type: typ.Func().Param("self", typ.Self).Returns(typ.Integer).Build()},
-	})
-
-	processManifest := testutil.ProcessManifest(channelGeneric, eventType)
-	timeManifest := testutil.TimeManifest(channelGeneric, timeType)
+	processManifest := testutil.ProcessManifest()
+	timeManifest := testutil.TimeManifest()
 
 	source := `
 		function main()
