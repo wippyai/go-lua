@@ -1,0 +1,1 @@
+{"description":"A table-field helper can rebind the captured receiver after dereferencing its argument.","check":{"errors":1}}
