@@ -312,6 +312,15 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 				if assignedType == nil {
 					assignedType = typ.Unknown
 				}
+				// A later field write can give an unannotated local a partial
+				// inferred record before this initializer is emitted. When the
+				// initializer itself is dynamic, that partial record cannot
+				// replace its other unknown runtime fields.
+				if info.IsLocal && source != nil && wrappedSynth != nil && typ.IsAny(wrappedSynth(source, p)) {
+					if _, partialRecord := unwrap.Alias(assignedType).(*typ.Record); partialRecord {
+						assignedType = typ.Any
+					}
+				}
 
 				// Use pre-collected spec-narrowed type if available (via SymbolID)
 				if narrowed, ok := specNarrowed[sym]; ok {
