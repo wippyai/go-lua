@@ -146,6 +146,7 @@ func RunScope(input ScopeInput) ScopeOutput {
 		base,
 		input.Types,
 		input.Manifests,
+		input.ModuleAliases,
 	)
 
 	localTypeAnnotations := make(map[cfg.SymbolID]ast.TypeExpr)

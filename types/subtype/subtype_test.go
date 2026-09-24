@@ -2341,7 +2341,9 @@ func TestRecordFieldsReachedThroughMetatableIndex(t *testing.T) {
 // A session decides each query as IsSubtype does and keeps its decisions for
 // later queries.
 func TestSession_AgreesWithIsSubtype(t *testing.T) {
-	rec := func(v typ.Type) typ.Type { return typ.NewRecord().Field("f", typ.Func().Param("x", v).Returns(v).Build()).Build() }
+	rec := func(v typ.Type) typ.Type {
+		return typ.NewRecord().Field("f", typ.Func().Param("x", v).Returns(v).Build()).Build()
+	}
 	pairs := [][2]typ.Type{
 		{typ.Integer, typ.Number}, {typ.Number, typ.Integer},
 		{rec(typ.String), rec(typ.String)}, {rec(typ.String), rec(typ.Number)},

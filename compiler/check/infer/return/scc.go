@@ -30,13 +30,17 @@ func (i *Inferencer) iterateSCCFixpoint(
 func (i *Inferencer) planLocalFunctionSCCs(localFuncs map[cfg.SymbolID]*returns.LocalFuncInfo) [][]cfg.SymbolID {
 	// Propagate inter-procedural parameter hints across local call edges before
 	// SCC return inference so unannotated params get stable callsite-driven seeds.
-	returns.PropagateParamHintsFromCallGraph(localFuncs)
-
+	var sigEnv returns.SignatureEnv
 	var moduleBindings *bind.BindingTable
-	if i != nil && i.store != nil {
-		moduleBindings = i.store.ModuleBindings()
+	if i != nil {
+		sigEnv.Manifests = i.manifests
+		if i.store != nil {
+			moduleBindings = i.store.ModuleBindings()
+			sigEnv.ModuleAliases = i.store.ModuleAliases()
+		}
 	}
-	adj := returns.BuildLocalCallGraph(localFuncs, moduleBindings)
+	returns.PropagateParamHintsFromCallGraph(localFuncs, sigEnv)
+	adj := returns.BuildLocalCallGraph(localFuncs, moduleBindings, sigEnv)
 	return returns.ComputeSymbolSCCs(adj)
 }
 

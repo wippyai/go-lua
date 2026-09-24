@@ -8,7 +8,9 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	checkcallsite "github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/infer/paramhints"
+	"github.com/wippyai/go-lua/compiler/check/modules"
 	synthresolve "github.com/wippyai/go-lua/compiler/check/synth/phase/resolve"
+	"github.com/wippyai/go-lua/types/io"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
@@ -54,7 +56,16 @@ func canonicalLocalCalleeSymbol(
 	return selected
 }
 
-func buildLocalSignatureResolver(localFuncs map[cfg.SymbolID]*LocalFuncInfo) func(cfg.SymbolID) *typ.Function {
+// SignatureEnv is the module context that resolves the annotations of local
+// function signatures: the manifests of required modules and the module
+// aliases visible from the enclosing chunk, which qualified names such as
+// alias.T refer to.
+type SignatureEnv struct {
+	Manifests     io.ManifestQuerier
+	ModuleAliases map[cfg.SymbolID]string
+}
+
+func buildLocalSignatureResolver(localFuncs map[cfg.SymbolID]*LocalFuncInfo, env SignatureEnv) func(cfg.SymbolID) *typ.Function {
 	sigCache := make(map[cfg.SymbolID]*typ.Function, len(localFuncs))
 	return func(sym cfg.SymbolID) *typ.Function {
 		if sym == 0 {
@@ -74,7 +85,12 @@ func buildLocalSignatureResolver(localFuncs map[cfg.SymbolID]*LocalFuncInfo) fun
 		if info.Graph != nil {
 			bindings = info.Graph.Bindings()
 		}
-		resolver := synthresolve.New(synthresolve.Config{Bindings: bindings})
+		resolver := synthresolve.New(synthresolve.Config{
+			Manifests:      env.Manifests,
+			Bindings:       bindings,
+			ModuleBindings: bindings,
+			ModuleAliases:  modules.MergeAliases(env.ModuleAliases, modules.CollectAliases(info.Graph)),
+		})
 		sig := resolver.ResolveFunctionSignature(info.Fn, info.DefScope)
 		sigCache[sym] = sig
 		return sig
@@ -97,7 +113,7 @@ func buildLocalSignatureResolver(localFuncs map[cfg.SymbolID]*LocalFuncInfo) fun
 //
 // Hints are accumulated using typ.JoinPreferNonSoft, producing union types when a parameter
 // is called with multiple different types across call sites.
-func PropagateParamHintsFromCallGraph(localFuncs map[cfg.SymbolID]*LocalFuncInfo) {
+func PropagateParamHintsFromCallGraph(localFuncs map[cfg.SymbolID]*LocalFuncInfo, env SignatureEnv) {
 	if len(localFuncs) == 0 {
 		return
 	}
@@ -122,7 +138,7 @@ func PropagateParamHintsFromCallGraph(localFuncs map[cfg.SymbolID]*LocalFuncInfo
 		}
 	}
 
-	resolveLocalSignature := buildLocalSignatureResolver(localFuncs)
+	resolveLocalSignature := buildLocalSignatureResolver(localFuncs, env)
 
 	parentGraphs := make(map[uint64]*cfg.Graph)
 	moduleBindings := (*bind.BindingTable)(nil)
@@ -290,6 +306,7 @@ func mergeFunctionParamHints(target *LocalFuncInfo, expectedFn *typ.Function) bo
 func BuildLocalCallGraph(
 	localFuncs map[cfg.SymbolID]*LocalFuncInfo,
 	moduleBindings *bind.BindingTable,
+	env SignatureEnv,
 ) map[cfg.SymbolID][]cfg.SymbolID {
 	adj := make(map[cfg.SymbolID][]cfg.SymbolID, len(localFuncs))
 
@@ -297,7 +314,7 @@ func BuildLocalCallGraph(
 		return canonicalLocalCalleeSymbol(localFuncs, graph, moduleBindings, bindings, callInfo)
 	}
 
-	resolveLocalSignature := buildLocalSignatureResolver(localFuncs)
+	resolveLocalSignature := buildLocalSignatureResolver(localFuncs, env)
 
 	addEdge := func(seen map[cfg.SymbolID]bool, callees *[]cfg.SymbolID, sym cfg.SymbolID) {
 		if sym == 0 {

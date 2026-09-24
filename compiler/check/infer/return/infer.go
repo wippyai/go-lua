@@ -209,7 +209,7 @@ func (i *Inferencer) ComputeForGraph(
 
 	parentScope := api.ParentScopeForGraph(i.store, graph.ID(), parent)
 
-	engine := phase.CreateTypeResolutionEngine(run.Ctx, graph, i.globalTypes, nil, parentScope, i.types, i.manifests)
+	engine := phase.CreateTypeResolutionEngine(run.Ctx, graph, i.globalTypes, nil, parentScope, i.types, i.manifests, i.store.ModuleAliases())
 	pointScopes := scope.BuildTypeDefScopes(graph, parentScope, engine.ResolveTypeDef)
 	localFuncs := i.collectLocalFunctions(graph, pointScopes, graph.Func())
 	if len(localFuncs) == 0 {
@@ -486,7 +486,7 @@ func (i *Inferencer) inferReturnWithSummary(
 	parentScope := info.DefScope
 	moduleAliases := modules.MergeAliases(i.store.ModuleAliases(), modules.CollectAliases(fnGraph))
 
-	engine := phase.CreateTypeResolutionEngine(run.Ctx, fnGraph, i.globalTypes, nil, parentScope, i.types, i.manifests)
+	engine := phase.CreateTypeResolutionEngine(run.Ctx, fnGraph, i.globalTypes, nil, parentScope, i.types, i.manifests, moduleAliases)
 
 	resolveScope := parentScope
 	if len(fn.TypeParams) > 0 {

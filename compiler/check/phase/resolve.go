@@ -60,6 +60,9 @@ func RunResolve(input ResolveInput) ResolveOutput {
 }
 
 // CreateTypeResolutionEngine creates an engine for type resolution with param types.
+// moduleAliases carries the module aliases visible from enclosing graphs (the
+// chunk's local x = require("m")); they resolve qualified type names such as
+// x.T in the annotations of graph, together with the aliases graph declares.
 func CreateTypeResolutionEngine(
 	ctx *db.QueryContext,
 	graph *cfg.Graph,
@@ -68,6 +71,7 @@ func CreateTypeResolutionEngine(
 	base *scope.State,
 	types core.TypeOps,
 	manifests io.ManifestQuerier,
+	moduleAliases map[cfg.SymbolID]string,
 ) *synth.Engine {
 	checkCtx := api.NewDeclaredEnv(api.DeclaredEnvConfig{
 		Graph:         graph,
@@ -83,7 +87,7 @@ func CreateTypeResolutionEngine(
 		Env:            checkCtx,
 		Phase:          api.PhaseTypeResolution,
 		ModuleBindings: graph.Bindings(),
-		ModuleAliases:  modules.CollectAliases(graph),
+		ModuleAliases:  modules.MergeAliases(moduleAliases, modules.CollectAliases(graph)),
 	})
 }
 
