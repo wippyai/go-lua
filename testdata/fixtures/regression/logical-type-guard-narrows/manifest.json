@@ -1,0 +1,4 @@
+{
+  "description": "A type() guard on the left of and/or narrows the right operand.",
+  "files": ["main.lua"]
+}

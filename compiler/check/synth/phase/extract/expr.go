@@ -469,6 +469,18 @@ func (s *Synthesizer) synthLogicalOpCore(ex *ast.LogicalOpExpr, recurse ExprSynt
 func (s *Synthesizer) synthLogicalOpWithNarrowing(ex *ast.LogicalOpExpr, p cfg.Point, sc *scope.State, narrower api.FlowOps, recurse ExprSynth) typ.Type {
 	left := recurse(ex.Lhs)
 
+	// A type() guard on the left narrows the value it tests for the right
+	// operand: `type(x) == "k" and x` sees x as k, as does `type(x) ~= "k" or x`.
+	if guarded, ok := s.typeGuardNarrowing(ex, p, sc, narrower); ok {
+		right := s.SynthExpr(ex.Rhs, p, guarded)
+		switch ex.Operator {
+		case "and":
+			return ops.LogicalAndTyped(left, right)
+		case "or":
+			return ops.LogicalOrTyped(left, right)
+		}
+	}
+
 	// Extract path for LHS expression
 	var lhsPath constraint.Path
 	if s.deps.Paths != nil {
@@ -512,6 +524,62 @@ func (s *Synthesizer) synthLogicalOpWithNarrowing(ex *ast.LogicalOpExpr, p cfg.P
 	}
 
 	return s.synthLogicalOpCore(ex, recurse)
+}
+
+// typeGuardNarrowing returns flow ops under which the right operand of ex is
+// evaluated when its left operand is a type() test of a path: the test holds
+// for the right operand of `and` when it compares with ==, and of `or` when
+// it compares with ~=.
+func (s *Synthesizer) typeGuardNarrowing(ex *ast.LogicalOpExpr, p cfg.Point, sc *scope.State, narrower api.FlowOps) (api.FlowOps, bool) {
+	rel, ok := ex.Lhs.(*ast.RelationalOpExpr)
+	if !ok || s.deps.Paths == nil {
+		return nil, false
+	}
+	holds := (ex.Operator == "and" && rel.Operator == "==") || (ex.Operator == "or" && rel.Operator == "~=")
+	if !holds {
+		return nil, false
+	}
+	call, lit := typeCallAndLiteral(rel.Lhs, rel.Rhs)
+	if call == nil {
+		return nil, false
+	}
+	key, ok := narrow.KnownBuiltinTypeKey(lit.Value)
+	if !ok || !s.isTypePredicateCall(call, p, narrower) {
+		return nil, false
+	}
+	path := s.deps.Paths(p, call.Args[0], sc)
+	if path.IsEmpty() {
+		return nil, false
+	}
+	current := s.SynthExpr(call.Args[0], p, narrower)
+	narrowed := narrow.ByTypeKey(current, key, nil)
+	if narrowed == nil || typ.IsNever(narrowed) {
+		return nil, false
+	}
+	return &localNarrowOps{inner: narrower, overridePath: path, overrideType: narrowed}, true
+}
+
+// typeCallAndLiteral splits a comparison into a one-argument call and a string
+// literal, in either order.
+func typeCallAndLiteral(a, b ast.Expr) (*ast.FuncCallExpr, *ast.StringExpr) {
+	if call, ok := a.(*ast.FuncCallExpr); ok && len(call.Args) == 1 && call.Receiver == nil {
+		if lit, ok := b.(*ast.StringExpr); ok {
+			return call, lit
+		}
+	}
+	if call, ok := b.(*ast.FuncCallExpr); ok && len(call.Args) == 1 && call.Receiver == nil {
+		if lit, ok := a.(*ast.StringExpr); ok {
+			return call, lit
+		}
+	}
+	return nil, nil
+}
+
+// isTypePredicateCall reports whether call's callee declares the type
+// predicate effect, as the builtin type does.
+func (s *Synthesizer) isTypePredicateCall(call *ast.FuncCallExpr, p cfg.Point, narrower api.FlowOps) bool {
+	row, ok := querycore.EffectRowOf(s.SynthExpr(call.Func, p, narrower))
+	return ok && row.HasTypePredicate()
 }
 
 // synthArithmeticOpCore synthesizes type for arithmetic operators.
