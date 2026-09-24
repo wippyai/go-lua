@@ -331,9 +331,45 @@ func (ce *ConditionExtractor) composedBranchConditions(expr ast.Expr) (BranchCon
 		case "<", "<=", ">", ">=":
 			evaluated := ce.conditionFromOrderedComparison(e.Lhs, e.Rhs)
 			return BranchConditions{OnTrue: evaluated, OnFalse: evaluated}, true
+		case "==", "~=":
+			var indexed ast.Expr
+			if literal.IsNilExpr(e.Rhs) {
+				indexed = e.Lhs
+			} else if literal.IsNilExpr(e.Lhs) {
+				indexed = e.Rhs
+			}
+			get, isGet := indexed.(*ast.AttrGetExpr)
+			if !isGet {
+				break
+			}
+			keyOf, ok := ce.dynamicKeyOf(get)
+			if !ok {
+				break
+			}
+			present := constraint.FromConstraints(keyOf)
+			if e.Operator == "==" {
+				return BranchConditions{OnTrue: constraint.TrueCondition(), OnFalse: present}, true
+			}
+			return BranchConditions{OnTrue: present, OnFalse: constraint.TrueCondition()}, true
 		}
 	}
 	return BranchConditions{}, false
+}
+
+// dynamicKeyOf returns the fact that a read t[k] with a variable key found an
+// entry: k is a key of t. Reads of t[k] at the same versions of t and k then
+// see the entry as present.
+func (ce *ConditionExtractor) dynamicKeyOf(get *ast.AttrGetExpr) (constraint.KeyOf, bool) {
+	key, ok := get.Key.(*ast.IdentExpr)
+	if !ok {
+		return constraint.KeyOf{}, false
+	}
+	tablePath := ce.pathFromExpr(get.Object)
+	keyPath := ce.pathFromExpr(key)
+	if tablePath.IsEmpty() || keyPath.IsEmpty() || keyPath.Symbol == 0 {
+		return constraint.KeyOf{}, false
+	}
+	return constraint.KeyOf{Table: tablePath, Key: keyPath}, true
 }
 
 // conditionFromExpr extracts predicate conditions from an expression (true branch).
@@ -388,6 +424,9 @@ func (ce *ConditionExtractor) ConditionFromExpr(expr ast.Expr) constraint.Condit
 	case *ast.AttrGetExpr:
 		path := ce.pathFromExpr(e)
 		if path.IsEmpty() {
+			if keyOf, ok := ce.dynamicKeyOf(e); ok {
+				return constraint.FromConstraints(keyOf)
+			}
 			return constraint.TrueCondition()
 		}
 		result := []constraint.Constraint{constraint.Truthy{Path: path}}
