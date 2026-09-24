@@ -264,6 +264,19 @@ func containsNilOrOptional(t typ.Type) bool {
 	})
 }
 
+// ExactStringKey returns the one string key t represents, when t is exactly
+// a single string literal after traversing wrappers.
+func ExactStringKey(t typ.Type) (string, bool) {
+	if t == nil {
+		return "", false
+	}
+	keys, ok := exactStringKeyDomain(t, 0)
+	if !ok || len(keys) != 1 {
+		return "", false
+	}
+	return keys[0], true
+}
+
 // exactStringKeyDomain returns the finite set of string keys represented by t.
 //
 // It only succeeds when the key type is exactly a finite union of string literals

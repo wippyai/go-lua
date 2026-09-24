@@ -202,7 +202,9 @@ type ScopeMap = map[cfg.Point]*scope.State
 type ExprSynth = func(ast.Expr, cfg.Point) typ.Type
 
 // PathFromExprFunc builds a flow path from an expression at a CFG point.
-type PathFromExprFunc func(p cfg.Point, expr ast.Expr, sc *scope.State) constraint.Path
+// keyType types index keys, so t[k] with k typed as exactly one string literal
+// resolves to the static field path of t.
+type PathFromExprFunc func(p cfg.Point, expr ast.Expr, sc *scope.State, keyType func(ast.Expr) typ.Type) constraint.Path
 
 // SynthAPI provides type synthesis operations for flow extraction.
 // synth.Engine satisfies this interface directly.

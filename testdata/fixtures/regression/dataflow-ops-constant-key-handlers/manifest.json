@@ -1,0 +1,4 @@
+{
+  "description": "dataflow 0.7.16 persist/ops as vendored by kickside/ledger: handlers are filled at dataflow_consts COMMAND_TYPES keys, and the COMPLETE_WORKFLOW handler calls the UPDATE_WORKFLOW handler through the same constant key.",
+  "files": ["dataflow_consts.lua", "encoding.lua", "activation_repo.lua", "main.lua"]
+}

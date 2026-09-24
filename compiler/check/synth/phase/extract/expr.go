@@ -91,12 +91,17 @@ func (n *localNarrowOps) HasKeyOf(p cfg.Point, tablePath, keyPath constraint.Pat
 	return false
 }
 
+// keyTypeAt types index keys for path extraction at p.
+func (s *Synthesizer) keyTypeAt(p cfg.Point, narrower api.FlowOps) func(ast.Expr) typ.Type {
+	return func(key ast.Expr) typ.Type { return s.SynthExpr(key, p, narrower) }
+}
+
 // synthAttrGetCore synthesizes type for attribute access using the shared core.
 func (s *Synthesizer) synthAttrGetCore(ex *ast.AttrGetExpr, p cfg.Point, sc *scope.State, narrower api.FlowOps, recurse ExprSynth) typ.Type {
 	objType := recurse(ex.Object)
 
 	if narrower != nil && s.deps.Paths != nil {
-		path := s.deps.Paths(p, ex, sc)
+		path := s.deps.Paths(p, ex, sc, recurse)
 		if !path.IsEmpty() {
 			narrowed := narrower.NarrowedTypeAt(p, path)
 			if narrowed != nil {
@@ -168,7 +173,7 @@ skipNarrowedAttr:
 				}
 				// Check for KeyOf constraint to unwrap optional on map index
 				if opt, ok := it.(*typ.Optional); ok && s.deps.Paths != nil && s.deps.CheckCtx != nil {
-					if tablePath := s.deps.Paths(p, ex.Object, sc); !tablePath.IsEmpty() {
+					if tablePath := s.deps.Paths(p, ex.Object, sc, recurse); !tablePath.IsEmpty() {
 						if bindings := s.deps.CheckCtx.Bindings(); bindings != nil {
 							if keySym, ok := bindings.SymbolOf(key); ok && keySym != 0 {
 								keyPath := constraint.Path{Root: key.Value, Symbol: keySym}
@@ -180,7 +185,7 @@ skipNarrowedAttr:
 					}
 				}
 				if s.deps.Paths != nil && s.deps.CheckCtx != nil {
-					if tablePath := s.deps.Paths(p, ex.Object, sc); !tablePath.IsEmpty() {
+					if tablePath := s.deps.Paths(p, ex.Object, sc, recurse); !tablePath.IsEmpty() {
 						if bindings := s.deps.CheckCtx.Bindings(); bindings != nil {
 							if keySym, ok := bindings.SymbolOf(key); ok && keySym != 0 {
 								keyPath := constraint.Path{Root: key.Value, Symbol: keySym}
@@ -238,7 +243,7 @@ func (s *Synthesizer) indexFromKeyOf(objType typ.Type, objExpr ast.Expr, key *as
 	if bindings == nil {
 		return nil
 	}
-	tablePath := s.deps.Paths(p, objExpr, sc)
+	tablePath := s.deps.Paths(p, objExpr, sc, s.keyTypeAt(p, narrower))
 	if tablePath.IsEmpty() {
 		return nil
 	}
@@ -337,7 +342,7 @@ func (s *Synthesizer) narrowArrayIndexByLenBound(indexResult typ.Type, objExpr a
 	if !hasLenRef {
 		return nil
 	}
-	tablePath := s.deps.Paths(p, objExpr, sc)
+	tablePath := s.deps.Paths(p, objExpr, sc, s.keyTypeAt(p, narrower))
 	if tablePath.IsEmpty() {
 		return nil
 	}
@@ -484,7 +489,7 @@ func (s *Synthesizer) synthLogicalOpWithNarrowing(ex *ast.LogicalOpExpr, p cfg.P
 	// Extract path for LHS expression
 	var lhsPath constraint.Path
 	if s.deps.Paths != nil {
-		lhsPath = s.deps.Paths(p, ex.Lhs, sc)
+		lhsPath = s.deps.Paths(p, ex.Lhs, sc, recurse)
 	} else if ident, ok := ex.Lhs.(*ast.IdentExpr); ok {
 		if s.deps.CheckCtx != nil {
 			if bindings := s.deps.CheckCtx.Bindings(); bindings != nil {
@@ -547,7 +552,7 @@ func (s *Synthesizer) typeGuardNarrowing(ex *ast.LogicalOpExpr, p cfg.Point, sc 
 	if !ok || !s.isTypePredicateCall(call, p, narrower) {
 		return nil, false
 	}
-	path := s.deps.Paths(p, call.Args[0], sc)
+	path := s.deps.Paths(p, call.Args[0], sc, s.keyTypeAt(p, narrower))
 	if path.IsEmpty() {
 		return nil, false
 	}

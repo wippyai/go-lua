@@ -16,6 +16,7 @@ import (
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/flow/pathkey"
+	querycore "github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -36,6 +37,16 @@ func StaticKeySegment(key ast.Expr) (constraint.Segment, bool) {
 	return pathseg.StaticTableFieldKeySegment(key)
 }
 
+// KeyTypeSegment converts a key whose type is exactly one string literal into
+// a path segment: t[k] with k: "foo" addresses the same slot as t.foo.
+func KeyTypeSegment(keyType typ.Type) (constraint.Segment, bool) {
+	key, ok := querycore.ExactStringKey(keyType)
+	if !ok {
+		return constraint.Segment{}, false
+	}
+	return StaticKeySegment(&ast.StringExpr{Value: key})
+}
+
 // WithVersion binds a path to the SSA version visible at point p.
 // If the path is unversioned or the version is unavailable, it is returned unchanged.
 func WithVersion(path constraint.Path, graph versionedGraph, p cfg.Point) constraint.Path {
@@ -53,6 +64,18 @@ func WithVersion(path constraint.Path, graph versionedGraph, p cfg.Point) constr
 // FromExprWithBindings extracts a flow path using bindings for symbol resolution.
 // Resolves symbols from AST nodes directly.
 func FromExprWithBindings(expr ast.Expr, constResolver func(string) *flow.ConstValue, bindings *bind.BindingTable) constraint.Path {
+	return FromExprWithKeyTypes(expr, constResolver, bindings, nil)
+}
+
+// FromExprWithKeyTypes extracts a flow path like FromExprWithBindings, and
+// also resolves index keys through keyType: t[k] with k typed exactly as one
+// string literal addresses a static field of t.
+func FromExprWithKeyTypes(
+	expr ast.Expr,
+	constResolver func(string) *flow.ConstValue,
+	bindings *bind.BindingTable,
+	keyType func(ast.Expr) typ.Type,
+) constraint.Path {
 	switch e := expr.(type) {
 	case *ast.IdentExpr:
 		var sym cfg.SymbolID
@@ -70,53 +93,70 @@ func FromExprWithBindings(expr ast.Expr, constResolver func(string) *flow.ConstV
 		}
 		return constraint.Path{Root: e.Value}
 	case *ast.AttrGetExpr:
-		base := FromExprWithBindings(e.Object, constResolver, bindings)
+		base := FromExprWithKeyTypes(e.Object, constResolver, bindings, keyType)
 		if base.IsEmpty() {
 			return constraint.Path{}
 		}
-		switch key := e.Key.(type) {
-		case *ast.StringExpr:
-			seg, ok := StaticKeySegment(key)
-			if !ok {
-				return constraint.Path{}
-			}
-			return base.Append(seg)
-		case *ast.NumberExpr:
-			if idx, ok := pathkey.ParseIntLiteral(key.Value); ok {
-				return base.Append(constraint.Segment{Kind: constraint.SegmentIndexInt, Index: idx})
-			}
-		case *ast.IdentExpr:
-			if constResolver == nil {
-				return constraint.Path{}
-			}
-			if val := constResolver(key.Value); val != nil {
-				switch val.Kind {
-				case flow.ConstString:
-					if seg, ok := StaticKeySegment(&ast.StringExpr{Value: val.Str}); ok {
-						return base.Append(seg)
-					}
-					return constraint.Path{}
-				case flow.ConstInt:
-					return base.Append(constraint.Segment{Kind: constraint.SegmentIndexInt, Index: int(val.Int)})
-				case flow.ConstFloat:
-					if idx, ok := pathkey.FloatToSafeInt(val.Float); ok {
-						return base.Append(constraint.Segment{Kind: constraint.SegmentIndexInt, Index: idx})
-					}
-					return constraint.Path{}
-				case flow.ConstBool, flow.ConstNil, flow.ConstUnknown:
-					return constraint.Path{}
-				}
-			}
+		seg, ok := IndexKeySegment(e.Key, constResolver, keyType)
+		if !ok {
 			return constraint.Path{}
 		}
+		return base.Append(seg)
 	}
 	return constraint.Path{}
 }
 
+// IndexKeySegment classifies the key of an index expression t[key] as a static
+// path segment. A key is static when it is a string or integer literal, an
+// identifier bound to a string or integral constant, or, given keyType, an
+// expression whose type is exactly one string literal.
+func IndexKeySegment(
+	key ast.Expr,
+	constResolver func(string) *flow.ConstValue,
+	keyType func(ast.Expr) typ.Type,
+) (constraint.Segment, bool) {
+	switch k := key.(type) {
+	case *ast.StringExpr, *ast.NumberExpr:
+		return pathseg.StaticAttrKeySegment(k)
+	case *ast.IdentExpr:
+		if constResolver != nil {
+			if val := constResolver(k.Value); val != nil {
+				switch val.Kind {
+				case flow.ConstString:
+					return StaticKeySegment(&ast.StringExpr{Value: val.Str})
+				case flow.ConstInt:
+					return constraint.Segment{Kind: constraint.SegmentIndexInt, Index: int(val.Int)}, true
+				case flow.ConstFloat:
+					if idx, ok := pathkey.FloatToSafeInt(val.Float); ok {
+						return constraint.Segment{Kind: constraint.SegmentIndexInt, Index: idx}, true
+					}
+				}
+				return constraint.Segment{}, false
+			}
+		}
+	}
+	if keyType == nil || key == nil {
+		return constraint.Segment{}, false
+	}
+	return KeyTypeSegment(keyType(key))
+}
+
 // FromExprWithBindingsAt extracts a flow path using bindings and binds it to the SSA version at point p.
 func FromExprWithBindingsAt(expr ast.Expr, constResolver func(string) *flow.ConstValue, bindings *bind.BindingTable, graph versionedGraph, p cfg.Point) constraint.Path {
-	path := FromExprWithBindings(expr, constResolver, bindings)
-	return WithVersion(path, graph, p)
+	return FromExprWithKeyTypesAt(expr, constResolver, bindings, nil, graph, p)
+}
+
+// FromExprWithKeyTypesAt extracts a flow path like FromExprWithKeyTypes and
+// binds it to the SSA version at point p.
+func FromExprWithKeyTypesAt(
+	expr ast.Expr,
+	constResolver func(string) *flow.ConstValue,
+	bindings *bind.BindingTable,
+	keyType func(ast.Expr) typ.Type,
+	graph versionedGraph,
+	p cfg.Point,
+) constraint.Path {
+	return WithVersion(FromExprWithKeyTypes(expr, constResolver, bindings, keyType), graph, p)
 }
 
 // SplitIndexPath splits a path into base and index key.
