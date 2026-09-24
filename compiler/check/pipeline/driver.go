@@ -28,6 +28,7 @@ import (
 	nestedinfer "github.com/wippyai/go-lua/compiler/check/infer/nested"
 	returninfer "github.com/wippyai/go-lua/compiler/check/infer/return"
 	"github.com/wippyai/go-lua/compiler/check/modules"
+	"github.com/wippyai/go-lua/compiler/check/phase"
 	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/constraint"
@@ -245,7 +246,15 @@ func (d *Driver) runReturnInference(
 	}
 
 	summaries, funcTypes, diags := inferencer.ComputeForGraph(returninfer.RunContext{
-		Ctx:          sess.Context(),
+		Env: phase.PhaseEnv{
+			Ctx:            sess.Context(),
+			Graph:          graph,
+			Types:          d.cfg.Types,
+			Manifests:      d.cfg.Manifests,
+			GlobalTypes:    d.cfg.GlobalTypes,
+			ModuleAliases:  modules.MergeAliases(store.ModuleAliases(), modules.CollectAliases(graph)),
+			ModuleBindings: store.ModuleBindings(),
+		},
 		ParentFacts:  d.localFunctionFacts(sess, store, graph.ID()),
 		EffectLookup: refinementLookup,
 	}, graph, parent)

@@ -16,10 +16,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth"
 	basecfg "github.com/wippyai/go-lua/types/cfg"
-	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/flow"
-	"github.com/wippyai/go-lua/types/io"
-	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -44,15 +41,12 @@ func RunResolve(input ResolveInput) ResolveOutput {
 		GlobalTypes:   input.GlobalTypes,
 	})
 
-	engine := synth.New(synth.Config{
-		Ctx:            input.Ctx,
-		Types:          input.Types,
-		Manifests:      input.Manifests,
-		Env:            globalCtx,
-		Phase:          api.PhaseTypeResolution,
-		ModuleBindings: firstNonNilBindings(input.ModuleBindings, input.Bindings),
-		ModuleAliases:  firstNonNilAliases(input.ModuleAliases, modules.CollectAliases(input.Graph)),
-	})
+	env := input.PhaseEnv
+	env.Env = globalCtx
+	env.Phase = api.PhaseTypeResolution
+	env.ModuleBindings = firstNonNilBindings(input.ModuleBindings, input.Bindings)
+	env.ModuleAliases = firstNonNilAliases(input.ModuleAliases, modules.CollectAliases(input.Graph))
+	engine := synth.New(env)
 
 	return ResolveOutput{
 		TypeResolver: engine,
@@ -64,31 +58,27 @@ func RunResolve(input ResolveInput) ResolveOutput {
 // chunk's local x = require("m")); they resolve qualified type names such as
 // x.T in the annotations of graph, together with the aliases graph declares.
 func CreateTypeResolutionEngine(
-	ctx *db.QueryContext,
-	graph *cfg.Graph,
-	globalTypes map[string]typ.Type,
+	env PhaseEnv,
 	paramTypes map[cfg.SymbolID]typ.Type,
 	base *scope.State,
-	types core.TypeOps,
-	manifests io.ManifestQuerier,
-	moduleAliases map[cfg.SymbolID]string,
 ) *synth.Engine {
+	graph := env.Graph
+	if graph == nil {
+		env.Phase = api.PhaseTypeResolution
+		return synth.New(env)
+	}
 	checkCtx := api.NewDeclaredEnv(api.DeclaredEnvConfig{
 		Graph:         graph,
 		Bindings:      graph.Bindings(),
-		DeclaredTypes: BuildDeclaredTypesForResolve(graph, globalTypes, paramTypes),
+		DeclaredTypes: BuildDeclaredTypesForResolve(graph, env.GlobalTypes, paramTypes),
 		BaseScope:     base,
-		GlobalTypes:   globalTypes,
+		GlobalTypes:   env.GlobalTypes,
 	})
-	return synth.New(synth.Config{
-		Ctx:            ctx,
-		Types:          types,
-		Manifests:      manifests,
-		Env:            checkCtx,
-		Phase:          api.PhaseTypeResolution,
-		ModuleBindings: graph.Bindings(),
-		ModuleAliases:  modules.MergeAliases(moduleAliases, modules.CollectAliases(graph)),
-	})
+	env.Env = checkCtx
+	env.Phase = api.PhaseTypeResolution
+	env.ModuleBindings = graph.Bindings()
+	env.ModuleAliases = modules.MergeAliases(env.ModuleAliases, modules.CollectAliases(graph))
+	return synth.New(env)
 }
 
 func firstNonNilBindings(primary, fallback *bind.BindingTable) *bind.BindingTable {
