@@ -35,7 +35,8 @@ func ReturnTypesAllNil(rets []typ.Type) bool {
 	return true
 }
 
-// ReturnTypesRefine reports whether a refines b (element-wise subtype).
+// ReturnTypesRefine reports whether a refines b: element-wise a subtype of b
+// that keeps the record fields b has (see coversRecordFields).
 func ReturnTypesRefine(a, b []typ.Type) bool {
 	if len(a) == 0 {
 		return false
@@ -55,7 +56,7 @@ func ReturnTypesRefine(a, b []typ.Type) bool {
 			}
 			return false
 		}
-		if !subtype.IsSubtype(ai, bi) {
+		if !subtype.IsSubtype(ai, bi) || !coversRecordFields(ai, bi) {
 			return false
 		}
 	}

@@ -482,8 +482,11 @@ func joinIterationFactAt(a, b typ.Type, invariant bool) typ.Type {
 		return joined
 	}
 	// The previous fact stays while it admits the current one, so equivalent
-	// facts with different spellings do not alternate between iterations.
-	previousAdmitsCurrent := subtype.IsSubtype(b, a)
+	// facts with different spellings do not alternate between iterations. A
+	// record admits one with other fields when their field types admit nil,
+	// but the fields the current fact discovered are information a record
+	// without them drops, so such a previous fact does not admit it.
+	previousAdmitsCurrent := subtype.IsSubtype(b, a) && coversRecordFields(a, b)
 	if invariant {
 		if previousAdmitsCurrent && subtype.IsSubtype(a, b) {
 			return a
@@ -510,6 +513,93 @@ func hasUnresolvedKeyDomain(t typ.Type) bool {
 		return v.HasMapComponent() && typ.IsUnknown(v.MapKey)
 	}
 	return false
+}
+
+// coversRecordFields reports whether a keeps the record fields of b: every
+// record of b, at the same position in a (a union or optional member, a field
+// both records have, an array element or a map value), has its fields in a
+// record of a, or a is open there.
+func coversRecordFields(a, b typ.Type) bool {
+	return coversFieldsAt(a, b, make(map[[2]typ.Type]bool))
+}
+
+func coversFieldsAt(a, b typ.Type, visiting map[[2]typ.Type]bool) bool {
+	pair := [2]typ.Type{a, b}
+	if visiting[pair] {
+		return true
+	}
+	visiting[pair] = true
+	defer delete(visiting, pair)
+	for _, bm := range fieldCoverageMembers(b) {
+		covered := false
+		for _, am := range fieldCoverageMembers(a) {
+			if coversMemberFields(am, bm, visiting) {
+				covered = true
+				break
+			}
+		}
+		if !covered {
+			return false
+		}
+	}
+	return true
+}
+
+// fieldCoverageMembers returns the non-nil members of t, aliases unwrapped.
+func fieldCoverageMembers(t typ.Type) []typ.Type {
+	t = unwrap.Alias(narrow.RemoveNil(t))
+	if u, ok := t.(*typ.Union); ok {
+		members := make([]typ.Type, 0, len(u.Members))
+		for _, m := range u.Members {
+			members = append(members, unwrap.Alias(m))
+		}
+		return members
+	}
+	return []typ.Type{t}
+}
+
+func coversMemberFields(a, b typ.Type, visiting map[[2]typ.Type]bool) bool {
+	if a == nil || a.Kind().IsPlaceholder() {
+		return true
+	}
+	ar, aRecord := a.(*typ.Record)
+	br, bRecord := b.(*typ.Record)
+	if aRecord && bRecord {
+		for _, bf := range br.Fields {
+			af := ar.GetField(bf.Name)
+			if af == nil {
+				if !ar.Open && !ar.HasMapComponent() {
+					return false
+				}
+				continue
+			}
+			if !coversFieldsAt(af.Type, bf.Type, visiting) {
+				return false
+			}
+		}
+	}
+	aValue, aOK := containerValue(a)
+	bValue, bOK := containerValue(b)
+	if aOK && bOK {
+		return coversFieldsAt(aValue, bValue, visiting)
+	}
+	return true
+}
+
+// containerValue returns the element type of an array, or the value type of
+// a map or a record's map component.
+func containerValue(t typ.Type) (typ.Type, bool) {
+	switch v := t.(type) {
+	case *typ.Array:
+		return v.Element, true
+	case *typ.Map:
+		return v.Value, true
+	case *typ.Record:
+		if v.HasMapComponent() {
+			return v.MapValue, true
+		}
+	}
+	return nil, false
 }
 
 // joinIterationArrays joins two array facts element by element. Array slots

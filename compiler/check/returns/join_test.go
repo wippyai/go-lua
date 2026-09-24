@@ -725,3 +725,29 @@ func TestMergeReturnSummary_PromotesTopLevelStructuredOverOpenTop(t *testing.T) 
 		t.Fatalf("expected top-level array after merge, got %T (%v)", merged[0], merged[0])
 	}
 }
+
+func TestReturnTypesRefine_RecordWithoutDiscoveredFieldDoesNotRefine(t *testing.T) {
+	success := typ.NewRecord().Field("item", typ.Any).Field("result", typ.Any).Build()
+	failure := typ.NewRecord().Field("item", typ.Any).Field("error", typ.Any).Build()
+	stale := []typ.Type{typ.NewArray(failure)}
+	current := []typ.Type{typ.NewArray(typ.NewUnion(success, failure))}
+
+	if ReturnTypesRefine(stale, current) {
+		t.Error("an array of failures must not refine an array of successes or failures")
+	}
+	if !ReturnTypesRefine(current, current) {
+		t.Error("a vector refines itself")
+	}
+}
+
+func TestJoinIterationFact_KeepsRecordShapesTheCurrentFactDiscovered(t *testing.T) {
+	success := typ.NewRecord().Field("item", typ.Any).Field("result", typ.Any).Build()
+	failure := typ.NewRecord().Field("item", typ.Any).Field("error", typ.Any).Build()
+	stale := typ.NewMap(typ.Any, failure)
+	current := typ.NewUnion(typ.NewMap(typ.Any, success), typ.NewMap(typ.Any, failure))
+
+	joined := joinIterationFact(stale, current)
+	if !coversRecordFields(joined, current) {
+		t.Errorf("expected the join to keep the success entries, got %v", joined)
+	}
+}
