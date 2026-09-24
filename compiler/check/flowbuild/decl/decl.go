@@ -157,6 +157,7 @@ func ExtractDeclaredTypes(fc *core.FlowContext, inputs *flow.Inputs) {
 							if existing := inputs.DeclaredTypes[sym]; existing == nil || typ.IsSoft(existing, typ.SoftAnnotationPolicy) {
 								inputs.DeclaredTypes[sym] = resolved
 							}
+							markRefinableAnnotated(inputs, sym)
 						} else {
 							inputs.DeclaredTypes[sym] = resolved
 							annotate = true
@@ -170,6 +171,7 @@ func ExtractDeclaredTypes(fc *core.FlowContext, inputs *flow.Inputs) {
 							if existing := inputs.DeclaredTypes[sym]; existing == nil || typ.IsSoft(existing, typ.SoftAnnotationPolicy) {
 								inputs.DeclaredTypes[sym] = resolved
 							}
+							markRefinableAnnotated(inputs, sym)
 						} else {
 							inputs.DeclaredTypes[sym] = resolved
 							annotate = true
@@ -193,6 +195,14 @@ func ExtractDeclaredTypes(fc *core.FlowContext, inputs *flow.Inputs) {
 			}
 		})
 	})
+}
+
+// markRefinableAnnotated records that sym carries a refinable annotation.
+func markRefinableAnnotated(inputs *flow.Inputs, sym cfg.SymbolID) {
+	if inputs.RefinableAnnotatedVars == nil {
+		inputs.RefinableAnnotatedVars = make(map[cfg.SymbolID]bool)
+	}
+	inputs.RefinableAnnotatedVars[sym] = true
 }
 
 // ExtractModuleAliases collects symbol -> module path mappings from require() assignments.

@@ -768,11 +768,18 @@ func (s *Solution) processIndexerAssignmentReturnKey(p cfg.Point, ia IndexerAssi
 
 	// Get the current type of the indexed container, which is the value at the
 	// full path (root plus segments), not the root the path hangs off.
-	currentType := preferDeclaredTemplateForWiden(s.writtenTableTypeAt(p, pathKey, iaPath), s.declaredTypeAtPath(iaPath))
+	declared := s.declaredTypeAtPath(iaPath)
+	currentType := preferDeclaredTemplateForWiden(s.writtenTableTypeAt(p, pathKey, iaPath), declared)
 
 	// Compute the widened type
 	newType := widenWithIndexer(currentType, keyType, valueType)
 	if newType == nil || typ.TypeEquals(currentType, newType) {
+		return ""
+	}
+	// A refinable annotation such as {any} lets writes refine the table within
+	// it; a write that would take it outside, as a non-integer key would turn
+	// an array into a map, leaves the annotation standing.
+	if s.inputs.RefinableAnnotatedVars[ia.Symbol] && !subtype.IsSubtype(newType, declared) {
 		return ""
 	}
 
@@ -1061,11 +1068,15 @@ func (s *Solution) processFieldWriteEffectReturnKey(p cfg.Point, fw FieldWriteEf
 		}
 		// As for a direct index write, a declared template stands in for an
 		// empty or unresolved current value.
-		base := preferDeclaredTemplateForWiden(currentType, s.declaredTypeAtPath(fw.Target))
+		declared := s.declaredTypeAtPath(fw.Target)
+		base := preferDeclaredTemplateForWiden(currentType, declared)
 		if base == nil {
 			return ""
 		}
 		newType = widenWithIndexer(base, m.Key, subtype.WidenForInference(m.Value))
+		if s.inputs.RefinableAnnotatedVars[fw.Target.Symbol] && !subtype.IsSubtype(newType, declared) {
+			return ""
+		}
 	} else {
 		newType = widenFieldWrite(currentType, fw.Field, subtype.WidenForInference(fw.Type))
 	}
@@ -1427,8 +1438,8 @@ func isEmptyRecordNoMapType(t typ.Type) bool {
 //   - Empty record {}: Converts to map {[K]: V}
 //   - Record with fields: Adds or widens map component
 //   - Existing map: Widens key/value types via union
-//   - Placeholder types: Creates map {[K]: V}
-//   - Other types: Returns unchanged
+//   - Unknown: Creates map {[K]: V}
+//   - Other types, any among them: Returns unchanged
 //
 // Nil values are skipped: In Lua, t[k] = nil deletes the key rather than storing nil.
 // Map access already returns Optional to represent potentially missing keys.
@@ -1508,8 +1519,9 @@ func widenWithIndexer(t typ.Type, keyType, valType typ.Type) typ.Type {
 			return typ.NewMap(newKey, newVal)
 		},
 		Default: func(t typ.Type) typ.Type {
-			// For other types (unknown, any), create a map
-			if t.Kind().IsPlaceholder() {
+			// A dynamic value already admits every write and stays dynamic;
+			// an unresolved one becomes the map the write builds.
+			if t.Kind() == kind.Unknown {
 				return typ.NewMap(keyType, valType)
 			}
 			return t

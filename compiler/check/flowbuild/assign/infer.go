@@ -464,12 +464,6 @@ func collectInferredTypes(
 			assignRefersSCC[idx] = exprsReferToSCC(info.Sources, bindings, sccSet) ||
 				exprsReferToSCC(info.IterExprs, bindings, sccSet)
 		}
-		paramCallRefersSCC := make(map[int]bool, len(sccParamCallIdx))
-		for _, idx := range sccParamCallIdx {
-			if info := calls[idx].info; info != nil {
-				paramCallRefersSCC[idx] = exprsReferToSCC(info.Args, bindings, sccSet)
-			}
-		}
 		selfPrev := func(refersSCC bool, sym cfg.SymbolID, overlay api.SpecTypes) typ.Type {
 			if !refersSCC {
 				return nil
@@ -768,7 +762,7 @@ func collectInferredTypes(
 						continue
 					}
 					old := inferred[sym]
-					joined := joinInferredType(old, expected, selfPrev(paramCallRefersSCC[idx], sym, overlay))
+					joined := meetParamExpectation(old, expected)
 					if !typ.TypeEquals(old, joined) {
 						inferred[sym] = joined
 						changed = true
@@ -1244,6 +1238,27 @@ func sameShape(a, b typ.Type) bool {
 		return aok && bok && ra.HasSameFieldNames(rb)
 	}
 	return a.Kind() == b.Kind()
+}
+
+// meetParamExpectation combines next, the type a call expects for an
+// unannotated parameter passed as its argument, with old, the parameter's type
+// inferred from the other calls. Every expectation constrains the same value,
+// so comparable expectations meet at the narrower one. Incomparable
+// expectations have no named common subtype, and the parameter admits either.
+func meetParamExpectation(old, next typ.Type) typ.Type {
+	if old == nil || typ.IsAbsentOrUnknown(old) {
+		return next
+	}
+	if next == nil {
+		return old
+	}
+	if subtype.IsSubtype(next, old) {
+		return next
+	}
+	if subtype.IsSubtype(old, next) {
+		return old
+	}
+	return typ.JoinPreferNonSoft(old, next)
 }
 
 // exprsReferToSCC reports whether any of exprs refers to a symbol of the SCC.

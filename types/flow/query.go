@@ -797,7 +797,8 @@ func (s *Solution) IsPointDead(p cfg.Point) bool {
 	return s.inputs.DeadPoints[p]
 }
 
-// HasKeyOf checks if a KeyOf constraint exists at point p for the given table and key paths.
+// HasKeyOf checks if a KeyOf constraint exists at point p for the given table
+// and key paths, read as operands of the statement at p.
 func (s *Solution) HasKeyOf(p cfg.Point, tablePath, keyPath constraint.Path) bool {
 	if s == nil || s.pkResolver == nil {
 		return false
@@ -807,9 +808,36 @@ func (s *Solution) HasKeyOf(p cfg.Point, tablePath, keyPath constraint.Path) boo
 		return false
 	}
 	resolve := func(path constraint.Path) constraint.PathKey {
-		return s.pkResolver.KeyAt(p, path)
+		return s.pkResolver.KeyAt(p, s.operandPath(p, path))
 	}
 	return constraint.HasKeyOfConstraint(cond, tablePath, keyPath, resolve)
+}
+
+// operandPath pins path to the version its symbol has as an operand of the
+// statement at p. The statement reads its operands before it writes, so when
+// it assigns the symbol, as t[k] = t[k] + 1 assigns t, the operand is the
+// version its predecessors agree on rather than the one visible after p.
+func (s *Solution) operandPath(p cfg.Point, path constraint.Path) constraint.Path {
+	if path.Symbol == 0 || path.Version != 0 || s.inputs == nil || s.inputs.Graph == nil {
+		return path
+	}
+	after := s.inputs.Graph.VisibleVersion(p, path.Symbol)
+	var before cfg.Version
+	for i, pred := range graphPredecessors(s.inputs.Graph, p) {
+		ver := s.inputs.Graph.VisibleVersion(pred, path.Symbol)
+		if i == 0 {
+			before = ver
+			continue
+		}
+		if ver.ID != before.ID {
+			return path
+		}
+	}
+	if before.IsZero() || before.ID == after.ID {
+		return path
+	}
+	path.Version = before.ID
+	return path
 }
 
 func (s *Solution) parseSuffixCached(suffix string) []constraint.Segment {

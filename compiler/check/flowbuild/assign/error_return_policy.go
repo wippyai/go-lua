@@ -24,7 +24,9 @@ import (
 //     correlated with it and co-correlated with the other value slots, as in
 //     `(a?, b?, c?, err?)`: the values are present together exactly when the
 //     error is absent. A slot that is never nil carries its value on both
-//     paths and takes no part.
+//     paths and takes no part. When another optional slot holds the error's
+//     type, as in `(actor?, scope?, err: string?, kind: string?)`, the error
+//     slot is ambiguous and no correlation is inferred.
 //
 // This encodes the conventional `(value?, err?)` API shape while keeping the
 // policy centralized and deterministic.
@@ -37,11 +39,16 @@ func InferErrorReturnConvention(fnType typ.Type) ([]flow.ReturnCorrelation, []fl
 		if !isOptionalErrorLike(fn.Returns[n-1]) {
 			return nil, nil
 		}
+		errInner := unwrap.Optional(fn.Returns[n-1])
 		var values []int
 		for v := 0; v < n-1; v++ {
-			if unwrap.IsOptionalLike(fn.Returns[v]) {
-				values = append(values, v)
+			if !unwrap.IsOptionalLike(fn.Returns[v]) {
+				continue
 			}
+			if holdsErrorOf(fn.Returns[v], errInner) {
+				return nil, nil
+			}
+			values = append(values, v)
 		}
 		if len(values) == 0 {
 			return nil, nil
@@ -68,6 +75,17 @@ func InferErrorReturnConvention(fnType typ.Type) ([]flow.ReturnCorrelation, []fl
 	}
 	valIdx := 1 - errIdx
 	return []flow.ReturnCorrelation{{ValueIndex: valIdx, ErrorIndex: errIdx}}, nil
+}
+
+// holdsErrorOf reports whether the optional slot t holds values of errInner,
+// the type of the trailing error slot, so it could be the error slot itself.
+// A top-typed slot says nothing about its values and holds no error.
+func holdsErrorOf(t, errInner typ.Type) bool {
+	inner := unwrap.Optional(t)
+	if inner == nil || errInner == nil || typ.IsAny(inner) || typ.IsUnknown(inner) {
+		return false
+	}
+	return subtype.IsSubtype(inner, errInner)
 }
 
 func isOptionalErrorLike(t typ.Type) bool {

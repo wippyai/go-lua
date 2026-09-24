@@ -80,7 +80,10 @@ func CollectSpecNarrowedTypes(
 			}
 
 			// Fall back to regular synthesis for method calls only
-			// This captures t = time.now() where the return type is known
+			// This captures t = time.now() where the return type is known.
+			// A dynamic result is not known: this synthesis ignores the branch
+			// guards reaching the call, so a receiver narrowed from any reads
+			// as any here while the assignment resolves its method.
 			// Only capture non-union types to avoid interfering with narrowing
 			if call.Method != "" && synth != nil {
 				inferred := assignValueAt(expanded, i)
@@ -89,7 +92,7 @@ func CollectSpecNarrowedTypes(
 						inferred = synth(source, p)
 					}
 				}
-				if typ.IsUnknownOrNil(inferred) {
+				if typ.IsUnknownOrNil(inferred) || typ.IsAny(inferred) {
 					return
 				}
 				// Skip union types - they may need narrowing later
