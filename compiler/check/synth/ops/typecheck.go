@@ -58,6 +58,9 @@ func isNumericGuard(t typ.Type, guard internal.RecursionGuard) bool {
 
 		return isNumericGuard(v.Target, next)
 
+	case *typ.Recursive:
+		return v.Body != nil && isNumericGuard(v.Body, next)
+
 	case *typ.Optional:
 		// Optional types are NOT numeric - must be narrowed first
 		return false
