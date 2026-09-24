@@ -190,8 +190,9 @@ func CollectNestedFieldWrites(
 					}
 					continue
 				}
-				written := typ.NewMap(dynamicKeyType(target.Key, p, synth), assignedValueType(source, p, synth))
-				add(base.Symbol, api.NewFieldWriteKey(base.Segments, flow.IndexerWriteField), written)
+				if written := api.NewIndexerWrite(dynamicKeyType(target.Key, p, synth), assignedValueType(source, p, synth)); written != nil {
+					add(base.Symbol, api.NewFieldWriteKey(base.Segments, flow.IndexerWriteField), written)
+				}
 			}
 		}
 	})
@@ -200,6 +201,8 @@ func CollectNestedFieldWrites(
 }
 
 // dynamicKeyType returns the type of the dynamic key of an index write at p.
+// A key whose type is not known stays unknown: it carries no evidence about
+// the key domain of the written table.
 func dynamicKeyType(key ast.Expr, p cfg.Point, synth func(ast.Expr, cfg.Point) typ.Type) typ.Type {
 	var keyType typ.Type
 	switch k := key.(type) {
@@ -210,8 +213,8 @@ func dynamicKeyType(key ast.Expr, p cfg.Point, synth func(ast.Expr, cfg.Point) t
 			keyType = synth(k, p)
 		}
 	}
-	if keyType == nil || keyType.Kind().IsPlaceholder() {
-		return typ.String
+	if keyType == nil {
+		return typ.Unknown
 	}
 	return keyType
 }

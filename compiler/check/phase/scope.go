@@ -682,10 +682,7 @@ func applyTypeDef(graph ScopeGraph, p cfg.Point, current *scope.State, services 
 	if resolved == nil {
 		resolved = typ.Unknown
 	}
-	if _, isGeneric := resolved.(*typ.Generic); isGeneric {
-		return current.WithType(info.Name, resolved)
-	}
-	return current.WithType(info.Name, typ.NewAlias(info.Name, resolved))
+	return current.DeclareType(info.Name, resolved)
 }
 
 // BuildFunctionScope creates the initial base scope for a function.

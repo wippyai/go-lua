@@ -140,3 +140,21 @@ func TestTypeDefResolver(t *testing.T) {
 		}
 	})
 }
+
+func TestDeclareType_BindsForwardReferences(t *testing.T) {
+	runtime := typ.NewRecord().Field("nudges", typ.NewMap(typ.String, typ.NewRef("", "Nudge"))).Build()
+	sc := New().DeclareType("Runtime", runtime)
+	nudge := typ.NewRecord().Field("generation", typ.Number).Build()
+	sc = sc.DeclareType("Nudge", nudge)
+
+	declared, ok := sc.LookupType("Runtime")
+	if !ok {
+		t.Fatal("expected Runtime in scope")
+	}
+	rec := declared.(*typ.Alias).Target.(*typ.Record)
+	value := rec.GetField("nudges").Type.(*typ.Map).Value
+	alias, ok := value.(*typ.Alias)
+	if !ok || alias.Name != "Nudge" || !typ.TypeEquals(alias.Target, nudge) {
+		t.Errorf("expected nudges values bound to alias Nudge, got %v", value)
+	}
+}

@@ -6,6 +6,8 @@ import (
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/flow/pathkey"
+	"github.com/wippyai/go-lua/types/kind"
+	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -87,4 +89,17 @@ func JoinFieldWrite(key FieldWriteKey, prev, next typ.Type) typ.Type {
 		}
 	}
 	return typ.NewUnion(prev, next)
+}
+
+// NewIndexerWrite returns the map {[K]: V} that writes of val by keys of type
+// key add to a table. Storing nil removes an entry, so V is the non-nil part
+// of val; a write of nil alone adds nothing and yields nil.
+func NewIndexerWrite(key, val typ.Type) typ.Type {
+	if val != nil {
+		val = narrow.RemoveNil(val)
+		if val.Kind() == kind.Never {
+			return nil
+		}
+	}
+	return typ.NewMap(key, val)
 }
