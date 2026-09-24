@@ -773,6 +773,15 @@ func (s *Solution) processIndexerAssignmentReturnKey(p cfg.Point, ia IndexerAssi
 
 	// Compute the widened type
 	newType := typ.WriteInto(currentType, func(t typ.Type) typ.Type {
+		if ia.FieldUpdate != "" {
+			if patch, ok := valueType.(*typ.Record); ok {
+				if field := patch.GetField(ia.FieldUpdate); field != nil {
+					if updated := widenIndexedField(t, ia.FieldUpdate, field.Type); updated != nil {
+						return updated
+					}
+				}
+			}
+		}
 		return widenWithIndexer(t, keyType, valueType)
 	})
 	if newType == nil || typ.TypeEquals(currentType, newType) {
@@ -1422,6 +1431,73 @@ func mergeMapKeyDomain(existing, incoming typ.Type) typ.Type {
 	return typ.JoinPreferNonSoft(existing, incoming)
 }
 
+// widenIndexedField applies t[k].field = value to the existing element type.
+// The write does not insert a new t[k] value: if t[k] is absent, Lua raises
+// before the field write. Joining a partial {field: value} as a new map value
+// would discard fields known on every actual entry.
+func widenIndexedField(t typ.Type, field string, value typ.Type) typ.Type {
+	if t == nil || field == "" || value == nil {
+		return t
+	}
+	switch v := t.(type) {
+	case *typ.Alias:
+		updated := widenIndexedField(v.Target, field, value)
+		if updated == nil {
+			return nil
+		}
+		if typ.TypeEquals(updated, v.Target) {
+			return t
+		}
+		return typ.NewAlias(v.Name, updated)
+	case *typ.Map:
+		updated := applyFieldWrite(v.Value, field, value, false)
+		if updated == nil || typ.TypeEquals(updated, v.Value) {
+			return t
+		}
+		return typ.NewMap(v.Key, updated)
+	case *typ.Array:
+		updated := applyFieldWrite(v.Element, field, value, false)
+		if updated == nil || typ.TypeEquals(updated, v.Element) {
+			return t
+		}
+		return typ.NewArray(updated)
+	case *typ.Record:
+		if !v.HasMapComponent() {
+			return nil
+		}
+		updated := applyFieldWrite(v.MapValue, field, value, false)
+		if updated == nil || typ.TypeEquals(updated, v.MapValue) {
+			return t
+		}
+		return rebuildRecordWithMapComponent(v, v.MapKey, updated)
+	case *typ.Optional:
+		updated := widenIndexedField(v.Inner, field, value)
+		if updated == nil {
+			return nil
+		}
+		if typ.TypeEquals(updated, v.Inner) {
+			return t
+		}
+		return typ.NewOptional(updated)
+	case *typ.Union:
+		members := make([]typ.Type, len(v.Members))
+		changed := false
+		for i, member := range v.Members {
+			members[i] = widenIndexedField(member, field, value)
+			if members[i] == nil {
+				return nil
+			}
+			changed = changed || !typ.TypeEquals(members[i], member)
+		}
+		if !changed {
+			return t
+		}
+		return typ.NewUnion(members...)
+	default:
+		return nil
+	}
+}
+
 func preferDeclaredTemplateForWiden(current, declared typ.Type) typ.Type {
 	if declared == nil {
 		return current
@@ -1610,6 +1686,9 @@ func (s *Solution) processJoinReturnChangedKeys(p cfg.Point) []string {
 		// Collect types from operands, applying edge conditions
 		types := s.scratchTypes[:0]
 		for _, op := range phi.Operands {
+			if s.inputs.DeadPoints[op.From] {
+				continue
+			}
 			opType := s.phiOperandTypeAt(p, op, nil)
 			if opType == nil {
 				continue
@@ -1647,6 +1726,9 @@ func (s *Solution) processJoinReturnChangedKeys(p cfg.Point) []string {
 			}
 			types = types[:0]
 			for _, op := range phi.Operands {
+				if s.inputs.DeadPoints[op.From] {
+					continue
+				}
 				opType := s.phiOperandTypeAt(p, op, segments)
 				if opType == nil {
 					opType = typ.Nil

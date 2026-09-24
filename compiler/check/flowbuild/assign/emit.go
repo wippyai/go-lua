@@ -806,6 +806,10 @@ func buildLiftedDynamicIndexerAssignment(
 	for i := len(steps) - 1; i > firstDynamic; i-- {
 		valType = wrapStepValue(steps[i], valType, graph, bindings, synth, symResolver, p)
 	}
+	fieldUpdate := ""
+	if firstDynamic == len(steps)-2 && steps[len(steps)-1].Static && steps[len(steps)-1].Seg.Kind == constraint.SegmentField {
+		fieldUpdate = steps[len(steps)-1].Seg.Name
+	}
 
 	// The source value is the entry itself only when the dynamic step is the
 	// last one; otherwise the entry is the wrapped shape built above, and
@@ -823,15 +827,16 @@ func buildLiftedDynamicIndexerAssignment(
 	}
 
 	return flow.IndexerAssignment{
-		Point:     p,
-		Root:      rootPath.Root,
-		Symbol:    rootPath.Symbol,
-		Segments:  rootPath.Segments,
-		KeyVar:    keyVar,
-		KeySymbol: keySym,
-		KeyType:   keyType,
-		ValuePath: valuePath,
-		ValType:   valType,
+		Point:       p,
+		Root:        rootPath.Root,
+		Symbol:      rootPath.Symbol,
+		Segments:    rootPath.Segments,
+		KeyVar:      keyVar,
+		KeySymbol:   keySym,
+		KeyType:     keyType,
+		ValuePath:   valuePath,
+		ValType:     valType,
+		FieldUpdate: fieldUpdate,
 	}, true
 }
 
