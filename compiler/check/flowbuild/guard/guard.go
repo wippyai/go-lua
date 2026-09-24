@@ -340,52 +340,61 @@ func extractTypeGuard(expr ast.Expr, bindings *bind.BindingTable) (TruthyPathKey
 	if !ok || rel == nil {
 		return TruthyPathKey{}, narrow.TypeKey{}, false, false
 	}
+	arg, typeKey, hasTypeOnTrue, ok := TypeGuardOperand(rel)
+	if !ok {
+		return TruthyPathKey{}, narrow.TypeKey{}, false, false
+	}
+	key, ok := TruthyKeyFromExpr(arg, bindings)
+	if !ok || key.Field == "" {
+		return TruthyPathKey{}, narrow.TypeKey{}, false, false
+	}
+	return key, typeKey, hasTypeOnTrue, true
+}
 
-	hasTypeOnTrue := false
+// TypeGuardOperand matches `type(arg) == "k"` and `type(arg) ~= "k"`, in either
+// operand order, for a builtin type name k. It returns the tested expression,
+// the type key, and whether the type holds when the comparison is true.
+func TypeGuardOperand(rel *ast.RelationalOpExpr) (ast.Expr, narrow.TypeKey, bool, bool) {
+	if rel == nil {
+		return nil, narrow.TypeKey{}, false, false
+	}
+	var hasTypeOnTrue bool
 	switch rel.Operator {
 	case "==":
 		hasTypeOnTrue = true
 	case "~=":
 		hasTypeOnTrue = false
 	default:
-		return TruthyPathKey{}, narrow.TypeKey{}, false, false
+		return nil, narrow.TypeKey{}, false, false
 	}
-
-	key, typeKey, ok := typeGuardPathAndKey(rel.Lhs, rel.Rhs, bindings)
-	if ok {
-		return key, typeKey, hasTypeOnTrue, true
+	if arg, typeKey, ok := typeCallOperand(rel.Lhs, rel.Rhs); ok {
+		return arg, typeKey, hasTypeOnTrue, true
 	}
-	key, typeKey, ok = typeGuardPathAndKey(rel.Rhs, rel.Lhs, bindings)
-	if ok {
-		return key, typeKey, hasTypeOnTrue, true
+	if arg, typeKey, ok := typeCallOperand(rel.Rhs, rel.Lhs); ok {
+		return arg, typeKey, hasTypeOnTrue, true
 	}
-	return TruthyPathKey{}, narrow.TypeKey{}, false, false
+	return nil, narrow.TypeKey{}, false, false
 }
 
-func typeGuardPathAndKey(typeExpr, keyExpr ast.Expr, bindings *bind.BindingTable) (TruthyPathKey, narrow.TypeKey, bool) {
+func typeCallOperand(typeExpr, keyExpr ast.Expr) (ast.Expr, narrow.TypeKey, bool) {
 	call, ok := typeExpr.(*ast.FuncCallExpr)
 	if !ok || call == nil || callsite.IsMethodLikeExpr(call) || len(call.Args) != 1 {
-		return TruthyPathKey{}, narrow.TypeKey{}, false
+		return nil, narrow.TypeKey{}, false
 	}
 	ident, ok := call.Func.(*ast.IdentExpr)
 	if !ok || ident.Value != "type" {
-		return TruthyPathKey{}, narrow.TypeKey{}, false
+		return nil, narrow.TypeKey{}, false
 	}
 
 	typeName, ok := typeStringLiteral(keyExpr)
 	if !ok {
-		return TruthyPathKey{}, narrow.TypeKey{}, false
+		return nil, narrow.TypeKey{}, false
 	}
 	typeKey, ok := narrow.KnownBuiltinTypeKey(typeName)
 	if !ok {
-		return TruthyPathKey{}, narrow.TypeKey{}, false
+		return nil, narrow.TypeKey{}, false
 	}
-
-	key, ok := TruthyKeyFromExpr(call.Args[0], bindings)
-	if !ok || key.Field == "" {
-		return TruthyPathKey{}, narrow.TypeKey{}, false
-	}
-	return key, typeKey, true
+	return call.Args[0], typeKey, true
 }
 
 func typeStringLiteral(expr ast.Expr) (string, bool) {
