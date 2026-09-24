@@ -1,9 +1,8 @@
 package typ
 
 // ExtendRecordWithField returns a record type extended with a field.
-// If the base type is absent, unknown or nil, creates a new record with just
-// the field. An any base stays any: a dynamic value remains dynamic after a
-// field write. If the base type is already a record, adds or updates the field.
+// If the base type is nil, any, unknown, or nil, creates a new record with just the field.
+// If the base type is already a record, adds or updates the field.
 func ExtendRecordWithField(base Type, field string, fieldType Type) Type {
 	if field == "" || fieldType == nil {
 		return base
@@ -13,10 +12,7 @@ func ExtendRecordWithField(base Type, field string, fieldType Type) Type {
 	for a, ok := unwrapped.(*Alias); ok; a, ok = unwrapped.(*Alias) {
 		unwrapped = a.Target
 	}
-	if unwrapped != nil && unwrapped.Kind() == Any.Kind() {
-		return base
-	}
-	if unwrapped == nil || unwrapped.Kind() == Unknown.Kind() || unwrapped.Kind() == Nil.Kind() {
+	if unwrapped == nil || unwrapped.Kind() == Any.Kind() || unwrapped.Kind() == Unknown.Kind() || unwrapped.Kind() == Nil.Kind() {
 		return NewRecord().SetOpen(true).Field(field, fieldType).Build()
 	}
 

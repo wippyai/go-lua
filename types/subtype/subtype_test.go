@@ -1478,15 +1478,12 @@ func TestTableMarkerAcceptsArray(t *testing.T) {
 	}
 }
 
-func TestTableMarkerAcceptsAnyAtUseSites(t *testing.T) {
+func TestTableMarkerAcceptsAny(t *testing.T) {
 	sub := typ.Any
 	super := typ.NewInterface("table", nil)
 
-	if IsSubtype(sub, super) {
-		t.Error("any is not a plain subtype of the table marker")
-	}
-	if !IsConsistentSubtype(sub, super) {
-		t.Error("any is consistent with the table marker")
+	if !IsSubtype(sub, super) {
+		t.Error("any should be subtype of table marker")
 	}
 }
 
@@ -2040,11 +2037,8 @@ func TestRecordMutableFieldWidening_ToAny(t *testing.T) {
 	sub := typ.NewRecord().Field("x", typ.String).Build()
 	super := typ.NewRecord().Field("x", typ.Any).Build()
 
-	if IsSubtype(sub, super) {
-		t.Error("a mutable field is invariant under plain subtyping: string is not any")
-	}
-	if !IsConsistentSubtype(sub, super) {
-		t.Error("a mutable any field accepts any type at use sites")
+	if !IsSubtype(sub, super) {
+		t.Error("any field should accept any type via widening")
 	}
 }
 
@@ -2293,14 +2287,11 @@ func TestUnionWithAnyValuedMapMember(t *testing.T) {
 // record field has: a value type widens into any, as {x: T} <: {x: any} does.
 func TestMapValueWidensIntoAny(t *testing.T) {
 	entry := typ.NewRecord().Field("id", typ.String).Build()
-	if !IsConsistentSubtype(typ.NewMap(typ.String, entry), typ.NewMap(typ.String, typ.Any)) {
-		t.Fatal("{[string]: T} must be consistent with {[string]: any}")
+	if !IsSubtype(typ.NewMap(typ.String, entry), typ.NewMap(typ.String, typ.Any)) {
+		t.Fatal("{[string]: T} must subtype {[string]: any}")
 	}
-	if IsSubtype(typ.NewMap(typ.String, entry), typ.NewMap(typ.String, typ.Any)) {
-		t.Fatal("map values are invariant under plain subtyping")
-	}
-	if !IsConsistentSubtype(typ.NewRecord().Field("x", entry).Build(), typ.NewRecord().Field("x", typ.Any).Build()) {
-		t.Fatal("a record field typed any must accept T at use sites")
+	if !IsSubtype(typ.NewRecord().Field("x", entry).Build(), typ.NewRecord().Field("x", typ.Any).Build()) {
+		t.Fatal("record field widening into any must hold")
 	}
 	if IsSubtype(typ.NewMap(typ.String, typ.Any), typ.NewMap(typ.String, entry)) {
 		t.Fatal("{[string]: any} must not subtype {[string]: T}")

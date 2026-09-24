@@ -15,9 +15,14 @@ func TestExtendRecordWithField_NilBase(t *testing.T) {
 	}
 }
 
-func TestExtendRecordWithField_AnyBaseStaysDynamic(t *testing.T) {
-	if result := ExtendRecordWithField(Any, "foo", Integer); result != Any {
-		t.Fatalf("a field write keeps a dynamic value any, got %v", result)
+func TestExtendRecordWithField_AnyBase(t *testing.T) {
+	result := ExtendRecordWithField(Any, "foo", Integer)
+	rec, ok := result.(*Record)
+	if !ok {
+		t.Fatalf("expected record, got %T", result)
+	}
+	if f := rec.GetField("foo"); f == nil || f.Type != Integer {
+		t.Error("expected field foo with integer type")
 	}
 }
 

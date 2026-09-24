@@ -181,7 +181,7 @@ func TestApplyParamList_WithResolveType(t *testing.T) {
 	}
 }
 
-func TestApplyParamList_AnnotationIsTheContractOverExpected(t *testing.T) {
+func TestApplyParamList_SoftAnnotationUsesExpected(t *testing.T) {
 	sc := scope.New()
 	resolveType := func(expr ast.TypeExpr, s *scope.State) typ.Type {
 		if arr, ok := expr.(*ast.ArrayTypeExpr); ok && arr.Element != nil {
@@ -212,8 +212,8 @@ func TestApplyParamList_AnnotationIsTheContractOverExpected(t *testing.T) {
 	if len(result.Params) != 1 {
 		t.Fatalf("expected 1 param, got %d", len(result.Params))
 	}
-	if !typ.TypeEquals(result.Params[0].Type, typ.NewArray(typ.Any)) {
-		t.Fatalf("an annotated parameter keeps its annotation over the expected type, got %v", result.Params[0].Type)
+	if result.Params[0].Type != typ.String {
+		t.Fatalf("expected param type String, got %v", result.Params[0].Type)
 	}
 }
 

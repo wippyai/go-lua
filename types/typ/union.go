@@ -234,7 +234,7 @@ func memberIsSoft(t Type) bool {
 		}
 		break
 	}
-	if t.Kind() == kind.Unknown {
+	if t.Kind().IsPlaceholder() {
 		return true
 	}
 	switch v := t.(type) {

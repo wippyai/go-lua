@@ -1,7 +1,6 @@
 package paramhints
 
 import (
-	"github.com/wippyai/go-lua/compiler/ast"
 	"testing"
 
 	"github.com/wippyai/go-lua/types/kind"
@@ -227,20 +226,20 @@ func TestMergeCallArgHintAt_JoinsEveryCallSite(t *testing.T) {
 	}
 }
 
-func TestMergeIntoSignature_AnnotationIsTheContract(t *testing.T) {
+func TestRefineAnnotation_NarrowsSoftAnnotationOnlyWithinIt(t *testing.T) {
 	anyMap := typ.NewMap(typ.String, typ.Any)
 	row := typ.NewRecord().Field("binding_id", typ.String).Build()
-	fn := &ast.FunctionExpr{ParList: &ast.ParList{
-		Names: []string{"a", "b"},
-		Types: []ast.TypeExpr{&ast.PrimitiveTypeExpr{Name: "Map"}, nil},
-	}}
-	sig := typ.Func().Param("a", anyMap).Param("b", typ.Unknown).Build()
 
-	got := MergeIntoSignature(fn, []typ.Type{row, row}, sig)
-	if !typ.TypeEquals(got.Params[0].Type, anyMap) {
-		t.Fatalf("a hint must not replace an annotation, even one containing any, got %s", got.Params[0].Type)
+	if got := RefineAnnotation(anyMap, row); !typ.TypeEquals(got, row) {
+		t.Fatalf("a hint within the soft annotation must refine it, got %s", got)
 	}
-	if !typ.TypeEquals(got.Params[1].Type, row) {
-		t.Fatalf("an unannotated parameter takes its hint, got %s", got.Params[1].Type)
+	if got := RefineAnnotation(anyMap, typ.NewOptional(row)); got != typ.Type(anyMap) {
+		t.Fatalf("a nilable hint must not replace a non-nilable annotation, got %s", got)
+	}
+	if got := RefineAnnotation(anyMap, typ.Nil); got != typ.Type(anyMap) {
+		t.Fatalf("a nil-only hint must keep the annotation, got %s", got)
+	}
+	if got := RefineAnnotation(typ.String, typ.LiteralString("x")); got != typ.Type(typ.String) {
+		t.Fatalf("a concrete annotation is the contract, got %s", got)
 	}
 }

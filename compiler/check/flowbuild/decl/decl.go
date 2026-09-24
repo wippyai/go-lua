@@ -152,14 +152,28 @@ func ExtractDeclaredTypes(fc *core.FlowContext, inputs *flow.Inputs) {
 				if fc.Services != nil {
 					annType = fc.Services.ResolveTypeExpr(annExpr, sc)
 					if annType != nil {
-						inputs.DeclaredTypes[sym] = resolve.Ref(annType, sc)
-						annotate = true
+						resolved := resolve.Ref(annType, sc)
+						if typ.IsRefinableAnnotation(annType) {
+							if existing := inputs.DeclaredTypes[sym]; existing == nil || typ.IsSoft(existing, typ.SoftAnnotationPolicy) {
+								inputs.DeclaredTypes[sym] = resolved
+							}
+						} else {
+							inputs.DeclaredTypes[sym] = resolved
+							annotate = true
+						}
 					}
 				} else if fc.CheckCtx != nil && fc.CheckCtx.Types() != nil {
 					tv := fc.CheckCtx.Types().DeclaredAt(p, sym)
 					if tv.State == flow.StateResolved && tv.Type != nil {
-						inputs.DeclaredTypes[sym] = resolve.Ref(tv.Type, sc)
-						annotate = true
+						resolved := resolve.Ref(tv.Type, sc)
+						if typ.IsRefinableAnnotation(tv.Type) {
+							if existing := inputs.DeclaredTypes[sym]; existing == nil || typ.IsSoft(existing, typ.SoftAnnotationPolicy) {
+								inputs.DeclaredTypes[sym] = resolved
+							}
+						} else {
+							inputs.DeclaredTypes[sym] = resolved
+							annotate = true
+						}
 					}
 				}
 				if annotate {

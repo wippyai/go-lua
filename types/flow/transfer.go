@@ -1237,9 +1237,7 @@ func WidenArrayElementType(arrayType typ.Type, elementType typ.Type, joinFn func
 			return arrayType
 		},
 		Default: func(t typ.Type) typ.Type {
-			// An unresolved container becomes an array; an any container
-			// stays dynamic.
-			if typ.IsUnknown(arrayType) {
+			if arrayType.Kind().IsPlaceholder() {
 				return typ.NewArray(elementType)
 			}
 			return arrayType
@@ -1313,9 +1311,7 @@ func WidenMapValueArray(mapType typ.Type, keyType, elementType typ.Type) typ.Typ
 			return mapType
 		},
 		Default: func(t typ.Type) typ.Type {
-			// An unresolved container becomes a map; an any container stays
-			// dynamic.
-			if typ.IsUnknown(mapType) {
+			if mapType.Kind().IsPlaceholder() {
 				return typ.NewMap(keyType, typ.NewArray(elementType))
 			}
 			return mapType
@@ -1335,7 +1331,7 @@ func mergeMapValueDomain(existing, incoming typ.Type) typ.Type {
 	if incoming == nil {
 		return existing
 	}
-	if !typ.IsUnknown(existing) && subtype.IsSubtype(incoming, existing) {
+	if !existing.Kind().IsPlaceholder() && subtype.IsSubtype(incoming, existing) {
 		return existing
 	}
 	return typ.JoinPreferNonSoft(existing, incoming)
@@ -1449,9 +1445,8 @@ func widenWithIndexer(t typ.Type, keyType, valType typ.Type) typ.Type {
 			return typ.NewMap(newKey, newVal)
 		},
 		Default: func(t typ.Type) typ.Type {
-			// An unresolved container becomes a map; an any container stays
-			// dynamic.
-			if typ.IsUnknown(t) {
+			// For other types (unknown, any), create a map
+			if t.Kind().IsPlaceholder() {
 				return typ.NewMap(keyType, valType)
 			}
 			return t

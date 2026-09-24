@@ -428,10 +428,14 @@ func TestWidenArrayElementType_Unknown(t *testing.T) {
 	}
 }
 
-func TestWidenArrayElementType_AnyStaysDynamic(t *testing.T) {
+func TestWidenArrayElementType_Any(t *testing.T) {
 	result := flow.WidenArrayElementType(typ.Any, typ.String, typ.JoinPreferNonSoft)
-	if result != typ.Any {
-		t.Fatalf("an any container stays any, got %v", result)
+	arr, ok := result.(*typ.Array)
+	if !ok {
+		t.Fatalf("expected Array, got %T", result)
+	}
+	if !typ.TypeEquals(arr.Element, typ.String) {
+		t.Errorf("expected element String, got %v", arr.Element)
 	}
 }
 

@@ -239,7 +239,7 @@ func TestMergeMapValueDomain_PreservesAcceptedRefinement(t *testing.T) {
 	}
 }
 
-func TestMergeMapValueDomain_WidensUnrelatedValuesAndReplacesUnresolved(t *testing.T) {
+func TestMergeMapValueDomain_WidensUnrelatedValuesAndReplacesPlaceholders(t *testing.T) {
 	for _, tt := range []struct {
 		name               string
 		existing, incoming typ.Type
@@ -247,7 +247,7 @@ func TestMergeMapValueDomain_WidensUnrelatedValuesAndReplacesUnresolved(t *testi
 	}{
 		{"unrelated", typ.String, typ.Number, typ.NewUnion(typ.String, typ.Number)},
 		{"unknown", typ.Unknown, typ.String, typ.String},
-		{"any stays dynamic", typ.Any, typ.String, typ.Any},
+		{"any", typ.Any, typ.String, typ.String},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := mergeMapValueDomain(tt.existing, tt.incoming); !typ.TypeEquals(got, tt.want) {
@@ -273,7 +273,7 @@ func TestWidenMapValueArray_NilBase(t *testing.T) {
 }
 
 func TestWidenMapValueArray_PrefersNonSoftElement(t *testing.T) {
-	base := typ.NewMap(typ.String, typ.NewArray(typ.Unknown))
+	base := typ.NewMap(typ.String, typ.NewArray(typ.Any))
 	elem := typ.NewRecord().Field("id", typ.String).Build()
 	result := WidenMapValueArray(base, typ.String, elem)
 	m, ok := result.(*typ.Map)
@@ -434,23 +434,5 @@ func TestWidenFieldWrite_UnknownFieldAdmitsWrite(t *testing.T) {
 	rec := typ.NewRecord().Field("tx", typ.Unknown).Build()
 	if got := widenFieldWrite(rec, "tx", typ.NewOptional(typ.String)); got != rec {
 		t.Fatalf("an unknown field admits the write already, got %s", got)
-	}
-}
-
-func TestWidenMapValueArray_AnyElementStaysDynamic(t *testing.T) {
-	base := typ.NewMap(typ.String, typ.NewArray(typ.Any))
-	elem := typ.NewRecord().Field("id", typ.String).Build()
-	result := WidenMapValueArray(base, typ.String, elem)
-	if !typ.TypeEquals(result, base) {
-		t.Fatalf("an any element admits every value, got %v", result)
-	}
-}
-
-func TestWidenArrayElementType_AnyContainerStaysDynamic(t *testing.T) {
-	if got := WidenArrayElementType(typ.Any, typ.String, typ.JoinPreferNonSoft); got != typ.Any {
-		t.Fatalf("an any container stays any, got %v", got)
-	}
-	if got := WidenArrayElementType(typ.Unknown, typ.String, typ.JoinPreferNonSoft); !typ.TypeEquals(got, typ.NewArray(typ.String)) {
-		t.Fatalf("an unresolved container becomes an array, got %v", got)
 	}
 }

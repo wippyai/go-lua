@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/internal"
 	"github.com/wippyai/go-lua/types/kind"
+	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -29,9 +30,10 @@ func MergeIntoSignature(fn *ast.FunctionExpr, hints []typ.Type, sig *typ.Functio
 			continue
 		}
 		if paramAnnotated(fn, i) {
-			continue
+			types[i] = RefineAnnotation(p.Type, hints[i])
+		} else {
+			types[i] = BodyParamType(hints[i])
 		}
-		types[i] = BodyParamType(hints[i])
 		if !typ.TypeEquals(p.Type, types[i]) {
 			modified = true
 		}
@@ -44,6 +46,21 @@ func MergeIntoSignature(fn *ast.FunctionExpr, hints []typ.Type, sig *typ.Functio
 		params[i] = typ.Param{Name: p.Name, Type: types[i], Optional: p.Optional}
 	}
 	return sig.WithParams(params)
+}
+
+// RefineAnnotation returns the type the body sees for an annotated parameter
+// with a call-site hint. A soft top-like annotation (any, {[string]: any})
+// is narrowed to the hint when the hint fits within it; otherwise, and for
+// every other annotation, the annotation stands.
+func RefineAnnotation(annotation, hint typ.Type) typ.Type {
+	if annotation == nil || hint == nil || !typ.IsRefinableAnnotation(annotation) {
+		return annotation
+	}
+	refined := BodyParamType(hint)
+	if refined == nil || typ.IsUnknown(refined) || !subtype.IsSubtype(refined, annotation) {
+		return annotation
+	}
+	return refined
 }
 
 func paramAnnotated(fn *ast.FunctionExpr, i int) bool {
