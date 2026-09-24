@@ -1,7 +1,6 @@
 package ops
 
 import (
-	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -109,12 +108,6 @@ func LogicalOrTyped(left, right typ.Type) typ.Type {
 	truthyLeft := narrow.ToTruthy(left)
 	if truthyLeft == nil || truthyLeft.Kind().IsNever() {
 		return right
-	}
-	// An unknown truthy left branch may be any truthy value, so it must remain
-	// dominant: joining it with the right branch would drop it as
-	// non-informative and type `x or {}` as the empty table.
-	if typ.IsUnknown(truthyLeft) && right != nil && right.Kind() != kind.Nil {
-		return typ.Unknown
 	}
 
 	return typ.JoinBranchOutcome(truthyLeft, right)
