@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	flowpath "github.com/wippyai/go-lua/compiler/check/flowbuild/path"
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/flow"
@@ -87,6 +88,12 @@ func HasStrictInverseReturnPattern(
 
 		valueState, okValue := classifyNilState(values[valueIdx])
 		errorState, okError := classifyNilState(values[errorIdx])
+		if !okValue && provenPresent(graph, solution, info.Exprs, valueIdx, p) {
+			valueState, okValue = nonNilOnly, true
+		}
+		if !okError && provenPresent(graph, solution, info.Exprs, errorIdx, p) {
+			errorState, okError = nonNilOnly, true
+		}
 		if !okValue && implicitReturnSlotIsNil(info.Exprs, valueIdx) {
 			valueState, okValue = nilOnly, true
 		}
@@ -110,6 +117,20 @@ func HasStrictInverseReturnPattern(
 	})
 
 	return classified && !incompatible && sawSuccess && sawFailure
+}
+
+// provenPresent reports whether the returned expression at idx is a path the
+// flow proves present at p, for a value whose type cannot say so, such as a
+// dynamic error a guard found truthy.
+func provenPresent(graph *cfg.Graph, solution *flow.Solution, exprs []ast.Expr, idx int, p cfg.Point) bool {
+	if solution == nil || graph == nil || idx < 0 || idx >= len(exprs) {
+		return false
+	}
+	path := flowpath.FromExprWithBindingsAt(exprs[idx], nil, graph.Bindings(), graph, p)
+	if path.IsEmpty() {
+		return false
+	}
+	return solution.IsNonNilAt(p, path)
 }
 
 func AttachErrorReturnSpec(fn *typ.Function, valueIndex, errorIndex int) *typ.Function {

@@ -149,6 +149,46 @@ func (s *Solution) conditionAtFallback(p cfg.Point, depth int) constraint.Condit
 	return constraint.And(predCond, edgeCond)
 }
 
+// IsNonNilAt reports whether the condition at p proves the value at path
+// present: every disjunct holds a Truthy or NotNil fact for it. It decides
+// presence where the type cannot express it, as for a value typed any that a
+// guard proved truthy.
+func (s *Solution) IsNonNilAt(p cfg.Point, path constraint.Path) bool {
+	if s == nil || s.pkResolver == nil || path.IsEmpty() {
+		return false
+	}
+	cond := s.ConditionAt(p)
+	if !cond.HasConstraints() || cond.IsFalse() {
+		return false
+	}
+	want := s.pkResolver.KeyAt(p, path)
+	if want == "" {
+		return false
+	}
+	for i := 0; i < cond.NumDisjuncts(); i++ {
+		found := false
+		for _, c := range cond.DisjunctConstraints(i) {
+			var factPath constraint.Path
+			switch v := c.(type) {
+			case constraint.Truthy:
+				factPath = v.Path
+			case constraint.NotNil:
+				factPath = v.Path
+			default:
+				continue
+			}
+			if s.pkResolver.KeyAt(p, factPath) == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
 // ExcludesTypeAt checks if a NotHasType constraint applies to the path at point p.
 func (s *Solution) ExcludesTypeAt(p cfg.Point, path constraint.Path, t typ.Type) bool {
 	if s == nil || s.inputs == nil || t == nil {
