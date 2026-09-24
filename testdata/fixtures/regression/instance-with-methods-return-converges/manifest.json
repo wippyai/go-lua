@@ -1,6 +1,3 @@
 {
-  "description": "A constructor whose instance carries metatable methods should converge to one instance type (session reader: session.open(id) then reader:contexts()).",
-  "check": {
-    "skip": "Known gap, also present in v1.5.23: return summaries keep successive approximations of the instance as union members. Joining them field by field (JoinReturnSlot) made return-summary widening diverge on dataflow runner/workflow_state; see regression/workflow-state-widen-terminates."
-  }
+  "description": "A constructor whose instance carries metatable methods should converge to one instance type (session reader: session.open(id) then reader:contexts())."
 }

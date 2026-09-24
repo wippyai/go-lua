@@ -103,6 +103,38 @@ func TestWidenReturnSummaries_UsesMonotoneJoinForHigherOrderReturns(t *testing.T
 	}
 }
 
+// Incomparable approximations of one higher-order record join into a single
+// record whose fields admit both, rather than a union of the approximations.
+// An any-typed field of an earlier iteration is an unresolved placeholder and
+// yields to the resolved string; a resolved any (cache) joined with nil stays any.
+func TestWidenReturnSummaries_JoinsIncomparableHigherOrderRecords(t *testing.T) {
+	method := typ.Func().Returns(typ.Func().Returns(typ.String).Build()).Build()
+	earlier := typ.NewRecord().
+		Field("run", method).
+		Field("id", typ.Any).
+		Field("cache", typ.Nil).
+		Build()
+	current := typ.NewRecord().
+		Field("run", method).
+		Field("id", typ.String).
+		Field("cache", typ.Any).
+		Build()
+
+	merged := WidenReturnSummaries(
+		api.ReturnSummaries{1: []typ.Type{earlier}},
+		api.ReturnSummaries{1: []typ.Type{current}},
+	)
+	got := merged[1]
+	want := typ.NewRecord().
+		Field("cache", typ.Any).
+		Field("id", typ.String).
+		Field("run", method).
+		Build()
+	if len(got) != 1 || !typ.TypeEquals(got[0], want) {
+		t.Fatalf("expected [%v], got %v", want, got)
+	}
+}
+
 func TestWidenReturnSummaries_InterfaceMethodsDoNotBlockOptionalElision(t *testing.T) {
 	dbType := typ.NewInterface("sql.DB", []typ.Method{
 		{
@@ -577,7 +609,7 @@ func TestWidenFieldWrites_FoldsNestedRecordApproximations(t *testing.T) {
 		t.Fatalf("expected a recursive node type, got %s", first)
 	}
 	for i := 0; i <= 5; i++ {
-		if !informationBelow(linkedNodeApproximation(i), first, make(map[[2]typ.Type]bool)) {
+		if !informationBelow(linkedNodeApproximation(i), first, make(map[[2]typ.Type]bool), subtype.NewSession()) {
 			t.Fatalf("approximation %d must lie below the folded node", i)
 		}
 	}
@@ -596,11 +628,11 @@ func TestWidenFieldWrites_FoldsNestedRecordApproximations(t *testing.T) {
 func TestInformationBelow_UnresolvedFieldIsBelowResolved(t *testing.T) {
 	early := typ.NewRecord().Field("name", typ.Unknown).Build()
 	late := typ.NewRecord().Field("name", typ.String).Build()
-	if !informationBelow(early, late, make(map[[2]typ.Type]bool)) {
+	if !informationBelow(early, late, make(map[[2]typ.Type]bool), subtype.NewSession()) {
 		t.Fatal("an unresolved field must lie below its resolved type")
 	}
 	other := typ.NewRecord().Field("name", typ.Integer).Build()
-	if informationBelow(other, late, make(map[[2]typ.Type]bool)) {
+	if informationBelow(other, late, make(map[[2]typ.Type]bool), subtype.NewSession()) {
 		t.Fatal("a conflicting resolved field must not lie below another")
 	}
 }
