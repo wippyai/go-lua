@@ -1,0 +1,1 @@
+{"description":"A successful helper that must dereference its argument proves the caller's optional receiver is non-nil.","check":{"errors":0}}

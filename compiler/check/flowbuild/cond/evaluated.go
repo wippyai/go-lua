@@ -13,7 +13,7 @@ import (
 // ReceiverRoots keeps dereference facts for values with a usable flow type.
 // An unresolved root has no type that a NotNil fact can narrow; retaining such
 // facts can repeatedly expand inferred unions at joins.
-func ReceiverRoots(inputs *flow.Inputs) (map[cfg.SymbolID]bool, map[cfg.SymbolID]bool, map[constraint.PathKey]bool) {
+func ReceiverRoots(inputs *flow.Inputs, graph *cfg.Graph) (map[cfg.SymbolID]bool, map[cfg.SymbolID]bool, map[constraint.PathKey]bool) {
 	if inputs == nil {
 		return nil, nil, nil
 	}
@@ -33,6 +33,18 @@ func ReceiverRoots(inputs *flow.Inputs) (map[cfg.SymbolID]bool, map[cfg.SymbolID
 	}
 	for sym, t := range inputs.SiblingTypes {
 		add(sym, t)
+	}
+	// A successful dereference of an `any` parameter is still a runtime proof
+	// about the argument. Keep it for the function's OnReturn summary, where it
+	// can narrow a typed argument at a call site. Restrict this to parameters:
+	// arbitrary unresolved locals have no stable flow type to refine.
+	if graph != nil {
+		for _, sym := range graph.ParamSymbols() {
+			if typ.IsAny(inputs.DeclaredTypes[sym]) {
+				roots[sym] = true
+				nilable[sym] = true
+			}
+		}
 	}
 	for _, assignment := range inputs.Assignments {
 		if len(assignment.TargetPath.Segments) == 0 {
