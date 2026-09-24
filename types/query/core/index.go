@@ -1,6 +1,7 @@
 package core
 
 import (
+	"github.com/wippyai/go-lua/types/typ/unwrap"
 	"sort"
 
 	"github.com/wippyai/go-lua/types/kind"
@@ -33,6 +34,16 @@ type indexResult struct {
 func indexDepth(t, keyType typ.Type, depth int) (typ.Type, bool) {
 	if stopDepth(t, depth) {
 		return nil, false
+	}
+	// A read with a key that may be nil yields what the non-nil key reads, or
+	// nil: t[nil] reads nil.
+	if keyType != nil && !unwrap.IsNilType(keyType) {
+		if present := unwrap.Optional(keyType); present != nil && !typ.TypeEquals(present, keyType) {
+			if res, ok := indexDepth(t, present, depth); ok {
+				return typ.NewOptional(res), true
+			}
+			return nil, false
+		}
 	}
 	if top, ok := specialAccessType(t); ok {
 		return top, true
