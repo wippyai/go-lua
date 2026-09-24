@@ -166,8 +166,33 @@ func (s *Solution) IsNonNilAt(p cfg.Point, path constraint.Path) bool {
 		return false
 	}
 	for i := 0; i < cond.NumDisjuncts(); i++ {
+		// Copies preserve identity. Follow only equalities that hold in this
+		// disjunct, so every reachable path must still prove presence.
+		equalKeys := map[string]bool{string(want): true}
+		items := cond.DisjunctConstraints(i)
+
+		for changed := true; changed; {
+			changed = false
+			for _, c := range items {
+				eq, ok := c.(constraint.EqPath)
+				if !ok {
+					continue
+				}
+				left := string(s.pkResolver.KeyAt(p, eq.Left))
+				right := string(s.pkResolver.KeyAt(p, eq.Right))
+				if left == "" || right == "" {
+					continue
+				}
+				if equalKeys[left] && !equalKeys[right] {
+					equalKeys[right], changed = true, true
+				}
+				if equalKeys[right] && !equalKeys[left] {
+					equalKeys[left], changed = true, true
+				}
+			}
+		}
 		found := false
-		for _, c := range cond.DisjunctConstraints(i) {
+		for _, c := range items {
 			var factPath constraint.Path
 			switch v := c.(type) {
 			case constraint.Truthy:
@@ -177,7 +202,7 @@ func (s *Solution) IsNonNilAt(p cfg.Point, path constraint.Path) bool {
 			default:
 				continue
 			}
-			if s.pkResolver.KeyAt(p, factPath) == want {
+			if equalKeys[string(s.pkResolver.KeyAt(p, factPath))] {
 				found = true
 				break
 			}

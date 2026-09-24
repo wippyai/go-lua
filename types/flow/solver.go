@@ -209,12 +209,28 @@ func (s *Solution) runPropagation() {
 		EdgeConditions: edgeConds,
 		DeadPoints:     s.inputs.DeadPoints,
 		Assignments:    assigns,
-		Facts:          s.indexerWriteFacts(),
+		Facts:          s.statementFacts(),
 		PhiRenames:     phiRenames(s.inputs.Graph.PhiNodes()),
 	}
 
 	result := propagate.Propagate(propInputs)
 	s.pointConditions = result.PointConditions
+}
+
+// statementFacts combines facts established by assignments and dynamic index writes.
+func (s *Solution) statementFacts() map[cfg.Point]constraint.Condition {
+	facts := s.indexerWriteFacts()
+	if facts == nil {
+		facts = make(map[cfg.Point]constraint.Condition, len(s.inputs.Facts))
+	}
+	for point, fact := range s.inputs.Facts {
+		if old, ok := facts[point]; ok {
+			facts[point] = constraint.And(old, fact)
+		} else {
+			facts[point] = fact
+		}
+	}
+	return facts
 }
 
 // indexerWriteFacts returns, per point, the KeyOf facts established by

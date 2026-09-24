@@ -3,10 +3,37 @@ package returns
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/types/contract"
+	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 	typjoin "github.com/wippyai/go-lua/types/typ/join"
 )
+
+func TestMergeFunctionFactType_OnlyKeepsGuaranteedReturnEffects(t *testing.T) {
+	returns := []typ.Type{typ.NewOptional(typ.String), typ.NewOptional(typ.String)}
+	withRelation := typ.Func().Returns(returns...).Spec(contract.NewSpec().WithEffects(effect.ErrorReturn{ValueIndex: 0, ErrorIndex: 1})).Build()
+	withoutRelation := typ.Func().Returns(typ.NewOptional(typ.Number), returns[1]).Build()
+	for _, pair := range [][2]typ.Type{{typ.NewUnion(withRelation, withoutRelation), withoutRelation}, {withoutRelation, typ.NewUnion(withRelation, withoutRelation)}} {
+		merged := MergeFunctionFactType(pair[0], pair[1])
+		if spec := contract.ExtractSpec(merged); spec != nil && spec.Effects.GetErrorReturn(0) != nil {
+			t.Fatalf("a relation absent from one alternative is not guaranteed: %v", merged)
+		}
+	}
+	merged := MergeFunctionFactType(withRelation, withRelation)
+	if spec := contract.ExtractSpec(merged); spec == nil || spec.Effects.GetErrorReturn(0) == nil {
+		t.Fatalf("common return relation was lost: %v", merged)
+	}
+	updated := MergeFunctionFactType(withoutRelation, withRelation)
+	if spec := contract.ExtractSpec(updated); spec == nil || spec.Effects.GetErrorReturn(0) == nil {
+		t.Fatalf("a later proof for the same function was lost: %v", updated)
+	}
+	incompleteEstimate := typ.Func().Returns(returns...).Spec(contract.NewSpec()).Build()
+	retained := MergeFunctionFactType(withRelation, incompleteEstimate)
+	if spec := contract.ExtractSpec(retained); spec == nil || spec.Effects.GetErrorReturn(0) == nil {
+		t.Fatalf("a proved relation was lost to an incomplete later estimate: %v", retained)
+	}
+}
 
 func TestJoinReturnVectors_Empty(t *testing.T) {
 	result := typjoin.ReturnVectors(nil, nil)

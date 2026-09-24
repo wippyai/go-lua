@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/kind"
+	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
@@ -29,9 +30,21 @@ func AttachInferredErrorReturnSpec(
 	if base == nil {
 		base = synth
 	}
-	if len(fn.Returns) == 2 && !HasErrorReturnLabel(fn) &&
+	if len(fn.Returns) == 2 &&
+		(unwrap.IsOptionalLike(fn.Returns[0]) || unwrap.IsNilType(fn.Returns[0])) &&
+		!HasErrorReturnLabel(fn) &&
 		HasStrictInverseReturnPattern(graph, solution, base, 0, 1) {
 		fn = AttachErrorReturnSpec(fn, 0, 1)
+	}
+	if solution != nil && len(fn.Returns) > 2 {
+		for first := 0; first < len(fn.Returns); first++ {
+			for second := first + 1; second < len(fn.Returns); second++ {
+				if (unwrap.IsOptionalLike(fn.Returns[first]) || unwrap.IsNilType(fn.Returns[first])) &&
+					HasStrictInverseReturnPattern(graph, solution, base, first, second) {
+					fn = AttachErrorReturnSpec(fn, first, second)
+				}
+			}
+		}
 	}
 	// A multi-result function can have successful values before a trailing
 	// error, including a string-valued result that makes the error position
@@ -121,6 +134,22 @@ func HasErrorReturnLabel(fn *typ.Function) bool {
 	return false
 }
 
+// HasReturnRelationLabel reports whether the function carries a proved
+// relation between its return slots.
+func HasReturnRelationLabel(fn *typ.Function) bool {
+	spec := contract.ExtractSpec(fn)
+	if spec == nil {
+		return false
+	}
+	for _, label := range spec.Effects.Labels {
+		switch label.(type) {
+		case effect.ErrorReturn, effect.CorrelatedReturn:
+			return true
+		}
+	}
+	return false
+}
+
 func HasStrictInverseReturnPattern(
 	graph *cfg.Graph,
 	solution *flow.Solution,
@@ -143,13 +172,21 @@ func HasStrictInverseReturnPattern(
 		if solution != nil && solution.IsPointDead(p) {
 			return
 		}
-		// Skip synthetic implicit return nodes; explicit `return` without values
-		// is a real nil,nil return and should block inference.
+		// A reachable implicit return yields nil in both slots, so it blocks
+		// a universal inverse relation. Pre-flow inference keeps its older
+		// two-witness requirement because it has no liveness solution.
 		if len(info.Exprs) == 0 && info.Stmt == nil {
+			if solution != nil {
+				incompatible = true
+			}
 			return
 		}
 
-		values := synth.ExpandValues(info.Exprs, 2, p)
+		needed := valueIdx
+		if errorIdx > needed {
+			needed = errorIdx
+		}
+		values := synth.ExpandValues(info.Exprs, needed+1, p)
 		if valueIdx >= len(values) || errorIdx >= len(values) {
 			incompatible = true
 			return
@@ -177,6 +214,10 @@ func HasStrictInverseReturnPattern(
 
 		switch {
 		case valueState == nilOnly && errorState == nonNilOnly:
+			if !typ.IsNever(narrow.ToFalsy(values[errorIdx])) {
+				incompatible = true
+				return
+			}
 			sawFailure = true
 		case valueState == nonNilOnly && errorState == nilOnly:
 			sawSuccess = true
@@ -185,7 +226,7 @@ func HasStrictInverseReturnPattern(
 		}
 	})
 
-	return classified && !incompatible && sawSuccess && sawFailure
+	return classified && !incompatible && (solution != nil || sawSuccess && sawFailure)
 }
 
 // provenPresent reports whether the returned expression at idx is a path the
@@ -206,8 +247,13 @@ func AttachErrorReturnSpec(fn *typ.Function, valueIndex, errorIndex int) *typ.Fu
 	if fn == nil {
 		return fn
 	}
-	if HasErrorReturnLabel(fn) {
-		return fn
+	if spec := contract.ExtractSpec(fn); spec != nil {
+		for _, label := range spec.Effects.Labels {
+			if existing, ok := label.(effect.ErrorReturn); ok &&
+				existing.ValueIndex == valueIndex && existing.ErrorIndex == errorIndex {
+				return fn
+			}
+		}
 	}
 	spec, ok := cloneContractSpec(fn)
 	if !ok {

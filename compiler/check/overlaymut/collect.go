@@ -25,6 +25,22 @@ func CollectFieldAssignments(
 	if graph == nil {
 		return result
 	}
+	record := func(sym cfg.SymbolID, name string, fieldType typ.Type) {
+		if sym == 0 || name == "" || filterSyms != nil && !filterSyms[sym] {
+			return
+		}
+		if fieldType == nil {
+			fieldType = typ.Unknown
+		}
+		if result[sym] == nil {
+			result[sym] = make(map[string]typ.Type)
+		}
+		if existing := result[sym][name]; existing != nil {
+			result[sym][name] = typ.NewUnion(existing, fieldType)
+		} else {
+			result[sym][name] = fieldType
+		}
+	}
 
 	graph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
 		if info == nil {
@@ -54,10 +70,7 @@ func CollectFieldAssignments(
 				}
 			}
 
-			if sym == 0 || fieldName == "" {
-				continue
-			}
-			if filterSyms != nil && !filterSyms[sym] {
+			if sym == 0 || fieldName == "" || filterSyms != nil && !filterSyms[sym] {
 				continue
 			}
 
@@ -65,19 +78,23 @@ func CollectFieldAssignments(
 			if source != nil && synth != nil {
 				fieldType = synth(source, p)
 			}
-			if fieldType == nil {
-				fieldType = typ.Unknown
-			}
-
-			if result[sym] == nil {
-				result[sym] = make(map[string]typ.Type)
-			}
-			if existing := result[sym][fieldName]; existing != nil {
-				result[sym][fieldName] = typ.NewUnion(existing, fieldType)
-			} else {
-				result[sym][fieldName] = fieldType
-			}
+			record(sym, fieldName, fieldType)
 		}
+	})
+	graph.EachFuncDef(func(p cfg.Point, info *cfg.FuncDefInfo) {
+		if info == nil || info.FuncExpr == nil || len(info.TargetPath.Segments) != 1 || info.TargetPath.Segments[0].Kind != constraint.SegmentField {
+			return
+		}
+		sym := info.TargetPath.Symbol
+		name := info.TargetPath.Segments[0].Name
+		if sym == 0 || name == "" || filterSyms != nil && !filterSyms[sym] {
+			return
+		}
+		var fieldType typ.Type
+		if synth != nil {
+			fieldType = synth(info.FuncExpr, p)
+		}
+		record(sym, name, fieldType)
 	})
 
 	return result

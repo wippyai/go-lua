@@ -1,0 +1,1 @@
+{"description": "Actual kickside.automation.engine:automation_engine and kickside.automation:types sources with stub registry import.", "files": ["registry.lua", "types.lua", "engine.lua"], "check": {"errors": 0}}

@@ -94,7 +94,11 @@ func FromConstraints(items ...Constraint) Condition {
 	if len(items) == 0 {
 		return TrueCondition()
 	}
-	return Condition{Disjuncts: [][]Constraint{canonicalizeConjunction(items)}}
+	conj := canonicalizeConjunction(items)
+	if conjunctionImpossible(conj) {
+		return FalseCondition()
+	}
+	return Condition{Disjuncts: [][]Constraint{conj}}
 }
 
 // FromDisjuncts builds a condition from multiple conjunctions.
@@ -215,6 +219,9 @@ func And(a, b Condition) Condition {
 	// Fast path: single disjunct on both sides (very common)
 	if len(a.Disjuncts) == 1 && len(b.Disjuncts) == 1 {
 		merged := mergeConjunctions(a.Disjuncts[0], b.Disjuncts[0])
+		if conjunctionImpossible(merged) {
+			return FalseCondition()
+		}
 		return Condition{Disjuncts: [][]Constraint{merged}}
 	}
 
@@ -819,7 +826,63 @@ func conjunctionSubsumesWithHashes(a []Constraint, aHashes []uint64, b []Constra
 	return true
 }
 
+// conjunctionImpossible recognizes contradictions whose meaning is fixed by
+// Lua's nil and truthiness rules, independent of the value's static type.
+func conjunctionImpossible(items []Constraint) bool {
+	for i, left := range items {
+		var leftPath Path
+		var leftKind uint8
+		switch v := left.(type) {
+		case IsNil:
+			leftPath, leftKind = v.Path, 1
+		case NotNil:
+			leftPath, leftKind = v.Path, 2
+		case Truthy:
+			leftPath, leftKind = v.Path, 3
+		case Falsy:
+			leftPath, leftKind = v.Path, 4
+		default:
+			continue
+		}
+		for _, right := range items[i+1:] {
+			var rightPath Path
+			var rightKind uint8
+			switch v := right.(type) {
+			case IsNil:
+				rightPath, rightKind = v.Path, 1
+			case NotNil:
+				rightPath, rightKind = v.Path, 2
+			case Truthy:
+				rightPath, rightKind = v.Path, 3
+			case Falsy:
+				rightPath, rightKind = v.Path, 4
+			default:
+				continue
+			}
+			if leftPath.Equal(rightPath) &&
+				(leftKind == 1 && (rightKind == 2 || rightKind == 3) ||
+					leftKind == 2 && rightKind == 1 ||
+					leftKind == 3 && (rightKind == 1 || rightKind == 4) ||
+					leftKind == 4 && rightKind == 3) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func normalizeCondition(c Condition) Condition {
+	// Impossible nil/truthy combinations are generated when relational facts
+	// meet a guard. Drop those paths before joins can dilute narrowing.
+	if len(c.Disjuncts) > 0 {
+		kept := make([][]Constraint, 0, len(c.Disjuncts))
+		for _, d := range c.Disjuncts {
+			if !conjunctionImpossible(d) {
+				kept = append(kept, d)
+			}
+		}
+		c.Disjuncts = kept
+	}
 	n := len(c.Disjuncts)
 	if n == 0 {
 		return c

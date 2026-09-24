@@ -217,7 +217,19 @@ func (p *Processor) processNestedFunction(
 								continue
 							}
 							base := capturedTypes[sym]
-							capturedTypes[sym] = returns.MergeFieldsIntoType(base, fieldMap)
+							captured := returns.MergeFieldsIntoType(base, fieldMap)
+							if parentResult.FlowSolution != nil {
+								// A closure sees the table after its preceding writes. The
+								// declaration may leave a field as any even though the
+								// solved value at this definition is a typed function.
+								for _, name := range cfg.SortedFieldNames(fieldMap) {
+									path := constraint.Path{Symbol: sym, Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: name}}}
+									if t := parentResult.FlowSolution.TypeAt(info.NF.Point, path); t != nil && !typ.IsAny(t) && !typ.IsUnknown(t) {
+										captured = typ.ExtendRecordWithField(captured, name, t)
+									}
+								}
+							}
+							capturedTypes[sym] = captured
 						}
 					}
 				}

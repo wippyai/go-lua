@@ -47,7 +47,6 @@
 //   - IteratorSource: Derives iterator variable types from the iterated container
 //   - ContainerElementSource: Derives types from container methods (channel:receive())
 //   - MapElementSource: Derives types from dynamic map index reads (t[k])
-//   - SiblingAssignment: Correlates multi-return values (result, err patterns)
 //
 // # Widening
 //
@@ -245,10 +244,9 @@ type Inputs struct {
 	// Example: local _, err = Point:is(data) -> err nil implies HasType{data, Point}
 	PredicateLinks map[string]PredicateLink
 
-	// SiblingAssignments tracks variables assigned from the same multi-return call.
-	// Key is "varname@defpoint", maps to the sibling group.
-	// Used for error return pattern where checking err narrows result.
-	SiblingAssignments map[SiblingKey]*SiblingAssignment
+	// Facts are conditions established by a statement and available to its
+	// successors, including relations between results of one call.
+	Facts map[cfg.Point]constraint.Condition
 
 	// IndexerAssignments tracks dynamic index assignments: t[k] = v with non-const k.
 	// Used to widen {} to {[K]: V} based on key/value types.
@@ -309,40 +307,6 @@ type ReturnExprConstraints struct {
 type PredicateLink struct {
 	OnTruthy constraint.Condition
 	OnFalsy  constraint.Condition
-}
-
-// ReturnCorrelation describes a correlated (value, error) pair in a multi-return.
-// Derived from effect.ErrorReturn on the callee's spec.
-type ReturnCorrelation struct {
-	ValueIndex int
-	ErrorIndex int
-}
-
-// GuardedTypeCorrelation describes branch-sensitive sibling narrowing:
-// when guard return at GuardIndex is truthy/falsy (per GuardOnTruthy),
-// target return at TargetIndex narrows to TargetType.
-type GuardedTypeCorrelation struct {
-	GuardIndex    int
-	TargetIndex   int
-	GuardOnTruthy bool
-	TargetType    typ.Type
-}
-
-// SiblingAssignment tracks variables assigned from the same multi-return call.
-// Used for error return pattern: `local result, err = call()` where checking err narrows result.
-type SiblingAssignment struct {
-	Symbols             []cfg.SymbolID           // Symbol IDs in order (primary identity)
-	Names               []string                 // Variable names (for constraint path construction)
-	Types               []typ.Type               // Declared types for each variable
-	Correlations        []ReturnCorrelation      // Inverse correlations (ErrorReturn): value nil <-> error non-nil
-	CoCorrelations      []ReturnCorrelation      // Same-direction correlations (CorrelatedReturn): all nil or all non-nil
-	GuardedCorrelations []GuardedTypeCorrelation // Branch-sensitive type narrowing from guard/result relations
-}
-
-// SiblingKey uniquely identifies a variable in a sibling assignment by SymbolID+SSA version.
-type SiblingKey struct {
-	Symbol    cfg.SymbolID
-	VersionID int
 }
 
 // IndexerAssignment describes an assignment via dynamic index: t[k] = v

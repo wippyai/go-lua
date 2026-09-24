@@ -248,6 +248,46 @@ func TestPropagate_FactHoldsAfterPointAndThroughPhi(t *testing.T) {
 	}
 }
 
+func TestPropagate_ReturnRelationSurvivesPhiAndErrorGuard(t *testing.T) {
+	g := &mockGraph{
+		entry: 1,
+		nodes: map[cfg.Point]*cfg.Node{
+			1: {Kind: cfg.NodeEntry}, 2: {Kind: cfg.NodeBranch},
+			3: {Kind: cfg.NodeAssign}, 4: {Kind: cfg.NodeAssign},
+			5: {Kind: cfg.NodeJoin}, 6: {Kind: cfg.NodeBranch},
+			7: {Kind: cfg.NodeAssign},
+		},
+		preds: map[cfg.Point][]cfg.Point{1: {}, 2: {1}, 3: {2}, 4: {2}, 5: {3, 4}, 6: {5}, 7: {6}},
+		succs: map[cfg.Point][]cfg.Point{1: {2}, 2: {3, 4}, 3: {5}, 4: {5}, 5: {6}, 6: {7}},
+		rpo:   []cfg.Point{1, 2, 3, 4, 5, 6, 7},
+	}
+	value := func(version int) constraint.Path { return constraint.Path{Root: "v", Symbol: 1, Version: version} }
+	err := func(version int) constraint.Path { return constraint.Path{Root: "err", Symbol: 2, Version: version} }
+	relation := func(version int) constraint.Condition {
+		return constraint.Or(
+			constraint.FromConstraints(constraint.Truthy{Path: err(version)}, constraint.IsNil{Path: value(version)}),
+			constraint.FromConstraints(constraint.Falsy{Path: err(version)}, constraint.NotNil{Path: value(version)}),
+		)
+	}
+	inputs := &Inputs{
+		Graph: g,
+		Facts: map[cfg.Point]constraint.Condition{3: relation(1), 4: relation(2)},
+		PhiRenames: map[EdgeKey]map[constraint.VersionRef]int{
+			{From: 3, To: 5}: {{Symbol: 1, Version: 1}: 3, {Symbol: 2, Version: 1}: 3},
+			{From: 4, To: 5}: {{Symbol: 1, Version: 2}: 3, {Symbol: 2, Version: 2}: 3},
+		},
+		EdgeConditions: EdgeConditions{{From: 6, To: 7}: constraint.FromConstraints(constraint.Falsy{Path: err(3)})},
+	}
+	result := Propagate(inputs)
+	if !result.PointConditions[5].Equals(relation(3)) {
+		t.Fatalf("phi lost the return relation: %v", result.PointConditions[5])
+	}
+	want := constraint.FromConstraints(constraint.Falsy{Path: err(3)}, constraint.NotNil{Path: value(3)})
+	if !result.PointConditions[7].Equals(want) {
+		t.Fatalf("error guard failed to narrow the value: got %v, want %v", result.PointConditions[7], want)
+	}
+}
+
 func TestPropagate_FactOnOneIncomingPathDoesNotHoldAtJoin(t *testing.T) {
 	g := &mockGraph{
 		entry: 1,
