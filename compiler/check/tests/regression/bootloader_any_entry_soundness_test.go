@@ -1,6 +1,7 @@
 package regression
 
 import (
+	"github.com/wippyai/go-lua/compiler/check"
 	"strings"
 	"testing"
 
@@ -24,9 +25,9 @@ func TestBootloader_ExplicitAnyEntry_AssignToStringIsError(t *testing.T) {
 		execute_bootloader(e)
 	`
 
-	result := testutil.Check(source, testutil.WithStdlib())
+	result := testutil.Check(source, testutil.WithStdlib(), testutil.WithCheckOptions(check.Options{StrictAny: true}))
 	if !result.HasError() {
-		t.Fatal("expected error: cannot assign any to string")
+		t.Fatal("expected error under strict any: cannot assign any to string")
 	}
 
 	found := false
@@ -60,5 +61,22 @@ func TestBootloader_TypedEntry_AssignToStringNoError(t *testing.T) {
 	result := testutil.Check(source, testutil.WithStdlib())
 	if result.HasError() {
 		t.Fatalf("expected no errors for typed entry, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+// Under gradual any, a field of an any-typed entry is consistent with string.
+func TestBootloader_ExplicitAnyEntry_AssignToStringIsConsistentUnderGradualAny(t *testing.T) {
+	source := `
+		local function execute_bootloader(entry: any)
+			local bootloader_id: string = entry.id
+			return bootloader_id
+		end
+
+		execute_bootloader({ id = "boot:one" })
+	`
+
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected no error, got: %v", testutil.ErrorMessages(result.Diagnostics))
 	}
 }

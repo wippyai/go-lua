@@ -1,6 +1,7 @@
 package regression
 
 import (
+	"github.com/wippyai/go-lua/compiler/check"
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
@@ -832,9 +833,9 @@ func TestIpairsOverAny_ValueNotTypedAsNil(t *testing.T) {
 		end
 		return true
 	`
-	result := testutil.Check(source, testutil.WithStdlib())
+	result := testutil.Check(source, testutil.WithStdlib(), testutil.WithCheckOptions(check.Options{StrictAny: true}))
 	if !result.HasError() {
-		t.Fatalf("expected error assigning iterator value to nil, got none")
+		t.Fatalf("expected error assigning the any iterator value to nil under strict any, got none")
 	}
 }
 

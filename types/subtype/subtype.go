@@ -87,8 +87,51 @@ func IsSubtype(sub, super typ.Type) bool {
 	return isSubtype(sub, super)
 }
 
+// IsConsistentSubtype reports whether a value of type sub may be used where
+// super is expected under gradual typing: the consistent-subtyping relation of
+// Siek and Taha, in which any is consistent with every type in both
+// directions, at the top level and inside structured types. It decides
+// use-site assignability only; joins, narrowing and normalization use
+// IsSubtype, because consistency is not containment. unknown is not
+// consistent with specific types: an unknown value must be narrowed first.
+func IsConsistentSubtype(sub, super typ.Type) bool {
+	c := &checker{gradual: true}
+	return c.check(sub, super, 0)
+}
+
+// Assignability selects the relation that decides whether a value may be used
+// where a type is expected: an assignment to an annotated variable, an
+// argument, a receiver, a return value or a table constructor checked against
+// its expected type.
+type Assignability uint8
+
+const (
+	// Gradual accepts any wherever a type is expected and any type where any
+	// is expected (IsConsistentSubtype).
+	Gradual Assignability = iota
+	// StrictAny treats any as unknown: it must be narrowed before it is used
+	// where a specific type is expected (IsSubtype).
+	StrictAny
+)
+
+// Assignable reports whether a value of type sub may be used where super is
+// expected under a.
+func (a Assignability) Assignable(sub, super typ.Type) bool {
+	if a == StrictAny {
+		return IsSubtype(sub, super)
+	}
+	return IsConsistentSubtype(sub, super)
+}
+
 // checker holds mutable state for a single subtype derivation.
 type checker struct {
+	// gradual derives consistent subtyping (IsConsistentSubtype) instead of
+	// plain subtyping. Derivations of the two relations never share
+	// assumptions or refutations.
+	gradual bool
+	// plain derives the plain relation inside a gradual derivation, for rules
+	// that must not treat any as consistent, such as literal widening.
+	plain *checker
 	// assumed holds every pair on the trail.
 	assumed map[typePair]struct{}
 	// trail records assumptions in the order they were made, so a failed
@@ -98,6 +141,18 @@ type checker struct {
 	refuted map[typePair]struct{}
 	// cutoffs counts derivations stopped by the recursion depth limit.
 	cutoffs int
+}
+
+// plainRelation returns the checker that derives plain subtyping within this
+// derivation.
+func (c *checker) plainRelation() *checker {
+	if !c.gradual {
+		return c
+	}
+	if c.plain == nil {
+		c.plain = &checker{}
+	}
+	return c.plain
 }
 
 // assume adds pair to the trail.
@@ -148,6 +203,11 @@ func (c *checker) derive(sub, super typ.Type, depth int) bool {
 	if typ.DepthExceeded(depth) {
 		c.cutoffs++
 		return false
+	}
+
+	// any is consistent with every type in both directions.
+	if c.gradual && (typ.IsAny(sub) || typ.IsAny(super)) {
+		return true
 	}
 
 	// Reflexivity: T <: T
@@ -690,6 +750,9 @@ func metatableRecord(t typ.Type) (*typ.Record, bool) {
 func (c *checker) canWidenTo(narrow, wide typ.Type, depth int) bool {
 	if narrow == nil || wide == nil {
 		return false
+	}
+	if c.gradual {
+		return c.plainRelation().canWidenTo(narrow, wide, depth)
 	}
 	if typ.DepthExceeded(depth) {
 		c.cutoffs++

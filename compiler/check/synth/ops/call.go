@@ -913,7 +913,7 @@ func callFunction(ctx *db.QueryContext, query core.TypeOps, fn *typ.Function, ar
 		}
 		if expectedReceiver != nil {
 			expectedReceiver = subst.Self(expectedReceiver, receiver)
-			if !isSubtypeCheck(ctx, query, receiver, expectedReceiver) {
+			if !isAssignableCheck(ctx, query, receiver, expectedReceiver) {
 				errors = append(errors, CallError{
 					Kind:    ErrTypeMismatch,
 					Message: fmt.Sprintf("method receiver: expected %s, got %s", typ.FormatShort(expectedReceiver), typ.FormatShort(receiver)),
@@ -940,7 +940,7 @@ func callFunction(ctx *db.QueryContext, query core.TypeOps, fn *typ.Function, ar
 		}
 
 		if expectedType != nil && arg != nil {
-			if !isSubtypeCheck(ctx, query, arg, expectedType) {
+			if !isAssignableCheck(ctx, query, arg, expectedType) {
 				errors = append(errors, CallError{
 					Kind:    ErrTypeMismatch,
 					Message: fmt.Sprintf("argument %d: expected %s, got %s", i+1, typ.FormatShort(expectedType), typ.FormatShort(arg)),
@@ -1098,6 +1098,15 @@ func receiverAliasName(t typ.Type) (string, bool) {
 	}
 
 	return "", false
+}
+
+// isAssignableCheck reports whether a value of type sub may be passed where
+// super is expected, under the assignability mode of ctx.
+func isAssignableCheck(ctx *db.QueryContext, query core.TypeOps, sub, super typ.Type) bool {
+	if query != nil {
+		return query.IsAssignable(ctx, sub, super)
+	}
+	return core.AssignabilityOf(ctx).Assignable(sub, super)
 }
 
 // isSubtypeCheck uses memoized query if available, otherwise falls back to package function.

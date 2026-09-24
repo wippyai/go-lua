@@ -64,6 +64,7 @@ import (
 	"github.com/wippyai/go-lua/types/diag"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/query/core"
+	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -137,6 +138,7 @@ func WithComputePass(p api.ComputePass) Option {
 type Checker struct {
 	db                        *db.DB
 	deps                      Deps
+	options                   Options
 	passes                    []Pass
 	computePasses             []api.ComputePass
 	maxIterations             int
@@ -202,6 +204,41 @@ func (c *Checker) newPipeline() *pipeline.Driver {
 	})
 }
 
+// Options holds the type-checking semantics an embedder selects for its
+// programs, as opposed to the analysis limits other options configure. The
+// zero value is the default semantics.
+type Options struct {
+	// StrictAny makes any behave as unknown: an any value is not accepted
+	// where a specific type is expected until it is narrowed. By default any
+	// is gradual, consistent with every type at assignments, arguments and
+	// returns.
+	StrictAny bool
+}
+
+// Assignability returns the relation that decides use-site assignability
+// under o.
+func (o Options) Assignability() subtype.Assignability {
+	if o.StrictAny {
+		return subtype.StrictAny
+	}
+	return subtype.Gradual
+}
+
+// WithOptions configures the type-checking semantics.
+func WithOptions(o Options) Option {
+	return func(c *Checker) {
+		c.options = o
+	}
+}
+
+// newQueryContext creates the query context of one check session, carrying
+// the session's assignability mode.
+func (c *Checker) newQueryContext() *db.QueryContext {
+	ctx := db.NewQueryContext(c.db)
+	core.WithAssignability(ctx, c.options.Assignability())
+	return ctx
+}
+
 // WithMaxIterations configures the maximum number of fixpoint iterations.
 // Values less than 1 are clamped to 1.
 func WithMaxIterations(n int) Option {
@@ -251,7 +288,7 @@ func WithScopeDepthDiagnostics(enabled bool) Option {
 //   - Diagnostics: Type errors, warnings, and suggestions
 //   - Store: Inter-function channel data for advanced introspection
 func (c *Checker) Check(source, name string) *Session {
-	ctx := db.NewQueryContext(c.db)
+	ctx := c.newQueryContext()
 	sess := New(ctx, name)
 	// Ensure each top-level Check starts from clean inter-function channel state.
 	// These are iteration-stable caches and must not persist across separate runs.
@@ -299,7 +336,7 @@ func (c *Checker) Check(source, name string) *Session {
 // Analysis proceeds identically to Check: binding, CFG construction, fixpoint
 // iteration, and diagnostic generation.
 func (c *Checker) CheckChunk(chunk []ast.Stmt, name string) *Session {
-	ctx := db.NewQueryContext(c.db)
+	ctx := c.newQueryContext()
 	sess := New(ctx, name)
 	// Attach store accessor and compute context for interproc queries
 	if sess.Store != nil {

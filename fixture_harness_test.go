@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/wippyai/go-lua/compiler/check"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -31,6 +32,36 @@ type fixtureSuite struct {
 type fixtureCheck struct {
 	Errors *int   `json:"errors,omitempty"`
 	Skip   string `json:"skip,omitempty"`
+	// Modes lists the checking modes the fixture runs under; the default is
+	// the gradual mode alone.
+	Modes []string `json:"modes,omitempty"`
+}
+
+// Checking modes a fixture can run under.
+const (
+	modeGradual   = "gradual"
+	modeStrictAny = "strict-any"
+)
+
+// checkModes returns the checking modes s runs under.
+func checkModes(s namedSuite) []string {
+	if s.Suite.Check != nil && len(s.Suite.Check.Modes) > 0 {
+		return s.Suite.Check.Modes
+	}
+	return []string{modeGradual}
+}
+
+// checkOptionsFor returns the check options of mode.
+func checkOptionsFor(t *testing.T, mode string) check.Options {
+	t.Helper()
+	switch mode {
+	case modeGradual:
+		return check.Options{}
+	case modeStrictAny:
+		return check.Options{StrictAny: true}
+	}
+	t.Fatalf("unknown check mode: %s", mode)
+	return check.Options{}
 }
 
 type fixtureRun struct {
@@ -54,10 +85,11 @@ type inlineExpectation struct {
 	File     string
 	Line     int
 	Severity string // "error" or "warning"
+	Mode     string // checking mode the expectation holds in; empty for every mode
 	Contains string
 }
 
-var expectRe = regexp.MustCompile(`--\s*expect-(error|warning)(?::\s*(.+?))?\s*$`)
+var expectRe = regexp.MustCompile(`--\s*expect-(error|warning)(?:\[([a-z-]+)\])?(?::\s*(.+?))?\s*$`)
 
 // discoverFixtures recursively walks root and finds directories containing .lua files.
 func discoverFixtures(root string) ([]namedSuite, error) {
@@ -159,14 +191,15 @@ func parseExpectations(filename, source string) []inlineExpectation {
 			File:     filename,
 			Line:     i + 1,
 			Severity: m[1],
-			Contains: strings.TrimSpace(m[2]),
+			Mode:     m[2],
+			Contains: strings.TrimSpace(m[3]),
 		})
 	}
 	return expectations
 }
 
-// runCheckPhase type-checks the fixture and verifies diagnostics.
-func runCheckPhase(t *testing.T, s namedSuite) {
+// runCheckPhase type-checks the fixture under mode and verifies diagnostics.
+func runCheckPhase(t *testing.T, s namedSuite, mode string) {
 	t.Helper()
 	if s.Suite.Check != nil && s.Suite.Check.Skip != "" {
 		t.Skip(s.Suite.Check.Skip)
@@ -175,7 +208,7 @@ func runCheckPhase(t *testing.T, s namedSuite) {
 	files := resolveFiles(s)
 	stdlib := resolveStdlib(s)
 
-	var baseOpts []testutil.Option
+	baseOpts := []testutil.Option{testutil.WithCheckOptions(checkOptionsFor(t, mode))}
 	if stdlib {
 		baseOpts = append(baseOpts, testutil.WithStdlib())
 	}
@@ -193,7 +226,11 @@ func runCheckPhase(t *testing.T, s namedSuite) {
 	for _, f := range files {
 		src := readFixtureFile(s.Dir, f)
 		sources[f] = src
-		allExpectations = append(allExpectations, parseExpectations(f, src)...)
+		for _, exp := range parseExpectations(f, src) {
+			if exp.Mode == "" || exp.Mode == mode {
+				allExpectations = append(allExpectations, exp)
+			}
+		}
 	}
 
 	// Check and export dependency modules (all except entry), preserving file order

@@ -1,6 +1,7 @@
 package narrowing
 
 import (
+	"github.com/wippyai/go-lua/compiler/check"
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
@@ -215,6 +216,18 @@ func TestTypeCallNarrowing(t *testing.T) {
 				end
 			`,
 			WantError: true,
+			Stdlib:    true,
+			Options:   check.Options{StrictAny: true},
+		},
+		{
+			Name: "Type call without narrowing is consistent under gradual any",
+			Code: `
+				type Point = {x: number, y: number}
+				function validate(data: any)
+					local p: {x: number, y: number} = data
+				end
+			`,
+			WantError: false,
 			Stdlib:    true,
 		},
 	}

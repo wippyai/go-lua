@@ -127,7 +127,7 @@ func checkSingleCall(
 				return narrowView.TypeOfWithExpected(arg, pt, expected)
 			},
 			func(table *ast.TableExpr, expected typ.Type, pt cfg.Point) bool {
-				return tableCompatible(table, expected, narrowSynth, pt)
+				return tableCompatible(core.AssignabilityOf(ctx), table, expected, narrowSynth, pt)
 			},
 			p,
 		))

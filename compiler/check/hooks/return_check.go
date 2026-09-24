@@ -32,6 +32,7 @@
 package hooks
 
 import (
+	"github.com/wippyai/go-lua/types/query/core"
 	"strconv"
 
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -154,7 +155,7 @@ func CheckReturns(
 				actual = typ.Unknown
 			}
 
-			if !subtype.IsSubtype(actual, declaredType) {
+			if !core.AssignabilityOf(declared.Context()).Assignable(actual, declaredType) {
 				pos := diag.Position{File: sourceName, Line: expr.Line(), Column: expr.Column()}
 				span := ast.SpanOf(expr)
 				msg := formatReturnMismatch(actual, declaredType, i)

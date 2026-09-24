@@ -83,6 +83,13 @@ func (q CallQuery) IsSubtype(ctx *db.QueryContext, sub, super typ.Type) bool {
 	return q.s.deps.Types.IsSubtype(ctx, sub, super)
 }
 
+func (q CallQuery) IsAssignable(ctx *db.QueryContext, sub, super typ.Type) bool {
+	if q.s == nil || q.s.deps.Types == nil {
+		return core.AssignabilityOf(ctx).Assignable(sub, super)
+	}
+	return q.s.deps.Types.IsAssignable(ctx, sub, super)
+}
+
 func (q CallQuery) ExpandInstantiated(ctx *db.QueryContext, t typ.Type) typ.Type {
 	if q.s == nil || q.s.deps.Types == nil {
 		return subst.ExpandInstantiated(t)

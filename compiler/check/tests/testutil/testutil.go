@@ -16,10 +16,11 @@ import (
 
 // Config holds configuration for creating a test checker.
 type Config struct {
-	Stdlib    bool
-	Manifests map[string]*io.Manifest
-	Database  *db.DB
-	Types     map[string]typ.Type
+	Stdlib       bool
+	Manifests    map[string]*io.Manifest
+	Database     *db.DB
+	Types        map[string]typ.Type
+	CheckOptions check.Options
 }
 
 // Option configures a test checker.
@@ -39,6 +40,13 @@ func WithManifest(path string, manifest *io.Manifest) Option {
 			c.Manifests = make(map[string]*io.Manifest)
 		}
 		c.Manifests[path] = manifest
+	}
+}
+
+// WithCheckOptions sets the type-checking semantics.
+func WithCheckOptions(o check.Options) Option {
+	return func(c *Config) {
+		c.CheckOptions = o
 	}
 }
 
@@ -113,7 +121,7 @@ func NewChecker(opts ...Option) *check.Checker {
 			FieldFunc: core.Field,
 			IndexFunc: core.Index,
 		},
-	}, hooks.All()...)
+	}, append(hooks.All(), check.WithOptions(cfg.CheckOptions))...)
 }
 
 // Result holds the result of a check operation.
@@ -165,6 +173,7 @@ type Case struct {
 	WantError bool
 	Stdlib    bool
 	Manifests map[string]*io.Manifest
+	Options   check.Options
 }
 
 // RunCases runs a slice of test cases.
@@ -172,7 +181,7 @@ func RunCases(t *testing.T, tests []Case) {
 	t.Helper()
 	for _, tt := range tests {
 		t.Run(tt.Name, func(t *testing.T) {
-			var opts []Option
+			opts := []Option{WithCheckOptions(tt.Options)}
 			if tt.Stdlib {
 				opts = append(opts, WithStdlib())
 			}

@@ -41,19 +41,22 @@ type CheckError struct {
 //   - Intersection: Checks against all members
 //   - Optional: Unwraps and checks inner type
 //
+// Element and field compatibility follows mode, the use-site assignability of
+// the check session.
+//
 // Returns the checked type and any errors found.
-func CheckTable(fields []FieldDef, arrayElems []typ.Type, expected typ.Type) CheckResult {
+func CheckTable(mode subtype.Assignability, fields []FieldDef, arrayElems []typ.Type, expected typ.Type) CheckResult {
 	if expected == nil {
 		// Pure synthesis mode
 		return CheckResult{Type: tableConstructor(fields, arrayElems)}
 	}
 
 	if rec := unwrap.Record(expected); rec != nil {
-		return checkTableAsRecord(fields, arrayElems, rec)
+		return checkTableAsRecord(mode, fields, arrayElems, rec)
 	}
 
 	if alias, ok := expected.(*typ.Alias); ok {
-		return CheckTable(fields, arrayElems, alias.Target)
+		return CheckTable(mode, fields, arrayElems, alias.Target)
 	}
 
 	if opt, ok := expected.(*typ.Optional); ok {
@@ -62,7 +65,7 @@ func CheckTable(fields []FieldDef, arrayElems []typ.Type, expected typ.Type) Che
 			inner = typ.Unknown
 		}
 
-		result := CheckTable(fields, arrayElems, inner)
+		result := CheckTable(mode, fields, arrayElems, inner)
 		if result.Type == nil {
 			result.Type = inner
 		}
@@ -72,7 +75,7 @@ func CheckTable(fields []FieldDef, arrayElems []typ.Type, expected typ.Type) Che
 
 	if inst, ok := expected.(*typ.Instantiated); ok {
 		if resolved, err := querycore.ResolveInstantiated(inst); err == nil {
-			return CheckTable(fields, arrayElems, resolved)
+			return CheckTable(mode, fields, arrayElems, resolved)
 		}
 	}
 
@@ -85,9 +88,9 @@ func CheckTable(fields []FieldDef, arrayElems []typ.Type, expected typ.Type) Che
 		var errors []CheckError
 
 		for _, member := range inter.Members {
-			result := CheckTable(fields, arrayElems, member)
+			result := CheckTable(mode, fields, arrayElems, member)
 			if rec := unwrap.Record(member); rec != nil {
-				result = checkTableAsRecordAllowExtra(fields, arrayElems, rec)
+				result = checkTableAsRecordAllowExtra(mode, fields, arrayElems, rec)
 			}
 
 			if len(result.Errors) > 0 {
@@ -106,19 +109,19 @@ func CheckTable(fields []FieldDef, arrayElems []typ.Type, expected typ.Type) Che
 
 	switch unwrapped.Kind() {
 	case kind.Array:
-		return checkTableAsArray(fields, arrayElems, unwrapped.(*typ.Array))
+		return checkTableAsArray(mode, fields, arrayElems, unwrapped.(*typ.Array))
 	case kind.Map:
-		return checkTableAsMap(fields, arrayElems, unwrapped.(*typ.Map))
+		return checkTableAsMap(mode, fields, arrayElems, unwrapped.(*typ.Map))
 	case kind.Record:
-		return checkTableAsRecord(fields, arrayElems, unwrapped.(*typ.Record))
+		return checkTableAsRecord(mode, fields, arrayElems, unwrapped.(*typ.Record))
 	case kind.Tuple:
-		return checkTableAsTuple(arrayElems, unwrapped.(*typ.Tuple))
+		return checkTableAsTuple(mode, arrayElems, unwrapped.(*typ.Tuple))
 	case kind.Union:
-		return checkTableAsUnion(fields, arrayElems, unwrapped.(*typ.Union))
+		return checkTableAsUnion(mode, fields, arrayElems, unwrapped.(*typ.Union))
 	default:
 		// Try synthesis and check compatibility
 		synthesized := tableConstructor(fields, arrayElems)
-		if subtype.IsSubtype(synthesized, expected) {
+		if mode.Assignable(synthesized, expected) {
 			return CheckResult{Type: synthesized}
 		}
 
@@ -133,8 +136,8 @@ func CheckTable(fields []FieldDef, arrayElems []typ.Type, expected typ.Type) Che
 	}
 }
 
-func checkTableAsRecordAllowExtra(fields []FieldDef, elems []typ.Type, expected *typ.Record) CheckResult {
-	result := checkTableAsRecord(fields, elems, expected)
+func checkTableAsRecordAllowExtra(mode subtype.Assignability, fields []FieldDef, elems []typ.Type, expected *typ.Record) CheckResult {
+	result := checkTableAsRecord(mode, fields, elems, expected)
 	if len(result.Errors) == 0 {
 		return result
 	}
@@ -155,7 +158,7 @@ func checkTableAsRecordAllowExtra(fields []FieldDef, elems []typ.Type, expected 
 }
 
 // checkTableAsArray checks table against array type.
-func checkTableAsArray(fields []FieldDef, elems []typ.Type, expected *typ.Array) CheckResult {
+func checkTableAsArray(mode subtype.Assignability, fields []FieldDef, elems []typ.Type, expected *typ.Array) CheckResult {
 	var errors []CheckError
 
 	// Named fields not allowed in array context
@@ -167,7 +170,7 @@ func checkTableAsArray(fields []FieldDef, elems []typ.Type, expected *typ.Array)
 
 	// Check each element against expected element type
 	for i, elem := range elems {
-		if !subtype.IsSubtype(elem, expected.Element) {
+		if !mode.Assignable(elem, expected.Element) {
 			errors = append(errors, CheckError{
 				Message:  "element type mismatch",
 				Expected: expected.Element,
@@ -181,13 +184,13 @@ func checkTableAsArray(fields []FieldDef, elems []typ.Type, expected *typ.Array)
 }
 
 // checkTableAsMap checks table against map type.
-func checkTableAsMap(fields []FieldDef, elems []typ.Type, expected *typ.Map) CheckResult {
+func checkTableAsMap(mode subtype.Assignability, fields []FieldDef, elems []typ.Type, expected *typ.Map) CheckResult {
 	var errors []CheckError
 
 	// Check named fields (string keys)
 	if expected.Key.Kind() == kind.String {
 		for _, f := range fields {
-			if !subtype.IsSubtype(f.Type, expected.Value) {
+			if !mode.Assignable(f.Type, expected.Value) {
 				errors = append(errors, CheckError{
 					Message:  "field value type mismatch",
 					Expected: expected.Value,
@@ -201,7 +204,7 @@ func checkTableAsMap(fields []FieldDef, elems []typ.Type, expected *typ.Map) Che
 	// Check array elements (integer keys)
 	if expected.Key.Kind() == kind.Integer || expected.Key.Kind() == kind.Number {
 		for i, elem := range elems {
-			if !subtype.IsSubtype(elem, expected.Value) {
+			if !mode.Assignable(elem, expected.Value) {
 				errors = append(errors, CheckError{
 					Message:  "element type mismatch",
 					Expected: expected.Value,
@@ -216,7 +219,7 @@ func checkTableAsMap(fields []FieldDef, elems []typ.Type, expected *typ.Map) Che
 }
 
 // checkTableAsUnion checks table against union type by finding the best-matching member.
-func checkTableAsUnion(fields []FieldDef, arrayElems []typ.Type, expected *typ.Union) CheckResult {
+func checkTableAsUnion(mode subtype.Assignability, fields []FieldDef, arrayElems []typ.Type, expected *typ.Union) CheckResult {
 	if len(expected.Members) == 0 {
 		return CheckResult{
 			Type:   tableConstructor(fields, arrayElems),
@@ -227,7 +230,7 @@ func checkTableAsUnion(fields []FieldDef, arrayElems []typ.Type, expected *typ.U
 	// Find the union member with the best field match
 	bestMember := findBestUnionMember(fields, expected.Members)
 	if bestMember != nil {
-		result := CheckTable(fields, arrayElems, bestMember)
+		result := CheckTable(mode, fields, arrayElems, bestMember)
 		if len(result.Errors) == 0 {
 			return result
 		}
@@ -235,7 +238,7 @@ func checkTableAsUnion(fields []FieldDef, arrayElems []typ.Type, expected *typ.U
 
 	// Try each member and return first success
 	for _, member := range expected.Members {
-		result := CheckTable(fields, arrayElems, member)
+		result := CheckTable(mode, fields, arrayElems, member)
 		if len(result.Errors) == 0 {
 			return result
 		}
@@ -293,7 +296,7 @@ func findBestUnionMember(fields []FieldDef, members []typ.Type) typ.Type {
 }
 
 // checkTableAsRecord checks table against record type.
-func checkTableAsRecord(fields []FieldDef, elems []typ.Type, expected *typ.Record) CheckResult {
+func checkTableAsRecord(mode subtype.Assignability, fields []FieldDef, elems []typ.Type, expected *typ.Record) CheckResult {
 	var errors []CheckError
 
 	// Array elements not allowed in record context (unless record has integer fields)
@@ -324,7 +327,7 @@ func checkTableAsRecord(fields []FieldDef, elems []typ.Type, expected *typ.Recor
 			continue
 		}
 
-		if !subtype.IsSubtype(pf, ef.Type) {
+		if !mode.Assignable(pf, ef.Type) {
 			errors = append(errors, CheckError{
 				Message:  "field type mismatch",
 				Expected: ef.Type,
@@ -349,7 +352,7 @@ func checkTableAsRecord(fields []FieldDef, elems []typ.Type, expected *typ.Recor
 }
 
 // checkTableAsTuple checks table against tuple type.
-func checkTableAsTuple(elems []typ.Type, expected *typ.Tuple) CheckResult {
+func checkTableAsTuple(mode subtype.Assignability, elems []typ.Type, expected *typ.Tuple) CheckResult {
 	var errors []CheckError
 
 	// Check element count
@@ -365,7 +368,7 @@ func checkTableAsTuple(elems []typ.Type, expected *typ.Tuple) CheckResult {
 
 	// Check each element
 	for i := 0; i < len(elems) && i < len(expected.Elements); i++ {
-		if !subtype.IsSubtype(elems[i], expected.Elements[i]) {
+		if !mode.Assignable(elems[i], expected.Elements[i]) {
 			errors = append(errors, CheckError{
 				Message:  "element type mismatch",
 				Expected: expected.Elements[i],

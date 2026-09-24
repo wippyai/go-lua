@@ -116,14 +116,14 @@ func (s *Synthesizer) SynthTableWithExpected(ex *ast.TableExpr, sc *scope.State,
 		} else {
 			result = typ.NewTuple(arrayElements...)
 		}
-		if expected != nil && len(ops.CheckTable(nil, arrayElements, expected).Errors) == 0 {
+		if expected != nil && len(ops.CheckTable(querycore.AssignabilityOf(s.deps.Ctx), nil, arrayElements, expected).Errors) == 0 {
 			return expected
 		}
 		return result
 	}
 
 	result := builder.Build()
-	if expected != nil && len(ops.CheckTable(fieldDefs, arrayElements, expected).Errors) == 0 {
+	if expected != nil && len(ops.CheckTable(querycore.AssignabilityOf(s.deps.Ctx), fieldDefs, arrayElements, expected).Errors) == 0 {
 		return expected
 	}
 	return result
