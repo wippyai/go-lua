@@ -25,4 +25,16 @@ local function project(id: string, seq: number, removed: boolean, edit: boolean)
     return nil
 end
 
-return project
+-- The field a statement writes does not hide the fields its right side reads
+-- (app:migration_lifecycle_test: row.decoded_body = json.decode(row.body)).
+local function decode(source: string): any
+    return source
+end
+
+local function decoded_row(rows: any): any
+    local row = rows[1]
+    row.decoded_body = decode(row.body)
+    return row
+end
+
+return { project = project, decoded_row = decoded_row }
