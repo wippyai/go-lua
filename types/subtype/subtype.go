@@ -836,19 +836,25 @@ func (c *checker) checkArray(sub, super *typ.Array, depth int) bool {
 
 // checkMap implements map subtyping with invariant key and value types.
 //
-// Map<K1, V1> <: Map<K2, V2> iff K1 = K2 and V1 = V2 (bidirectional subtype)
+// Map<K1, V1> <: Map<K2, V2> iff K1 = K2 and V1 = V2 (bidirectional subtype),
+// where a slot typed any accepts any type
 //
 // Maps are invariant because they are mutable: a write through the supertype
 // could violate the subtype's constraints, and a read through the supertype
 // could return an unexpected type.
 func (c *checker) checkMap(sub, super *typ.Map, depth int) bool {
-	// Keys must be equal (invariant)
-	if !c.check(sub.Key, super.Key, depth+1) || !c.check(super.Key, sub.Key, depth+1) {
+	return c.checkInvariantSlot(sub.Key, super.Key, depth+1) &&
+		c.checkInvariantSlot(sub.Value, super.Value, depth+1)
+}
+
+// checkInvariantSlot checks a mutable slot, such as a map key or value, that
+// must hold the same types on both sides. A slot typed any accepts any value
+// type, as a mutable record field typed any does (canWidenTo).
+func (c *checker) checkInvariantSlot(sub, super typ.Type, depth int) bool {
+	if !c.check(sub, super, depth) {
 		return false
 	}
-	// Values must be equal (invariant)
-	return c.check(sub.Value, super.Value, depth+1) &&
-		c.check(super.Value, sub.Value, depth+1)
+	return c.check(super, sub, depth) || typ.IsAny(unwrap.Alias(super))
 }
 
 // checkTuple implements tuple subtyping with covariant elements.

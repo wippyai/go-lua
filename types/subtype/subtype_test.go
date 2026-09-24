@@ -2282,3 +2282,21 @@ func TestUnionWithAnyValuedMapMember(t *testing.T) {
 		t.Fatal("union with a map member must not subtype integer")
 	}
 }
+
+// A map's value slot is invariant, with the same widening allowance a mutable
+// record field has: a value type widens into any, as {x: T} <: {x: any} does.
+func TestMapValueWidensIntoAny(t *testing.T) {
+	entry := typ.NewRecord().Field("id", typ.String).Build()
+	if !IsSubtype(typ.NewMap(typ.String, entry), typ.NewMap(typ.String, typ.Any)) {
+		t.Fatal("{[string]: T} must subtype {[string]: any}")
+	}
+	if !IsSubtype(typ.NewRecord().Field("x", entry).Build(), typ.NewRecord().Field("x", typ.Any).Build()) {
+		t.Fatal("record field widening into any must hold")
+	}
+	if IsSubtype(typ.NewMap(typ.String, typ.Any), typ.NewMap(typ.String, entry)) {
+		t.Fatal("{[string]: any} must not subtype {[string]: T}")
+	}
+	if IsSubtype(typ.NewMap(typ.String, typ.Integer), typ.NewMap(typ.String, typ.String)) {
+		t.Fatal("unrelated value types stay incompatible")
+	}
+}
