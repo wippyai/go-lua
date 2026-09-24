@@ -528,12 +528,13 @@ func (s *Synthesizer) synthUnaryMinusCore(ex *ast.UnaryMinusOpExpr, recurse Expr
 }
 
 // expandValuesCore expands expression list to types using provided synthesis functions.
-func (s *Synthesizer) expandValuesCore(exprs []ast.Expr, needed int, single func(ast.Expr) typ.Type, multi func(ast.Expr) []typ.Type) []typ.Type {
+func (s *Synthesizer) expandValuesCore(exprs []ast.Expr, needed int, single func(ast.Expr) typ.Type, multi func(ast.Expr) []typ.Type, sc *scope.State) []typ.Type {
 	if len(exprs) == 0 {
 		return nil
 	}
 	result := make([]typ.Type, 0, needed)
 
+	last := exprs[len(exprs)-1]
 	for i, expr := range exprs {
 		if i == len(exprs)-1 {
 			result = append(result, multi(expr)...)
@@ -542,11 +543,45 @@ func (s *Synthesizer) expandValuesCore(exprs []ast.Expr, needed int, single func
 		}
 	}
 
+	pad := typ.Type(typ.Nil)
+	if len(result) < needed {
+		if rest := openValueRest(last, single, sc); rest != nil {
+			pad = rest
+		}
+	}
 	for len(result) < needed {
-		result = append(result, typ.Nil)
+		result = append(result, pad)
 	}
 
 	return result
+}
+
+// openValueRest returns the type of the values an expression yields past the
+// ones its type states, when their number is not known: a call to a function
+// value typed any or unknown, or a vararg expression. It returns nil when the
+// expression yields exactly the values its type states.
+func openValueRest(expr ast.Expr, single func(ast.Expr) typ.Type, sc *scope.State) typ.Type {
+	switch ex := expr.(type) {
+	case *ast.FuncCallExpr:
+		target := ex.Func
+		if ex.Receiver != nil {
+			target = ex.Receiver
+		}
+		if target == nil {
+			return nil
+		}
+		callee := unwrap.Alias(single(target))
+		if typ.IsAny(callee) || typ.IsUnknown(callee) {
+			return callee
+		}
+	case *ast.Comma3Expr:
+		vt := sc.VariadicType()
+		if vt == nil {
+			return typ.Unknown
+		}
+		return typ.NewOptional(vt)
+	}
+	return nil
 }
 
 // expandValues expands expression list to types.
@@ -554,6 +589,7 @@ func (s *Synthesizer) expandValues(exprs []ast.Expr, needed int, p cfg.Point, na
 	return s.expandValuesCore(exprs, needed,
 		func(expr ast.Expr) typ.Type { return s.SynthExpr(expr, p, narrower) },
 		func(expr ast.Expr) []typ.Type { return s.MultiTypeOf(expr, p) },
+		s.deps.ScopeAt(p),
 	)
 }
 
@@ -562,6 +598,7 @@ func (s *Synthesizer) expandValuesWithSpec(exprs []ast.Expr, needed int, p cfg.P
 	return s.expandValuesCore(exprs, needed,
 		func(expr ast.Expr) typ.Type { return s.synthExprWithSpec(expr, p, specTypes) },
 		func(expr ast.Expr) []typ.Type { return s.synthMultiWithSpec(expr, p, specTypes) },
+		s.deps.ScopeAt(p),
 	)
 }
 
