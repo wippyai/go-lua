@@ -581,11 +581,6 @@ func (c *checker) checkFunction(sub, super *typ.Function, depth int) bool {
 		return false
 	}
 
-	// If super can call with more args than sub accepts, sub is more restrictive
-	if sub.Variadic == nil && len(super.Params) > len(sub.Params) {
-		return false
-	}
-
 	// Check param types (contravariant)
 	maxParams := len(sub.Params)
 	if len(super.Params) > maxParams {

@@ -1238,12 +1238,12 @@ func TestFunctionParamContravariance(t *testing.T) {
 	}
 }
 
-func TestFunctionArityMismatch(t *testing.T) {
+func TestFunctionIgnoresExtraArguments(t *testing.T) {
 	fn1 := typ.Func().Param("x", typ.Number).Returns(typ.Nil).Build()
 	fn2 := typ.Func().Param("x", typ.Number).Param("y", typ.Number).Returns(typ.Nil).Build()
 
-	if IsSubtype(fn1, fn2) {
-		t.Error("function with fewer params should not be subtype")
+	if !IsSubtype(fn1, fn2) {
+		t.Error("Lua function with fewer params can ignore extra arguments")
 	}
 }
 
