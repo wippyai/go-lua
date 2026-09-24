@@ -154,7 +154,13 @@ func IsBuiltinTableTop(t typ.Type) bool {
 		return false
 	}
 	iface, ok := t.(*typ.Interface)
-	return ok && iface.Name == "table" && len(iface.Methods) == 0
+	if ok {
+		return iface.Name == "table" && len(iface.Methods) == 0
+	}
+	// A local reference to the builtin can survive in a synthesized union
+	// before scope resolution has replaced it with the marker interface.
+	ref, ok := t.(*typ.Ref)
+	return ok && ref.Module == "" && ref.Name == "table"
 }
 
 // Function extracts a Function type, unwrapping Alias and Optional.

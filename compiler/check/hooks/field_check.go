@@ -35,13 +35,13 @@ import (
 )
 
 // CheckFields validates field accesses on narrowed types.
-func CheckFields(graph *cfg.Graph, narrowSynth api.Synth, narrowView api.BaseSynth, sourceName string) []diag.Diagnostic {
+func CheckFields(graph *cfg.Graph, narrowSynth api.Synth, narrowView api.BaseSynth, solution api.FlowOps, conditions api.ConditionFromExprFunc, sourceName string) []diag.Diagnostic {
 	if graph == nil || narrowSynth == nil || narrowView == nil {
 		return nil
 	}
 
 	bindings := graph.Bindings()
-	resolver := fieldResolverImpl{view: narrowView, synth: narrowSynth, bindings: bindings}
+	resolver := fieldResolverImpl{view: narrowView, synth: narrowSynth, bindings: bindings, solution: solution, conditions: conditions, assumption: constraint.TrueCondition()}
 
 	var diags []diag.Diagnostic
 	seen := make(map[ast.Expr]bool)
@@ -84,9 +84,32 @@ func CheckFields(graph *cfg.Graph, narrowSynth api.Synth, narrowView api.BaseSyn
 }
 
 type fieldResolverImpl struct {
-	view     api.BaseSynth
-	synth    api.Synth
-	bindings *bind.BindingTable
+	view       api.BaseSynth
+	synth      api.Synth
+	bindings   *bind.BindingTable
+	solution   api.FlowOps
+	conditions api.ConditionFromExprFunc
+	assumption constraint.Condition
+}
+
+// conditionNarrowView reads the right operand under the same guard that
+// expression synthesis and CFG branches use for the left operand.
+type conditionNarrowView struct {
+	api.BaseSynth
+	bindings   *bind.BindingTable
+	solution   api.FlowOps
+	assumption constraint.Condition
+}
+
+func (v *conditionNarrowView) TypeOf(expr ast.Expr, p cfg.Point) typ.Type {
+	if v.bindings != nil && v.solution != nil {
+		if exprPath := path.FromExprWithBindings(expr, nil, v.bindings); !exprPath.IsEmpty() {
+			if narrowed := v.solution.NarrowedTypeAssuming(p, exprPath, v.assumption); narrowed != nil && !typ.IsUnknown(narrowed) {
+				return narrowed
+			}
+		}
+	}
+	return v.BaseSynth.TypeOf(expr, p)
 }
 
 func (r fieldResolverImpl) TypeOf(expr ast.Expr, p cfg.Point) typ.Type {
@@ -245,6 +268,23 @@ func applyLogicalOpNarrowing(
 	default:
 		return view, resolver
 	}
+	if resolver.conditions != nil && resolver.solution != nil {
+		onTrue, onFalse := resolver.conditions(p, expr.Lhs)
+		condition := onTrue
+		if expr.Operator == "or" {
+			condition = onFalse
+		}
+		if condition.HasConstraints() {
+			assumption := constraint.And(resolver.assumption, condition)
+			localView := &conditionNarrowView{
+				BaseSynth: view, bindings: resolver.bindings,
+				solution: resolver.solution, assumption: assumption,
+			}
+			resolver.view = localView
+			resolver.assumption = assumption
+			return localView, resolver
+		}
+	}
 
 	lhsType := view.TypeOf(expr.Lhs, p)
 	if lhsType == nil || !ops.CanBeFalsy(lhsType) {
@@ -274,7 +314,8 @@ func applyLogicalOpNarrowing(
 		overrideType: narrowed,
 	}
 
-	return localView, fieldResolverImpl{view: localView, synth: resolver.synth, bindings: resolver.bindings}
+	resolver.view = localView
+	return localView, resolver
 }
 
 func applyAssignPreStateNarrowing(
@@ -324,9 +365,12 @@ func applyAssignPreStateNarrowing(
 		}
 		assignView = localView
 		assignResolver = fieldResolverImpl{
-			view:     localView,
-			synth:    resolver.synth,
-			bindings: resolver.bindings,
+			view:       localView,
+			synth:      resolver.synth,
+			bindings:   resolver.bindings,
+			solution:   resolver.solution,
+			conditions: resolver.conditions,
+			assumption: resolver.assumption,
 		}
 	}
 

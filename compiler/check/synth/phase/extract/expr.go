@@ -29,7 +29,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
-	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/io"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/narrow"
@@ -85,15 +84,6 @@ skipNarrowedAttr:
 				return specialized
 			}
 			return ft
-		}
-		if ft := fieldOnPartialUnion(objType, key.Value, s.deps.Types, s.deps.Ctx); ft != nil {
-			if specialized := s.stableLocalFunctionValueType(ex, p, sc, ft, nil); specialized != nil {
-				return specialized
-			}
-			return ft
-		}
-		if vt := mapValueType(objType); vt != nil {
-			return vt
 		}
 		if it, ok := s.deps.Types.Index(s.deps.Ctx, objType, typ.LiteralString(key.Value)); ok {
 			if specialized := s.stableLocalFunctionValueType(ex, p, sc, it, nil); specialized != nil {
@@ -340,65 +330,6 @@ func intConstFromExpr(expr ast.Expr) (int64, bool) {
 		}
 	}
 	return 0, false
-}
-
-// fieldOnPartialUnion handles field access on unions where some but not all
-// members have the field.
-func fieldOnPartialUnion(t typ.Type, name string, types querycore.TypeOps, ctx *db.QueryContext) typ.Type {
-	u, ok := unwrap.Alias(t).(*typ.Union)
-	if !ok {
-		return nil
-	}
-
-	var fieldTypes []typ.Type
-	hasField := false
-
-	for _, m := range u.Members {
-		if ft, ok := types.Field(ctx, m, name); ok {
-			fieldTypes = append(fieldTypes, ft)
-			hasField = true
-		} else {
-			fieldTypes = append(fieldTypes, typ.Nil)
-		}
-	}
-
-	if !hasField {
-		return nil
-	}
-
-	return typ.NewUnion(fieldTypes...)
-}
-
-// mapValueType returns the value type for map-like types without adding optional.
-func mapValueType(t typ.Type) typ.Type {
-	if t == nil {
-		return nil
-	}
-	switch v := unwrap.Alias(t).(type) {
-	case *typ.Map:
-		return v.Value
-	case *typ.Optional:
-		return mapValueType(v.Inner)
-	case *typ.Union:
-		var types []typ.Type
-		for _, m := range v.Members {
-			if vt := mapValueType(m); vt != nil {
-				types = append(types, vt)
-			}
-		}
-		if len(types) == 1 {
-			return types[0]
-		}
-		if len(types) > 1 {
-			return typ.NewUnion(types...)
-		}
-		return nil
-	case *typ.Instantiated:
-		if resolved, err := querycore.ResolveInstantiated(v); err == nil {
-			return mapValueType(resolved)
-		}
-	}
-	return nil
 }
 
 // synthLogicalOpCore synthesizes type for logical operators.

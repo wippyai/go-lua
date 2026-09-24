@@ -152,6 +152,8 @@ func TestIsBuiltinTableTop(t *testing.T) {
 	}{
 		{"builtin table marker", tableTop, true},
 		{"aliased builtin table marker", aliasedTable, true},
+		{"unresolved builtin table reference", typ.NewRef("", "table"), true},
+		{"module table reference", typ.NewRef("other", "table"), false},
 		{"non-table interface", nonTableIface, false},
 		{"string", typ.String, false},
 		{"nil", nil, false},
