@@ -26,7 +26,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/path"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/predicate"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/resolve"
-	"github.com/wippyai/go-lua/compiler/check/flowbuild/sibling"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow"
@@ -537,7 +536,6 @@ func ConstraintsFromCallOnReturn(
 	if len(must) == 0 {
 		return constraint.Condition{}
 	}
-	must = append(must, siblingConstraintsFromOnReturn(must, inputs, bindings, graph, p)...)
 	cond := constraint.FromConjunction(must)
 
 	if cond.IsFalse() || !cond.HasConstraints() {
@@ -684,54 +682,6 @@ func substituteReturnConstraintPaths(c constraint.Constraint, retTargets map[int
 		},
 		Default: func(constraint.Constraint) constraint.Constraint { return c },
 	})
-}
-
-func siblingConstraintsFromOnReturn(disj []constraint.Constraint, inputs *flow.Inputs, bindings *bind.BindingTable, graph *cfg.Graph, p cfg.Point) []constraint.Constraint {
-	if len(disj) == 0 {
-		return nil
-	}
-	var out []constraint.Constraint
-	for _, c := range disj {
-		var cpath constraint.Path
-		var wantNil bool
-		switch v := c.(type) {
-		case constraint.IsNil:
-			cpath = v.Path
-			wantNil = false
-		case constraint.Falsy:
-			cpath = v.Path
-			wantNil = false
-		case constraint.NotNil:
-			cpath = v.Path
-			wantNil = true
-		case constraint.Truthy:
-			cpath = v.Path
-			wantNil = true
-		default:
-			continue
-		}
-		if cpath.Symbol == 0 {
-			continue
-		}
-		version := graph.VisibleVersion(p, cpath.Symbol)
-		raw := sibling.ConstraintsForSymbol(cpath.Symbol, version.ID, inputs, wantNil, bindings)
-		if len(raw) == 0 {
-			continue
-		}
-		for _, rc := range raw {
-			switch v := rc.(type) {
-			case constraint.IsNil:
-				v.Path = path.WithVersion(v.Path, graph, p)
-				out = append(out, v)
-			case constraint.NotNil:
-				v.Path = path.WithVersion(v.Path, graph, p)
-				out = append(out, v)
-			default:
-				out = append(out, rc)
-			}
-		}
-	}
-	return out
 }
 
 func normalizePathConstraints(conj []constraint.Constraint) []constraint.Constraint {

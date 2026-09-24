@@ -1,7 +1,6 @@
 package assign
 
 import (
-	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/subtype"
@@ -30,7 +29,7 @@ import (
 //
 // This encodes the conventional `(value?, err?)` API shape while keeping the
 // policy centralized and deterministic.
-func InferErrorReturnConvention(fnType typ.Type) ([]flow.ReturnCorrelation, []flow.ReturnCorrelation) {
+func InferErrorReturnConvention(fnType typ.Type) ([]ReturnCorrelation, []ReturnCorrelation) {
 	fn := unwrap.Function(fnType)
 	if fn == nil || len(fn.Returns) < 2 {
 		return nil, nil
@@ -53,12 +52,12 @@ func InferErrorReturnConvention(fnType typ.Type) ([]flow.ReturnCorrelation, []fl
 		if len(values) == 0 {
 			return nil, nil
 		}
-		inverse := make([]flow.ReturnCorrelation, 0, len(values))
-		var co []flow.ReturnCorrelation
+		inverse := make([]ReturnCorrelation, 0, len(values))
+		var co []ReturnCorrelation
 		for i, v := range values {
-			inverse = append(inverse, flow.ReturnCorrelation{ValueIndex: v, ErrorIndex: n - 1})
+			inverse = append(inverse, ReturnCorrelation{ValueIndex: v, ErrorIndex: n - 1})
 			for _, w := range values[i+1:] {
-				co = append(co, flow.ReturnCorrelation{ValueIndex: v, ErrorIndex: w})
+				co = append(co, ReturnCorrelation{ValueIndex: v, ErrorIndex: w})
 			}
 		}
 		return inverse, co
@@ -74,7 +73,7 @@ func InferErrorReturnConvention(fnType typ.Type) ([]flow.ReturnCorrelation, []fl
 		return nil, nil
 	}
 	valIdx := 1 - errIdx
-	return []flow.ReturnCorrelation{{ValueIndex: valIdx, ErrorIndex: errIdx}}, nil
+	return []ReturnCorrelation{{ValueIndex: valIdx, ErrorIndex: errIdx}}, nil
 }
 
 // holdsErrorOf reports whether the optional slot t holds values of errInner,

@@ -17,16 +17,6 @@
 //	x or y             -> Or(constraints(x), constraints(y))
 //	not x              -> negate(constraints(x))
 //
-// # SIBLING CONSTRAINT PROPAGATION
-//
-// For error-return patterns like `local ok, err = fn()`, checking one variable
-// implies constraints on its sibling:
-//
-//	if err ~= nil then  -- err is truthy, implies ok is falsy
-//	if ok then          -- ok is truthy, implies err is nil
-//
-// This is handled via SiblingConstraints lookups into the flow.Inputs.
-//
 // # PREDICATE FUNCTION INTEGRATION
 //
 // Functions with predicate semantics (returning boolean with type implications)
@@ -49,7 +39,6 @@ import (
 	flowpath "github.com/wippyai/go-lua/compiler/check/flowbuild/path"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/predicate"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/resolve"
-	"github.com/wippyai/go-lua/compiler/check/flowbuild/sibling"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/effect"
@@ -184,7 +173,8 @@ func (ce *ConditionExtractor) pathFromExpr(expr ast.Expr) constraint.Path {
 
 // constraintsFromConditionExpr extracts predicate conditions from a full condition expression.
 func (ce *ConditionExtractor) ConstraintsFromConditionExpr(expr ast.Expr) BranchConditions {
-	// Special-case nil comparisons for error-return and predicate-link patterns.
+	// Predicate links have branch-specific implications beyond the ordinary
+	// nil condition. Return relations are already facts in the flow domain.
 	if rel, ok := expr.(*ast.RelationalOpExpr); ok && (rel.Operator == "==" || rel.Operator == "~=") {
 		var ident *ast.IdentExpr
 		if literal.IsNilExpr(rel.Lhs) {
@@ -194,64 +184,20 @@ func (ce *ConditionExtractor) ConstraintsFromConditionExpr(expr ast.Expr) Branch
 		}
 		if ident != nil {
 			path := ce.pathFromExpr(ident)
-			if !path.IsEmpty() {
-				sibNil := versionSiblingConstraints(sibling.ConstraintsForIdent(ident, ce.P, ce.Inputs, true), ce.graph(), ce.P)
-				sibNotNil := versionSiblingConstraints(sibling.ConstraintsForIdent(ident, ce.P, ce.Inputs, false), ce.graph(), ce.P)
-				link := predicate.LookupPredicateLink(ident.Value, ce.Inputs)
-				hasLink := link != nil && (link.OnTruthy.HasConstraints() || link.OnFalsy.HasConstraints())
-				if hasLink || len(sibNil) > 0 || len(sibNotNil) > 0 {
-					var onTrue, onFalse constraint.Condition
-					if rel.Operator == "==" {
-						onTrue = constraint.FromConstraints(append([]constraint.Constraint{constraint.IsNil{Path: path}}, sibNotNil...)...)
-						onFalse = constraint.FromConstraints(append([]constraint.Constraint{constraint.NotNil{Path: path}}, sibNil...)...)
-						if hasLink {
-							if link.OnFalsy.HasConstraints() {
-								onTrue = constraint.And(onTrue, link.OnFalsy)
-							}
-							if link.OnTruthy.HasConstraints() {
-								onFalse = constraint.And(onFalse, link.OnTruthy)
-							}
-						}
-					} else {
-						onTrue = constraint.FromConstraints(append([]constraint.Constraint{constraint.NotNil{Path: path}}, sibNil...)...)
-						onFalse = constraint.FromConstraints(append([]constraint.Constraint{constraint.IsNil{Path: path}}, sibNotNil...)...)
-						if hasLink {
-							if link.OnTruthy.HasConstraints() {
-								onTrue = constraint.And(onTrue, link.OnTruthy)
-							}
-							if link.OnFalsy.HasConstraints() {
-								onFalse = constraint.And(onFalse, link.OnFalsy)
-							}
-						}
-					}
-					return BranchConditions{OnTrue: onTrue, OnFalse: onFalse}
+			link := predicate.LookupPredicateLink(ident.Value, ce.Inputs)
+			if !path.IsEmpty() && link != nil && (link.OnTruthy.HasConstraints() || link.OnFalsy.HasConstraints()) {
+				nilCond := constraint.FromConstraints(constraint.IsNil{Path: path})
+				present := constraint.FromConstraints(constraint.NotNil{Path: path})
+				if link.OnFalsy.HasConstraints() {
+					nilCond = constraint.And(nilCond, link.OnFalsy)
 				}
-			}
-		}
-	}
-
-	// Special-case error-return patterns: if err then ... / if not err then ...
-	if ident, ok := expr.(*ast.IdentExpr); ok {
-		if sibTrue := versionSiblingConstraints(sibling.ConstraintsForIdent(ident, ce.P, ce.Inputs, true), ce.graph(), ce.P); len(sibTrue) > 0 {
-			path := ce.pathFromExpr(ident)
-			if !path.IsEmpty() {
-				onTrue := constraint.FromConstraints(append([]constraint.Constraint{constraint.Truthy{Path: path}}, sibTrue...)...)
-				sibFalse := versionSiblingConstraints(sibling.ConstraintsForIdent(ident, ce.P, ce.Inputs, false), ce.graph(), ce.P)
-				onFalse := constraint.FromConstraints(append([]constraint.Constraint{constraint.Falsy{Path: path}}, sibFalse...)...)
-				return BranchConditions{OnTrue: onTrue, OnFalse: onFalse}
-			}
-		}
-	}
-	if notExpr, ok := expr.(*ast.UnaryNotOpExpr); ok {
-		if ident, ok := notExpr.Expr.(*ast.IdentExpr); ok {
-			if sibTrue := versionSiblingConstraints(sibling.ConstraintsForIdent(ident, ce.P, ce.Inputs, true), ce.graph(), ce.P); len(sibTrue) > 0 {
-				path := ce.pathFromExpr(ident)
-				if !path.IsEmpty() {
-					sibFalse := versionSiblingConstraints(sibling.ConstraintsForIdent(ident, ce.P, ce.Inputs, false), ce.graph(), ce.P)
-					onTrue := constraint.FromConstraints(append([]constraint.Constraint{constraint.Falsy{Path: path}}, sibFalse...)...)
-					onFalse := constraint.FromConstraints(append([]constraint.Constraint{constraint.Truthy{Path: path}}, sibTrue...)...)
-					return BranchConditions{OnTrue: onTrue, OnFalse: onFalse}
+				if link.OnTruthy.HasConstraints() {
+					present = constraint.And(present, link.OnTruthy)
 				}
+				if rel.Operator == "==" {
+					return BranchConditions{OnTrue: nilCond, OnFalse: present}
+				}
+				return BranchConditions{OnTrue: present, OnFalse: nilCond}
 			}
 		}
 	}
@@ -587,9 +533,7 @@ func (ce *ConditionExtractor) ConditionFromEquality(lhs, rhs ast.Expr) constrain
 			}
 			path := ce.pathFromExpr(rhs)
 			if !path.IsEmpty() {
-				result := []constraint.Constraint{constraint.IsNil{Path: path}}
-				result = append(result, versionSiblingConstraints(sibling.ConstraintsForIdent(ident, ce.P, ce.Inputs, false), ce.graph(), ce.P)...)
-				return constraint.FromConstraints(result...)
+				return constraint.FromConstraints(constraint.IsNil{Path: path})
 			}
 		}
 		if path := ce.pathFromExpr(rhs); !path.IsEmpty() {
@@ -607,9 +551,7 @@ func (ce *ConditionExtractor) ConditionFromEquality(lhs, rhs ast.Expr) constrain
 			}
 			path := ce.pathFromExpr(lhs)
 			if !path.IsEmpty() {
-				result := []constraint.Constraint{constraint.IsNil{Path: path}}
-				result = append(result, versionSiblingConstraints(sibling.ConstraintsForIdent(ident, ce.P, ce.Inputs, false), ce.graph(), ce.P)...)
-				return constraint.FromConstraints(result...)
+				return constraint.FromConstraints(constraint.IsNil{Path: path})
 			}
 		}
 		if path := ce.pathFromExpr(lhs); !path.IsEmpty() {
@@ -713,9 +655,7 @@ func (ce *ConditionExtractor) ConditionFromInequality(lhs, rhs ast.Expr) constra
 			}
 			path := ce.pathFromExpr(rhs)
 			if !path.IsEmpty() {
-				result := []constraint.Constraint{constraint.NotNil{Path: path}}
-				result = append(result, versionSiblingConstraints(sibling.ConstraintsForIdent(ident, ce.P, ce.Inputs, true), ce.graph(), ce.P)...)
-				return constraint.FromConstraints(result...)
+				return constraint.FromConstraints(constraint.NotNil{Path: path})
 			}
 		}
 		if path := ce.pathFromExpr(rhs); !path.IsEmpty() {
@@ -733,9 +673,7 @@ func (ce *ConditionExtractor) ConditionFromInequality(lhs, rhs ast.Expr) constra
 			}
 			path := ce.pathFromExpr(lhs)
 			if !path.IsEmpty() {
-				result := []constraint.Constraint{constraint.NotNil{Path: path}}
-				result = append(result, versionSiblingConstraints(sibling.ConstraintsForIdent(ident, ce.P, ce.Inputs, true), ce.graph(), ce.P)...)
-				return constraint.FromConstraints(result...)
+				return constraint.FromConstraints(constraint.NotNil{Path: path})
 			}
 		}
 		if path := ce.pathFromExpr(lhs); !path.IsEmpty() {
@@ -1213,32 +1151,4 @@ func EmitIndexEqualsPath(target constraint.Path, keyType typ.Type, valuePath con
 		return []constraint.Constraint{constraint.IndexEqualsPath{Target: target, Key: keyType, Value: valuePath}}
 	}
 	return []constraint.Constraint{constraint.IndexNotEqualsPath{Target: target, Key: keyType, Value: valuePath}}
-}
-
-func versionSiblingConstraints(constraints []constraint.Constraint, graph interface {
-	VisibleVersion(p cfg.Point, sym cfg.SymbolID) cfg.Version
-}, p cfg.Point) []constraint.Constraint {
-	if len(constraints) == 0 || graph == nil {
-		return constraints
-	}
-	out := make([]constraint.Constraint, 0, len(constraints))
-	for _, c := range constraints {
-		switch v := c.(type) {
-		case constraint.IsNil:
-			v.Path = flowpath.WithVersion(v.Path, graph, p)
-			out = append(out, v)
-		case constraint.NotNil:
-			v.Path = flowpath.WithVersion(v.Path, graph, p)
-			out = append(out, v)
-		case constraint.Truthy:
-			v.Path = flowpath.WithVersion(v.Path, graph, p)
-			out = append(out, v)
-		case constraint.Falsy:
-			v.Path = flowpath.WithVersion(v.Path, graph, p)
-			out = append(out, v)
-		default:
-			out = append(out, c)
-		}
-	}
-	return out
 }

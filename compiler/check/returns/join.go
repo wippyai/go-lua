@@ -1,6 +1,8 @@
 package returns
 
 import (
+	"github.com/wippyai/go-lua/types/contract"
+	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/subtype"
@@ -765,7 +767,7 @@ func MergeFunctionFactType(existing, candidate typ.Type) typ.Type {
 	}
 	if existingFn != nil && candidateFn != nil {
 		if sameFunctionShapeForFactMerge(existingFn, candidateFn) {
-			return mergeFunctionFactsByShape(existingFn, candidateFn)
+			return mergeFunctionFactsByShape(existingFn, candidateFn, false)
 		}
 	}
 
@@ -779,6 +781,11 @@ func MergeFunctionFactType(existing, candidate typ.Type) typ.Type {
 }
 
 func mergeFunctionFactVariants(existing, candidate typ.Type) (typ.Type, bool) {
+	_, existingUnion := unwrap.Alias(existing).(*typ.Union)
+	_, candidateUnion := unwrap.Alias(candidate).(*typ.Union)
+	if !existingUnion && !candidateUnion {
+		return nil, false
+	}
 	existingFns := functionVariantsForFactMerge(existing)
 	candidateFns := functionVariantsForFactMerge(candidate)
 	if len(existingFns) == 0 || len(candidateFns) == 0 {
@@ -794,7 +801,7 @@ func mergeFunctionFactVariants(existing, candidate typ.Type) (typ.Type, bool) {
 	}
 	merged := all[0]
 	for i := 1; i < len(all); i++ {
-		next, _ := mergeFunctionFactsByShape(merged, all[i]).(*typ.Function)
+		next, _ := mergeFunctionFactsByShape(merged, all[i], true).(*typ.Function)
 		if next == nil {
 			return nil, false
 		}
@@ -854,7 +861,7 @@ func sameFunctionShapeForFactMerge(a, b *typ.Function) bool {
 	return true
 }
 
-func mergeFunctionFactsByShape(existing, candidate *typ.Function) typ.Type {
+func mergeFunctionFactsByShape(existing, candidate *typ.Function, alternatives bool) typ.Type {
 	if existing == nil {
 		return candidate
 	}
@@ -896,12 +903,25 @@ func mergeFunctionFactsByShape(existing, candidate *typ.Function) typ.Type {
 	if effects != nil {
 		builder = builder.Effects(effects)
 	}
-	spec := existing.Spec
-	if spec == nil {
-		spec = candidate.Spec
-	}
-	if spec != nil {
-		builder = builder.Spec(spec)
+	// Alternative callable signatures guarantee only their common effects.
+	// Repeated estimates for one function are updates to the same summary.
+	existingSpec := contract.ExtractSpec(existing)
+	candidateSpec := contract.ExtractSpec(candidate)
+	if existingSpec != nil || candidateSpec != nil {
+		var merged contract.Spec
+		if candidateSpec != nil {
+			merged = *candidateSpec
+		} else {
+			merged = *existingSpec
+		}
+		if alternatives {
+			if existingSpec == nil || candidateSpec == nil {
+				merged.Effects = effect.Empty
+			} else {
+				merged.Effects = effect.Intersect(existingSpec.Effects, candidateSpec.Effects)
+			}
+		}
+		builder = builder.Spec(&merged)
 	}
 	refinement := existing.Refinement
 	if refinement == nil {

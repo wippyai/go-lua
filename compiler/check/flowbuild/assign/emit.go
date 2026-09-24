@@ -52,6 +52,7 @@ import (
 	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/kind"
+	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
@@ -473,6 +474,43 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 					ContainerElementSource: containerElemSrc,
 					MapElementSource:       mapElementSource,
 				})
+				// A direct copy preserves identity and nil state even when an any
+				// annotation hides the source type from return inference.
+				// The fact is useful for flow proof only when the destination's
+				// static type cannot contradict the copied runtime value. An
+				// invalid annotated assignment must still report downstream errors.
+				var copyType typ.Type
+				if sourcePath.Symbol != 0 && len(sourcePath.Segments) == 0 && sourcePath.Symbol != sym {
+					copyType = wrappedSynth(source, p)
+				}
+				copyTypeFits := typ.IsAny(assignedType) || typ.IsUnknown(assignedType) ||
+					copyType != nil && !typ.IsAny(copyType) && !typ.IsUnknown(copyType) && subtype.IsSubtype(copyType, assignedType)
+				if copyTypeFits && sourcePath.Symbol != 0 && len(sourcePath.Segments) == 0 && sourcePath.Symbol != sym {
+					sourceReassigned := false
+					for _, other := range info.Targets {
+						if other.Symbol == sourcePath.Symbol {
+							sourceReassigned = true
+							break
+						}
+					}
+					if !sourceReassigned {
+						destVersion := fc.Graph.VisibleVersion(p, sym)
+						sourceVersion := fc.Graph.VisibleVersion(p, sourcePath.Symbol)
+						if destVersion.ID != 0 && sourceVersion.ID != 0 {
+							dest := constraint.Path{Root: resolve.RootName(fc.Graph, sym, name), Symbol: sym, Version: destVersion.ID}
+							sourcePath.Version = sourceVersion.ID
+							fact := constraint.FromConstraints(constraint.NewEqPath(dest, sourcePath))
+							if inputs.Facts == nil {
+								inputs.Facts = make(map[cfg.Point]constraint.Condition)
+							}
+							if old, ok := inputs.Facts[p]; ok {
+								inputs.Facts[p] = constraint.And(old, fact)
+							} else {
+								inputs.Facts[p] = fact
+							}
+						}
+					}
+				}
 
 				// Emit per-field assignments for table literals to enable flow narrowing
 				if source != nil {
@@ -690,49 +728,34 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 			}
 		}
 
-		// Handle sibling assignments from expanding trailing calls.
+		// The call establishes relations between its returned values at this
+		// assignment. The solver carries them with ordinary branch conditions.
 		if sourceCall, start := info.ExpandingSourceCall(); sourceCall != nil {
 			count := len(info.Targets) - start
-			symbols := make([]cfg.SymbolID, count)
-			names := make([]string, count)
-			types := make([]typ.Type, count)
-			ensureValues()
+			paths := make([]constraint.Path, count)
 			for i := 0; i < count; i++ {
 				target, ok := info.TargetAt(start + i)
-				if !ok {
+				if !ok || target.Kind != cfg.TargetIdent || target.Symbol == 0 {
 					continue
 				}
-				if target.Kind == cfg.TargetIdent && target.Name != "" {
-					names[i] = target.Name
-					symbols[i] = target.Symbol
-				}
-				if value := assignValueAt(values, start+i); value != nil {
-					types[i] = value
+				ver := fc.Graph.VisibleVersion(p, target.Symbol)
+				if ver.ID != 0 {
+					paths[i] = constraint.Path{Root: target.Name, Symbol: target.Symbol, Version: ver.ID}
 				}
 			}
-			correlations, coCorrelations, guardedCorrelations := extractCallCorrelations(sourceCall, wrappedSynth, p, resolverWithSpec, fc.Graph, bindings, fc.ModuleBindings)
-			for _, corr := range guardedCorrelations {
+			inverse, together, guarded := extractCallCorrelations(sourceCall, wrappedSynth, p, resolverWithSpec, fc.Graph, bindings, fc.ModuleBindings)
+			for _, corr := range guarded {
 				decl.AddTypeKey(inputs, corr.TargetType)
 			}
-			sibling := &flow.SiblingAssignment{
-				Symbols:             symbols,
-				Names:               names,
-				Types:               types,
-				Correlations:        correlations,
-				CoCorrelations:      coCorrelations,
-				GuardedCorrelations: guardedCorrelations,
-			}
-			for i, sym := range symbols {
-				if sym != 0 && names[i] != "" {
-					ver := fc.Graph.VisibleVersion(p, sym)
-					if ver.ID == 0 {
-						continue
-					}
-					key := flow.SiblingKey{Symbol: sym, VersionID: ver.ID}
-					inputs.SiblingAssignments[key] = sibling
+			if fact := returnRelation(paths, inverse, together, guarded); fact.HasConstraints() {
+				if previous, ok := inputs.Facts[p]; ok {
+					inputs.Facts[p] = constraint.And(previous, fact)
+				} else {
+					inputs.Facts[p] = fact
 				}
 			}
 		}
+
 	})
 }
 
@@ -1121,7 +1144,7 @@ func extractCallCorrelations(
 	graph *cfg.Graph,
 	bindings *bind.BindingTable,
 	moduleBindings *bind.BindingTable,
-) ([]flow.ReturnCorrelation, []flow.ReturnCorrelation, []flow.GuardedTypeCorrelation) {
+) ([]ReturnCorrelation, []ReturnCorrelation, []GuardedTypeCorrelation) {
 	if callInfo == nil {
 		return nil, nil, nil
 	}
@@ -1133,12 +1156,12 @@ func extractCallCorrelations(
 
 // correlationsFromFunctionType extracts ErrorReturn and CorrelatedReturn labels from a function's spec effects.
 // Returns (inverse correlations, co-correlations).
-func correlationsFromFunctionType(fnType typ.Type) ([]flow.ReturnCorrelation, []flow.ReturnCorrelation) {
+func correlationsFromFunctionType(fnType typ.Type) ([]ReturnCorrelation, []ReturnCorrelation) {
 	if fnType == nil {
 		return nil, nil
 	}
 	if union, ok := typ.UnwrapAnnotated(fnType).(*typ.Union); ok {
-		var inverse, coCorr []flow.ReturnCorrelation
+		var inverse, coCorr []ReturnCorrelation
 		for i, member := range union.Members {
 			// A relation is valid for a union call only when every possible
 			// callee has it. A later return estimate may make one function
@@ -1157,12 +1180,12 @@ func correlationsFromFunctionType(fnType typ.Type) ([]flow.ReturnCorrelation, []
 		return inverse, coCorr
 	}
 	spec := contract.ExtractSpec(fnType)
-	var inverse []flow.ReturnCorrelation
-	var coCorr []flow.ReturnCorrelation
+	var inverse []ReturnCorrelation
+	var coCorr []ReturnCorrelation
 	if spec != nil {
 		for _, label := range spec.Effects.Labels {
 			if er, ok := label.(effect.ErrorReturn); ok {
-				inverse = append(inverse, flow.ReturnCorrelation{
+				inverse = append(inverse, ReturnCorrelation{
 					ValueIndex: er.ValueIndex,
 					ErrorIndex: er.ErrorIndex,
 				})
@@ -1171,7 +1194,7 @@ func correlationsFromFunctionType(fnType typ.Type) ([]flow.ReturnCorrelation, []
 				// Expand pairwise: each pair of indices forms a co-correlation
 				for i := 0; i < len(cr.Indices); i++ {
 					for j := i + 1; j < len(cr.Indices); j++ {
-						coCorr = append(coCorr, flow.ReturnCorrelation{
+						coCorr = append(coCorr, ReturnCorrelation{
 							ValueIndex: cr.Indices[i],
 							ErrorIndex: cr.Indices[j],
 						})
@@ -1181,22 +1204,16 @@ func correlationsFromFunctionType(fnType typ.Type) ([]flow.ReturnCorrelation, []
 		}
 	}
 	if len(inverse) == 0 && len(coCorr) == 0 {
-		convInv, convCo := InferErrorReturnConvention(fnType)
-		if len(convInv) > 0 {
-			inverse = append(inverse, convInv...)
-		}
-		if len(convCo) > 0 {
-			coCorr = append(coCorr, convCo...)
-		}
+		return InferErrorReturnConvention(fnType)
 	}
 	return inverse, coCorr
 }
 
-func commonReturnCorrelations(a, b []flow.ReturnCorrelation) []flow.ReturnCorrelation {
+func commonReturnCorrelations(a, b []ReturnCorrelation) []ReturnCorrelation {
 	if len(a) == 0 || len(b) == 0 {
 		return nil
 	}
-	out := make([]flow.ReturnCorrelation, 0, len(a))
+	out := make([]ReturnCorrelation, 0, len(a))
 	for _, candidate := range a {
 		for _, other := range b {
 			if candidate == other {
@@ -1213,7 +1230,7 @@ func guardedTypeCorrelationsFromCall(
 	callInfo *cfg.CallInfo,
 	synth func(ast.Expr, cfg.Point) typ.Type,
 	p cfg.Point,
-) []flow.GuardedTypeCorrelation {
+) []GuardedTypeCorrelation {
 	if fnType == nil || callInfo == nil || synth == nil {
 		return nil
 	}
@@ -1230,7 +1247,7 @@ func guardedTypeCorrelationsFromCall(
 		return nil
 	}
 
-	var out []flow.GuardedTypeCorrelation
+	var out []GuardedTypeCorrelation
 	for _, label := range spec.Effects.Labels {
 		ret, ok := label.(effect.Return)
 		if !ok || ret.Transform == nil || ret.ReturnIndex < 0 {
@@ -1252,7 +1269,7 @@ func guardedTypeCorrelationsFromCall(
 		if targetType == nil || typ.IsAny(targetType) || typ.IsUnknown(targetType) {
 			continue
 		}
-		out = append(out, flow.GuardedTypeCorrelation{
+		out = append(out, GuardedTypeCorrelation{
 			GuardIndex:    guardIdx,
 			TargetIndex:   ret.ReturnIndex,
 			GuardOnTruthy: true,
