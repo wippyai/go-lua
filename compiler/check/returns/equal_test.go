@@ -187,10 +187,10 @@ func TestCapturedFieldAssignsEqual_Empty(t *testing.T) {
 
 func TestCapturedFieldAssignsEqual_DifferentCallee(t *testing.T) {
 	a := api.FieldWrites{
-		cfg.SymbolID(1): {cfg.SymbolID(2): {"foo": typ.String}},
+		cfg.SymbolID(1): {cfg.SymbolID(2): {{Field: "foo"}: typ.String}},
 	}
 	b := api.FieldWrites{
-		cfg.SymbolID(3): {cfg.SymbolID(2): {"foo": typ.String}},
+		cfg.SymbolID(3): {cfg.SymbolID(2): {{Field: "foo"}: typ.String}},
 	}
 	if FieldWritesEqual(a, b) {
 		t.Error("different callee symbols should not be equal")

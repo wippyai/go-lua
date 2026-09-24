@@ -17,7 +17,7 @@ import (
 // FieldWriteSource resolves the field writes recorded for function symbols.
 type FieldWriteSource interface {
 	// FieldWritesOf returns the writes recorded for fn, keyed by target symbol.
-	FieldWritesOf(fn cfg.SymbolID) map[cfg.SymbolID]map[string]typ.Type
+	FieldWritesOf(fn cfg.SymbolID) map[cfg.SymbolID]api.FieldWriteSet
 	// ParamSymbolsOf returns fn's parameter symbols in runtime order.
 	ParamSymbolsOf(fn cfg.SymbolID) []cfg.SymbolID
 	// DefPointOf returns the point where the closure fn is created in its parent graph.
@@ -31,7 +31,7 @@ type StoreFieldWriteSource struct {
 }
 
 // FieldWritesOf returns the writes stored in the facts of fn's parent graph.
-func (s StoreFieldWriteSource) FieldWritesOf(fn cfg.SymbolID) map[cfg.SymbolID]map[string]typ.Type {
+func (s StoreFieldWriteSource) FieldWritesOf(fn cfg.SymbolID) map[cfg.SymbolID]api.FieldWriteSet {
 	if s.Store == nil || fn == 0 {
 		return nil
 	}
@@ -77,39 +77,36 @@ func (s StoreFieldWriteSource) DefPointOf(fn cfg.SymbolID) (cfg.Point, bool) {
 
 // CollectFieldWrites computes the fields the function of graph may write
 // through targets, its captured variables and parameters: field assignments
-// in its body, writes of the closures it creates, and writes of the functions
-// it calls with a target as argument.
+// in its body, into the target tables and the tables they reach by static
+// fields, writes of the closures it creates, and writes of the functions it
+// calls with a target as argument.
 func CollectFieldWrites(
 	graph *cfg.Graph,
 	bindings *bind.BindingTable,
 	targets map[cfg.SymbolID]bool,
 	synth func(ast.Expr, cfg.Point) typ.Type,
-	closures map[cfg.SymbolID]map[cfg.SymbolID]map[string]typ.Type,
+	closures map[cfg.SymbolID]map[cfg.SymbolID]api.FieldWriteSet,
 	source FieldWriteSource,
-) map[cfg.SymbolID]map[string]typ.Type {
-	result := make(map[cfg.SymbolID]map[string]typ.Type)
+) map[cfg.SymbolID]api.FieldWriteSet {
+	result := make(map[cfg.SymbolID]api.FieldWriteSet)
 	if graph == nil || len(targets) == 0 {
 		return result
 	}
-	add := func(target cfg.SymbolID, field string, t typ.Type) {
+	add := func(target cfg.SymbolID, key api.FieldWriteKey, t typ.Type) {
 		if !targets[target] {
 			return
 		}
-		fields := result[target]
-		if fields == nil {
-			fields = make(map[string]typ.Type)
-			result[target] = fields
+		set := result[target]
+		if set == nil {
+			set = make(api.FieldWriteSet)
+			result[target] = set
 		}
-		if existing := fields[field]; existing != nil {
-			fields[field] = typ.NewUnion(existing, t)
-		} else {
-			fields[field] = t
-		}
+		set[key] = api.JoinFieldWrite(key, set[key], t)
 	}
 
 	for target, fields := range overlaymut.CollectFieldAssignments(graph, synth, targets) {
-		for field, t := range fields {
-			add(target, field, t)
+		for _, field := range cfg.SortedFieldNames(fields) {
+			add(target, api.FieldWriteKey{Field: field}, fields[field])
 		}
 	}
 	// Writes by dynamic keys (t[k] = v) are recorded as the map component
@@ -124,13 +121,14 @@ func CollectFieldWrites(
 		if keyType == nil || valType == nil {
 			continue
 		}
-		add(target, flow.IndexerWriteField, typ.NewMap(keyType, valType))
+		add(target, api.FieldWriteKey{Field: flow.IndexerWriteField}, typ.NewMap(keyType, valType))
 	}
+	eachFieldWrite(overlaymut.CollectNestedFieldWrites(graph, synth, bindings, targets), add)
 	for _, closure := range cfg.SortedSymbolIDs(closures) {
 		eachFieldWrite(closures[closure], add)
 	}
-	eachCallFieldWrite(graph, bindings, source, func(_ cfg.Point, target constraint.Path, field string, t typ.Type) {
-		add(target.Symbol, field, t)
+	eachCallFieldWrite(graph, bindings, source, func(_ cfg.Point, target constraint.Path, key api.FieldWriteKey, t typ.Type) {
+		add(target.Symbol, key.Under(target.Segments), t)
 	})
 	return result
 }
@@ -141,7 +139,7 @@ func CollectFieldWrites(
 func CollectFieldWriteEffects(
 	graph *cfg.Graph,
 	bindings *bind.BindingTable,
-	closures map[cfg.SymbolID]map[cfg.SymbolID]map[string]typ.Type,
+	closures map[cfg.SymbolID]map[cfg.SymbolID]api.FieldWriteSet,
 	source FieldWriteSource,
 ) []flow.FieldWriteEffect {
 	if graph == nil || source == nil {
@@ -149,11 +147,17 @@ func CollectFieldWriteEffects(
 	}
 	symbols := graph.AllSymbolIDs()
 	var effects []flow.FieldWriteEffect
-	emit := func(p cfg.Point, target constraint.Path, field string, t typ.Type) {
+	emit := func(p cfg.Point, target constraint.Path, key api.FieldWriteKey, t typ.Type) {
 		if !symbols[target.Symbol] {
 			return
 		}
-		effects = append(effects, flow.FieldWriteEffect{Point: p, Target: target, Field: field, Type: t})
+		segments := append(append([]constraint.Segment(nil), target.Segments...), key.Segments()...)
+		effects = append(effects, flow.FieldWriteEffect{
+			Point:  p,
+			Target: constraint.Path{Root: target.Root, Symbol: target.Symbol, Segments: segments},
+			Field:  key.Field,
+			Type:   t,
+		})
 	}
 
 	for _, closure := range cfg.SortedSymbolIDs(closures) {
@@ -161,11 +165,11 @@ func CollectFieldWriteEffects(
 		if !ok {
 			continue
 		}
-		eachFieldWrite(closures[closure], func(target cfg.SymbolID, field string, t typ.Type) {
+		eachFieldWrite(closures[closure], func(target cfg.SymbolID, key api.FieldWriteKey, t typ.Type) {
 			emit(p, constraint.Path{
 				Root:   resolve.RootNameFromGraphAndBindings(graph, bindings, target, ""),
 				Symbol: target,
-			}, field, t)
+			}, key, t)
 		})
 	}
 	eachCallFieldWrite(graph, bindings, source, emit)
@@ -173,13 +177,14 @@ func CollectFieldWriteEffects(
 }
 
 // eachCallFieldWrite maps the writes of each called function onto the
-// caller: a write through a parameter lands on the argument variable, a write
-// through a captured variable lands on that variable.
+// caller: a write through a parameter lands on the table the argument
+// denotes, a variable or a static field path below one; a write through a
+// captured variable lands on that variable.
 func eachCallFieldWrite(
 	graph *cfg.Graph,
 	bindings *bind.BindingTable,
 	source FieldWriteSource,
-	visit func(p cfg.Point, target constraint.Path, field string, t typ.Type),
+	visit func(p cfg.Point, target constraint.Path, key api.FieldWriteKey, t typ.Type),
 ) {
 	if source == nil {
 		return
@@ -202,25 +207,25 @@ func eachCallFieldWrite(
 			path := constraint.Path{Symbol: target}
 			if idx, ok := paramIndex[target]; ok {
 				path = flowpath.FromExprWithBindings(checkcallsite.RuntimeArgAt(info, idx), nil, bindings)
-				if path.Symbol == 0 || len(path.Segments) > 0 {
+				if path.Symbol == 0 {
 					continue
 				}
 			} else {
 				path.Root = resolve.RootNameFromGraphAndBindings(graph, bindings, target, "")
 			}
-			fields := writes[target]
-			for _, field := range cfg.SortedFieldNames(fields) {
-				visit(p, path, field, fields[field])
+			set := writes[target]
+			for _, key := range api.SortedFieldWriteKeys(set) {
+				visit(p, path, key, set[key])
 			}
 		}
 	})
 }
 
-func eachFieldWrite(writes map[cfg.SymbolID]map[string]typ.Type, visit func(target cfg.SymbolID, field string, t typ.Type)) {
+func eachFieldWrite(writes map[cfg.SymbolID]api.FieldWriteSet, visit func(target cfg.SymbolID, key api.FieldWriteKey, t typ.Type)) {
 	for _, target := range cfg.SortedSymbolIDs(writes) {
-		fields := writes[target]
-		for _, field := range cfg.SortedFieldNames(fields) {
-			visit(target, field, fields[field])
+		set := writes[target]
+		for _, key := range api.SortedFieldWriteKeys(set) {
+			visit(target, key, set[key])
 		}
 	}
 }

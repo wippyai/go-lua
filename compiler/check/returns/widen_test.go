@@ -601,10 +601,10 @@ func linkedNodeApproximation(n int) typ.Type {
 func TestWidenFieldWrites_FoldsNestedRecordApproximations(t *testing.T) {
 	const fn, target = 1, 2
 	write := func(t typ.Type) api.FieldWrites {
-		return api.FieldWrites{fn: {target: {"current": t}}}
+		return api.FieldWrites{fn: {target: {{Field: "current"}: t}}}
 	}
 
-	first := WidenFieldWrites(write(linkedNodeApproximation(2)), write(linkedNodeApproximation(3)))[fn][target]["current"]
+	first := WidenFieldWrites(write(linkedNodeApproximation(2)), write(linkedNodeApproximation(3)))[fn][target][api.FieldWriteKey{Field: "current"}]
 	if _, ok := first.(*typ.Recursive); !ok {
 		t.Fatalf("expected a recursive node type, got %s", first)
 	}
@@ -619,7 +619,7 @@ func TestWidenFieldWrites_FoldsNestedRecordApproximations(t *testing.T) {
 		Field("name", typ.String).
 		Field("parent", typ.NewOptional(first)).
 		Build()
-	second := WidenFieldWrites(write(first), write(step))[fn][target]["current"]
+	second := WidenFieldWrites(write(first), write(step))[fn][target][api.FieldWriteKey{Field: "current"}]
 	if !typ.TypeEquals(first, second) {
 		t.Fatalf("a step over the folded node must fold back to it:\n%s\n%s", first, second)
 	}

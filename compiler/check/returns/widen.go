@@ -763,7 +763,7 @@ func WidenFieldWrites(prev, next api.FieldWrites) api.FieldWrites {
 			merged[callee] = captured
 			continue
 		}
-		merged[callee] = MergeFieldWriteSymbolMaps(existing, captured, func(prev typ.Type, next typ.Type) typ.Type {
+		merged[callee] = MergeFieldWriteSymbolMaps(existing, captured, func(_ api.FieldWriteKey, prev typ.Type, next typ.Type) typ.Type {
 			if prev != nil {
 				joined := joinIterationFact(prev, next)
 				if joined == prev {

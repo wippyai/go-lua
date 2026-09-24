@@ -4,7 +4,11 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/mutator"
+	flowpath "github.com/wippyai/go-lua/compiler/check/flowbuild/path"
+	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -118,32 +122,9 @@ func CollectIndexerAssignments(
 				continue
 			}
 
-			var keyType typ.Type
-			switch k := target.Key.(type) {
-			case *ast.IdentExpr:
-				if synth != nil {
-					keyType = synth(k, p)
-				}
-			case *ast.NumberExpr:
-				keyType = typ.Integer
-			default:
-				if synth != nil && target.Key != nil {
-					keyType = synth(target.Key, p)
-				}
-			}
-			keyType = canonicalDynamicKeyType(keyType)
-
-			var valType typ.Type
-			if source != nil && synth != nil {
-				valType = synth(source, p)
-			}
-			if valType == nil {
-				valType = typ.Unknown
-			}
-
 			result[sym] = append(result[sym], mutator.IndexerInfo{
-				KeyType: keyType,
-				ValType: valType,
+				KeyType: dynamicKeyType(target.Key, p, synth),
+				ValType: assignedValueType(source, p, synth),
 			})
 		}
 	})
@@ -151,9 +132,96 @@ func CollectIndexerAssignments(
 	return result
 }
 
-func canonicalDynamicKeyType(keyType typ.Type) typ.Type {
+// CollectNestedFieldWrites scans the graph for writes into tables that
+// targets reach by static fields: t.a.x = v, t.a["x"] = v and t.a[k] = v.
+// Writes to the target table itself are collected by CollectFieldAssignments
+// and CollectIndexerAssignments. Writes by dynamic keys are recorded under
+// flow.IndexerWriteField as the map {[K]: V} they add.
+func CollectNestedFieldWrites(
+	graph *cfg.Graph,
+	synth func(ast.Expr, cfg.Point) typ.Type,
+	bindings *bind.BindingTable,
+	targets map[cfg.SymbolID]bool,
+) map[cfg.SymbolID]api.FieldWriteSet {
+	result := make(map[cfg.SymbolID]api.FieldWriteSet)
+	if graph == nil || len(targets) == 0 {
+		return result
+	}
+	add := func(sym cfg.SymbolID, key api.FieldWriteKey, t typ.Type) {
+		set := result[sym]
+		if set == nil {
+			set = make(api.FieldWriteSet)
+			result[sym] = set
+		}
+		set[key] = api.JoinFieldWrite(key, set[key], t)
+	}
+
+	graph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
+		if info == nil {
+			return
+		}
+		for i, target := range info.Targets {
+			var source ast.Expr
+			if i < len(info.Sources) {
+				source = info.Sources[i]
+			}
+			switch target.Kind {
+			case cfg.TargetField:
+				n := len(target.FieldPath)
+				if n < 2 || !targets[target.BaseSymbol] {
+					continue
+				}
+				segments := make([]constraint.Segment, n-1)
+				for j, name := range target.FieldPath[:n-1] {
+					segments[j] = constraint.Segment{Kind: constraint.SegmentField, Name: name}
+				}
+				add(target.BaseSymbol, api.NewFieldWriteKey(segments, target.FieldPath[n-1]), assignedValueType(source, p, synth))
+			case cfg.TargetIndex:
+				if target.Base == nil || target.Key == nil {
+					continue
+				}
+				base := flowpath.FromExprWithBindings(target.Base, nil, bindings)
+				if len(base.Segments) == 0 || !targets[base.Symbol] {
+					continue
+				}
+				if strKey, ok := target.Key.(*ast.StringExpr); ok {
+					if strKey.Value != "" {
+						add(base.Symbol, api.NewFieldWriteKey(base.Segments, strKey.Value), assignedValueType(source, p, synth))
+					}
+					continue
+				}
+				written := typ.NewMap(dynamicKeyType(target.Key, p, synth), assignedValueType(source, p, synth))
+				add(base.Symbol, api.NewFieldWriteKey(base.Segments, flow.IndexerWriteField), written)
+			}
+		}
+	})
+
+	return result
+}
+
+// dynamicKeyType returns the type of the dynamic key of an index write at p.
+func dynamicKeyType(key ast.Expr, p cfg.Point, synth func(ast.Expr, cfg.Point) typ.Type) typ.Type {
+	var keyType typ.Type
+	switch k := key.(type) {
+	case *ast.NumberExpr:
+		keyType = typ.Integer
+	default:
+		if synth != nil && k != nil {
+			keyType = synth(k, p)
+		}
+	}
 	if keyType == nil || keyType.Kind().IsPlaceholder() {
 		return typ.String
 	}
 	return keyType
+}
+
+// assignedValueType returns the type of the value source assigns at p.
+func assignedValueType(source ast.Expr, p cfg.Point, synth func(ast.Expr, cfg.Point) typ.Type) typ.Type {
+	if source != nil && synth != nil {
+		if t := synth(source, p); t != nil {
+			return t
+		}
+	}
+	return typ.Unknown
 }

@@ -101,10 +101,10 @@ func TestCapturedFieldAssigns_Basic(t *testing.T) {
 	nestedSym := cfg.SymbolID(1)
 	capturedSym := cfg.SymbolID(2)
 
-	assigns[nestedSym] = map[cfg.SymbolID]map[string]typ.Type{
+	assigns[nestedSym] = map[cfg.SymbolID]FieldWriteSet{
 		capturedSym: {
-			"foo": typ.String,
-			"bar": typ.Number,
+			{Field: "foo"}: typ.String,
+			{Field: "bar"}: typ.Number,
 		},
 	}
 
@@ -119,7 +119,7 @@ func TestCapturedFieldAssigns_Basic(t *testing.T) {
 	if len(fields) != 2 {
 		t.Errorf("expected 2 fields, got %d", len(fields))
 	}
-	if fields["foo"] != typ.String {
+	if fields[FieldWriteKey{Field: "foo"}] != typ.String {
 		t.Error("expected foo to be string")
 	}
 }

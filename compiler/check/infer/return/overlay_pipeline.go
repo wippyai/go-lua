@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/mutator"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/resolve"
 	"github.com/wippyai/go-lua/compiler/check/infer/paramhints"
+	"github.com/wippyai/go-lua/compiler/check/overlaymut"
 	"github.com/wippyai/go-lua/compiler/check/phase"
 	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/compiler/check/scope"
@@ -701,7 +702,7 @@ func (i *Inferencer) applyFieldMutations(ctx *returnInferenceContext, stage *ove
 	if nestedBindings == nil {
 		nestedBindings = i.store.ModuleBindings()
 	}
-	var capturedByCallee map[cfg.SymbolID]map[cfg.SymbolID]map[string]typ.Type
+	var capturedByCallee api.FieldWrites
 	if i.store != nil {
 		capturedParent := api.ParentScopeForGraph(i.store, stage.fnGraph.ID(), ctx.info.DefScope)
 		capturedByCallee = i.store.GetFieldWritesSnapshot(stage.fnGraph, capturedParent)
@@ -709,10 +710,10 @@ func (i *Inferencer) applyFieldMutations(ctx *returnInferenceContext, stage *ove
 	calleeTypeResolver := func(info *cfg.CallInfo, p cfg.Point) typ.Type {
 		return resolve.CalleeType(info, p, stage.enrichedSynthAdapter, nil, nil, stage.fnGraph, nestedBindings, i.store.ModuleBindings())
 	}
-	nestedFieldAssignments := returns.CollectCalledNestedFieldAssignments(stage.fnGraph, nestedBindings, capturedByCallee, calleeTypeResolver)
-	returns.MergeFieldAssignments(fieldAssignments, nestedFieldAssignments)
+	writes := overlaymut.FieldWriteSets(fieldAssignments)
+	overlaymut.MergeFieldWriteSets(writes, returns.CollectCalledNestedFieldAssignments(stage.fnGraph, nestedBindings, capturedByCallee, calleeTypeResolver))
 
-	returns.ApplyFieldMergeToOverlay(stage.finalOverlay, fieldAssignments)
+	overlaymut.ApplyFieldWritesToOverlay(stage.finalOverlay, writes)
 }
 
 func (i *Inferencer) applyIndexerMutations(stage *overlayMutationStage) {

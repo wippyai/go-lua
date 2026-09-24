@@ -767,18 +767,7 @@ func (s *Solution) processIndexerAssignmentReturnKey(p cfg.Point, ia IndexerAssi
 
 	// Get the current type of the indexed container, which is the value at the
 	// full path (root plus segments), not the root the path hangs off.
-	currentType := s.values[string(pathKey)]
-	if currentType == nil {
-		currentType = s.joinPredecessorPathTypes(p, ia.Symbol, ia.Segments)
-	}
-	if currentType == nil && len(ia.Segments) > 0 {
-		if root := s.joinPredecessorPathTypes(p, ia.Symbol, nil); root != nil {
-			if derived, ok := s.deriveTypeFrom(root, ia.Segments); ok {
-				currentType = derived
-			}
-		}
-	}
-	currentType = preferDeclaredTemplateForWiden(currentType, s.declaredTypeAtPath(iaPath))
+	currentType := preferDeclaredTemplateForWiden(s.writtenTableTypeAt(p, pathKey, iaPath), s.declaredTypeAtPath(iaPath))
 
 	// Compute the widened type
 	newType := widenWithIndexer(currentType, keyType, valueType)
@@ -1009,6 +998,43 @@ func (s *Solution) processContainerMutatorAssignmentReturnKey(p cfg.Point, cm Co
 	return string(pathKey)
 }
 
+// writtenTableTypeAt returns the current type of the table at path, whose key
+// at p is pathKey: its value, or the join of its predecessor values, or the
+// type derived through the remaining segments from the value of its nearest
+// ancestor path, or from the root's predecessor values.
+func (s *Solution) writtenTableTypeAt(p cfg.Point, pathKey constraint.PathKey, path constraint.Path) typ.Type {
+	if current := s.values[string(pathKey)]; current != nil {
+		return current
+	}
+	if current := s.joinPredecessorPathTypes(p, path.Symbol, path.Segments); current != nil {
+		return current
+	}
+	if len(path.Segments) == 0 {
+		return nil
+	}
+	for cut := len(path.Segments) - 1; cut >= 0; cut-- {
+		ancestor := constraint.Path{Root: path.Root, Symbol: path.Symbol, Segments: path.Segments[:cut]}
+		ancestorKey := s.pkResolver.KeyAt(p, ancestor)
+		if ancestorKey == "" {
+			continue
+		}
+		if value := s.values[string(ancestorKey)]; value != nil {
+			if derived, ok := s.deriveTypeFrom(value, path.Segments[cut:]); ok {
+				return derived
+			}
+			break
+		}
+	}
+	root := s.joinPredecessorPathTypes(p, path.Symbol, nil)
+	if root == nil {
+		return nil
+	}
+	if derived, ok := s.deriveTypeFrom(root, path.Segments); ok {
+		return derived
+	}
+	return nil
+}
+
 // processFieldWriteEffectReturnKey widens the target table with a field that
 // may be written through an alias. Annotated variables keep their declared
 // type. Returns the changed key, or empty string when nothing changed.
@@ -1025,7 +1051,7 @@ func (s *Solution) processFieldWriteEffectReturnKey(p cfg.Point, fw FieldWriteEf
 		return ""
 	}
 
-	currentType := s.values[string(pathKey)]
+	currentType := s.writtenTableTypeAt(p, pathKey, fw.Target)
 	var newType typ.Type
 	if fw.Field == IndexerWriteField {
 		m, ok := fw.Type.(*typ.Map)
