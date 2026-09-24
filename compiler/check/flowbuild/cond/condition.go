@@ -78,14 +78,18 @@ type BranchConditions struct {
 //   - ConstResolver: constant value lookup (for const-folded conditions)
 //   - RefinementBySym: function refinement lookup (for predicate/terminating functions)
 type ConditionExtractor struct {
-	P               cfg.Point                                         // Current CFG point
-	SC              *scope.State                                      // Scope state at this point
-	Inputs          *flow.Inputs                                      // Flow inputs being built
-	Synth           func(ast.Expr, cfg.Point) typ.Type                // Expression type synthesis
-	SymResolver     func(cfg.Point, cfg.SymbolID) (typ.Type, bool)    // Symbol type resolution
-	TypeKeyRes      func(string, *scope.State) (narrow.TypeKey, bool) // Type name resolution
-	ConstResolver   func(string) *flow.ConstValue                     // Constant value lookup
-	RefinementBySym constraint.RefinementLookupBySym                  // Function refinement lookup
+	P                cfg.Point                                         // Current CFG point
+	SC               *scope.State                                      // Scope state at this point
+	Inputs           *flow.Inputs                                      // Flow inputs being built
+	Synth            func(ast.Expr, cfg.Point) typ.Type                // Expression type synthesis
+	SymResolver      func(cfg.Point, cfg.SymbolID) (typ.Type, bool)    // Symbol type resolution
+	TypeKeyRes       func(string, *scope.State) (narrow.TypeKey, bool) // Type name resolution
+	ConstResolver    func(string) *flow.ConstValue                     // Constant value lookup
+	RefinementBySym  constraint.RefinementLookupBySym                  // Function refinement lookup
+	UnstableSymbols  map[cfg.SymbolID]bool
+	ReceiverRoots    map[cfg.SymbolID]bool
+	NilableRoots     map[cfg.SymbolID]bool
+	KnownNonNilPaths map[constraint.PathKey]bool
 }
 
 // constraintsFromBranch extracts type constraints from branch info.
@@ -312,8 +316,8 @@ func (ce *ConditionExtractor) ConstraintsFromConditionExpr(expr ast.Expr) Branch
 func (ce *ConditionExtractor) composedBranchConditions(expr ast.Expr) (BranchConditions, bool) {
 	switch e := expr.(type) {
 	case *ast.LogicalOpExpr:
-		left := ce.ConstraintsFromConditionExpr(e.Lhs)
-		right := ce.ConstraintsFromConditionExpr(e.Rhs)
+		left := ce.conditionsFromEvaluatedExpr(e.Lhs)
+		right := ce.conditionsFromEvaluatedExpr(e.Rhs)
 		switch e.Operator {
 		case "and":
 			return BranchConditions{
@@ -327,7 +331,7 @@ func (ce *ConditionExtractor) composedBranchConditions(expr ast.Expr) (BranchCon
 			}, true
 		}
 	case *ast.UnaryNotOpExpr:
-		inner := ce.ConstraintsFromConditionExpr(e.Expr)
+		inner := ce.conditionsFromEvaluatedExpr(e.Expr)
 		return BranchConditions{OnTrue: inner.OnFalse, OnFalse: inner.OnTrue}, true
 	case *ast.RelationalOpExpr:
 		switch e.Operator {

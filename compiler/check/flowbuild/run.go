@@ -91,9 +91,10 @@ func Run(fc *fbcore.FlowContext) *flow.Inputs {
 
 	// Compute derived resolvers and store in a separate derived bundle.
 	derived := &fbcore.Derived{
-		SymResolver:     resolve.BuildInputSymbolResolver(fc.CheckCtx, inputs),
-		TypeKeyRes:      resolve.BuildContextTypeKeyResolver(fc.CheckCtx),
-		RefinementBySym: resolve.BuildRefinementLookup(fc.CheckCtx),
+		SymResolver:           resolve.BuildInputSymbolResolver(fc.CheckCtx, inputs),
+		TypeKeyRes:            resolve.BuildContextTypeKeyResolver(fc.CheckCtx),
+		RefinementBySym:       resolve.BuildRefinementLookup(fc.CheckCtx),
+		CapturedReassignments: cond.CapturedReassignments(fc.Graph),
 	}
 	if fc.API != nil {
 		derived.Synth = fc.API.TypeOf
@@ -106,6 +107,7 @@ func Run(fc *fbcore.FlowContext) *flow.Inputs {
 
 	// Assignments with const resolution.
 	assign.ExtractAssignments(fc, inputs, keyscoll.BuildKeysCollectorDetector(fc.Graph, fc.ModuleBindings))
+	derived.ReceiverRoots, derived.NilableRoots, derived.KnownNonNilPaths = cond.ReceiverRoots(inputs)
 
 	// Table mutator assignments (table.insert-like).
 	mutator.ExtractTableMutatorAssignments(fc, inputs)
@@ -135,6 +137,7 @@ func Run(fc *fbcore.FlowContext) *flow.Inputs {
 	// Call OnReturn constraints, merged into edges.
 	callConstraints := cond.ExtractCallOnReturnConstraints(fc, inputs)
 	MergeCallConstraintsIntoEdges(inputs, callConstraints)
+	cond.ExtractEvaluationConstraints(fc, inputs)
 
 	// Mark terminating call edges as unreachable (error(), etc.).
 	for _, p := range fc.Graph.RPO() {
