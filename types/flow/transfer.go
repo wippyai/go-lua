@@ -1597,6 +1597,9 @@ func (s *Solution) processJoinReturnChangedKeys(p cfg.Point) []string {
 		// Collect types from operands, applying edge conditions
 		types := s.scratchTypes[:0]
 		for _, op := range phi.Operands {
+			if s.inputs.DeadPoints[op.From] {
+				continue
+			}
 			opType := s.phiOperandTypeAt(p, op, nil)
 			if opType == nil {
 				continue
@@ -1634,6 +1637,9 @@ func (s *Solution) processJoinReturnChangedKeys(p cfg.Point) []string {
 			}
 			types = types[:0]
 			for _, op := range phi.Operands {
+				if s.inputs.DeadPoints[op.From] {
+					continue
+				}
 				opType := s.phiOperandTypeAt(p, op, segments)
 				if opType == nil {
 					opType = typ.Nil

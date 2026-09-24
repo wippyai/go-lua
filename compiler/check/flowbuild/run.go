@@ -54,6 +54,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/mutator"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/resolve"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/returns"
+	"github.com/wippyai/go-lua/compiler/check/flowbuild/sibling"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/query/core"
@@ -120,6 +121,16 @@ func Run(fc *fbcore.FlowContext) *flow.Inputs {
 
 	// Edge constraints from branches.
 	cond.ExtractEdgeConstraints(fc, inputs)
+	if sibling.HasPhiCandidate(fc.Graph, inputs) {
+		// Conditional multi-return assignments first need ordinary branch facts
+		// to identify impossible phi inputs. Preserve their relation across the
+		// remaining inputs, then re-extract guards that use the joined pair.
+		preliminary := flow.Solve(inputs, nil)
+		if sibling.PropagatePhi(fc.Graph, inputs, preliminary) {
+			inputs.EdgeConditions = nil
+			cond.ExtractEdgeConstraints(fc, inputs)
+		}
+	}
 
 	// Call OnReturn constraints, merged into edges.
 	callConstraints := cond.ExtractCallOnReturnConstraints(fc, inputs)
