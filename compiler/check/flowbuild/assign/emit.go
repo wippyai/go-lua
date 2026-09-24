@@ -844,8 +844,12 @@ func buildLiftedDynamicIndexerAssignment(
 		valType = wrapStepValue(steps[i], valType, graph, bindings, synth, symResolver, p)
 	}
 
+	// The source value is the entry itself only when the dynamic step is the
+	// last one; otherwise the entry is the wrapped shape built above, and
+	// resolving the source path at solve time would replace it with the
+	// field's value.
 	valuePath := constraint.Path{}
-	if source != nil {
+	if source != nil && firstDynamic == len(steps)-1 {
 		if sp := path.FromExprWithBindings(source, constResolver, bindings); !sp.IsEmpty() {
 			valuePath = constraint.Path{
 				Root:     resolve.RootNameFromBindings(bindings, sp.Symbol, sp.Root),
