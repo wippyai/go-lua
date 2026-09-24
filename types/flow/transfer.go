@@ -788,6 +788,12 @@ func (s *Solution) processIndexerAssignmentReturnKey(p cfg.Point, ia IndexerAssi
 	if valueType == nil {
 		return ""
 	}
+	// A primitive literal written to an inferred mutable table is no longer a
+	// fixed slot type: later writes may replace it with another value of the
+	// same primitive type. Keep nested mutable values unchanged.
+	if !isIntegerKey(keyType) {
+		valueType = subtype.Widen(valueType)
+	}
 
 	// Get canonical key for the root variable
 	iaPath := constraint.Path{Root: ia.Root, Symbol: ia.Symbol, Segments: ia.Segments}
