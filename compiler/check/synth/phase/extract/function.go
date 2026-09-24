@@ -598,7 +598,7 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 			} else {
 				t = typ.Nil
 			}
-			returnTypes[i] = typ.JoinReturnSlot(returnTypes[i], t)
+			returnTypes[i] = typ.JoinReturnPaths(returnTypes[i], t)
 		}
 	})
 

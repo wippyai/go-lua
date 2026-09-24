@@ -1,4 +1,4 @@
 {
-  "description": "Field writes into a value typed any keep its unwritten keys dynamic: the written field keeps its type, an unwritten one reads as any.",
+  "description": "A concretely inferred record keeps written field types; a field write through an any-valued row preserves dynamic reads.",
   "files": ["main.lua"]
 }

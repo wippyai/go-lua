@@ -20,6 +20,16 @@ func TestJoinReturnSlot_PreservesAnyOverNil(t *testing.T) {
 	}
 }
 
+func TestJoinReturnPaths_AnyAbsorbsConcreteReturn(t *testing.T) {
+	stream := NewRecord().Field("headers", NewMap(String, Any)).Build()
+	if got := JoinReturnPaths(Any, stream); got != Any {
+		t.Fatalf("JoinReturnPaths(any, stream) = %v, want any", got)
+	}
+	if got := JoinReturnPaths(stream, Any); got != Any {
+		t.Fatalf("JoinReturnPaths(stream, any) = %v, want any", got)
+	}
+}
+
 func TestJoinReturnSlot_PrefersArrayOverEmptyRecord(t *testing.T) {
 	empty := NewRecord().Build()
 	arr := NewArray(String)

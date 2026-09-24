@@ -1,7 +1,6 @@
--- Field writes into a value typed any record the written fields, and every
--- other key stays dynamic: an unwritten field reads as any, so an index write
--- through a callee leaves it a value that passes where a list is expected
--- (kickside.workflows store_projection: state.head_seq, state.edge_order).
+-- load_state returns a concrete table, so writes to that inferred record can
+-- still establish head_seq as number. A dynamic field passed through a callee
+-- remains usable as a list (kickside.workflows store_projection: edge_order).
 local function load_state(): (any?, string?)
     return { edge_order = {} }, nil
 end
@@ -25,7 +24,7 @@ local function project(id: string, seq: number, removed: boolean, edit: boolean)
     return nil
 end
 
--- The field a statement writes does not hide the fields its right side reads
+-- A row read from any stays dynamic on both sides of a field write
 -- (app:migration_lifecycle_test: row.decoded_body = json.decode(row.body)).
 local function decode(source: string): any
     return source

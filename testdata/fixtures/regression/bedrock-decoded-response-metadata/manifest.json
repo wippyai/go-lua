@@ -1,0 +1,6 @@
+{
+  "description": "Real wippy.llm.bedrock client and client_test sources, with test globals bound and a direct assertion that json.decode's any value remains dynamic after the metadata write. The assertion fails on 7974edd5f; client_test reads stopReason after test.is_nil(err) at original lines 77 and 102.",
+  "files": ["json.lua", "ctx.lua", "env.lua", "base64.lua", "store.lua", "crypto.lua", "hash.lua", "http_client.lua", "test.lua", "transport.lua", "sigv4.lua", "bedrock_credentials.lua", "bedrock_client.lua", "main.lua"],
+  "packages": ["time", "process"],
+  "check": {"errors": 0}
+}

@@ -412,7 +412,7 @@ func joinReturnTypes(existing, incoming []typ.Type) []typ.Type {
 		} else {
 			t = typ.Nil
 		}
-		existing[i] = typ.JoinReturnSlot(existing[i], t)
+		existing[i] = typ.JoinReturnPaths(existing[i], t)
 	}
 	return existing
 }

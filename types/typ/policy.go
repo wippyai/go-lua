@@ -65,6 +65,16 @@ func JoinReturnSlot(a, b Type) Type {
 	return coalesceCompatibleRecordMembers(JoinPreferNonSoft(a, b))
 }
 
+// JoinReturnPaths merges return statements of one function. Unlike a soft
+// placeholder used while inferring a return slot, an any-typed value returned
+// on a path can have any runtime shape and absorbs the other paths.
+func JoinReturnPaths(a, b Type) Type {
+	if (a != nil && IsAny(a)) || (b != nil && IsAny(b)) {
+		return Any
+	}
+	return JoinReturnSlot(a, b)
+}
+
 func preferArrayOverEmptyRecord(a, b Type) (Type, bool) {
 	if isEmptyRecordNoMap(a) && isArrayLike(b) {
 		return b, true

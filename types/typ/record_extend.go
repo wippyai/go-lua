@@ -1,18 +1,24 @@
 package typ
 
 // ExtendRecordWithField returns a record type extended with a field.
-// If the base type is nil, any, unknown, or nil, creates a new record with just the field.
-// If the base type is already a record, adds or updates the field.
+// A dynamic base stays dynamic (WriteInto). If the base type is absent, unknown,
+// or Lua nil, creates a new record with just the field. If the base type is
+// already a record, adds or updates the field.
 func ExtendRecordWithField(base Type, field string, fieldType Type) Type {
 	if field == "" || fieldType == nil {
 		return base
 	}
+	return WriteInto(base, func(base Type) Type {
+		return extendRecordWithField(base, field, fieldType)
+	})
+}
 
+func extendRecordWithField(base Type, field string, fieldType Type) Type {
 	unwrapped := base
 	for a, ok := unwrapped.(*Alias); ok; a, ok = unwrapped.(*Alias) {
 		unwrapped = a.Target
 	}
-	if unwrapped == nil || unwrapped.Kind() == Any.Kind() || unwrapped.Kind() == Unknown.Kind() || unwrapped.Kind() == Nil.Kind() {
+	if unwrapped == nil || unwrapped.Kind() == Unknown.Kind() || unwrapped.Kind() == Nil.Kind() {
 		return NewRecord().SetOpen(true).Field(field, fieldType).Build()
 	}
 

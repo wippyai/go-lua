@@ -56,7 +56,12 @@ func MergeFieldsIntoType(baseType typ.Type, fields map[string]typ.Type) typ.Type
 	if len(fields) == 0 {
 		return baseType
 	}
+	return typ.WriteInto(baseType, func(t typ.Type) typ.Type {
+		return mergeFields(t, fields)
+	})
+}
 
+func mergeFields(baseType typ.Type, fields map[string]typ.Type) typ.Type {
 	fieldNames := cfg.SortedFieldNames(fields)
 
 	if baseType == nil {
@@ -177,6 +182,12 @@ func JoinValueTypes(a, b typ.Type) typ.Type {
 
 // MergeMapComponentIntoType adds a map component to a base type.
 func MergeMapComponentIntoType(baseType, keyType, valType typ.Type) typ.Type {
+	return typ.WriteInto(baseType, func(t typ.Type) typ.Type {
+		return mergeMapComponent(t, keyType, valType)
+	})
+}
+
+func mergeMapComponent(baseType, keyType, valType typ.Type) typ.Type {
 	if baseType == nil {
 		return typ.NewMap(keyType, valType)
 	}

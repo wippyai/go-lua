@@ -266,7 +266,12 @@ func overwriteStructuredIntIndex(baseType typ.Type, elemType typ.Type) typ.Type 
 	if elemType == nil {
 		return baseType
 	}
+	return typ.WriteInto(baseType, func(t typ.Type) typ.Type {
+		return overwriteStructuredIntIndexNonDynamic(t, elemType)
+	})
+}
 
+func overwriteStructuredIntIndexNonDynamic(baseType typ.Type, elemType typ.Type) typ.Type {
 	switch t := baseType.(type) {
 	case *typ.Alias:
 		updated := overwriteStructuredIntIndex(t.Target, elemType)

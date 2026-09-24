@@ -772,7 +772,9 @@ func (s *Solution) processIndexerAssignmentReturnKey(p cfg.Point, ia IndexerAssi
 	currentType := preferDeclaredTemplateForWiden(s.writtenTableTypeAt(p, pathKey, iaPath), declared)
 
 	// Compute the widened type
-	newType := widenWithIndexer(currentType, keyType, valueType)
+	newType := typ.WriteInto(currentType, func(t typ.Type) typ.Type {
+		return widenWithIndexer(t, keyType, valueType)
+	})
 	if newType == nil || typ.TypeEquals(currentType, newType) {
 		return ""
 	}
@@ -1073,12 +1075,16 @@ func (s *Solution) processFieldWriteEffectReturnKey(p cfg.Point, fw FieldWriteEf
 		if base == nil {
 			return ""
 		}
-		newType = widenWithIndexer(base, m.Key, subtype.WidenForInference(m.Value))
+		newType = typ.WriteInto(base, func(t typ.Type) typ.Type {
+			return widenWithIndexer(t, m.Key, subtype.WidenForInference(m.Value))
+		})
 		if s.inputs.RefinableAnnotatedVars[fw.Target.Symbol] && !subtype.IsSubtype(newType, declared) {
 			return ""
 		}
 	} else {
-		newType = widenFieldWrite(currentType, fw.Field, subtype.WidenForInference(fw.Type))
+		newType = typ.WriteInto(currentType, func(t typ.Type) typ.Type {
+			return widenFieldWrite(t, fw.Field, subtype.WidenForInference(fw.Type))
+		})
 	}
 	if newType == nil || typ.TypeEquals(currentType, newType) {
 		return ""
@@ -1439,7 +1445,7 @@ func isEmptyRecordNoMapType(t typ.Type) bool {
 //   - Record with fields: Adds or widens map component
 //   - Existing map: Widens key/value types via union
 //   - Unknown: Creates map {[K]: V}
-//   - Other types, any among them: Returns unchanged
+//   - Other types: Returns unchanged
 //
 // Nil values are skipped: In Lua, t[k] = nil deletes the key rather than storing nil.
 // Map access already returns Optional to represent potentially missing keys.
@@ -1519,8 +1525,7 @@ func widenWithIndexer(t typ.Type, keyType, valType typ.Type) typ.Type {
 			return typ.NewMap(newKey, newVal)
 		},
 		Default: func(t typ.Type) typ.Type {
-			// A dynamic value already admits every write and stays dynamic;
-			// an unresolved one becomes the map the write builds.
+			// An unresolved value becomes the map the write builds.
 			if t.Kind() == kind.Unknown {
 				return typ.NewMap(keyType, valType)
 			}

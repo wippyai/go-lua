@@ -9,7 +9,6 @@ import (
 	"github.com/wippyai/go-lua/types/flow/numeric"
 	"github.com/wippyai/go-lua/types/flow/pathkey"
 	"github.com/wippyai/go-lua/types/flow/propagate"
-	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
@@ -883,6 +882,12 @@ func (s *Solution) resolveTypeKey(key narrow.TypeKey) typ.Type {
 //
 // This enables gradual type construction for tables built incrementally.
 func (s *Solution) mergeFieldAssignments(baseType typ.Type, baseKey string) typ.Type {
+	return typ.WriteInto(baseType, func(t typ.Type) typ.Type {
+		return s.mergeFields(t, baseKey)
+	})
+}
+
+func (s *Solution) mergeFields(baseType typ.Type, baseKey string) typ.Type {
 	baseSym, baseVersion, _, ok := pathkey.ParseKeyUnchecked(constraint.PathKey(baseKey))
 	if !ok {
 		return baseType
@@ -1002,12 +1007,8 @@ func (s *Solution) mergeFieldAssignments(baseType typ.Type, baseKey string) typ.
 			return builder.Build()
 		},
 		Default: func(t typ.Type) typ.Type {
-			// Base is not a record or map; create one with just the field
-			// assignments. A dynamic base keeps every other key dynamic.
+			// Base is not a record or map; create one with just the field assignments
 			builder := typ.NewRecord().SetOpen(true)
-			if t.Kind() == kind.Any {
-				builder.MapComponent(typ.Any, typ.Any)
-			}
 			for _, f := range fields {
 				if f.Optional {
 					builder.OptField(f.Name, f.Type)
