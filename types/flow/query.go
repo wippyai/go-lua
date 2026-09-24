@@ -549,6 +549,12 @@ func (s *Solution) applyCondition(p cfg.Point, baseType typ.Type, path constrain
 		}
 		narrowed := s.applyConstraints(p, baseType, path, disjunct)
 		if narrowed != nil && !narrowed.Kind().IsNever() {
+			// A disjunct that leaves the value unresolved admits every value,
+			// so the union over the disjuncts is unresolved too; NewUnion
+			// would drop it as carrying no information.
+			if typ.IsUnknown(narrowed) {
+				return narrowed
+			}
 			narrowedTypes = append(narrowedTypes, narrowed)
 		}
 	}
