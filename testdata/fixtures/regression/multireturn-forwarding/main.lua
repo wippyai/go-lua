@@ -34,4 +34,15 @@ local function body(): (string, string?)
 end
 local decoded: string = decode(body())
 
+-- A trailing call's error value forwarded into an optional message parameter
+-- is passed by Lua's adjustment, not written by the caller.
+local function fetch(): (string?, string?)
+    return "v", nil
+end
+local function expect(v: any, msg: string?): any
+    return v
+end
+local fetched = assert(fetch())
+local expected = expect(fetch())
+
 return { handler = handler }

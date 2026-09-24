@@ -199,7 +199,7 @@ local function handle(args)
     end
 
     local summary_prompt = prompt.new()
-    summary_prompt:add_system(checkpoint_prompt(existing_summary and PROMPTS.update or PROMPTS.initial, cfg.max_tokens)) -- expect-error: argument 2: expected table?, got integer
+    summary_prompt:add_system(checkpoint_prompt(existing_summary and PROMPTS.update or PROMPTS.initial, cfg.max_tokens))
 
     if existing_summary then
         summary_prompt:add_user("===PREVIOUS CHECKPOINT (PRESERVE AND BUILD ON THIS)===\n" .. existing_summary)

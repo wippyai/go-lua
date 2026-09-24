@@ -877,6 +877,16 @@ func methodConsumesReceiverSimple(fn *typ.Function, receiver typ.Type, isMethod 
 	return hasExplicitSelfSimple(fn, receiver)
 }
 
+// paramAcceptsAbsence reports whether a call may leave the parameter unset:
+// it has a default or its type admits nil.
+func paramAcceptsAbsence(p typ.Param) bool {
+	if p.Optional {
+		return true
+	}
+	_, nilable := typ.SplitNilableFieldType(p.Type)
+	return nilable
+}
+
 func callFunction(ctx *db.QueryContext, query core.TypeOps, fn *typ.Function, args []typ.Type, explicit int, receiver typ.Type, isMethod bool, forceMethodReceiver bool, errors []CallError) CallResult {
 	if fn == nil {
 		return singleValueCallResult(typ.Unknown, append(errors, CallError{Kind: ErrNotCallable, Message: "nil function"}))
@@ -954,6 +964,15 @@ func callFunction(ctx *db.QueryContext, query core.TypeOps, fn *typ.Function, ar
 
 		if isMethod && receiver != nil {
 			expectedType = subst.Self(expectedType, receiver)
+		}
+
+		// A value expanded from the trailing call that lands on an optional
+		// parameter or the variadic tail is passed by Lua's adjustment rule, not
+		// written by the caller (assert(f()), test.ok(f()) forward the error).
+		// It fills required parameters and is checked there; elsewhere it is not
+		// an argument the caller wrote.
+		if explicit > 0 && i >= explicit && (paramIdx >= len(fn.Params) || paramAcceptsAbsence(fn.Params[paramIdx])) {
+			continue
 		}
 
 		if expectedType != nil && arg != nil {
