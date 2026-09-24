@@ -40,3 +40,15 @@ func TestInferErrorReturnConvention_CorrelatesOnlyOptionalValueSlots(t *testing.
 		t.Fatalf("expected the optional value slots co-correlated, got %v", co)
 	}
 }
+
+func TestInferErrorReturnConvention_AmbiguousErrorSlotCorrelatesNothing(t *testing.T) {
+	fn := typ.Func().Returns(typ.NewOptional(typ.Any), typ.NewOptional(typ.Any), typ.NewOptional(typ.String), typ.NewOptional(typ.String)).Build()
+	if inverse, co := InferErrorReturnConvention(fn); inverse != nil || co != nil {
+		t.Fatalf("two string error candidates leave the error slot ambiguous, got %v %v", inverse, co)
+	}
+
+	anyValues := typ.Func().Returns(typ.NewOptional(typ.Any), typ.NewOptional(typ.Any), typ.NewOptional(typ.String)).Build()
+	if inverse, _ := InferErrorReturnConvention(anyValues); len(inverse) != 2 {
+		t.Fatalf("any-typed value slots correlate with the trailing error, got %v", inverse)
+	}
+}

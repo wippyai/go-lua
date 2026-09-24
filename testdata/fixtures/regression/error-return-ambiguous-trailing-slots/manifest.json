@@ -1,0 +1,5 @@
+{
+  "description": "A trailing error slot is ambiguous when another optional slot holds its type: (actor?, scope?, err: string?, kind: string?) infers no (value, err) correlation, so err == nil never narrows the values to nil.",
+  "files": ["identity.lua", "main.lua"],
+  "check": {"errors": 0}
+}
