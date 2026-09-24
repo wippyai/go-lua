@@ -88,10 +88,35 @@ func applyTypeDefAtPoint(graph *cfg.Graph, p cfg.Point, current *State, resolver
 	if resolved == nil {
 		return current
 	}
-	if _, isGeneric := resolved.(*typ.Generic); isGeneric {
-		return current.WithType(info.Name, resolved)
+	return current.DeclareType(info.Name, resolved)
+}
+
+// DeclareType binds the type definition name, resolved as resolved: a generic
+// directly, any other type under an alias that keeps the name. Types declared
+// before name hold references to it as local Refs, since name was not yet in
+// scope when they resolved; the declared type binds those forward references.
+func (s *State) DeclareType(name string, resolved typ.Type) *State {
+	declared := resolved
+	if _, isGeneric := resolved.(*typ.Generic); !isGeneric {
+		declared = typ.NewAlias(name, resolved)
 	}
-	return current.WithType(info.Name, typ.NewAlias(info.Name, resolved))
+	bind := func(n typ.Type) (typ.Type, bool) {
+		if ref, ok := n.(*typ.Ref); ok && ref.Module == "" && ref.Name == name {
+			return declared, true
+		}
+		return nil, false
+	}
+	next := s
+	s.RangeTypes(func(other string, t typ.Type) bool {
+		if other == name {
+			return true
+		}
+		if bound := typ.Rewrite(t, bind); bound != t {
+			next = next.WithType(other, bound)
+		}
+		return true
+	})
+	return next.WithType(name, declared)
 }
 
 // ToTypeParamExprs converts cfg type params to ast type param expressions.

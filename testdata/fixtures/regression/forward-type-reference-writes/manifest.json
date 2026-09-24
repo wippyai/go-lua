@@ -1,0 +1,5 @@
+{
+  "description": "A type that refers to one declared after it binds that forward reference, so values written into its slots conform to the declared type.",
+  "files": ["main.lua"],
+  "check": {"errors": 0}
+}
