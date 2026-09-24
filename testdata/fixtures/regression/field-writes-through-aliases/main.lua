@@ -39,8 +39,21 @@ install(sink)
 local last: string? = sink.last
 local size: integer = sink.size
 
+local function make_recorder(target)
+    return {
+        record = function(v: any)
+            target.seen = v
+            target.seen = nil
+        end,
+    }
+end
+
+local log = { n = 0 }
+make_recorder(log)
+local first = log.seen[1]
+
 local untouched = { n = 0 }
 mark(sink)
 local missing = untouched.done -- expect-error: does not exist
 
-return { done, label, hits, last, size, missing }
+return { done, label, hits, last, size, first, missing }

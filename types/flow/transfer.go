@@ -1037,7 +1037,9 @@ func (s *Solution) processFieldWriteEffectReturnKey(p cfg.Point, fw FieldWriteEf
 
 // widenFieldWrite joins a possibly-written field into the record members of t.
 // A present field keeps its optionality and joins the written type; an absent
-// field is added as optional.
+// field is added as optional. A field read as unknown already admits the
+// write, so a record whose field is unknown, or an open record without the
+// field, stays unchanged.
 func widenFieldWrite(t typ.Type, field string, valueType typ.Type) typ.Type {
 	if t == nil {
 		return nil
@@ -1045,6 +1047,9 @@ func widenFieldWrite(t typ.Type, field string, valueType typ.Type) typ.Type {
 	switch v := t.(type) {
 	case *typ.Record:
 		if existing := v.GetField(field); existing != nil {
+			if typ.IsUnknown(existing.Type) {
+				return v
+			}
 			joined := join.Types(existing.Type, valueType)
 			if typ.TypeEquals(existing.Type, joined) {
 				return v
@@ -1052,6 +1057,9 @@ func widenFieldWrite(t typ.Type, field string, valueType typ.Type) typ.Type {
 			widened := *existing
 			widened.Type = joined
 			return v.WithField(widened)
+		}
+		if v.Open {
+			return v
 		}
 		return v.WithField(typ.Field{Name: field, Type: valueType, Optional: true})
 	case *typ.Optional:

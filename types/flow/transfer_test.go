@@ -422,3 +422,17 @@ func TestWidenFieldWrite_WidensRecordMembers(t *testing.T) {
 		t.Fatalf("non-table types stay unchanged, got %s", s)
 	}
 }
+
+func TestWidenFieldWrite_OpenRecordKeepsAbsentFieldUnknown(t *testing.T) {
+	rec := typ.NewRecord().Field("n", typ.Integer).SetOpen(true).Build()
+	if got := widenFieldWrite(rec, "label", typ.String); got != rec {
+		t.Fatalf("an open record admits the write already, got %s", got)
+	}
+}
+
+func TestWidenFieldWrite_UnknownFieldAdmitsWrite(t *testing.T) {
+	rec := typ.NewRecord().Field("tx", typ.Unknown).Build()
+	if got := widenFieldWrite(rec, "tx", typ.NewOptional(typ.String)); got != rec {
+		t.Fatalf("an unknown field admits the write already, got %s", got)
+	}
+}

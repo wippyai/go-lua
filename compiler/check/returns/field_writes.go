@@ -101,7 +101,7 @@ func CollectFieldWrites(
 			result[target] = fields
 		}
 		if existing := fields[field]; existing != nil {
-			fields[field] = typ.JoinPreferNonSoft(existing, t)
+			fields[field] = typ.NewUnion(existing, t)
 		} else {
 			fields[field] = t
 		}

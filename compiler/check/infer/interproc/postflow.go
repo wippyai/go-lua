@@ -129,7 +129,12 @@ func storeWriteEffectsFromResult(
 				facts.FieldWrites = make(api.FieldWrites)
 			}
 			existing := facts.FieldWrites[fnSym]
-			facts.FieldWrites[fnSym] = returns.MergeFieldWriteSymbolMaps(existing, fields, typ.JoinPreferNonSoft)
+			facts.FieldWrites[fnSym] = returns.MergeFieldWriteSymbolMaps(existing, fields, func(prev, next typ.Type) typ.Type {
+				if prev == nil {
+					return next
+				}
+				return typ.NewUnion(prev, next)
+			})
 		})
 	}
 
