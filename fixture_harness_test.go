@@ -15,6 +15,8 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
 	"github.com/wippyai/go-lua/types/diag"
 	"github.com/wippyai/go-lua/types/io"
+	"github.com/wippyai/go-lua/types/query/core"
+	"github.com/wippyai/go-lua/types/typ"
 )
 
 // Suite describes a fixture suite loaded from manifest.json.
@@ -32,6 +34,8 @@ type fixtureSuite struct {
 type fixtureCheck struct {
 	Errors *int   `json:"errors,omitempty"`
 	Skip   string `json:"skip,omitempty"`
+	// ExportContains checks inferred module field types at import boundaries.
+	ExportContains map[string]string `json:"export_contains,omitempty"`
 	// Modes lists the checking modes the fixture runs under; the default is
 	// the gradual mode alone.
 	Modes []string `json:"modes,omitempty"`
@@ -240,6 +244,7 @@ func runCheckPhase(t *testing.T, s namedSuite, mode string) {
 	}
 	var moduleOrder []namedModule
 	var allDiagnostics []diag.Diagnostic
+	checkedExports := make(map[string]bool)
 	for _, f := range files[:len(files)-1] {
 		modOpts := append([]testutil.Option{}, baseOpts...)
 		for _, nm := range moduleOrder {
@@ -249,6 +254,28 @@ func runCheckPhase(t *testing.T, s namedSuite, mode string) {
 		mod := testutil.CheckAndExport(sources[f], name, modOpts...)
 		moduleOrder = append(moduleOrder, namedModule{name, mod})
 		allDiagnostics = append(allDiagnostics, mod.Errors...)
+		var exportContains map[string]string
+		if s.Suite.Check != nil {
+			exportContains = s.Suite.Check.ExportContains
+		}
+		for qualified, expected := range exportContains {
+			module, field, ok := strings.Cut(qualified, ".")
+			if !ok || module != name {
+				continue
+			}
+			checkedExports[qualified] = true
+			fieldType, found := core.Field(mod.Manifest.Export, field)
+			if !found || !strings.Contains(typ.FormatShort(fieldType), expected) {
+				t.Errorf("export %s: expected type containing %q, got %s", qualified, expected, typ.FormatShort(fieldType))
+			}
+		}
+	}
+	if s.Suite.Check != nil {
+		for qualified := range s.Suite.Check.ExportContains {
+			if !checkedExports[qualified] {
+				t.Errorf("export %s: module was not checked", qualified)
+			}
+		}
 	}
 
 	// Check entry point

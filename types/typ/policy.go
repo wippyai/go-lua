@@ -17,10 +17,12 @@ func JoinPreferNonSoft(a, b Type) Type {
 	}
 	a = PruneSoftUnionMembers(a)
 	b = PruneSoftUnionMembers(b)
-	if IsSoft(a, SoftPlaceholderPolicy) && !IsSoft(b, SoftPlaceholderPolicy) {
+	// Nil is a real return value, and even an empty table is a real value on
+	// another return path. Keep both when joining them.
+	if IsSoft(a, SoftPlaceholderPolicy) && !IsSoft(b, SoftPlaceholderPolicy) && b.Kind() != kind.Nil {
 		return b
 	}
-	if IsSoft(b, SoftPlaceholderPolicy) && !IsSoft(a, SoftPlaceholderPolicy) {
+	if IsSoft(b, SoftPlaceholderPolicy) && !IsSoft(a, SoftPlaceholderPolicy) && a.Kind() != kind.Nil {
 		return a
 	}
 	// Inline join.Two to avoid dependency cycles inside typ.
