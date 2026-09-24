@@ -266,6 +266,32 @@ func TestMergeReturnSummary_FillsNilSlotWithCandidateEvidence(t *testing.T) {
 	}
 }
 
+// The journal db_one helper returns a row assigned through a callback. Its
+// unresolved first estimate must remain open against a nil-only estimate.
+func TestMergeReturnSummary_KeepsUnresolvedValueOpenAgainstNil(t *testing.T) {
+	for _, pair := range [][2][]typ.Type{
+		{{typ.Unknown}, {typ.Nil}},
+		{{typ.Nil}, {typ.Unknown}},
+	} {
+		got := MergeReturnSummary(pair[0], pair[1])
+		if len(got) != 1 || !typ.IsUnknown(got[0]) {
+			t.Fatalf("MergeReturnSummary(%v, %v) = %v; unresolved value became nil", pair[0], pair[1], got)
+		}
+	}
+}
+
+func TestAdvanceReturnSummary_KeepsUnresolvedValueOpenAgainstNil(t *testing.T) {
+	for _, pair := range [][2][]typ.Type{
+		{{typ.Unknown}, {typ.Nil}},
+		{{typ.Nil}, {typ.Unknown}},
+	} {
+		got := AdvanceReturnSummary(pair[0], pair[1])
+		if len(got) != 1 || !typ.IsUnknown(got[0]) {
+			t.Fatalf("AdvanceReturnSummary(%v, %v) = %v; unresolved value became nil", pair[0], pair[1], got)
+		}
+	}
+}
+
 func TestMergeFunctionFactType_MergesSameShapeReturnsCanonically(t *testing.T) {
 	existing := typ.Func().
 		Param("x", typ.String).

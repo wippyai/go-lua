@@ -716,13 +716,13 @@ func AdvanceReturnSummary(prev, next []typ.Type) []typ.Type {
 	return normalizeAndPruneReturnVector(typjoin.ReturnVectors(prev, next))
 }
 
-// fillUnknownSlots returns rets with each unknown slot replaced by the slot of
-// other at the same position: an unknown slot is a return an estimate could
-// not infer yet, a placeholder that yields to the other estimate's type.
+// fillUnknownSlots replaces unresolved slots with concrete evidence from the
+// other estimate. A nil-only slot supplies no value evidence: replacing an
+// unknown return with nil would prematurely close an unresolved capture.
 func fillUnknownSlots(rets, other []typ.Type) []typ.Type {
 	var out []typ.Type
 	for i, t := range rets {
-		if i >= len(other) || !typ.IsUnknown(t) || other[i] == nil || typ.IsUnknown(other[i]) {
+		if i >= len(other) || !typ.IsUnknown(t) || other[i] == nil || typ.IsUnknown(other[i]) || other[i].Kind() == kind.Nil {
 			continue
 		}
 		if out == nil {
