@@ -9,14 +9,18 @@ func TestIsSoftAnnotationPolicy(t *testing.T) {
 		want bool
 	}{
 		{"nil", nil, false},
-		{"any", Any, true},
+		{"any", Any, false},
 		{"unknown", Unknown, true},
-		{"optional any", NewOptional(Any), true},
-		{"array any", NewArray(Any), true},
-		{"map value any", NewMap(String, Any), true},
-		{"union all soft", NewUnion(Any, Unknown), true},
+		{"optional any", NewOptional(Any), false},
+		{"optional unknown", NewOptional(Unknown), true},
+		{"array any", NewArray(Any), false},
+		{"array unknown", NewArray(Unknown), true},
+		{"map value any", NewMap(String, Any), false},
+		{"map value unknown", NewMap(String, Unknown), true},
+		{"union all soft", NewUnion(NewArray(Unknown), NewMap(String, Unknown)), true},
 		{"union mixed", NewUnion(String, Number), false},
-		{"record map any", NewRecord().MapComponent(Integer, Any).Build(), true},
+		{"record map any", NewRecord().MapComponent(Integer, Any).Build(), false},
+		{"record map unknown", NewRecord().MapComponent(Integer, Unknown).Build(), true},
 		{"record", NewRecord().Field("id", String).Build(), false},
 	}
 
@@ -29,7 +33,8 @@ func TestIsSoftAnnotationPolicy(t *testing.T) {
 
 func TestIsSoftPlaceholderPolicy(t *testing.T) {
 	emptyRecord := NewRecord().Build()
-	emptyMapRecord := NewRecord().MapComponent(String, Any).Build()
+	emptyMapRecord := NewRecord().MapComponent(String, Unknown).Build()
+	anyMapRecord := NewRecord().MapComponent(String, Any).Build()
 	entryRecord := NewRecord().Field("id", String).Build()
 
 	tests := []struct {
@@ -39,9 +44,11 @@ func TestIsSoftPlaceholderPolicy(t *testing.T) {
 	}{
 		{"empty record", emptyRecord, true},
 		{"record with field", entryRecord, false},
-		{"record map any", emptyMapRecord, true},
-		{"array of soft", NewArray(Any), true},
-		{"union all soft", NewUnion(Any, emptyRecord), true},
+		{"record map unknown", emptyMapRecord, true},
+		{"record map any", anyMapRecord, false},
+		{"array of soft", NewArray(Unknown), true},
+		{"array of any", NewArray(Any), false},
+		{"union all soft", NewUnion(NewArray(Unknown), emptyRecord), true},
 		{"union mixed", NewUnion(emptyRecord, entryRecord), false},
 	}
 
@@ -55,7 +62,8 @@ func TestIsSoftPlaceholderPolicy(t *testing.T) {
 func TestPruneSoftUnionMembers(t *testing.T) {
 	entryRecord := NewRecord().Field("id", String).Build()
 	entryArray := NewArray(entryRecord)
-	softArray := NewArray(Any)
+	softArray := NewArray(Unknown)
+	anyArray := NewArray(Any)
 	emptyRecord := NewRecord().Build()
 
 	tests := []struct {
@@ -64,8 +72,9 @@ func TestPruneSoftUnionMembers(t *testing.T) {
 		want Type
 	}{
 		{"drop soft array", NewUnion(softArray, entryArray), entryArray},
+		{"keep any array", NewUnion(anyArray, entryArray), NewUnion(anyArray, entryArray)},
 		{"drop empty record", NewUnion(emptyRecord, entryArray), entryArray},
-		{"all soft stays", NewUnion(Any, softArray), Any},
+		{"all soft stays", NewUnion(emptyRecord, softArray), NewUnion(emptyRecord, softArray)},
 	}
 
 	for _, tt := range tests {
@@ -123,27 +132,5 @@ func TestPruneSoftUnionMembers_AliasStillDescends(t *testing.T) {
 	}
 	if !TypeEquals(gotAlias.Target, leaf) {
 		t.Fatalf("expected alias target to be pruned to %v, got %v", leaf, gotAlias.Target)
-	}
-}
-
-func TestIsRefinableAnnotation(t *testing.T) {
-	tests := []struct {
-		name string
-		t    Type
-		want bool
-	}{
-		{"nil", nil, false},
-		{"any", Any, false},
-		{"unknown", Unknown, false},
-		{"optional any", NewOptional(Any), false},
-		{"array any", NewArray(Any), true},
-		{"record map any", NewRecord().MapComponent(String, Any).Build(), true},
-		{"record", NewRecord().Field("id", String).Build(), false},
-	}
-
-	for _, tt := range tests {
-		if got := IsRefinableAnnotation(tt.t); got != tt.want {
-			t.Errorf("%s: got %v, want %v", tt.name, got, tt.want)
-		}
 	}
 }

@@ -1,6 +1,7 @@
 package errors
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
@@ -167,7 +168,7 @@ func TestNilArithmetic_TableIndexArg(t *testing.T) {
 		}
 
 		local completed = 0
-		local count, failures = process(data["a"])
+		local count, failures = process(data["a"] or {})
 		completed = completed + count
 	`
 
@@ -622,5 +623,32 @@ func TestNilArithmetic_PairsIterationValueType(t *testing.T) {
 
 	if result.HasError() {
 		t.Errorf("expected no errors: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+// TestNilArithmetic_TableIndexArgMayBeAbsent: a map read may miss its key, so
+// passing it unguarded to a parameter that requires a table is an error.
+func TestNilArithmetic_TableIndexArgMayBeAbsent(t *testing.T) {
+	source := `
+		local function process(items: {any})
+			return #items, {}
+		end
+
+		local data: {[string]: {any}} = {
+			a = {1, 2, 3},
+		}
+
+		local count, failures = process(data["a"])
+	`
+
+	result := testutil.Check(source, testutil.WithStdlib())
+	found := false
+	for _, d := range result.Errors {
+		if strings.Contains(d.Message, "argument 1") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected the optional map read to be rejected as argument 1, got %v", testutil.ErrorMessages(result.Diagnostics))
 	}
 }

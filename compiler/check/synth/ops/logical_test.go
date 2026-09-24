@@ -88,7 +88,7 @@ func TestLogicalOrTyped_LeftOptional(t *testing.T) {
 }
 
 func TestLogicalOrTyped_SoftOptionalPrefersRight(t *testing.T) {
-	left := typ.NewOptional(typ.NewArray(typ.Any))
+	left := typ.NewOptional(typ.NewArray(typ.Unknown))
 	right := typ.NewArray(typ.Number)
 	result := LogicalOrTyped(left, right)
 	if result == nil || result.String() != "number[]" {

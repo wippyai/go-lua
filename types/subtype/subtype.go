@@ -329,13 +329,9 @@ func (c *checker) deriveStructural(sub, super typ.Type, depth int) bool {
 	if typ.IsUnknown(super) {
 		return true
 	}
-	// Any is NOT assignable to specific types; only to Any itself (Unknown handled above).
+	// Any is not a plain subtype of specific types; only of any and unknown
+	// (handled above). Use sites accept it through IsConsistentSubtype.
 	if typ.IsAny(sub) {
-		// Builtin table-top marker is a dynamic table boundary; explicit `any`
-		// values are permitted to flow through it.
-		if unwrap.IsBuiltinTableTop(super) {
-			return true
-		}
 		return false
 	}
 
@@ -762,11 +758,6 @@ func (c *checker) canWidenTo(narrow, wide typ.Type, depth int) bool {
 	wide = unwrap.Alias(wide)
 	narrow = unwrap.Alias(narrow)
 
-	// Any type accepts everything
-	if typ.IsAny(wide) {
-		return true
-	}
-
 	// Nil can widen to optional types
 	if narrow.Kind() == kind.Nil {
 		if _, ok := wide.(*typ.Optional); ok {
@@ -961,13 +952,9 @@ func (c *checker) checkMap(sub, super *typ.Map, depth int) bool {
 }
 
 // checkInvariantSlot checks a mutable slot, such as a map key or value, that
-// must hold the same types on both sides. A slot typed any accepts any value
-// type, as a mutable record field typed any does (canWidenTo).
+// must hold the same types on both sides.
 func (c *checker) checkInvariantSlot(sub, super typ.Type, depth int) bool {
-	if !c.check(sub, super, depth) {
-		return false
-	}
-	return c.check(super, sub, depth) || typ.IsAny(unwrap.Alias(super))
+	return c.check(sub, super, depth) && c.check(super, sub, depth)
 }
 
 // checkTuple implements tuple subtyping with covariant elements.

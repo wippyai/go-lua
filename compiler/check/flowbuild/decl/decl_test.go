@@ -161,7 +161,7 @@ func TestExtractModuleAliases_NilInputs(t *testing.T) {
 	ExtractModuleAliases(fc, nil)
 }
 
-func TestExtractDeclaredTypes_SoftAnnotationNotAnnotated(t *testing.T) {
+func TestExtractDeclaredTypes_AnyContainerAnnotationIsAnnotated(t *testing.T) {
 	code := `local suites: {[string]: {any}} = {}`
 	chunk, err := parse.ParseString(code, "test.lua")
 	if err != nil {
@@ -208,8 +208,8 @@ func TestExtractDeclaredTypes_SoftAnnotationNotAnnotated(t *testing.T) {
 	if suitesSym == 0 {
 		t.Fatal("failed to resolve suites symbol")
 	}
-	if inputs.AnnotatedVars != nil && inputs.AnnotatedVars[suitesSym] {
-		t.Fatal("soft annotation should not mark AnnotatedVars")
+	if inputs.AnnotatedVars == nil || !inputs.AnnotatedVars[suitesSym] {
+		t.Fatal("an annotation containing any is the contract and marks AnnotatedVars")
 	}
 	if inputs.DeclaredTypes[suitesSym] == nil {
 		t.Fatal("expected declared type for suites")

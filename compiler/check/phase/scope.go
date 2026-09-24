@@ -292,16 +292,8 @@ func ExtractParamTypes(
 			} else {
 				paramType = typ.Unknown
 			}
-			if typ.IsRefinableAnnotation(paramType) {
-				if hint != nil {
-					paramType = paramhints.RefineAnnotation(paramType, hint)
-				} else if synthSig != nil && i < len(synthSig.Params) && synthSig.Params[i].Type != nil {
-					paramType = synthSig.Params[i].Type
-				}
-			} else {
-				isAnnotated = true
-				hasExplicitAnnotation = true
-			}
+			isAnnotated = true
+			hasExplicitAnnotation = true
 		} else if hint != nil {
 			paramType = paramhints.BodyParamType(hint)
 		} else if synthSig != nil && i < len(synthSig.Params) && synthSig.Params[i].Type != nil {

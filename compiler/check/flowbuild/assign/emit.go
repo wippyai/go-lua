@@ -292,6 +292,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 				// Determine assigned type using identity-based resolver.
 				// For annotated locals, keep the declared type (RHS should not override).
 				assignedType := typ.Unknown
+				var resolvedTopLike typ.Type
 				if info.IsLocal {
 					if inputs != nil && inputs.AnnotatedVars != nil && inputs.AnnotatedVars[sym] {
 						if dt, ok := inputs.DeclaredTypes[sym]; ok && dt != nil {
@@ -304,6 +305,8 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 							// (any/unknown/soft) must not block RHS-derived types.
 							if !isTopLikeResolvedAssignType(t) {
 								assignedType = t
+							} else {
+								resolvedTopLike = t
 							}
 						}
 					}
@@ -317,6 +320,11 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 					} else if wrappedSynth != nil && source != nil {
 						assignedType = wrappedSynth(source, p)
 					}
+				}
+				// Without a value to derive from, as for a parameter declaration,
+				// the resolved type stands even when it is top-like.
+				if typ.IsAbsentOrUnknown(assignedType) && resolvedTopLike != nil {
+					assignedType = resolvedTopLike
 				}
 				// Override with expanded values if source call has a spec-narrowed receiver.
 				// This handles cases like ch:receive() where ch was narrowed by spec.

@@ -47,7 +47,7 @@ func TestJoinBranchOutcome_PreservesUnknownWithNil(t *testing.T) {
 }
 
 func TestJoinBranchOutcome_PrefersConcreteOverSoft(t *testing.T) {
-	left := NewOptional(NewArray(Any))
+	left := NewOptional(NewArray(Unknown))
 	right := NewArray(Number)
 	got := JoinBranchOutcome(left, right)
 	if got == nil || got.String() != "number[]" {
@@ -165,5 +165,14 @@ func TestJoinReturnSlot_CoalescesUnionRecordMember(t *testing.T) {
 	typeField := merged.GetField("type")
 	if typeField == nil || !typeField.Optional || !TypeEquals(typeField.Type, String) {
 		t.Fatalf("expected optional type:string after coalescing, got %v", typeField)
+	}
+}
+
+func TestJoinBranchOutcome_KeepsAnyContainer(t *testing.T) {
+	left := NewOptional(NewArray(Any))
+	right := NewArray(Number)
+	got := JoinBranchOutcome(left, right)
+	if !TypeEquals(got, NewUnion(Nil, NewArray(Any), NewArray(Number))) {
+		t.Fatalf("JoinBranchOutcome(%v, %v) = %v, want the any container kept", left, right, got)
 	}
 }

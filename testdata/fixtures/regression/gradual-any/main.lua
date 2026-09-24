@@ -29,13 +29,14 @@ local function config_size(row: { cfg: any }): integer
     return take_map(row.cfg) -- expect-error[strict-any]: argument 1
 end
 
--- dataflow node: keys collected from a dynamic table into a string-keyed map.
-local function merge_context(ctx: any, extra: { dataflow_id: any, node_id: any }): Map
-    local merged: { [any]: any } = { dataflow_id = extra.dataflow_id, node_id = extra.node_id }
+-- dataflow node: a context built from known ids plus the keys of a dynamic
+-- table, passed where a string-keyed map is expected.
+local function merge_context(ctx: any, extra: { dataflow_id: any, node_id: any }): integer
+    local merged = { dataflow_id = extra.dataflow_id, node_id = extra.node_id }
     for k, v in pairs(ctx) do
         merged[k] = v
     end
-    return merged -- expect-error[strict-any]: cannot return
+    return take_map(merged) -- expect-error[strict-any]: argument 1
 end
 
 local function label(v: any): string

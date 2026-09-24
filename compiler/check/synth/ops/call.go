@@ -1187,8 +1187,11 @@ func isExplicitSelfSubtypeCandidate(t typ.Type) bool {
 	if t == nil {
 		return false
 	}
-	// Soft placeholder types are intentionally broad and should not imply
-	// implicit receiver consumption in method arity checks.
+	// Top types and soft placeholders are intentionally broad and should not
+	// imply implicit receiver consumption in method arity checks.
+	if typ.IsAny(unwrap.Alias(t)) {
+		return false
+	}
 	return !typ.IsSoft(t, typ.SoftAnnotationPolicy)
 }
 
