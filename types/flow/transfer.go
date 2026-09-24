@@ -436,6 +436,21 @@ func (s *Solution) carryForwardStructuredVersionFacts(p cfg.Point, targetPath co
 			continue
 		}
 		key := currentBaseKeyStr + suffix
+		// A write to one field must retain the provenance of its sibling
+		// fields. This lets a later branch refinement of the source narrow a
+		// copied field even after the containing record gets a new version.
+		var alias string
+		for i, predBaseKey := range predBaseKeys {
+			source := s.pathAliases[predBaseKey+suffix]
+			if source == "" || (i > 0 && source != alias) {
+				alias = ""
+				break
+			}
+			alias = source
+		}
+		if alias != "" {
+			s.pathAliases[key] = alias
+		}
 		if s.values[key] != nil {
 			continue
 		}
@@ -754,6 +769,21 @@ func (s *Solution) processIndexerAssignmentReturnKey(p cfg.Point, ia IndexerAssi
 		if resolved := s.NarrowedTypeAt(p, ia.ValuePath); !typ.IsAbsentOrUnknown(resolved) {
 			valueType = resolved
 		}
+	}
+	if record, ok := valueType.(*typ.Record); ok {
+		for _, source := range ia.ValueFieldPaths {
+			field := record.GetField(source.Name)
+			if field == nil || !typ.IsAbsentOrUnknown(field.Type) || !source.Path.HasSymbol() {
+				continue
+			}
+			resolved := s.NarrowedTypeAt(p, source.Path)
+			if !typ.IsAbsentOrUnknown(resolved) {
+				updated := *field
+				updated.Type = resolved
+				record = record.WithField(updated)
+			}
+		}
+		valueType = record
 	}
 	if valueType == nil {
 		return ""
@@ -1406,6 +1436,23 @@ func mergeMapValueDomain(existing, incoming typ.Type) typ.Type {
 	}
 	if incoming == nil {
 		return existing
+	}
+	// A dynamic index write may first see an unresolved field and then a
+	// concrete call result in a later flow pass. Replace only those provisional
+	// fields before deciding whether the existing value admits this write.
+	if oldRecord, ok := existing.(*typ.Record); ok {
+		if newRecord, ok := incoming.(*typ.Record); ok {
+			refined := oldRecord
+			for _, oldField := range oldRecord.Fields {
+				newField := newRecord.GetField(oldField.Name)
+				if newField != nil && typ.IsUnknown(oldField.Type) && !typ.IsAbsentOrUnknown(newField.Type) {
+					field := oldField
+					field.Type = newField.Type
+					refined = refined.WithField(field)
+				}
+			}
+			existing = refined
+		}
 	}
 	if !existing.Kind().IsPlaceholder() && subtype.IsSubtype(incoming, existing) {
 		return existing

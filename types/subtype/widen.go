@@ -88,10 +88,8 @@ func widenDepth(t typ.Type, depth int) typ.Type {
 //   - Array elements: the element type is recursively widened
 //   - Map key/value: both are recursively widened
 //   - Record fields: each field type is recursively widened
-//   - Large records (> DefaultRecursionDepth fields): collapsed to Map<string, union>
-//
-// The large record collapse prevents type explosion when inferring types
-// for data structures with many fields.
+// Record field names are retained even for large records so accesses to a
+// known field do not become accesses to a union of unrelated field values.
 //
 // Returns nil if t is nil.
 func WidenForInference(t typ.Type) typ.Type {
@@ -145,20 +143,6 @@ func widenForInferenceDepth(t typ.Type, depth int) typ.Type {
 			return typ.NewMap(key, val)
 		},
 		Record: func(r *typ.Record) typ.Type {
-			if len(r.Fields) > typ.DefaultRecursionDepth {
-				var fieldTypes []typ.Type
-				for _, f := range r.Fields {
-					fieldTypes = append(fieldTypes, widenForInferenceDepth(f.Type, depth+1))
-				}
-
-				elem := typ.Unknown
-				if len(fieldTypes) > 0 {
-					elem = typ.NewUnion(fieldTypes...)
-				}
-
-				return typ.NewMap(typ.String, elem)
-			}
-
 			builder := typ.NewRecord()
 			if r.Open {
 				builder.SetOpen(true)

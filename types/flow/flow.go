@@ -354,9 +354,17 @@ type IndexerAssignment struct {
 	KeyType   typ.Type             // Optional explicit key type (overrides KeySymbol lookup)
 	ValuePath constraint.Path      // Path to value expression for flow-resolved type lookup
 	ValType   typ.Type             // Fallback type when ValuePath is unavailable
+	// Field paths inside a table literal value, resolved after call returns and
+	// branch facts are available to the flow solver.
+	ValueFieldPaths []IndexerValueFieldPath
 	// FieldUpdate identifies t[k].field = value: it updates an existing entry,
 	// whereas t[k] = value inserts or replaces an entry.
 	FieldUpdate string
+}
+
+type IndexerValueFieldPath struct {
+	Name string
+	Path constraint.Path
 }
 
 // TableMutatorAssignment describes table.insert-like mutations that widen

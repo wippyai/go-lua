@@ -655,15 +655,16 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 					}
 					resolved := resolve.Ref(valType, sc)
 					inputs.IndexerAssignments = append(inputs.IndexerAssignments, flow.IndexerAssignment{
-						Point:     p,
-						Root:      basePath.Root,
-						Symbol:    basePath.Symbol,
-						Segments:  basePath.Segments,
-						KeyVar:    keyVar,
-						KeySymbol: keySym,
-						KeyType:   keyType,
-						ValuePath: valuePath,
-						ValType:   resolved,
+						Point:           p,
+						Root:            basePath.Root,
+						Symbol:          basePath.Symbol,
+						Segments:        basePath.Segments,
+						KeyVar:          keyVar,
+						KeySymbol:       keySym,
+						KeyType:         keyType,
+						ValuePath:       valuePath,
+						ValueFieldPaths: tableValueFieldPaths(source, p, bindings, inputs),
+						ValType:         resolved,
 					})
 					continue
 				}
@@ -827,16 +828,17 @@ func buildLiftedDynamicIndexerAssignment(
 	}
 
 	return flow.IndexerAssignment{
-		Point:       p,
-		Root:        rootPath.Root,
-		Symbol:      rootPath.Symbol,
-		Segments:    rootPath.Segments,
-		KeyVar:      keyVar,
-		KeySymbol:   keySym,
-		KeyType:     keyType,
-		ValuePath:   valuePath,
-		ValType:     valType,
-		FieldUpdate: fieldUpdate,
+		Point:           p,
+		Root:            rootPath.Root,
+		Symbol:          rootPath.Symbol,
+		Segments:        rootPath.Segments,
+		KeyVar:          keyVar,
+		KeySymbol:       keySym,
+		KeyType:         keyType,
+		ValuePath:       valuePath,
+		ValueFieldPaths: tableValueFieldPaths(source, p, bindings, inputs),
+		ValType:         valType,
+		FieldUpdate:     fieldUpdate,
 	}, true
 }
 

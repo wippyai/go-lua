@@ -1,0 +1,1 @@
+{"description": "Automation stuck-item access after all declared imports", "files": ["types.lua", "execution_identity.lua", "stuck_item.lua", "automation.lua", "main.lua"], "check": {"errors": 0}}
