@@ -436,6 +436,21 @@ func (s *Solution) carryForwardStructuredVersionFacts(p cfg.Point, targetPath co
 			continue
 		}
 		key := currentBaseKeyStr + suffix
+		// A write to one field must retain the provenance of its sibling
+		// fields. This lets a later branch refinement of the source narrow a
+		// copied field even after the containing record gets a new version.
+		var alias string
+		for i, predBaseKey := range predBaseKeys {
+			source := s.pathAliases[predBaseKey+suffix]
+			if source == "" || (i > 0 && source != alias) {
+				alias = ""
+				break
+			}
+			alias = source
+		}
+		if alias != "" {
+			s.pathAliases[key] = alias
+		}
 		if s.values[key] != nil {
 			continue
 		}

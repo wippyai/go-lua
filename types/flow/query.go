@@ -408,7 +408,45 @@ func (s *Solution) narrowedTypeUnder(p cfg.Point, path constraint.Path, conditio
 	if !condition.HasConstraints() {
 		return baseType
 	}
+	baseType = s.narrowRecordFieldAliases(p, path, baseType, condition)
 	return s.applyCondition(p, baseType, path, condition)
+}
+
+// narrowRecordFieldAliases carries a branch refinement through a field that
+// was initialized from a scalar path, such as t.engine = engine. A refinement
+// of engine also describes t.engine until that field is written again.
+func (s *Solution) narrowRecordFieldAliases(p cfg.Point, path constraint.Path, t typ.Type, condition constraint.Condition) typ.Type {
+	if len(path.Segments) != 0 || s.pkResolver == nil {
+		return t
+	}
+	rec, ok := t.(*typ.Record)
+	if !ok {
+		return t
+	}
+	for _, field := range rec.Fields {
+		sourceKey := s.aliasSourceKeyAt(p, path.Field(field.Name))
+		if sourceKey == "" {
+			continue
+		}
+		sym, version, suffix, ok := pathkey.ParseKeyUnchecked(constraint.PathKey(sourceKey))
+		if !ok || sym == 0 || version == 0 || suffix != "" || sym == path.Symbol {
+			continue
+		}
+		sourcePath := constraint.Path{Symbol: sym, Version: version}
+		sourceType := s.values[sourceKey]
+		if sourceType == nil {
+			sourceType = s.baseTypeAt(p, sourcePath)
+		}
+		if sourceType == nil {
+			continue
+		}
+		narrowed := s.applyCondition(p, sourceType, sourcePath, condition)
+		if narrowed != nil && subtype.IsSubtype(narrowed, field.Type) && !typ.TypeEquals(narrowed, field.Type) {
+			field.Type = narrowed
+			rec = rec.WithField(field)
+		}
+	}
+	return rec
 }
 
 // NarrowTypeAt narrows t, a type the caller holds for path, by the condition

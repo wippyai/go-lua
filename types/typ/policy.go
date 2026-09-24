@@ -144,6 +144,9 @@ func JoinCompatibleRecords(a, b Type) (Type, bool) {
 	if hasConflictingRequiredLiteralField(ar, br) {
 		return nil, false
 	}
+	if hasLiteralTagWithAsymmetricField(ar, br) {
+		return nil, false
+	}
 
 	// Mixing map and non-map record slots can be semantically distinct.
 	if ar.HasMapComponent() != br.HasMapComponent() {
@@ -315,9 +318,47 @@ func hasConflictingRequiredLiteralField(a, b *Record) bool {
 	return false
 }
 
+// Keep branch shapes distinct when one branch has a literal tag and another
+// may have that tag but carries additional required fields. Coalescing would
+// make those fields optional and discard the tag/shape relationship.
+func hasLiteralTagWithAsymmetricField(a, b *Record) bool {
+	fieldsA := recordFieldsByName(a)
+	fieldsB := recordFieldsByName(b)
+	asymmetric := false
+	for name, fa := range fieldsA {
+		if _, ok := fieldsB[name]; !ok && !fa.Optional {
+			asymmetric = true
+			break
+		}
+	}
+	if !asymmetric {
+		for name, fb := range fieldsB {
+			if _, ok := fieldsA[name]; !ok && !fb.Optional {
+				asymmetric = true
+				break
+			}
+		}
+	}
+	if !asymmetric {
+		return false
+	}
+	for name, fa := range fieldsA {
+		fb, ok := fieldsB[name]
+		if !ok || fa.Optional || fb.Optional || !isDiscriminantLiteralField(name) {
+			continue
+		}
+		_, aLiteral := literalType(fa.Type)
+		_, bLiteral := literalType(fb.Type)
+		if aLiteral != bLiteral {
+			return true
+		}
+	}
+	return false
+}
+
 func isDiscriminantLiteralField(name string) bool {
 	switch name {
-	case "type", "kind", "tag", "role", "variant", "success", "ok":
+	case "type", "kind", "tag", "role", "variant", "success", "ok", "engine":
 		return true
 	default:
 		return false
