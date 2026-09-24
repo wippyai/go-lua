@@ -1198,22 +1198,32 @@ func coversMembers(old, next typ.Type) bool {
 
 // joinMembers lists the alternatives of t: the members of a union, the inner
 // type and nil of an optional, and the body alternatives of a recursive type.
+// A recursive type reached again inside its own body is listed as itself.
 func joinMembers(t typ.Type) []typ.Type {
+	return appendJoinMembers(nil, t, nil)
+}
+
+func appendJoinMembers(out []typ.Type, t typ.Type, expanding map[*typ.Recursive]bool) []typ.Type {
 	switch tt := unwrap.Alias(t).(type) {
 	case *typ.Union:
-		var out []typ.Type
 		for _, m := range tt.Members {
-			out = append(out, joinMembers(m)...)
+			out = appendJoinMembers(out, m, expanding)
 		}
 		return out
 	case *typ.Optional:
-		return append(joinMembers(tt.Inner), typ.Nil)
+		return append(appendJoinMembers(out, tt.Inner, expanding), typ.Nil)
 	case *typ.Recursive:
-		if tt.Body != nil {
-			return joinMembers(tt.Body)
+		if tt.Body != nil && !expanding[tt] {
+			if expanding == nil {
+				expanding = make(map[*typ.Recursive]bool)
+			}
+			expanding[tt] = true
+			out = appendJoinMembers(out, tt.Body, expanding)
+			delete(expanding, tt)
+			return out
 		}
 	}
-	return []typ.Type{t}
+	return append(out, t)
 }
 
 // sameShape reports whether a and b are records with the same field names, or

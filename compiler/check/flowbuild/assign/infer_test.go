@@ -591,3 +591,14 @@ func hasSymbol(refs []cfg.SymbolID, sym cfg.SymbolID) bool {
 	}
 	return false
 }
+
+func TestJoinMembers_RecursiveUnionListsItselfOnce(t *testing.T) {
+	rec := typ.NewRecursivePlaceholder("R")
+	leaf := typ.NewRecord().Field("leaf", typ.String).Build()
+	rec.SetBody(typ.NewUnion(leaf, typ.NewRecord().Field("next", rec).Build(), rec))
+
+	members := joinMembers(rec)
+	if len(members) != 3 {
+		t.Fatalf("expected leaf, node and the recursive self reference, got %v", members)
+	}
+}
