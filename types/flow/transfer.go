@@ -1026,7 +1026,16 @@ func (s *Solution) processFieldWriteEffectReturnKey(p cfg.Point, fw FieldWriteEf
 	}
 
 	currentType := s.values[string(pathKey)]
-	newType := widenFieldWrite(currentType, fw.Field, subtype.WidenForInference(fw.Type))
+	var newType typ.Type
+	if fw.Field == IndexerWriteField {
+		m, ok := fw.Type.(*typ.Map)
+		if !ok || currentType == nil {
+			return ""
+		}
+		newType = widenWithIndexer(currentType, m.Key, subtype.WidenForInference(m.Value))
+	} else {
+		newType = widenFieldWrite(currentType, fw.Field, subtype.WidenForInference(fw.Type))
+	}
 	if newType == nil || typ.TypeEquals(currentType, newType) {
 		return ""
 	}

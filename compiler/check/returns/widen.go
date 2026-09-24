@@ -470,6 +470,9 @@ func joinIterationFactAt(a, b typ.Type, invariant bool) typ.Type {
 	if joined, ok := joinIterationRecords(a, b); ok {
 		return joined
 	}
+	if joined, ok := joinIterationArrays(a, b); ok {
+		return joined
+	}
 	// The previous fact stays while it admits the current one, so equivalent
 	// facts with different spellings do not alternate between iterations.
 	previousAdmitsCurrent := subtype.IsSubtype(b, a)
@@ -486,6 +489,26 @@ func joinIterationFactAt(a, b typ.Type, invariant bool) typ.Type {
 		return b
 	}
 	return typ.JoinPreferNonSoft(a, b)
+}
+
+// joinIterationArrays joins two array facts element by element. Array slots
+// are mutable, so their elements join at an invariant position: an earlier
+// approximation of the element yields to the current one instead of leaving
+// the two arrays as union members. The join reuses an input it equals.
+func joinIterationArrays(a, b typ.Type) (typ.Type, bool) {
+	arrA, okA := a.(*typ.Array)
+	arrB, okB := b.(*typ.Array)
+	if !okA || !okB {
+		return nil, false
+	}
+	elem := joinIterationFactAt(arrA.Element, arrB.Element, true)
+	switch {
+	case typ.TypeEquals(elem, arrA.Element):
+		return a, true
+	case typ.TypeEquals(elem, arrB.Element):
+		return b, true
+	}
+	return typ.NewArray(elem), true
 }
 
 // joinIterationOptionals joins two optional record or function facts, or one

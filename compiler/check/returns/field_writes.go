@@ -112,6 +112,20 @@ func CollectFieldWrites(
 			add(target, field, t)
 		}
 	}
+	// Writes by dynamic keys (t[k] = v) are recorded as the map component
+	// they add, under flow.IndexerWriteField.
+	indexers := overlaymut.CollectIndexerAssignments(graph, synth, bindings, targets)
+	for _, target := range cfg.SortedSymbolIDs(indexers) {
+		var keyType, valType typ.Type
+		for _, info := range indexers[target] {
+			keyType = typ.JoinPreferNonSoft(keyType, info.KeyType)
+			valType = typ.JoinPreferNonSoft(valType, info.ValType)
+		}
+		if keyType == nil || valType == nil {
+			continue
+		}
+		add(target, flow.IndexerWriteField, typ.NewMap(keyType, valType))
+	}
 	for _, closure := range cfg.SortedSymbolIDs(closures) {
 		eachFieldWrite(closures[closure], add)
 	}

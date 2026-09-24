@@ -636,3 +636,14 @@ func TestInformationBelow_UnresolvedFieldIsBelowResolved(t *testing.T) {
 		t.Fatal("a conflicting resolved field must not lie below another")
 	}
 }
+
+// Arrays join element by element across iterations: an earlier approximation
+// of the element yields to the current one instead of staying a union member.
+func TestJoinIterationFact_ArraysJoinByElement(t *testing.T) {
+	early := typ.NewArray(typ.NewRecord().Field("name", typ.Unknown).Build())
+	late := typ.NewArray(typ.NewRecord().Field("name", typ.String).OptField("content", typ.String).Build())
+	got := joinIterationFact(early, late)
+	if !typ.TypeEquals(got, late) {
+		t.Fatalf("joinIterationFact(%v, %v) = %v, want %v", early, late, got, late)
+	}
+}

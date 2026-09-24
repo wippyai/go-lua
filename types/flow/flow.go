@@ -379,6 +379,10 @@ type ContainerMutatorAssignment struct {
 // parameter, or a closure created there writes it through a captured variable.
 // The write may happen at any later time, so the field joins the table's type
 // as optional unless it is already present.
+// IndexerWriteField is the Field of a FieldWriteEffect for writes by dynamic
+// keys (t[k] = v); its Type is the map {[K]: V} they add to the table.
+const IndexerWriteField = "[]"
+
 type FieldWriteEffect struct {
 	Point  cfg.Point
 	Target constraint.Path // Table path (symbol-only)
