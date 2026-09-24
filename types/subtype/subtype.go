@@ -358,6 +358,17 @@ func (c *checker) deriveStructural(sub, super typ.Type, depth int) bool {
 		return isTableLikeType(sub)
 	}
 
+	// The builtin table top is a dynamic table boundary in both directions: a
+	// value known only to be some table (type(v) == "table" on an any or
+	// unknown value, or a `table` annotation) may be used as any table shape,
+	// as any flows into `table` above.
+	if unwrap.IsBuiltinTableTop(sub) {
+		switch unwrap.Alias(super).(type) {
+		case *typ.Record, *typ.Map, *typ.Array, *typ.Tuple:
+			return true
+		}
+	}
+
 	// Empty record can satisfy array/map shapes, but should still flow through
 	// regular record subtyping for record supers (e.g. all-optional records).
 	if r, ok := sub.(*typ.Record); ok && len(r.Fields) == 0 {

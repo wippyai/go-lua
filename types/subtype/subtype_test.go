@@ -2300,3 +2300,22 @@ func TestMapValueWidensIntoAny(t *testing.T) {
 		t.Fatal("unrelated value types stay incompatible")
 	}
 }
+
+// A value known only to be some table is a dynamic table: it may be used as
+// any table shape, and as nothing else.
+func TestBuiltinTableTopFlowsIntoTableShapes(t *testing.T) {
+	top := typ.NewInterface("table", nil)
+	for _, super := range []typ.Type{
+		typ.NewMap(typ.String, typ.Any),
+		typ.NewArray(typ.Any),
+		typ.NewRecord().OptField("name", typ.String).Build(),
+		typ.NewAlias("Map", typ.NewMap(typ.String, typ.Any)),
+	} {
+		if !IsSubtype(top, super) {
+			t.Errorf("table must subtype %s", super)
+		}
+	}
+	if IsSubtype(top, typ.String) {
+		t.Error("table must not subtype string")
+	}
+}
