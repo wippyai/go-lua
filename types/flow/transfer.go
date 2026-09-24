@@ -1419,8 +1419,12 @@ func widenWithIndexer(t typ.Type, keyType, valType typ.Type) typ.Type {
 			return typ.NewMap(keyType, elemType)
 		},
 		Record: func(r *typ.Record) typ.Type {
-			// Empty record {} with no map component becomes a map (backward compat)
-			if len(r.Fields) == 0 && !r.HasMapComponent() {
+			// Empty record {} with no map component becomes an array when written
+			// by integer keys (t[#t + 1] = v), a map otherwise.
+			if len(r.Fields) == 0 && !r.HasMapComponent() && r.Metatable == nil {
+				if isIntegerKey(keyType) {
+					return typ.NewArray(valType)
+				}
 				return typ.NewMap(keyType, valType)
 			}
 			// Record with fields: add or widen map component
@@ -1434,6 +1438,18 @@ func widenWithIndexer(t typ.Type, keyType, valType typ.Type) typ.Type {
 			}
 			// Record with fields but no map component: add map component
 			return rebuildRecordWithMapComponent(r, keyType, valType)
+		},
+		Array: func(a *typ.Array) typ.Type {
+			// Integer writes keep an array and widen its element; other keys
+			// turn it into a map over both key domains.
+			elem := mergeMapValueDomain(a.Element, valType)
+			if isIntegerKey(keyType) {
+				if typ.TypeEquals(a.Element, elem) {
+					return t
+				}
+				return typ.NewArray(elem)
+			}
+			return typ.NewMap(mergeMapKeyDomain(typ.Integer, keyType), elem)
 		},
 		Map: func(m *typ.Map) typ.Type {
 			// Widen existing map by unioning key/value types, preferring non-soft.
@@ -1452,6 +1468,11 @@ func widenWithIndexer(t typ.Type, keyType, valType typ.Type) typ.Type {
 			return t
 		},
 	})
+}
+
+// isIntegerKey reports whether an index key is an integer, as array indices are.
+func isIntegerKey(keyType typ.Type) bool {
+	return keyType != nil && keyType.Kind() != kind.Never && subtype.IsSubtype(keyType, typ.Integer)
 }
 
 // rebuildRecordWithMapComponent creates a new record with an added or updated map component.
