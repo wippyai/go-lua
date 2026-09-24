@@ -30,6 +30,24 @@ func TestMergeFunctionFactIntoFacts_InitialWrite(t *testing.T) {
 	}
 }
 
+func TestReconcileFunctionFact_IncomparableFlowReturnWins(t *testing.T) {
+	preFlow := typ.NewRecord().Field("old", typ.Boolean).Build()
+	flowResult := typ.NewRecord().Field("result", typ.String).Build()
+	out := ReconcileFunctionFact(ReconcileFunctionFactInput{
+		ExistingSummary: []typ.Type{preFlow},
+		ExistingFunc:    typ.Func().Returns(preFlow).Build(),
+		CandidateNarrow: []typ.Type{flowResult},
+		CandidateFunc:   typ.Func().Returns(flowResult).Build(),
+	})
+	if !ReturnTypesEqual(out.Summary, []typ.Type{flowResult}) {
+		t.Fatalf("post-flow return should win, got %v", out.Summary)
+	}
+	fn, ok := out.Func.(*typ.Function)
+	if !ok || !ReturnTypesEqual(fn.Returns, []typ.Type{flowResult}) {
+		t.Fatalf("function fact should use post-flow returns, got %v", out.Func)
+	}
+}
+
 func TestMergeFunctionFactIntoFacts_MatchesKernelReconcile(t *testing.T) {
 	sym := cfg.SymbolID(17)
 	existingFn := typ.Func().Returns(typ.Number).Build()
