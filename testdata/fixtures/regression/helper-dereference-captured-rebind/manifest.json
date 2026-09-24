@@ -1,0 +1,1 @@
+{"description":"A helper's successful dereference cannot preserve a captured receiver that it later rebinds to nil.","check":{"errors":1}}

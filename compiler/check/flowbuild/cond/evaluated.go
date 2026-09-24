@@ -95,6 +95,117 @@ func CapturedReassignments(graph *cfg.Graph) map[cfg.SymbolID]bool {
 	return reassigned
 }
 
+// CapturedRebindingFacts records which captured locals a function defined in
+// this graph can rebind, whether called directly, through a field, or passed as
+// a callback.
+type CapturedRebindingFacts struct {
+	ByPath   map[constraint.PathKey]map[cfg.SymbolID]bool
+	BySymbol map[cfg.SymbolID]map[cfg.SymbolID]bool
+	ByFunc   map[*ast.FunctionExpr]map[cfg.SymbolID]bool
+}
+
+func CapturedRebindingsByCallee(graph *cfg.Graph) *CapturedRebindingFacts {
+	if graph == nil || graph.Bindings() == nil {
+		return nil
+	}
+	bindings := graph.Bindings()
+	definedPaths := make(map[*ast.FunctionExpr]constraint.Path)
+	graph.EachFuncDef(func(_ cfg.Point, info *cfg.FuncDefInfo) {
+		if info != nil && info.FuncExpr != nil && !info.TargetPath.IsEmpty() {
+			definedPaths[info.FuncExpr] = info.TargetPath
+		}
+	})
+	type summary struct {
+		path    constraint.Path
+		symbol  cfg.SymbolID
+		fn      *ast.FunctionExpr
+		rebound map[cfg.SymbolID]bool
+		callees map[cfg.SymbolID]bool
+	}
+	var summaries []*summary
+	bySymbol := make(map[cfg.SymbolID]*summary)
+	for _, nested := range graph.NestedFunctions() {
+		if nested.Func == nil {
+			continue
+		}
+		path := definedPaths[nested.Func]
+		if path.IsEmpty() && nested.Symbol != 0 {
+			path = constraint.Path{Root: graph.NameOf(nested.Symbol), Symbol: nested.Symbol}
+		}
+		s := &summary{path: path, symbol: nested.Symbol, fn: nested.Func}
+		summaries = append(summaries, s)
+		if s.symbol != 0 {
+			bySymbol[s.symbol] = s
+		}
+		captured := make(map[cfg.SymbolID]bool)
+		for _, sym := range bindings.CapturedSymbols(nested.Func) {
+			captured[sym] = true
+		}
+		child := cfg.BuildWithBindings(nested.Func, bindings)
+		child.EachAssign(func(_ cfg.Point, assignment *cfg.AssignInfo) {
+			for _, target := range assignment.Targets {
+				if target.Kind == cfg.TargetIdent && captured[target.Symbol] {
+					if s.rebound == nil {
+						s.rebound = make(map[cfg.SymbolID]bool)
+					}
+					s.rebound[target.Symbol] = true
+				}
+			}
+		})
+		child.EachCallSite(func(_ cfg.Point, call *cfg.CallInfo) {
+			if call != nil && call.CalleeSymbol != 0 {
+				if s.callees == nil {
+					s.callees = make(map[cfg.SymbolID]bool)
+				}
+				s.callees[call.CalleeSymbol] = true
+			}
+		})
+	}
+	// A helper can invoke another local closure that rebinds the same captured
+	// value. Compute the transitive closure over direct calls to those closures.
+	changed := true
+	for changed {
+		changed = false
+		for _, s := range summaries {
+			for callee := range s.callees {
+				called := bySymbol[callee]
+				if called == nil {
+					continue
+				}
+				for sym := range called.rebound {
+					if !s.rebound[sym] {
+						if s.rebound == nil {
+							s.rebound = make(map[cfg.SymbolID]bool)
+						}
+						s.rebound[sym] = true
+						changed = true
+					}
+				}
+			}
+		}
+	}
+	result := &CapturedRebindingFacts{
+		ByPath:   make(map[constraint.PathKey]map[cfg.SymbolID]bool),
+		BySymbol: make(map[cfg.SymbolID]map[cfg.SymbolID]bool),
+		ByFunc:   make(map[*ast.FunctionExpr]map[cfg.SymbolID]bool),
+	}
+	for _, s := range summaries {
+		if len(s.rebound) == 0 {
+			continue
+		}
+		p := s.path
+		p.Version = 0
+		if !p.IsEmpty() {
+			result.ByPath[p.Key()] = s.rebound
+		}
+		if s.symbol != 0 {
+			result.BySymbol[s.symbol] = s.rebound
+		}
+		result.ByFunc[s.fn] = s.rebound
+	}
+	return result
+}
+
 func (ce *ConditionExtractor) canRetainPath(path constraint.Path) bool {
 	if path.Symbol == 0 || ce.UnstableSymbols[path.Symbol] || !ce.ReceiverRoots[path.Symbol] {
 		return false

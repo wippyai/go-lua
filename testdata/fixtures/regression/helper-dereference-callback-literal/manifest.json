@@ -1,0 +1,1 @@
+{"description":"An imported helper can invoke a literal callback that rebinds the receiver after dereference.","check":{"errors":1}}

@@ -1,0 +1,5 @@
+local sql = require("sql")
+local helper = require("helper")
+local db = sql.get("spiralscout.estimation:db")
+helper.rows(db, function() db = nil end)
+db:release()

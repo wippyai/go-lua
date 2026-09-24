@@ -384,6 +384,10 @@ func ExtractCallOnReturnConstraints(
 	if fc == nil || fc.Graph == nil || fc.Derived == nil || inputs == nil {
 		return out
 	}
+	var rebindingCallees *CapturedRebindingFacts
+	if len(fc.Derived.CapturedReassignments) != 0 {
+		rebindingCallees = CapturedRebindingsByCallee(fc.Graph)
+	}
 
 	for _, p := range fc.Graph.RPO() {
 		if !PointHasTerminatingCallSite(fc.Graph, p, fc.Derived.Synth, fc.Derived.SymResolver, fc.Derived.RefinementBySym, fc.ModuleBindings) {
@@ -406,6 +410,7 @@ func ExtractCallOnReturnConstraints(
 		constResolver := predicate.BuildConstResolver(inputs, p)
 
 		cond := ConstraintsFromCallOnReturn(info, p, sc, inputs, fc.Derived.Synth, fc.Derived.TypeKeyRes, fc.Derived.RefinementBySym, constResolver, fc.Derived.SymResolver, fc.Graph, fc.ModuleBindings)
+		cond = stableCallConstraints(cond, info, fc.Derived.CapturedReassignments, rebindingCallees)
 		if !cond.HasConstraints() {
 			return
 		}
@@ -423,6 +428,9 @@ func ExtractCallOnReturnConstraints(
 		sc := fc.Scopes[p]
 		constResolver := predicate.BuildConstResolver(inputs, p)
 		cond := ConstraintsFromAssignOnReturn(info, p, sc, inputs, fc.Derived.Synth, fc.Derived.TypeKeyRes, fc.Derived.RefinementBySym, constResolver, fc.Derived.SymResolver, fc.Graph, fc.ModuleBindings)
+		for _, call := range info.SourceCalls {
+			cond = stableCallConstraints(cond, call, fc.Derived.CapturedReassignments, rebindingCallees)
+		}
 		if !cond.HasConstraints() {
 			return
 		}
@@ -437,6 +445,60 @@ func ExtractCallOnReturnConstraints(
 	})
 
 	return out
+}
+
+// A nested callee can rebind a captured local during the same call whose
+// OnReturn fact mentions it. Such a fact describes the argument's old value,
+// not necessarily the local's value when the call returns.
+func stableCallConstraints(cond constraint.Condition, call *cfg.CallInfo, unstable map[cfg.SymbolID]bool, rebindingCallees *CapturedRebindingFacts) constraint.Condition {
+	if !cond.HasConstraints() || len(unstable) == 0 || call == nil {
+		return cond
+	}
+	// Direct calls may be aliases of a local closure, so retain only facts
+	// about locals that no nested closure can rebind.
+	unsafe := unstable
+	if len(call.CalleePath.Segments) != 0 {
+		// A field call can reach a caller local through a locally stored closure
+		// or through a callback argument supplied to an imported function.
+		unsafe = make(map[cfg.SymbolID]bool)
+		callee := call.CalleePath
+		callee.Version = 0
+		if rebindingCallees != nil {
+			for sym := range rebindingCallees.ByPath[callee.Key()] {
+				unsafe[sym] = true
+			}
+			for i, arg := range call.Args {
+				if fn, ok := arg.(*ast.FunctionExpr); ok {
+					for sym := range rebindingCallees.ByFunc[fn] {
+						unsafe[sym] = true
+					}
+				}
+				if i < len(call.ArgSymbols) {
+					for sym := range rebindingCallees.BySymbol[call.ArgSymbols[i]] {
+						unsafe[sym] = true
+					}
+				}
+			}
+		}
+		if len(unsafe) == 0 {
+			return cond
+		}
+	}
+	var kept []constraint.Constraint
+	for _, c := range cond.MustConstraints() {
+		mayRebind := false
+		constraint.VisitPaths(c, func(path constraint.Path) bool {
+			if unsafe[path.Symbol] {
+				mayRebind = true
+				return true
+			}
+			return false
+		})
+		if !mayRebind {
+			kept = append(kept, c)
+		}
+	}
+	return constraint.FromConstraints(kept...)
 }
 
 // constraintsFromCallOnReturn extracts OnReturn constraints from a call.
