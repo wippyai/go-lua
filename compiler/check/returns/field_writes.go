@@ -121,7 +121,9 @@ func CollectFieldWrites(
 		if keyType == nil || valType == nil {
 			continue
 		}
-		add(target, api.FieldWriteKey{Field: flow.IndexerWriteField}, typ.NewMap(keyType, valType))
+		if written := api.NewIndexerWrite(keyType, valType); written != nil {
+			add(target, api.FieldWriteKey{Field: flow.IndexerWriteField}, written)
+		}
 	}
 	eachFieldWrite(overlaymut.CollectNestedFieldWrites(graph, synth, bindings, targets), add)
 	for _, closure := range cfg.SortedSymbolIDs(closures) {

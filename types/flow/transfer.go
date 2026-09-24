@@ -18,6 +18,7 @@ import (
 	"github.com/wippyai/go-lua/types/flow/join"
 	"github.com/wippyai/go-lua/types/flow/pathkey"
 	"github.com/wippyai/go-lua/types/kind"
+	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -1432,8 +1433,13 @@ func isEmptyRecordNoMapType(t typ.Type) bool {
 // Nil values are skipped: In Lua, t[k] = nil deletes the key rather than storing nil.
 // Map access already returns Optional to represent potentially missing keys.
 func widenWithIndexer(t typ.Type, keyType, valType typ.Type) typ.Type {
-	if valType != nil && valType.Kind() == kind.Nil {
-		return t
+	// Storing nil under a key removes the entry, so only the non-nil part of
+	// the written value becomes a value of the table.
+	if valType != nil {
+		valType = narrow.RemoveNil(valType)
+		if valType.Kind() == kind.Never {
+			return t
+		}
 	}
 
 	if t == nil {

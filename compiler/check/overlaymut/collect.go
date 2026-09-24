@@ -190,8 +190,9 @@ func CollectNestedFieldWrites(
 					}
 					continue
 				}
-				written := typ.NewMap(dynamicKeyType(target.Key, p, synth), assignedValueType(source, p, synth))
-				add(base.Symbol, api.NewFieldWriteKey(base.Segments, flow.IndexerWriteField), written)
+				if written := api.NewIndexerWrite(dynamicKeyType(target.Key, p, synth), assignedValueType(source, p, synth)); written != nil {
+					add(base.Symbol, api.NewFieldWriteKey(base.Segments, flow.IndexerWriteField), written)
+				}
 			}
 		}
 	})
