@@ -9,9 +9,9 @@ import (
 // When prev is nil, next is a new field value.
 type FieldTypeMerger func(prev typ.Type, next typ.Type) typ.Type
 
-// MergeCapturedFieldSymbolMaps merges captured-field maps keyed by captured symbol.
-// Structure: capturedSymbol -> fieldName -> fieldType.
-func MergeCapturedFieldSymbolMaps(
+// MergeFieldWriteSymbolMaps merges field-write maps keyed by target symbol.
+// Structure: targetSymbol -> fieldName -> fieldType.
+func MergeFieldWriteSymbolMaps(
 	existing map[cfg.SymbolID]map[string]typ.Type,
 	next map[cfg.SymbolID]map[string]typ.Type,
 	merge FieldTypeMerger,

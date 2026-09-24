@@ -704,7 +704,7 @@ func (i *Inferencer) applyFieldMutations(ctx *returnInferenceContext, stage *ove
 	var capturedByCallee map[cfg.SymbolID]map[cfg.SymbolID]map[string]typ.Type
 	if i.store != nil {
 		capturedParent := api.ParentScopeForGraph(i.store, stage.fnGraph.ID(), ctx.info.DefScope)
-		capturedByCallee = i.store.GetCapturedFieldAssignsSnapshot(stage.fnGraph, capturedParent)
+		capturedByCallee = i.store.GetFieldWritesSnapshot(stage.fnGraph, capturedParent)
 	}
 	calleeTypeResolver := func(info *cfg.CallInfo, p cfg.Point) typ.Type {
 		return resolve.CalleeType(info, p, stage.enrichedSynthAdapter, nil, nil, stage.fnGraph, nestedBindings, i.store.ModuleBindings())

@@ -180,19 +180,19 @@ func TestCapturedTypesEqual_Same(t *testing.T) {
 }
 
 func TestCapturedFieldAssignsEqual_Empty(t *testing.T) {
-	if !CapturedFieldAssignsEqual(nil, nil) {
+	if !FieldWritesEqual(nil, nil) {
 		t.Error("nil captured field assigns should be equal")
 	}
 }
 
 func TestCapturedFieldAssignsEqual_DifferentCallee(t *testing.T) {
-	a := api.CapturedFieldAssigns{
+	a := api.FieldWrites{
 		cfg.SymbolID(1): {cfg.SymbolID(2): {"foo": typ.String}},
 	}
-	b := api.CapturedFieldAssigns{
+	b := api.FieldWrites{
 		cfg.SymbolID(3): {cfg.SymbolID(2): {"foo": typ.String}},
 	}
-	if CapturedFieldAssignsEqual(a, b) {
+	if FieldWritesEqual(a, b) {
 		t.Error("different callee symbols should not be equal")
 	}
 }

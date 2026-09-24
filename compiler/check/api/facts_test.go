@@ -31,8 +31,8 @@ func TestFacts_Zero(t *testing.T) {
 	if f.CapturedTypes != nil {
 		t.Error("zero Facts should have nil CapturedTypes")
 	}
-	if f.CapturedFields != nil {
-		t.Error("zero Facts should have nil CapturedFields")
+	if f.FieldWrites != nil {
+		t.Error("zero Facts should have nil FieldWrites")
 	}
 	if f.CapturedContainers != nil {
 		t.Error("zero Facts should have nil CapturedContainers")
@@ -97,7 +97,7 @@ func TestCapturedTypes_Basic(t *testing.T) {
 }
 
 func TestCapturedFieldAssigns_Basic(t *testing.T) {
-	assigns := make(CapturedFieldAssigns)
+	assigns := make(FieldWrites)
 	nestedSym := cfg.SymbolID(1)
 	capturedSym := cfg.SymbolID(2)
 

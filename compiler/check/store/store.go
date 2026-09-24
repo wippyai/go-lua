@@ -570,8 +570,8 @@ func initInterprocFacts(f *api.Facts) {
 	if f.CapturedTypes == nil {
 		f.CapturedTypes = make(api.CapturedTypes)
 	}
-	if f.CapturedFields == nil {
-		f.CapturedFields = make(api.CapturedFieldAssigns)
+	if f.FieldWrites == nil {
+		f.FieldWrites = make(api.FieldWrites)
 	}
 }
 
@@ -887,13 +887,13 @@ func (s *SessionStore) ScratchLiteralSigs(graphID uint64) map[*ast.FunctionExpr]
 	return s.Scratch.LiteralSigsByGraphID[graphID]
 }
 
-// GetCapturedFieldAssignsSnapshot returns captured field assignments from the stable interproc snapshot.
-func (s *SessionStore) GetCapturedFieldAssignsSnapshot(
+// GetFieldWritesSnapshot returns field-write effects from the stable interproc snapshot.
+func (s *SessionStore) GetFieldWritesSnapshot(
 	graph *cfg.Graph,
 	parent *scope.State,
-) api.CapturedFieldAssigns {
+) api.FieldWrites {
 	s.requirePhase(api.PhaseScopeCompute, api.PhaseNarrowing)
-	return s.GetInterprocFactsSnapshot(graph, parent).CapturedFields
+	return s.GetInterprocFactsSnapshot(graph, parent).FieldWrites
 }
 
 // GetCapturedContainerMutationsSnapshot returns captured container mutations from the stable interproc snapshot.

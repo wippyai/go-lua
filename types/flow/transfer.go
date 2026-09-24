@@ -61,6 +61,7 @@ func (s *Solution) processPointReturnChangedKeys(p cfg.Point) []string {
 //   - IndexerAssignments: Dynamic index (t[k] = v) widening empty tables to maps
 //   - TableMutatorAssignments: table.insert-like array element widening
 //   - ContainerMutatorAssignments: channel.send-like element type widening
+//   - FieldWriteEffects: fields written later through an alias
 //
 // Returns keys that changed, enabling worklist-driven convergence.
 func (s *Solution) processAssignmentReturnChangedKeys(p cfg.Point) []string {
@@ -165,6 +166,15 @@ func (s *Solution) processAssignmentReturnChangedKeys(p cfg.Point) []string {
 			continue
 		}
 		if key := s.processContainerMutatorAssignmentReturnKey(p, cm); key != "" {
+			changedKeys = append(changedKeys, key)
+		}
+	}
+
+	for _, fw := range s.inputs.FieldWriteEffects {
+		if fw.Point != p {
+			continue
+		}
+		if key := s.processFieldWriteEffectReturnKey(p, fw); key != "" {
 			changedKeys = append(changedKeys, key)
 		}
 	}
@@ -997,6 +1007,74 @@ func (s *Solution) processContainerMutatorAssignmentReturnKey(p cfg.Point, cm Co
 
 	s.setValue(string(pathKey), newType)
 	return string(pathKey)
+}
+
+// processFieldWriteEffectReturnKey widens the target table with a field that
+// may be written through an alias. Annotated variables keep their declared
+// type. Returns the changed key, or empty string when nothing changed.
+func (s *Solution) processFieldWriteEffectReturnKey(p cfg.Point, fw FieldWriteEffect) string {
+	if fw.Target.Symbol == 0 || fw.Field == "" || fw.Type == nil {
+		return ""
+	}
+	if s.inputs.AnnotatedVars != nil && s.inputs.AnnotatedVars[fw.Target.Symbol] {
+		return ""
+	}
+
+	pathKey := s.pkResolver.KeyAt(p, fw.Target)
+	if pathKey == "" {
+		return ""
+	}
+
+	currentType := s.values[string(pathKey)]
+	newType := widenFieldWrite(currentType, fw.Field, subtype.WidenForInference(fw.Type))
+	if newType == nil || typ.TypeEquals(currentType, newType) {
+		return ""
+	}
+
+	s.setValue(string(pathKey), newType)
+	return string(pathKey)
+}
+
+// widenFieldWrite joins a possibly-written field into the record members of t.
+// A present field keeps its optionality and joins the written type; an absent
+// field is added as optional.
+func widenFieldWrite(t typ.Type, field string, valueType typ.Type) typ.Type {
+	if t == nil {
+		return nil
+	}
+	switch v := t.(type) {
+	case *typ.Record:
+		if existing := v.GetField(field); existing != nil {
+			joined := join.Types(existing.Type, valueType)
+			if typ.TypeEquals(existing.Type, joined) {
+				return v
+			}
+			widened := *existing
+			widened.Type = joined
+			return v.WithField(widened)
+		}
+		return v.WithField(typ.Field{Name: field, Type: valueType, Optional: true})
+	case *typ.Optional:
+		inner := widenFieldWrite(v.Inner, field, valueType)
+		if inner == v.Inner {
+			return v
+		}
+		return typ.NewOptional(inner)
+	case *typ.Union:
+		changed := false
+		members := make([]typ.Type, len(v.Members))
+		for i, m := range v.Members {
+			members[i] = widenFieldWrite(m, field, valueType)
+			if members[i] != m {
+				changed = true
+			}
+		}
+		if !changed {
+			return v
+		}
+		return typ.NewUnion(members...)
+	}
+	return t
 }
 
 // widenContainerElementType widens a container's element type by unioning with a new value type.

@@ -190,6 +190,7 @@ func (r *Runner) Run(ctx *db.QueryContext, key api.FuncKey) *api.FuncResult {
 		ReturnSummaries: returnSummaries,
 	})
 	r.appendCapturedMutatorAssignments(store, graph, parent, env, scopeOut, literalOut, returnSummaries, &extractOut)
+	r.appendFieldWriteEffects(store, graph, parent, &extractOut)
 
 	// Phase C: Solve flow system.
 	solveOut := phase.RunSolve(phase.FlowSolveInput{

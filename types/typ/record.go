@@ -123,6 +123,25 @@ func (r *Record) WithMetatable(meta Type) *Record {
 	return buildRecordType(r.Fields, meta, r.MapKey, r.MapValue, r.Open, true)
 }
 
+// WithField returns r with f replacing the field of the same name, or added
+// when r has no such field; everything else is kept.
+func (r *Record) WithField(f Field) *Record {
+	fields := make([]Field, 0, len(r.Fields)+1)
+	replaced := false
+	for _, existing := range r.Fields {
+		if existing.Name == f.Name {
+			fields = append(fields, f)
+			replaced = true
+			continue
+		}
+		fields = append(fields, existing)
+	}
+	if !replaced {
+		fields = append(fields, f)
+	}
+	return buildRecordType(fields, r.Metatable, r.MapKey, r.MapValue, r.Open, replaced)
+}
+
 func (r *Record) Kind() kind.Kind { return kind.Record }
 
 func (r *Record) String() string {

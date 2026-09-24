@@ -20,7 +20,7 @@ func FactsEqual(a, b api.Facts) bool {
 	if !symbolTypeMapEqual(a.CapturedTypes, b.CapturedTypes) {
 		return false
 	}
-	if !CapturedFieldAssignsEqual(a.CapturedFields, b.CapturedFields) {
+	if !FieldWritesEqual(a.FieldWrites, b.FieldWrites) {
 		return false
 	}
 	if !CapturedContainerMutationsEqual(a.CapturedContainers, b.CapturedContainers) {
@@ -98,8 +98,8 @@ func symbolTypeMapEqual(a map[cfg.SymbolID]typ.Type, b map[cfg.SymbolID]typ.Type
 	return true
 }
 
-// CapturedFieldAssignsEqual checks if two captured field assignment maps are equal.
-func CapturedFieldAssignsEqual(a, b api.CapturedFieldAssigns) bool {
+// FieldWritesEqual checks if two field-write maps are equal.
+func FieldWritesEqual(a, b api.FieldWrites) bool {
 	if len(a) != len(b) {
 		return false
 	}

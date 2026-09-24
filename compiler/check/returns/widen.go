@@ -19,7 +19,7 @@ func WidenFacts(prev, next api.Facts) api.Facts {
 		ParamHints:         WidenParamHints(prev.ParamHints, next.ParamHints),
 		LiteralSigs:        WidenLiteralSigs(prev.LiteralSigs, next.LiteralSigs),
 		CapturedTypes:      WidenCapturedTypes(prev.CapturedTypes, next.CapturedTypes),
-		CapturedFields:     WidenCapturedFieldAssigns(prev.CapturedFields, next.CapturedFields),
+		FieldWrites:        WidenFieldWrites(prev.FieldWrites, next.FieldWrites),
 		CapturedContainers: WidenCapturedContainerMutations(prev.CapturedContainers, next.CapturedContainers),
 		ConstructorFields:  WidenConstructorFields(prev.ConstructorFields, next.ConstructorFields),
 	}
@@ -671,8 +671,8 @@ func WidenCapturedTypes(prev, next api.CapturedTypes) api.CapturedTypes {
 	return merged
 }
 
-// WidenCapturedFieldAssigns merges captured field assignment maps using monotone union.
-func WidenCapturedFieldAssigns(prev, next api.CapturedFieldAssigns) api.CapturedFieldAssigns {
+// WidenFieldWrites merges field-write maps using monotone union.
+func WidenFieldWrites(prev, next api.FieldWrites) api.FieldWrites {
 	if prev == nil && next == nil {
 		return nil
 	}
@@ -682,7 +682,7 @@ func WidenCapturedFieldAssigns(prev, next api.CapturedFieldAssigns) api.Captured
 	if next == nil {
 		return prev
 	}
-	merged := make(api.CapturedFieldAssigns, len(prev)+len(next))
+	merged := make(api.FieldWrites, len(prev)+len(next))
 	for _, callee := range cfg.SortedSymbolIDs(prev) {
 		merged[callee] = prev[callee]
 	}
@@ -693,14 +693,30 @@ func WidenCapturedFieldAssigns(prev, next api.CapturedFieldAssigns) api.Captured
 			merged[callee] = captured
 			continue
 		}
-		merged[callee] = MergeCapturedFieldSymbolMaps(existing, captured, func(prev typ.Type, next typ.Type) typ.Type {
+		merged[callee] = MergeFieldWriteSymbolMaps(existing, captured, func(prev typ.Type, next typ.Type) typ.Type {
 			if prev != nil {
-				return maybeWidenTypeForConvergence(joinIterationFact(prev, next))
+				joined := joinIterationFact(prev, next)
+				if joined == prev {
+					return prev
+				}
+				return widenFieldWriteForConvergence(joined)
 			}
-			return maybeWidenTypeForConvergence(next)
+			return widenFieldWriteForConvergence(next)
 		})
 	}
 	return merged
+}
+
+// widenFieldWriteForConvergence closes a written field type over the records
+// it nests. A write such as `node.parent = current; current = node` types the
+// written record against the field type of the previous iteration, so each
+// iteration nests one more approximation of the record; folding the nested
+// approximations yields the recursive limit of that chain.
+func widenFieldWriteForConvergence(t typ.Type) typ.Type {
+	if t == nil {
+		return nil
+	}
+	return foldSelfRecursiveRecords(maybeWidenTypeForConvergence(t))
 }
 
 // WidenCapturedContainerMutations merges captured container mutation maps using monotone union.
@@ -965,8 +981,8 @@ func foldSelfRecursiveRecord(owner *typ.Record) typ.Type {
 }
 
 // isRecordApproximation reports whether t is an approximation of owner: a
-// record, or a recursive record, with exactly owner's fields that is a
-// subtype of owner.
+// record, or a recursive record, with exactly owner's fields that lies below
+// owner in the information order of inference.
 func isRecordApproximation(t typ.Type, owner *typ.Record) bool {
 	shape := unwrap.Alias(t)
 	if rr, ok := shape.(*typ.Recursive); ok {
@@ -976,7 +992,93 @@ func isRecordApproximation(t typ.Type, owner *typ.Record) bool {
 	if !ok || !rec.HasSameFieldNames(owner) {
 		return false
 	}
-	return subtype.IsSubtype(t, owner)
+	return informationBelow(t, owner, make(map[[2]typ.Type]bool))
+}
+
+// informationBelow reports whether a is an earlier approximation of b: a
+// subtype of b, or a type that differs from one only where an earlier
+// iteration had not yet resolved a type (unknown). Records compare field by
+// field, unions member by member, and recursive types coinductively.
+func informationBelow(a, b typ.Type, assumed map[[2]typ.Type]bool) bool {
+	if a == nil || typ.IsUnknown(a) {
+		return true
+	}
+	if b == nil {
+		return false
+	}
+	if subtype.IsSubtype(a, b) {
+		return true
+	}
+	key := [2]typ.Type{a, b}
+	if assumed[key] {
+		return true
+	}
+	assumed[key] = true
+
+	a = unwrap.Alias(a)
+	b = unwrap.Alias(b)
+	if ar, ok := a.(*typ.Recursive); ok {
+		return informationBelow(ar.Body, b, assumed)
+	}
+	if br, ok := b.(*typ.Recursive); ok {
+		return informationBelow(a, br.Body, assumed)
+	}
+	if au, ok := a.(*typ.Union); ok {
+		for _, m := range au.Members {
+			if !informationBelow(m, b, assumed) {
+				return false
+			}
+		}
+		return true
+	}
+	if ao, ok := a.(*typ.Optional); ok {
+		return informationBelow(typ.Nil, b, assumed) && informationBelow(ao.Inner, b, assumed)
+	}
+	switch bt := b.(type) {
+	case *typ.Optional:
+		return unwrap.IsNilType(a) || informationBelow(a, bt.Inner, assumed)
+	case *typ.Union:
+		for _, m := range bt.Members {
+			if informationBelow(a, m, assumed) {
+				return true
+			}
+		}
+		return false
+	case *typ.Array:
+		aa, ok := a.(*typ.Array)
+		return ok && informationBelow(aa.Element, bt.Element, assumed)
+	case *typ.Record:
+		ar, ok := a.(*typ.Record)
+		if !ok || ar.HasMapComponent() != bt.HasMapComponent() {
+			return false
+		}
+		if ar.HasMapComponent() &&
+			(!informationBelow(ar.MapKey, bt.MapKey, assumed) || !informationBelow(ar.MapValue, bt.MapValue, assumed)) {
+			return false
+		}
+		for _, af := range ar.Fields {
+			bf := bt.GetField(af.Name)
+			if bf == nil {
+				if bt.Open {
+					continue
+				}
+				return false
+			}
+			if af.Optional && !bf.Optional && !typ.IsUnknown(af.Type) {
+				return false
+			}
+			if !informationBelow(af.Type, bf.Type, assumed) {
+				return false
+			}
+		}
+		for _, bf := range bt.Fields {
+			if !bf.Optional && ar.GetField(bf.Name) == nil && !ar.Open {
+				return false
+			}
+		}
+		return true
+	}
+	return false
 }
 
 func maybeWidenFunctionForConvergence(fn *typ.Function) *typ.Function {

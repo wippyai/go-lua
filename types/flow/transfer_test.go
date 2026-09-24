@@ -389,3 +389,36 @@ func TestProcessJoinReturnChangedKeys_WithPhi(t *testing.T) {
 		t.Errorf("union members = %d, want 2", len(union.Members))
 	}
 }
+
+func TestWidenFieldWrite_AddsAbsentFieldAsOptional(t *testing.T) {
+	rec := typ.NewRecord().Field("n", typ.Integer).Build()
+	got := widenFieldWrite(rec, "label", typ.String)
+	want := typ.NewRecord().Field("n", typ.Integer).OptField("label", typ.String).Build()
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("widenFieldWrite = %s, want %s", got, want)
+	}
+}
+
+func TestWidenFieldWrite_JoinsPresentFieldKeepingOptionality(t *testing.T) {
+	rec := typ.NewRecord().Field("n", typ.Integer).OptField("label", typ.String).Build()
+	got := widenFieldWrite(rec, "n", typ.Number)
+	want := typ.NewRecord().Field("n", typ.Number).OptField("label", typ.String).Build()
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("widenFieldWrite = %s, want %s", got, want)
+	}
+	if same := widenFieldWrite(want, "n", typ.Integer); same != want {
+		t.Fatalf("a write already admitted by the field must keep the record, got %s", same)
+	}
+}
+
+func TestWidenFieldWrite_WidensRecordMembers(t *testing.T) {
+	rec := typ.NewRecord().Field("n", typ.Integer).Build()
+	got := widenFieldWrite(typ.NewOptional(rec), "label", typ.String)
+	want := typ.NewOptional(typ.NewRecord().Field("n", typ.Integer).OptField("label", typ.String).Build())
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("widenFieldWrite = %s, want %s", got, want)
+	}
+	if s := widenFieldWrite(typ.String, "label", typ.String); s != typ.String {
+		t.Fatalf("non-table types stay unchanged, got %s", s)
+	}
+}

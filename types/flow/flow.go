@@ -253,6 +253,10 @@ type Inputs struct {
 	// that widen element types via ContainerElementUnion effects.
 	ContainerMutatorAssignments []ContainerMutatorAssignment
 
+	// FieldWriteEffects tracks fields that functions reached at a point may
+	// write on a table through an alias.
+	FieldWriteEffects []FieldWriteEffect
+
 	// DeadPoints marks CFG points that are unreachable.
 	// Used when a terminating function (one that never returns) is called.
 	DeadPoints map[cfg.Point]bool
@@ -368,6 +372,18 @@ type ContainerMutatorAssignment struct {
 	Target    constraint.Path // Container path (symbol-only, e.g., channel variable)
 	ValuePath constraint.Path // Path to value expression for flow-resolved type lookup
 	ValueType typ.Type        // Fallback type if ValuePath doesn't resolve
+}
+
+// FieldWriteEffect records that the table at Target may gain Field of Type
+// from Point on: a function called there writes the field through a
+// parameter, or a closure created there writes it through a captured variable.
+// The write may happen at any later time, so the field joins the table's type
+// as optional unless it is already present.
+type FieldWriteEffect struct {
+	Point  cfg.Point
+	Target constraint.Path // Table path (symbol-only)
+	Field  string
+	Type   typ.Type
 }
 
 // ContainerElementSource tracks that an assignment's type should be derived

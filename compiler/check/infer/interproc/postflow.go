@@ -59,7 +59,7 @@ func StoreFactsFromResult(
 	if fnSym == 0 {
 		return
 	}
-	storeCapturedFactsFromResult(store, writer, fn, fnSym, result)
+	storeWriteEffectsFromResult(store, writer, fn, fnSym, result, parent)
 
 	fnType := narrowFunctionTypeFromResult(result, fn)
 	if fnType == nil {
@@ -83,12 +83,15 @@ func StoreFactsFromResult(
 	})
 }
 
-func storeCapturedFactsFromResult(
+// storeWriteEffectsFromResult records the field writes and container
+// mutations fn may perform through its captured variables and parameters.
+func storeWriteEffectsFromResult(
 	store Store,
 	writer interprocFactWriter,
 	fn *ast.FunctionExpr,
 	fnSym cfg.SymbolID,
 	result *api.FuncResult,
+	parent *scope.State,
 ) {
 	if store == nil || fn == nil || fnSym == 0 || result == nil || result.Graph == nil || result.NarrowSynth == nil {
 		return
@@ -98,18 +101,35 @@ func storeCapturedFactsFromResult(
 		return
 	}
 	capturedSet := capturedSymbolSet(bindings, fn)
-	if len(capturedSet) == 0 {
+	targets := make(map[cfg.SymbolID]bool, len(capturedSet))
+	for sym := range capturedSet {
+		targets[sym] = true
+	}
+	for _, sym := range bindings.ParamSymbols(fn) {
+		if sym != 0 {
+			targets[sym] = true
+		}
+	}
+	if len(targets) == 0 {
 		return
 	}
 
-	fields := nested.CollectCapturedFieldAssignments(result.Graph, capturedSet, result.NarrowSynth.TypeOf)
+	graphParent := api.ParentScopeForGraph(store, result.Graph.ID(), parent)
+	fields := returns.CollectFieldWrites(
+		result.Graph,
+		bindings,
+		targets,
+		result.NarrowSynth.TypeOf,
+		store.GetFieldWritesSnapshot(result.Graph, graphParent),
+		returns.StoreFieldWriteSource{Store: store, Bindings: bindings},
+	)
 	if len(fields) > 0 {
 		writer.updateParentFactsForSymbol(fnSym, func(facts *api.Facts) {
-			if facts.CapturedFields == nil {
-				facts.CapturedFields = make(api.CapturedFieldAssigns)
+			if facts.FieldWrites == nil {
+				facts.FieldWrites = make(api.FieldWrites)
 			}
-			existing := facts.CapturedFields[fnSym]
-			facts.CapturedFields[fnSym] = returns.MergeCapturedFieldSymbolMaps(existing, fields, typ.JoinPreferNonSoft)
+			existing := facts.FieldWrites[fnSym]
+			facts.FieldWrites[fnSym] = returns.MergeFieldWriteSymbolMaps(existing, fields, typ.JoinPreferNonSoft)
 		})
 	}
 
@@ -475,21 +495,7 @@ func CollectParamHintsFromResult(store Store, result *api.FuncResult, parent *sc
 		})
 	}
 
-	graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
-		collectCallHints(p, info)
-
-		seenNested := make(map[*ast.FuncCallExpr]struct{})
-		for _, arg := range info.Args {
-			collectNestedFuncCalls(arg, seenNested)
-		}
-		for nested := range seenNested {
-			nestedInfo := graph.CallSiteAt(p, nested)
-			if nestedInfo == nil {
-				nestedInfo = synthCallInfoFromExpr(nested, bindings)
-			}
-			collectCallHints(p, nestedInfo)
-		}
-	})
+	checkcallsite.EachCallSiteWithNested(graph, bindings, collectCallHints)
 }
 
 // unhintedOwnParams returns the unannotated parameters of graph's function
@@ -518,83 +524,6 @@ func unhintedOwnParams(store Store, graph *cfg.Graph, parent *scope.State) map[c
 		out[slot.Symbol] = true
 	}
 	return out
-}
-
-func synthCallInfoFromExpr(ex *ast.FuncCallExpr, bindings *bind.BindingTable) *cfg.CallInfo {
-	if ex == nil {
-		return nil
-	}
-	info := &cfg.CallInfo{
-		Call:     ex,
-		Callee:   ex.Func,
-		Args:     ex.Args,
-		Method:   ex.Method,
-		Receiver: ex.Receiver,
-		IsStmt:   false,
-	}
-	if id, ok := ex.Func.(*ast.IdentExpr); ok {
-		info.CalleeName = id.Value
-	}
-	if bindings != nil {
-		info.CalleeSymbol = checkcallsite.SymbolFromExpr(ex.Func, bindings)
-		if ex.Receiver != nil {
-			info.ReceiverSymbol = checkcallsite.SymbolFromExpr(ex.Receiver, bindings)
-			if id, ok := ex.Receiver.(*ast.IdentExpr); ok {
-				info.ReceiverName = id.Value
-			}
-		}
-		info.ArgSymbols = make([]cfg.SymbolID, len(ex.Args))
-		for i, arg := range ex.Args {
-			info.ArgSymbols[i] = checkcallsite.SymbolFromExpr(arg, bindings)
-		}
-	}
-	return info
-}
-
-func collectNestedFuncCalls(expr ast.Expr, out map[*ast.FuncCallExpr]struct{}) {
-	if expr == nil || out == nil {
-		return
-	}
-	switch e := expr.(type) {
-	case *ast.FuncCallExpr:
-		out[e] = struct{}{}
-		collectNestedFuncCalls(e.Func, out)
-		collectNestedFuncCalls(e.Receiver, out)
-		for _, arg := range e.Args {
-			collectNestedFuncCalls(arg, out)
-		}
-	case *ast.AttrGetExpr:
-		collectNestedFuncCalls(e.Object, out)
-		collectNestedFuncCalls(e.Key, out)
-	case *ast.TableExpr:
-		for _, field := range e.Fields {
-			if field == nil {
-				continue
-			}
-			collectNestedFuncCalls(field.Key, out)
-			collectNestedFuncCalls(field.Value, out)
-		}
-	case *ast.LogicalOpExpr:
-		collectNestedFuncCalls(e.Lhs, out)
-		collectNestedFuncCalls(e.Rhs, out)
-	case *ast.RelationalOpExpr:
-		collectNestedFuncCalls(e.Lhs, out)
-		collectNestedFuncCalls(e.Rhs, out)
-	case *ast.StringConcatOpExpr:
-		collectNestedFuncCalls(e.Lhs, out)
-		collectNestedFuncCalls(e.Rhs, out)
-	case *ast.ArithmeticOpExpr:
-		collectNestedFuncCalls(e.Lhs, out)
-		collectNestedFuncCalls(e.Rhs, out)
-	case *ast.UnaryMinusOpExpr:
-		collectNestedFuncCalls(e.Expr, out)
-	case *ast.UnaryNotOpExpr:
-		collectNestedFuncCalls(e.Expr, out)
-	case *ast.UnaryLenOpExpr:
-		collectNestedFuncCalls(e.Expr, out)
-	case *ast.UnaryBNotOpExpr:
-		collectNestedFuncCalls(e.Expr, out)
-	}
 }
 
 func parentGraphKeyForCallee(store Store, result *api.FuncResult, parent *scope.State, calleeSym cfg.SymbolID) (api.GraphKey, bool) {

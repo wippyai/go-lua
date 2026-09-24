@@ -528,3 +528,60 @@ func TestJoinParamHint_UnknownYieldsToHintWithPlaceholderMembers(t *testing.T) {
 		}
 	}
 }
+
+// linkedNodeApproximation is the written type of `node.parent = current;
+// current = node` after n fixpoint steps; the first step saw the name as
+// unresolved.
+func linkedNodeApproximation(n int) typ.Type {
+	var parent typ.Type = typ.Nil
+	name := typ.Unknown
+	var node *typ.Record
+	for i := 0; i <= n; i++ {
+		node = typ.NewRecord().
+			Field("name", name).
+			Field("parent", parent).
+			Build()
+		parent = typ.NewOptional(node)
+		name = typ.String
+	}
+	return node
+}
+
+func TestWidenFieldWrites_FoldsNestedRecordApproximations(t *testing.T) {
+	const fn, target = 1, 2
+	write := func(t typ.Type) api.FieldWrites {
+		return api.FieldWrites{fn: {target: {"current": t}}}
+	}
+
+	first := WidenFieldWrites(write(linkedNodeApproximation(2)), write(linkedNodeApproximation(3)))[fn][target]["current"]
+	if _, ok := first.(*typ.Recursive); !ok {
+		t.Fatalf("expected a recursive node type, got %s", first)
+	}
+	for i := 0; i <= 5; i++ {
+		if !informationBelow(linkedNodeApproximation(i), first, make(map[[2]typ.Type]bool)) {
+			t.Fatalf("approximation %d must lie below the folded node", i)
+		}
+	}
+
+	// The next step writes a node whose parent is the folded type.
+	step := typ.NewRecord().
+		Field("name", typ.String).
+		Field("parent", typ.NewOptional(first)).
+		Build()
+	second := WidenFieldWrites(write(first), write(step))[fn][target]["current"]
+	if !typ.TypeEquals(first, second) {
+		t.Fatalf("a step over the folded node must fold back to it:\n%s\n%s", first, second)
+	}
+}
+
+func TestInformationBelow_UnresolvedFieldIsBelowResolved(t *testing.T) {
+	early := typ.NewRecord().Field("name", typ.Unknown).Build()
+	late := typ.NewRecord().Field("name", typ.String).Build()
+	if !informationBelow(early, late, make(map[[2]typ.Type]bool)) {
+		t.Fatal("an unresolved field must lie below its resolved type")
+	}
+	other := typ.NewRecord().Field("name", typ.Integer).Build()
+	if informationBelow(other, late, make(map[[2]typ.Type]bool)) {
+		t.Fatal("a conflicting resolved field must not lie below another")
+	}
+}

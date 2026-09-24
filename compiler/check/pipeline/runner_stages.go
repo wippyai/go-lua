@@ -110,6 +110,30 @@ func (r *Runner) appendCapturedMutatorAssignments(
 	extractOut.Inputs.ContainerMutatorAssignments = append(extractOut.Inputs.ContainerMutatorAssignments, extra...)
 }
 
+// appendFieldWriteEffects adds the field writes that closures created in graph
+// and functions called from it may perform on tables held by graph's symbols.
+func (r *Runner) appendFieldWriteEffects(
+	store api.StoreView,
+	graph *cfg.Graph,
+	parent *scope.State,
+	extractOut *phase.FlowExtractOutput,
+) {
+	if store == nil || graph == nil || extractOut == nil || extractOut.Inputs == nil {
+		return
+	}
+	bindings := graph.Bindings()
+	if bindings == nil {
+		bindings = store.ModuleBindings()
+	}
+	effects := returns.CollectFieldWriteEffects(
+		graph,
+		bindings,
+		store.GetFieldWritesSnapshot(graph, parent),
+		returns.StoreFieldWriteSource{Store: store, Bindings: bindings},
+	)
+	extractOut.Inputs.FieldWriteEffects = append(extractOut.Inputs.FieldWriteEffects, effects...)
+}
+
 func (r *Runner) runComputePasses(graph *cfg.Graph, scopes map[cfg.Point]*scope.State) map[string]any {
 	if graph == nil || len(r.computePasses) == 0 {
 		return nil

@@ -249,6 +249,7 @@ func (p *Processor) processNestedFunction(
 				selfType = nested.EnrichSelfTypeWithConstructorFields(selfType, tblSym, &nestedStoreAdapter{store: p.store})
 			}
 			if selfType != nil {
+				selfType = nested.NormalizeMethodSelfType(selfType)
 				parentScope = parentScope.WithSelf(selfType).WithLocalName("self")
 			}
 		}
