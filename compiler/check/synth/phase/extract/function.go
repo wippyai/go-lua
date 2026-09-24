@@ -47,6 +47,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/synth/phase/core"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/contract"
+	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/join"
@@ -168,8 +169,20 @@ func (s *Synthesizer) synthFunctionTypeWithCapturePoint(
 	}
 
 	// Infer callback env overlays (runs before return types).
-	if overlaySpec := s.inferCallbackOverlaySpec(fn, resolveScope, expected, fnGraph); overlaySpec != nil {
-		builder = builder.Spec(overlaySpec)
+	callbackSpec := s.inferCallbackOverlaySpec(fn, resolveScope, expected, fnGraph)
+	if callbackParam, ok := inferProtectedCallbackReturn(fnGraph, resolveScope); ok {
+		if callbackSpec == nil {
+			callbackSpec = contract.NewSpec()
+		}
+		callbackSpec.WithEffects(effect.Return{
+			ReturnIndex: 0,
+			Transform: effect.CallbackReturn{
+				CallbackParam: effect.ParamRef{Index: callbackParam},
+			},
+		})
+	}
+	if callbackSpec != nil {
+		builder = builder.Spec(callbackSpec)
 	}
 
 	inferredErrorReturn := false
