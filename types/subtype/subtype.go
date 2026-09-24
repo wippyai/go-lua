@@ -329,16 +329,17 @@ func (c *checker) deriveStructural(sub, super typ.Type, depth int) bool {
 	if typ.IsUnknown(super) {
 		return true
 	}
-	// Any is not a plain subtype of specific types; only of any and unknown
-	// (handled above). Use sites accept it through IsConsistentSubtype.
+	// Any is not a plain subtype of specific types; only of any, unknown and
+	// types with a top member. Use sites accept it through IsConsistentSubtype.
 	if typ.IsAny(sub) {
-		return false
+		return hasTopMember(super)
 	}
 
 	// Unknown acts as a top type for unresolved values, but not bottom.
-	// Unknown <: T is false (except T = Any/Unknown handled above), while T <: Unknown is true.
+	// Unknown <: T holds only when T contains a top member (unknown? or a
+	// union with unknown or any); T <: Unknown is always true.
 	if typ.IsUnknown(sub) {
-		return false
+		return hasTopMember(super)
 	}
 
 	// Sub union: all members must be subtypes
@@ -1209,4 +1210,20 @@ func needsCycleGuard(k kind.Kind) bool {
 	default:
 		return true
 	}
+}
+
+// hasTopMember reports whether t is an optional or union with an unknown or
+// any member, which every value inhabits.
+func hasTopMember(t typ.Type) bool {
+	switch v := t.(type) {
+	case *typ.Optional:
+		return typ.IsUnknown(v.Inner) || typ.IsAny(v.Inner) || hasTopMember(v.Inner)
+	case *typ.Union:
+		for _, m := range v.Members {
+			if typ.IsUnknown(m) || typ.IsAny(m) || hasTopMember(m) {
+				return true
+			}
+		}
+	}
+	return false
 }
