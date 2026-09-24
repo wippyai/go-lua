@@ -295,11 +295,8 @@ func isStringableGuard(t typ.Type, guard internal.RecursionGuard) bool {
 
 		return false
 	case *typ.Interface:
-		if v.Name == "Error" {
-			return true
-		}
-
-		return false
+		// Error values convert through their __tostring and __concat metamethods.
+		return typ.TypeEquals(v, typ.LuaError)
 
 	default:
 		k := t.Kind()
@@ -362,7 +359,7 @@ func mayBeStringableGuard(t typ.Type, guard internal.RecursionGuard) bool {
 		}
 		return false
 	case *typ.Interface:
-		return v.Name == "Error"
+		return typ.TypeEquals(v, typ.LuaError)
 	case *typ.Literal:
 		switch v.Value.(type) {
 		case string, float64, int64:

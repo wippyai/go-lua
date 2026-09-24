@@ -126,12 +126,15 @@ func (selfType) String() string     { return "self" }
 func (selfType) Hash() uint64       { return uint64(kind.Self) }
 func (selfType) Equals(o Type) bool { return o.Kind() == kind.Self }
 
-// LuaError is the standard error type for Lua functions.
-// It represents structured errors with message, kind, retryable, etc.
+// LuaError is the runtime error value: what errors.new, errors.wrap and host
+// modules return, and what the `error` and `Error` type names denote. Its
+// methods mirror the runtime: retryable is nil when unspecified and details
+// is nil when empty. The value also converts to a string through its
+// __tostring and __concat metamethods.
 var LuaError Type = NewInterface("Error", []Method{
 	{Name: "kind", Type: Func().Param("self", Self).Returns(String).Build()},
-	{Name: "retryable", Type: Func().Param("self", Self).Returns(Boolean).Build()},
-	{Name: "details", Type: Func().Param("self", Self).Returns(Any).Build()},
+	{Name: "retryable", Type: Func().Param("self", Self).Returns(NewOptional(Boolean)).Build()},
+	{Name: "details", Type: Func().Param("self", Self).Returns(NewOptional(NewMap(String, Any))).Build()},
 	{Name: "message", Type: Func().Param("self", Self).Returns(String).Build()},
 	{Name: "stack", Type: Func().Param("self", Self).Returns(String).Build()},
 })

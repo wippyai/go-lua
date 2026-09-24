@@ -20,10 +20,11 @@ import (
 //     return[0] is Optional<LuaError>.
 //   - The other position is treated as the value slot.
 //   - More returns: the last slot is the error when it is Optional<LuaError>
-//     or Optional<string>; every other slot is a value slot inversely
+//     or Optional<string>; every other optional slot is a value slot inversely
 //     correlated with it and co-correlated with the other value slots, as in
 //     `(a?, b?, c?, err?)`: the values are present together exactly when the
-//     error is absent.
+//     error is absent. A slot that is never nil carries its value on both
+//     paths and takes no part.
 //
 // This encodes the conventional `(value?, err?)` API shape while keeping the
 // policy centralized and deterministic.
@@ -36,11 +37,20 @@ func InferErrorReturnConvention(fnType typ.Type) ([]flow.ReturnCorrelation, []fl
 		if !isOptionalErrorLike(fn.Returns[n-1]) {
 			return nil, nil
 		}
-		inverse := make([]flow.ReturnCorrelation, 0, n-1)
-		var co []flow.ReturnCorrelation
+		var values []int
 		for v := 0; v < n-1; v++ {
+			if unwrap.IsOptionalLike(fn.Returns[v]) {
+				values = append(values, v)
+			}
+		}
+		if len(values) == 0 {
+			return nil, nil
+		}
+		inverse := make([]flow.ReturnCorrelation, 0, len(values))
+		var co []flow.ReturnCorrelation
+		for i, v := range values {
 			inverse = append(inverse, flow.ReturnCorrelation{ValueIndex: v, ErrorIndex: n - 1})
-			for w := v + 1; w < n-1; w++ {
+			for _, w := range values[i+1:] {
 				co = append(co, flow.ReturnCorrelation{ValueIndex: v, ErrorIndex: w})
 			}
 		}

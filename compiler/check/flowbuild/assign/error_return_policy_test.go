@@ -28,3 +28,15 @@ func TestInferErrorReturnConvention_CorrelatesEveryValueWithTrailingError(t *tes
 		t.Fatalf("a trailing non-error slot must not correlate, got %v %v", inverse, co)
 	}
 }
+
+func TestInferErrorReturnConvention_CorrelatesOnlyOptionalValueSlots(t *testing.T) {
+	fn := typ.Func().Returns(typ.Integer, typ.NewOptional(typ.String), typ.NewOptional(typ.String), typ.NewOptional(typ.LuaError)).Build()
+
+	inverse, co := InferErrorReturnConvention(fn)
+	if len(inverse) != 2 || inverse[0].ValueIndex != 1 || inverse[1].ValueIndex != 2 {
+		t.Fatalf("expected the optional value slots inversely correlated with the error, got %v", inverse)
+	}
+	if len(co) != 1 || co[0].ValueIndex != 1 || co[0].ErrorIndex != 2 {
+		t.Fatalf("expected the optional value slots co-correlated, got %v", co)
+	}
+}

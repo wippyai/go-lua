@@ -346,7 +346,7 @@ func TestMayBeStringable(t *testing.T) {
 		{"string", typ.String, true},
 		{"number", typ.Number, true},
 		{"boolean", typ.Boolean, false},
-		{"error interface", typ.NewInterface("Error", nil), true},
+		{"error interface", typ.LuaError, true},
 		{"optional string", typ.NewOptional(typ.String), true},
 		{"string or nil", typ.NewUnion(typ.String, typ.Nil), true},
 		{"boolean or nil", typ.NewUnion(typ.Boolean, typ.Nil), false},

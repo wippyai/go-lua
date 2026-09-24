@@ -135,6 +135,8 @@ func NewWithBuiltins() *State {
 	s = s.WithType("int", typ.Integer)
 	s = s.WithType("string", typ.String)
 	s = s.WithType("table", typ.NewInterface("table", nil))
+	s = s.WithType("error", typ.LuaError)
+	s = s.WithType("Error", typ.LuaError)
 
 	return s
 }
