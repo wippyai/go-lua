@@ -464,6 +464,25 @@ func TestJoinIterationFact_MutableFieldTakesCurrentType(t *testing.T) {
 	}
 }
 
+// An optional fact joins its present values field by field and stays
+// optional, so an earlier approximation of a record does not remain as a
+// separate union member beside the resolved record.
+func TestJoinIterationFact_OptionalRecordsJoinTheirPresentValues(t *testing.T) {
+	earlier := typ.NewOptional(typ.NewRecord().
+		Field("cache", typ.Nil).
+		Field("session_id", typ.Unknown).
+		Build())
+	current := typ.NewOptional(typ.NewRecord().
+		Field("cache", typ.Any).
+		Field("session_id", typ.String).
+		Build())
+
+	got := joinIterationFact(earlier, current)
+	if !typ.TypeEquals(got, current) {
+		t.Fatalf("expected %s, got %s", current, got)
+	}
+}
+
 func TestJoinParamHint_KeepsFieldsDiscoveredByEitherIteration(t *testing.T) {
 	earlier := typ.NewRecord().
 		Field("route", typ.Func().Returns(typ.Nil).Build()).

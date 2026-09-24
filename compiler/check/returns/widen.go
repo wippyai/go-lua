@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/internal"
+	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 	typjoin "github.com/wippyai/go-lua/types/typ/join"
@@ -456,6 +457,11 @@ func joinIterationFactAt(a, b typ.Type, invariant bool) typ.Type {
 	if softB && !softA {
 		return a
 	}
+	if !invariant {
+		if joined, ok := joinIterationOptionals(a, b); ok {
+			return joined
+		}
+	}
 	if joined, ok := joinIterationFunctions(a, b); ok {
 		return joined
 	}
@@ -478,6 +484,45 @@ func joinIterationFactAt(a, b typ.Type, invariant bool) typ.Type {
 		return b
 	}
 	return typ.JoinPreferNonSoft(a, b)
+}
+
+// joinIterationOptionals joins two optional record or function facts, or one
+// optional and one present: their present values join with
+// joinIterationFact and the result is optional. An earlier approximation of
+// the record or function thereby yields to the resolved one rather than
+// remaining as a separate union member. The join reuses an input it equals,
+// so unchanged facts keep their identity across iterations.
+func joinIterationOptionals(a, b typ.Type) (typ.Type, bool) {
+	presentA := narrow.RemoveNil(a)
+	presentB := narrow.RemoveNil(b)
+	if typ.TypeEquals(presentA, a) && typ.TypeEquals(presentB, b) {
+		return nil, false
+	}
+	if !joinsStructurally(presentA, presentB) {
+		return nil, false
+	}
+	joined := typ.NewOptional(joinIterationFact(presentA, presentB))
+	switch {
+	case typ.TypeEquals(joined, a):
+		return a, true
+	case typ.TypeEquals(joined, b):
+		return b, true
+	}
+	return joined, true
+}
+
+// joinsStructurally reports whether two present facts are both records or
+// both functions, the shapes joinIterationFact joins member by member.
+func joinsStructurally(a, b typ.Type) bool {
+	switch a.(type) {
+	case *typ.Record:
+		_, ok := b.(*typ.Record)
+		return ok
+	case *typ.Function:
+		_, ok := b.(*typ.Function)
+		return ok
+	}
+	return false
 }
 
 // joinIterationFunctions joins two function facts with the same parameter
