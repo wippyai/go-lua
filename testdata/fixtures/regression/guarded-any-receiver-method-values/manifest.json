@@ -1,0 +1,4 @@
+{
+  "description": "Method calls on an any value narrowed to string by a type() guard take the string method's returns: a dynamic result recorded before narrowing does not override them (kickside.workflows runs_completion).",
+  "files": ["main.lua"]
+}
