@@ -118,7 +118,7 @@ func CollectInferredTypes(fc *fbcore.FlowContext, specTypes api.SpecTypes, annot
 	if fc.Derived != nil {
 		symResolver = fc.Derived.SymResolver
 	}
-	preflowBranchSolution := buildPreflowBranchSolution(fc, inputs)
+	preflowBranchSolution := buildPreflowFacts(fc, inputs)
 	return collectInferredTypes(
 		fc.Graph, fc.Scopes, synth, fc.API, symResolver,
 		specTypes, annotated, inputs, fc.ModuleBindings, fc.CallCtx, fc.TypeOps, preflowBranchSolution, fc.Services,
@@ -144,7 +144,7 @@ func collectInferredTypes(
 	moduleBindings *bind.BindingTable,
 	callCtx *db.QueryContext,
 	typeOps core.TypeOps,
-	preflowBranchSolution *flow.Solution,
+	preflowBranchSolution *preflowFacts,
 	services fbcore.FlowServices,
 ) api.SpecTypes {
 	inferred := make(api.SpecTypes)
@@ -961,7 +961,7 @@ func synthWithInferenceOverlay(
 	inputs *flow.Inputs,
 	callCtx *db.QueryContext,
 	typeOps core.TypeOps,
-	preflow *flow.Solution,
+	preflow *preflowFacts,
 	base func(ast.Expr, cfg.Point) typ.Type,
 ) func(ast.Expr, cfg.Point) typ.Type {
 	_ = graph

@@ -93,7 +93,7 @@ func WithField() check.Option {
 			return nil
 		}
 		narrowView := result.NarrowSynth.Narrow()
-		return CheckFields(result.Graph, result.NarrowSynth, narrowView, sess.SourceName)
+		return CheckFields(result.Graph, result.NarrowSynth, narrowView, result.FlowSolution, result.Conditions, sess.SourceName)
 	})
 }
 

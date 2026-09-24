@@ -222,6 +222,7 @@ func (r *Runner) Run(ctx *db.QueryContext, key api.FuncKey) *api.FuncResult {
 		Facts:              narrowOut.Facts,
 		FlowInputs:         extractOut.Inputs,
 		FlowSolution:       solveOut.Solution,
+		Conditions:         extractOut.Conditions,
 		FnRefinement:       narrowOut.Refinement,
 		NarrowSynth:        narrowOut.Synth,
 		LiteralSignatures:  literalOut.Signatures,

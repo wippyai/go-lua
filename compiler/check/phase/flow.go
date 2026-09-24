@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild"
+	"github.com/wippyai/go-lua/compiler/check/flowbuild/cond"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/core"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/keyscoll"
 	"github.com/wippyai/go-lua/compiler/check/scope"
@@ -45,7 +46,7 @@ func RunExtract(input FlowExtractInput) FlowExtractOutput {
 		ModuleAliases:  moduleAliases,
 	})
 
-	inputs := flowbuild.Run(&core.FlowContext{
+	fc := &core.FlowContext{
 		Graph:    input.Graph,
 		Scopes:   input.Scope.Scopes,
 		CheckCtx: extractionCtx,
@@ -63,7 +64,8 @@ func RunExtract(input FlowExtractInput) FlowExtractOutput {
 		LiteralTypes:         input.LiteralTypes,
 		ModuleAliases:        moduleAliases,
 		ModuleBindings:       input.ModuleBindings,
-	})
+	}
+	inputs := flowbuild.Run(fc)
 
 	applyModuleAliasTypes(inputs, input.Manifests)
 
@@ -73,6 +75,7 @@ func RunExtract(input FlowExtractInput) FlowExtractOutput {
 
 	return FlowExtractOutput{
 		Inputs:     inputs,
+		Conditions: cond.ConditionsFunc(fc, inputs),
 		Params:     params,
 		ReturnType: returnType,
 	}

@@ -183,14 +183,6 @@ func TestLogicalOrTyped_UnknownOrNil_DoesNotCollapseToNil(t *testing.T) {
 	}
 }
 
-func TestLogicalOrTyped_UnknownOrTable_StaysUnknown(t *testing.T) {
-	empty := typ.NewRecord().Build()
-	result := LogicalOrTyped(typ.Unknown, empty)
-	if !typ.IsUnknown(result) {
-		t.Fatalf("unknown or {} should stay unknown, got %v", result)
-	}
-}
-
 func TestLogicalOrTyped_AnyOrNil_DoesNotCollapseToNil(t *testing.T) {
 	result := LogicalOrTyped(typ.Any, typ.Nil)
 	if typ.TypeEquals(result, typ.Nil) {

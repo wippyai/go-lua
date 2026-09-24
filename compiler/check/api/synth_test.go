@@ -86,6 +86,12 @@ func (m *mockFlowOps) ArrayLenBoundWithOffsetAt(cfg.Point, string) (string, int6
 }
 func (m *mockFlowOps) IsPointDead(cfg.Point) bool                                { return false }
 func (m *mockFlowOps) HasKeyOf(cfg.Point, constraint.Path, constraint.Path) bool { return false }
+func (m *mockFlowOps) NarrowedTypeAssuming(cfg.Point, constraint.Path, constraint.Condition) typ.Type {
+	return nil
+}
+func (m *mockFlowOps) HasKeyOfAssuming(cfg.Point, constraint.Path, constraint.Path, constraint.Condition) bool {
+	return false
+}
 
 type mockLiteralSynth struct{}
 

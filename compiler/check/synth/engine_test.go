@@ -99,6 +99,14 @@ func (m mockFlowOps) HasKeyOf(p cfg.Point, tablePath, keyPath constraint.Path) b
 	return false
 }
 
+func (m mockFlowOps) NarrowedTypeAssuming(p cfg.Point, path constraint.Path, _ constraint.Condition) typ.Type {
+	return m.NarrowedTypeAt(p, path)
+}
+
+func (m mockFlowOps) HasKeyOfAssuming(cfg.Point, constraint.Path, constraint.Path, constraint.Condition) bool {
+	return false
+}
+
 type mockGraph struct {
 	symbols map[string]cfg.SymbolID
 }

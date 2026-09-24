@@ -418,6 +418,7 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 			ModuleBindings:         s.deps.ModuleBindings,
 			ModuleAliases:          moduleAliases,
 			Paths:                  s.deps.Paths,
+			Conditions:             s.deps.Conditions,
 		}
 		prelimSynth = NewSynthesizer(prelimDeps, s.phase)
 		return prelimSynth
@@ -558,6 +559,7 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 		ModuleBindings:         s.deps.ModuleBindings,
 		ModuleAliases:          moduleAliases,
 		Paths:                  s.deps.Paths,
+		Conditions:             s.deps.Conditions,
 	}
 	if s.IsNarrowing() && s.deps.Flow != nil && s.deps.CheckCtx != nil {
 		if currentGraph, ok := s.deps.CheckCtx.Graph().(*cfg.Graph); ok && currentGraph == fnGraph {

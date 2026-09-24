@@ -1,0 +1,1 @@
+{"description": "wippy.bootloader:bootloader_registry: `options = options or {}` on an optional map parameter keeps the map type"}

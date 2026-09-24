@@ -81,6 +81,14 @@ func ResolveFieldAccess(
 			return FieldAccessResult{NotIndexable: true}
 		}
 	}
+	// The shared field query recognizes the dynamic builtin table top even
+	// when it appears as a reference inside a union. Shape rejection below
+	// applies only when that query cannot resolve the field.
+	if resolver != nil {
+		if ft, ok := resolver.Field(objType, fieldName); ok {
+			return FieldAccessResult{Type: ft, Found: true}
+		}
+	}
 
 	switch unwrapped := unwrapped.(type) {
 	case *typ.Record, *typ.Interface, *typ.Union, *typ.Intersection, *typ.Optional:
@@ -102,12 +110,6 @@ func ResolveFieldAccess(
 			break
 		}
 		return FieldAccessResult{NotIndexable: true}
-	}
-
-	if resolver != nil {
-		if ft, ok := resolver.Field(objType, fieldName); ok {
-			return FieldAccessResult{Type: ft, Found: true}
-		}
 	}
 
 	return FieldAccessResult{Found: false}

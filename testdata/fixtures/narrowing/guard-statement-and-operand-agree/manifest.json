@@ -1,0 +1,1 @@
+{"description": "a guard narrows a field the same way on a branch and on the left of and/or, in a local, in an argument and under a nested guard"}

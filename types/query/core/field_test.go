@@ -93,6 +93,16 @@ func TestFieldUnion(t *testing.T) {
 	})
 }
 
+func TestFieldUnionWithBuiltinTableTop(t *testing.T) {
+	for _, top := range []typ.Type{typ.NewInterface("table", nil), typ.NewRef("", "table")} {
+		union := typ.NewUnion(top, typ.NewRecord().Build())
+		got, ok := Field(union, "dynamic")
+		if !ok || !typ.IsAny(got) {
+			t.Fatalf("field of %v | {} = %v, %v; want dynamic any", top, got, ok)
+		}
+	}
+}
+
 func TestFieldIntersection(t *testing.T) {
 	rec1 := typ.NewRecord().Field("a", typ.String).Build()
 	rec2 := typ.NewRecord().Field("b", typ.Integer).Build()

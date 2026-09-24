@@ -305,7 +305,10 @@ func ExtractParamTypes(
 			}
 		} else if hint != nil {
 			paramType = paramhints.BodyParamType(hint)
-		} else if synthSig != nil && i < len(synthSig.Params) && synthSig.Params[i].Type != nil {
+		} else if synthSig != nil && i < len(synthSig.Params) && synthSig.Params[i].Type != nil && !typ.IsUnknown(synthSig.Params[i].Type) {
+			// A synthesized signature leaves an unannotated parameter it has
+			// no evidence for unresolved; such a parameter is the gradual any
+			// below, not an annotation.
 			paramType = synthSig.Params[i].Type
 			isAnnotated = true
 		} else if slot.Name == "self" && base != nil && base.SelfType() != nil {

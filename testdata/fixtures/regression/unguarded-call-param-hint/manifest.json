@@ -1,0 +1,1 @@
+{"description": "a local helper called with an unguarded string | table still reports the string branch", "check": {"errors": 1}}

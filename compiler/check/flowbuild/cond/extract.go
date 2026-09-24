@@ -18,6 +18,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
 	checkeffects "github.com/wippyai/go-lua/compiler/check/effects"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/core"
@@ -33,6 +34,30 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
+// newConditionExtractor returns the extractor for conditions at p.
+func newConditionExtractor(fc *core.FlowContext, inputs *flow.Inputs, p cfg.Point) *ConditionExtractor {
+	return &ConditionExtractor{
+		P: p, SC: fc.Scopes[p], Inputs: inputs,
+		Synth:           fc.Derived.Synth,
+		SymResolver:     fc.Derived.SymResolver,
+		TypeKeyRes:      fc.Derived.TypeKeyRes,
+		ConstResolver:   predicate.BuildConstResolver(inputs, p),
+		RefinementBySym: fc.Derived.RefinementBySym,
+	}
+}
+
+// ConditionsFunc returns the conditions an expression establishes at a point
+// when truthy and when falsy, as a branch on it puts them on its edges.
+func ConditionsFunc(fc *core.FlowContext, inputs *flow.Inputs) api.ConditionFromExprFunc {
+	return func(p cfg.Point, expr ast.Expr) (constraint.Condition, constraint.Condition) {
+		if fc == nil || fc.Derived == nil || inputs == nil || expr == nil {
+			return constraint.TrueCondition(), constraint.TrueCondition()
+		}
+		bc := newConditionExtractor(fc, inputs, p).ConstraintsFromConditionExpr(expr)
+		return bc.OnTrue, bc.OnFalse
+	}
+}
+
 // ExtractEdgeConstraints extracts type constraints from branch conditions.
 func ExtractEdgeConstraints(fc *core.FlowContext, inputs *flow.Inputs) {
 	fc.Graph.EachBranch(func(p cfg.Point, info *cfg.BranchInfo) {
@@ -46,16 +71,7 @@ func ExtractEdgeConstraints(fc *core.FlowContext, inputs *flow.Inputs) {
 			return
 		}
 
-		constResolver := predicate.BuildConstResolver(inputs, p)
-
-		ce := &ConditionExtractor{
-			P: p, SC: fc.Scopes[p], Inputs: inputs,
-			Synth:           fc.Derived.Synth,
-			SymResolver:     fc.Derived.SymResolver,
-			TypeKeyRes:      fc.Derived.TypeKeyRes,
-			ConstResolver:   constResolver,
-			RefinementBySym: fc.Derived.RefinementBySym,
-		}
+		ce := newConditionExtractor(fc, inputs, p)
 		constraints := ce.ConstraintsFromBranch(info)
 
 		// For generic for loops, add NotNil and KeyOf constraints for loop variables
@@ -77,7 +93,7 @@ func ExtractEdgeConstraints(fc *core.FlowContext, inputs *flow.Inputs) {
 					bindings := fc.Graph.Bindings()
 					iterSource := resolve.ExtractIteratorSource(
 						assignInfo.IterExprs, node.LoopPreheader,
-						fc.Derived.Synth, fc.Derived.SymResolver, constResolver, bindings,
+						fc.Derived.Synth, fc.Derived.SymResolver, ce.ConstResolver, bindings,
 					)
 					if iterSource != nil && iterSource.Kind == flow.IterateKeyed && len(node.LoopLocals) > 0 {
 						keySym := node.LoopLocals[0]
