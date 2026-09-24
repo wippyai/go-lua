@@ -272,37 +272,15 @@ func (s *Session) RegisterGraphHierarchy(root *cfg.Graph) {
 				}
 			}
 		}
-		// Register local function assignments within this graph.
-		g.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
-			if info == nil || !info.IsLocal || len(info.Targets) == 0 {
-				return
-			}
-			info.EachTargetSource(func(_ int, target cfg.AssignTarget, source ast.Expr) {
-				if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
-					return
-				}
-				if fnExpr, ok := source.(*ast.FunctionExpr); ok && fnExpr != nil {
-					child := s.GetOrBuildCFG(fnExpr)
-					if child == nil {
-						return
-					}
-					s.Store.RegisterGraph(child, fnExpr)
-					s.Store.RegisterNestedMeta(child.ID(), g.ID(), p)
-					s.Store.RegisterFunctionRef(target.Symbol, fnExpr, child, g.ID(), p)
-				}
-			})
-		})
-		g.EachFuncDef(func(p cfg.Point, info *cfg.FuncDefInfo) {
-			if info == nil || info.Symbol == 0 || info.FuncExpr == nil {
-				return
-			}
-			child := s.GetOrBuildCFG(info.FuncExpr)
+		// Register the local functions of this graph.
+		g.EachLocalFunction(func(p cfg.Point, sym cfg.SymbolID, fnExpr *ast.FunctionExpr) {
+			child := s.GetOrBuildCFG(fnExpr)
 			if child == nil {
 				return
 			}
-			s.Store.RegisterGraph(child, info.FuncExpr)
+			s.Store.RegisterGraph(child, fnExpr)
 			s.Store.RegisterNestedMeta(child.ID(), g.ID(), p)
-			s.Store.RegisterFunctionRef(info.Symbol, info.FuncExpr, child, g.ID(), p)
+			s.Store.RegisterFunctionRef(sym, fnExpr, child, g.ID(), p)
 		})
 		for _, nf := range g.NestedFunctions() {
 			if nf.Func == nil {

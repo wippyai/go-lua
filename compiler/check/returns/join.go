@@ -648,6 +648,8 @@ func MergeReturnSummary(existing, candidate []typ.Type) []typ.Type {
 	if len(candidate) == 0 {
 		return existing
 	}
+	existing = fillUnknownSlots(existing, candidate)
+	candidate = fillUnknownSlots(candidate, existing)
 	// Canonical promotion: open-top record placeholders should not dominate
 	// concrete structured return evidence (array/map/record with fields).
 	if replaced, ok := replaceOpenTopWithStructured(existing, candidate); ok {
@@ -670,6 +672,79 @@ func MergeReturnSummary(existing, candidate []typ.Type) []typ.Type {
 	}
 
 	return normalizeAndPruneReturnVector(typjoin.ReturnVectors(existing, candidate))
+}
+
+// AdvanceReturnSummary merges the previous estimate of a function's returns
+// with the estimate the next fixpoint iteration infers from it. The next
+// estimate supersedes a comparable previous one: it either refines it or adds
+// branches the previous iteration could not infer yet, such as those behind a
+// recursive call whose summary was still a placeholder. Incomparable estimates
+// join, and placeholder slots (nil-only, never artifacts, open-top records)
+// never displace evidence.
+func AdvanceReturnSummary(prev, next []typ.Type) []typ.Type {
+	prev = normalizeAndPruneReturnVector(prev)
+	next = normalizeAndPruneReturnVector(next)
+	if len(prev) == 0 {
+		return next
+	}
+	if len(next) == 0 {
+		return prev
+	}
+	prev = fillUnknownSlots(prev, next)
+	next = fillUnknownSlots(next, prev)
+	if replaced, ok := replaceOpenTopWithStructured(prev, next); ok {
+		prev = normalizeAndPruneReturnVector(replaced)
+	}
+	if replaced, ok := replaceOpenTopWithStructured(next, prev); ok {
+		next = normalizeAndPruneReturnVector(replaced)
+	}
+	if ReturnTypesRepairNever(prev, next) {
+		return prev
+	}
+	if ReturnTypesRepairNever(next, prev) {
+		return next
+	}
+	if shouldUseMonotoneReturnJoin(prev, next) {
+		return normalizeAndPruneReturnVector(joinReturnVectorsMonotone(prev, next))
+	}
+	if ReturnTypesFillNilSlots(prev, next) || (ReturnTypesAllNil(next) && !ReturnTypesAllNil(prev)) {
+		return prev
+	}
+	if returnVectorsComparable(prev, next) {
+		return next
+	}
+	return normalizeAndPruneReturnVector(typjoin.ReturnVectors(prev, next))
+}
+
+// fillUnknownSlots returns rets with each unknown slot replaced by the slot of
+// other at the same position: an unknown slot is a return an estimate could
+// not infer yet, a placeholder that yields to the other estimate's type.
+func fillUnknownSlots(rets, other []typ.Type) []typ.Type {
+	var out []typ.Type
+	for i, t := range rets {
+		if i >= len(other) || !typ.IsUnknown(t) || other[i] == nil || typ.IsUnknown(other[i]) {
+			continue
+		}
+		if out == nil {
+			out = append([]typ.Type(nil), rets...)
+		}
+		out[i] = other[i]
+	}
+	if out == nil {
+		return rets
+	}
+	return out
+}
+
+// returnVectorsComparable reports whether one vector refines the other.
+func returnVectorsComparable(a, b []typ.Type) bool {
+	for _, pair := range [2][2][]typ.Type{{a, b}, {b, a}} {
+		x, y := pair[0], pair[1]
+		if ReturnTypesRefine(x, y) || ReturnTypesFillNilSlots(x, y) || ReturnTypesExtendRecord(x, y) || ReturnTypesElideOptional(x, y) {
+			return true
+		}
+	}
+	return false
 }
 
 // MergeFunctionFactType merges function-type facts through one canonical policy.

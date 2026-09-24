@@ -82,9 +82,8 @@ func (i *Inferencer) enrichOverlayWithSiblings(
 		}
 	}
 	siblingOverlay := siblings.BuildOverlay(siblings.OverlayConfig{
-		Summaries:  ctx.summaries,
-		Siblings:   siblingEntries,
-		CurrentSym: ctx.info.Sym,
+		Summaries: ctx.summaries,
+		Siblings:  siblingEntries,
 		Services: siblings.OverlayServicesFuncs{
 			SeedTypeFn: func(fn *ast.FunctionExpr) typ.Type {
 				var bindings interface {
@@ -781,7 +780,7 @@ func (i *Inferencer) runPhase2FlowNarrowing(
 			return ctx.engine.ResolveFunctionSignature(fn, sc)
 		}),
 	}
-	phaseReturnSummaries := summarizeWithoutCurrent(ctx.summaries, ctx.info)
+	phaseReturnSummaries := ctx.summaries
 
 	extractOut := phase.RunExtract(phase.FlowExtractInput{
 		PhaseEnv:        phaseEnv,
@@ -837,26 +836,6 @@ func (i *Inferencer) runPhase2FlowNarrowing(
 		synth:      i.newReturnInferenceEngine(ctx.run, fnScopes, fnCheckCtx),
 		deadPoints: deadPoints,
 	}
-}
-
-func summarizeWithoutCurrent(
-	summaries map[cfg.SymbolID][]typ.Type,
-	info *returns.LocalFuncInfo,
-) map[cfg.SymbolID][]typ.Type {
-	if len(summaries) == 0 || info == nil || info.Sym == 0 {
-		return summaries
-	}
-	if _, ok := summaries[info.Sym]; !ok {
-		return summaries
-	}
-	out := make(map[cfg.SymbolID][]typ.Type, len(summaries)-1)
-	for _, sym := range cfg.SortedSymbolIDs(summaries) {
-		if sym == info.Sym {
-			continue
-		}
-		out[sym] = summaries[sym]
-	}
-	return out
 }
 
 func uniformFunctionScopes(graph *cfg.Graph, base *scope.State) map[cfg.Point]*scope.State {

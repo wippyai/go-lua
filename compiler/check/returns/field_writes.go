@@ -1,6 +1,8 @@
 package returns
 
 import (
+	"strings"
+
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
@@ -75,6 +77,18 @@ func (s StoreFieldWriteSource) DefPointOf(fn cfg.SymbolID) (cfg.Point, bool) {
 	return ref.DefPoint, true
 }
 
+// MustWritesOf returns fields directly written on every path through fn.
+func (s StoreFieldWriteSource) MustWritesOf(fn cfg.SymbolID) map[cfg.SymbolID]map[api.FieldWriteKey]bool {
+	if s.Store == nil || fn == 0 {
+		return nil
+	}
+	ref := s.Store.FunctionRefBySym(fn)
+	if ref == nil {
+		return nil
+	}
+	return MustFieldWrites(s.Store.Graphs()[ref.GraphID])
+}
+
 // CollectFieldWrites computes the fields the function of graph may write
 // through targets, its captured variables and parameters: field assignments
 // in its body, into the target tables and the tables they reach by static
@@ -129,7 +143,7 @@ func CollectFieldWrites(
 	for _, closure := range cfg.SortedSymbolIDs(closures) {
 		eachFieldWrite(closures[closure], add)
 	}
-	eachCallFieldWrite(graph, bindings, source, func(_ cfg.Point, target constraint.Path, key api.FieldWriteKey, t typ.Type) {
+	eachCallFieldWrite(graph, bindings, source, func(_ cfg.Point, _ cfg.SymbolID, _ cfg.SymbolID, _ bool, target constraint.Path, key api.FieldWriteKey, t typ.Type, _ api.FieldWriteSet) {
 		add(target.Symbol, key.Under(target.Segments), t)
 	})
 	return result
@@ -149,16 +163,17 @@ func CollectFieldWriteEffects(
 	}
 	symbols := graph.AllSymbolIDs()
 	var effects []flow.FieldWriteEffect
-	emit := func(p cfg.Point, target constraint.Path, key api.FieldWriteKey, t typ.Type) {
+	emit := func(p cfg.Point, target constraint.Path, key api.FieldWriteKey, t typ.Type, definite bool) {
 		if !symbols[target.Symbol] {
 			return
 		}
 		segments := append(append([]constraint.Segment(nil), target.Segments...), key.Segments()...)
 		effects = append(effects, flow.FieldWriteEffect{
-			Point:  p,
-			Target: constraint.Path{Root: target.Root, Symbol: target.Symbol, Segments: segments},
-			Field:  key.Field,
-			Type:   t,
+			Point:    p,
+			Target:   constraint.Path{Root: target.Root, Symbol: target.Symbol, Segments: segments},
+			Field:    key.Field,
+			Type:     t,
+			Definite: definite,
 		})
 	}
 
@@ -171,11 +186,62 @@ func CollectFieldWriteEffects(
 			emit(p, constraint.Path{
 				Root:   resolve.RootNameFromGraphAndBindings(graph, bindings, target, ""),
 				Symbol: target,
-			}, key, t)
+			}, key, t, false)
 		})
 	}
-	eachCallFieldWrite(graph, bindings, source, emit)
+	var mustSource interface {
+		MustWritesOf(cfg.SymbolID) map[cfg.SymbolID]map[api.FieldWriteKey]bool
+	}
+	mustSource, _ = source.(interface {
+		MustWritesOf(cfg.SymbolID) map[cfg.SymbolID]map[api.FieldWriteKey]bool
+	})
+	mustCache := make(map[cfg.SymbolID]map[cfg.SymbolID]map[api.FieldWriteKey]bool)
+	eachCallFieldWrite(graph, bindings, source, func(p cfg.Point, callee cfg.SymbolID, writtenTo cfg.SymbolID, guaranteedCall bool, target constraint.Path, key api.FieldWriteKey, t typ.Type, calleeSet api.FieldWriteSet) {
+		definite := false
+		if guaranteedCall && mustSource != nil && t != nil && !typ.IsUnknown(t) && !typ.IsAny(t) {
+			_, nilable := typ.SplitNilableFieldType(t)
+			if !nilable && t != typ.Nil {
+				must, ok := mustCache[callee]
+				if !ok {
+					must = mustSource.MustWritesOf(callee)
+					mustCache[callee] = must
+				}
+				definite = must[writtenTo][key] && !overlappingClosureWrite(closures, callee, writtenTo, key, calleeSet)
+			}
+		}
+		emit(p, target, key, t, definite)
+	})
 	return effects
+}
+
+// Another closure can write the same table field later, or a field below it.
+// In that case applying this call's write as a closed replacement would erase
+// part of the table's known shape; retain the possible-write merge.
+func overlappingClosureWrite(closures map[cfg.SymbolID]map[cfg.SymbolID]api.FieldWriteSet, callee, target cfg.SymbolID, key api.FieldWriteKey, calleeSet api.FieldWriteSet) bool {
+	for other := range calleeSet {
+		if other != key && fieldWriteKeysOverlap(key, other) {
+			return true
+		}
+	}
+	for closure, targets := range closures {
+		if closure == callee {
+			continue
+		}
+		for other := range targets[target] {
+			if fieldWriteKeysOverlap(key, other) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func fieldWriteKeysOverlap(a, b api.FieldWriteKey) bool {
+	ap := a.Path + "." + a.Field
+	bp := b.Path + "." + b.Field
+	return ap == bp || strings.HasPrefix(ap, bp+".") || strings.HasPrefix(bp, ap+".") ||
+		(a.IsIndexer() && strings.HasPrefix(bp, a.Path+".")) ||
+		(b.IsIndexer() && strings.HasPrefix(ap, b.Path+"."))
 }
 
 // eachCallFieldWrite maps the writes of each called function onto the
@@ -186,7 +252,7 @@ func eachCallFieldWrite(
 	graph *cfg.Graph,
 	bindings *bind.BindingTable,
 	source FieldWriteSource,
-	visit func(p cfg.Point, target constraint.Path, key api.FieldWriteKey, t typ.Type),
+	visit func(p cfg.Point, callee cfg.SymbolID, writtenTo cfg.SymbolID, guaranteedCall bool, target constraint.Path, key api.FieldWriteKey, t typ.Type, calleeSet api.FieldWriteSet),
 ) {
 	if source == nil {
 		return
@@ -217,10 +283,36 @@ func eachCallFieldWrite(
 			}
 			set := writes[target]
 			for _, key := range api.SortedFieldWriteKeys(set) {
-				visit(p, path, key, set[key])
+				visit(p, callee, target, callEvaluatedAtPoint(graph, p, info), path, key, set[key], set)
 			}
 		}
 	})
+}
+
+// A nested call in a short-circuit expression may not execute when its CFG
+// point is reached. Direct statement, assignment and return calls do.
+func callEvaluatedAtPoint(graph *cfg.Graph, p cfg.Point, call *cfg.CallInfo) bool {
+	if call == nil || call.Call == nil {
+		return false
+	}
+	if call.IsStmt {
+		return true
+	}
+	if assign := graph.Assign(p); assign != nil {
+		for _, source := range assign.Sources {
+			if source == call.Call {
+				return true
+			}
+		}
+	}
+	if ret := graph.Return(p); ret != nil {
+		for _, expr := range ret.Exprs {
+			if expr == call.Call {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func eachFieldWrite(writes map[cfg.SymbolID]api.FieldWriteSet, visit func(target cfg.SymbolID, key api.FieldWriteKey, t typ.Type)) {

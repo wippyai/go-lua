@@ -36,6 +36,19 @@ func JoinPreferNonSoft(a, b Type) Type {
 	return PruneSoftUnionMembers(NewUnion(a, b))
 }
 
+// UnknownReturns returns a return vector of the given arity whose every slot is
+// unknown. An arity below one yields a single unknown slot.
+func UnknownReturns(arity int) []Type {
+	if arity < 1 {
+		arity = 1
+	}
+	out := make([]Type, arity)
+	for i := range out {
+		out[i] = Unknown
+	}
+	return out
+}
+
 // JoinReturnSlot merges return slot types while preserving uncertainty.
 //
 // Unknown in return inference means unresolved runtime behavior. When one branch

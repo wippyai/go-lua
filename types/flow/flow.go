@@ -381,17 +381,19 @@ type ContainerMutatorAssignment struct {
 // FieldWriteEffect records that the table at Target may gain Field of Type
 // from Point on: a function called there writes the field through a
 // parameter, or a closure created there writes it through a captured variable.
-// The write may happen at any later time, so the field joins the table's type
-// as optional unless it is already present.
+// Closure-created writes may happen later and join as possible effects. A
+// direct call effect is definite when the callee leaves the field present on
+// every return path and no overlapping closure write obscures its shape.
 // IndexerWriteField is the Field of a FieldWriteEffect for writes by dynamic
 // keys (t[k] = v); its Type is the map {[K]: V} they add to the table.
 const IndexerWriteField = "[]"
 
 type FieldWriteEffect struct {
-	Point  cfg.Point
-	Target constraint.Path // Table path: a symbol, or a static field path below one
-	Field  string
-	Type   typ.Type
+	Point    cfg.Point
+	Target   constraint.Path // Table path: a symbol, or a static field path below one
+	Field    string
+	Type     typ.Type
+	Definite bool // The call writes this field on every path before returning.
 }
 
 // ContainerElementSource tracks that an assignment's type should be derived

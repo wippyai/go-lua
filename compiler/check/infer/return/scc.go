@@ -17,6 +17,11 @@ func (i *Inferencer) iterateSCCFixpoint(
 	localFuncs map[cfg.SymbolID]*returns.LocalFuncInfo,
 	summaries map[cfg.SymbolID][]typ.Type,
 ) bool {
+	for _, sym := range scc {
+		if len(summaries[sym]) == 0 && i.recursive(sym) {
+			summaries[sym] = returns.RecursionVariables(returnArity(localFuncs[sym]))
+		}
+	}
 	for iter := 0; iter < i.maxIterations; iter++ {
 		next, changed := i.runSCCIteration(run, scc, localFuncs, summaries)
 		applySCCIterationUpdates(summaries, scc, next)
@@ -97,6 +102,10 @@ func (i *Inferencer) runSCCIteration(
 		newReturn := i.inferReturnWithSummary(run, info, summaries, localFuncs)
 		oldReturn := summaries[sym]
 		merged := returns.MergeReturnSummary(oldReturn, newReturn)
+		if i.recursive(sym) {
+			newReturn = returns.TieRecursiveReturns(oldReturn, newReturn)
+			merged = returns.AdvanceReturnSummary(oldReturn, newReturn)
+		}
 		next[sym] = merged
 		if !returns.ReturnTypesEqual(merged, oldReturn) {
 			changed = true
@@ -125,16 +134,7 @@ func (i *Inferencer) widenSCCToUnknown(
 	summaries map[cfg.SymbolID][]typ.Type,
 ) *diag.Diagnostic {
 	for _, sym := range scc {
-		existing := summaries[sym]
-		if len(existing) == 0 {
-			summaries[sym] = []typ.Type{typ.Unknown}
-		} else {
-			widened := make([]typ.Type, len(existing))
-			for i := range widened {
-				widened[i] = typ.Unknown
-			}
-			summaries[sym] = widened
-		}
+		summaries[sym] = typ.UnknownReturns(len(summaries[sym]))
 	}
 	if info := localFuncs[scc[0]]; info != nil && info.Fn != nil {
 		return &diag.Diagnostic{
@@ -145,4 +145,24 @@ func (i *Inferencer) widenSCCToUnknown(
 		}
 	}
 	return nil
+}
+
+// recursive reports whether the local function bound to sym can call itself.
+func (i *Inferencer) recursive(sym cfg.SymbolID) bool {
+	return returns.CallsItself(i.store, sym)
+}
+
+// returnArity returns the largest number of values a return statement of the
+// function lists, at least one.
+func returnArity(info *returns.LocalFuncInfo) int {
+	arity := 1
+	if info == nil || info.Graph == nil {
+		return arity
+	}
+	info.Graph.EachReturn(func(_ cfg.Point, ret *cfg.ReturnInfo) {
+		if ret != nil && len(ret.Exprs) > arity {
+			arity = len(ret.Exprs)
+		}
+	})
+	return arity
 }

@@ -392,47 +392,47 @@ func TestProcessJoinReturnChangedKeys_WithPhi(t *testing.T) {
 
 func TestWidenFieldWrite_AddsAbsentFieldAsOptional(t *testing.T) {
 	rec := typ.NewRecord().Field("n", typ.Integer).Build()
-	got := widenFieldWrite(rec, "label", typ.String)
+	got := applyFieldWrite(rec, "label", typ.String, false)
 	want := typ.NewRecord().Field("n", typ.Integer).OptField("label", typ.String).Build()
 	if !typ.TypeEquals(got, want) {
-		t.Fatalf("widenFieldWrite = %s, want %s", got, want)
+		t.Fatalf("applyFieldWrite = %s, want %s", got, want)
 	}
 }
 
 func TestWidenFieldWrite_JoinsPresentFieldKeepingOptionality(t *testing.T) {
 	rec := typ.NewRecord().Field("n", typ.Integer).OptField("label", typ.String).Build()
-	got := widenFieldWrite(rec, "n", typ.Number)
+	got := applyFieldWrite(rec, "n", typ.Number, false)
 	want := typ.NewRecord().Field("n", typ.Number).OptField("label", typ.String).Build()
 	if !typ.TypeEquals(got, want) {
-		t.Fatalf("widenFieldWrite = %s, want %s", got, want)
+		t.Fatalf("applyFieldWrite = %s, want %s", got, want)
 	}
-	if same := widenFieldWrite(want, "n", typ.Integer); same != want {
+	if same := applyFieldWrite(want, "n", typ.Integer, false); same != want {
 		t.Fatalf("a write already admitted by the field must keep the record, got %s", same)
 	}
 }
 
 func TestWidenFieldWrite_WidensRecordMembers(t *testing.T) {
 	rec := typ.NewRecord().Field("n", typ.Integer).Build()
-	got := widenFieldWrite(typ.NewOptional(rec), "label", typ.String)
+	got := applyFieldWrite(typ.NewOptional(rec), "label", typ.String, false)
 	want := typ.NewOptional(typ.NewRecord().Field("n", typ.Integer).OptField("label", typ.String).Build())
 	if !typ.TypeEquals(got, want) {
-		t.Fatalf("widenFieldWrite = %s, want %s", got, want)
+		t.Fatalf("applyFieldWrite = %s, want %s", got, want)
 	}
-	if s := widenFieldWrite(typ.String, "label", typ.String); s != typ.String {
+	if s := applyFieldWrite(typ.String, "label", typ.String, false); s != typ.String {
 		t.Fatalf("non-table types stay unchanged, got %s", s)
 	}
 }
 
 func TestWidenFieldWrite_OpenRecordKeepsAbsentFieldUnknown(t *testing.T) {
 	rec := typ.NewRecord().Field("n", typ.Integer).SetOpen(true).Build()
-	if got := widenFieldWrite(rec, "label", typ.String); got != rec {
+	if got := applyFieldWrite(rec, "label", typ.String, false); got != rec {
 		t.Fatalf("an open record admits the write already, got %s", got)
 	}
 }
 
 func TestWidenFieldWrite_UnknownFieldAdmitsWrite(t *testing.T) {
 	rec := typ.NewRecord().Field("tx", typ.Unknown).Build()
-	if got := widenFieldWrite(rec, "tx", typ.NewOptional(typ.String)); got != rec {
+	if got := applyFieldWrite(rec, "tx", typ.NewOptional(typ.String), false); got != rec {
 		t.Fatalf("an unknown field admits the write already, got %s", got)
 	}
 }

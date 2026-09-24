@@ -246,7 +246,7 @@ func (d *Driver) runReturnInference(
 
 	summaries, funcTypes, diags := inferencer.ComputeForGraph(returninfer.RunContext{
 		Ctx:          sess.Context(),
-		ParentFacts:  d.parentFactsForGraph(sess, store, graph.ID()),
+		ParentFacts:  d.localFunctionFacts(sess, store, graph.ID()),
 		EffectLookup: refinementLookup,
 	}, graph, parent)
 	if len(diags) > 0 {
@@ -262,7 +262,11 @@ func (d *Driver) runReturnInference(
 	}
 }
 
-func (d *Driver) parentFactsForGraph(
+// localFunctionFacts returns the solved facts of the graph whose local
+// functions return inference infers. Their definition points and the locals
+// they capture belong to that graph, so the facts are the graph's own result,
+// from the previous iteration.
+func (d *Driver) localFunctionFacts(
 	sess api.AnalysisSession,
 	store api.IterationStore,
 	graphID uint64,
@@ -270,27 +274,23 @@ func (d *Driver) parentFactsForGraph(
 	if store == nil || graphID == 0 {
 		return nil
 	}
-	meta, ok := store.NestedMetaFor(graphID)
-	if !ok || meta.ParentGraphID == 0 {
-		return nil
-	}
 	results := sess.ResultsMap()
 	if results == nil {
 		return nil
 	}
-	parentGraph := store.Graphs()[meta.ParentGraphID]
-	if parentGraph == nil {
+	graph := store.Graphs()[graphID]
+	if graph == nil {
 		return nil
 	}
-	parentFn := store.FuncForGraph(parentGraph)
-	if parentFn == nil {
+	fn := store.FuncForGraph(graph)
+	if fn == nil {
 		return nil
 	}
-	parentResult := results[parentFn]
-	if parentResult == nil {
+	result := results[fn]
+	if result == nil {
 		return nil
 	}
-	return parentResult.Facts
+	return result.Facts
 }
 
 func (d *Driver) loadFunctionResult(

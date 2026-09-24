@@ -1083,7 +1083,7 @@ func (s *Solution) processFieldWriteEffectReturnKey(p cfg.Point, fw FieldWriteEf
 		}
 	} else {
 		newType = typ.WriteInto(currentType, func(t typ.Type) typ.Type {
-			return widenFieldWrite(t, fw.Field, subtype.WidenForInference(fw.Type))
+			return applyFieldWrite(t, fw.Field, subtype.WidenForInference(fw.Type), fw.Definite)
 		})
 	}
 	if newType == nil || typ.TypeEquals(currentType, newType) {
@@ -1094,18 +1094,26 @@ func (s *Solution) processFieldWriteEffectReturnKey(p cfg.Point, fw FieldWriteEf
 	return string(pathKey)
 }
 
-// widenFieldWrite joins a possibly-written field into the record members of t.
-// A present field keeps its optionality and joins the written type; an absent
-// field is added as optional. A field read as unknown already admits the
-// write, so a record whose field is unknown, or an open record without the
-// field, stays unchanged.
-func widenFieldWrite(t typ.Type, field string, valueType typ.Type) typ.Type {
+// applyFieldWrite writes field into the record members of t. A definite write
+// sets the field; a possible write joins into a present field, keeping its
+// optionality, and adds an absent field as optional. A field read as unknown
+// already admits a possible write, so a record whose field is unknown, or an
+// open record without the field, stays unchanged.
+func applyFieldWrite(t typ.Type, field string, valueType typ.Type, definite bool) typ.Type {
 	if t == nil {
 		return nil
 	}
 	switch v := t.(type) {
 	case *typ.Record:
 		if existing := v.GetField(field); existing != nil {
+			if definite {
+				written := *existing
+				// Existing evidence may include writes through closures that run
+				// later than this call, so keep its value domain.
+				written.Type = join.Types(existing.Type, valueType)
+				written.Optional = false
+				return v.WithField(written)
+			}
 			if typ.IsUnknown(existing.Type) {
 				return v
 			}
@@ -1117,12 +1125,12 @@ func widenFieldWrite(t typ.Type, field string, valueType typ.Type) typ.Type {
 			widened.Type = joined
 			return v.WithField(widened)
 		}
-		if v.Open {
+		if v.Open && !definite {
 			return v
 		}
-		return v.WithField(typ.Field{Name: field, Type: valueType, Optional: true})
+		return v.WithField(typ.Field{Name: field, Type: valueType, Optional: !definite})
 	case *typ.Optional:
-		inner := widenFieldWrite(v.Inner, field, valueType)
+		inner := applyFieldWrite(v.Inner, field, valueType, definite)
 		if inner == v.Inner {
 			return v
 		}
@@ -1131,7 +1139,7 @@ func widenFieldWrite(t typ.Type, field string, valueType typ.Type) typ.Type {
 		changed := false
 		members := make([]typ.Type, len(v.Members))
 		for i, m := range v.Members {
-			members[i] = widenFieldWrite(m, field, valueType)
+			members[i] = applyFieldWrite(m, field, valueType, definite)
 			if members[i] != m {
 				changed = true
 			}

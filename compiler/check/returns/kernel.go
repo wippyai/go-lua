@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/types/typ"
+	typjoin "github.com/wippyai/go-lua/types/typ/join"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
@@ -55,11 +56,12 @@ func ReconcileFunctionFact(in ReconcileFunctionFactInput) ReconcileFunctionFactO
 		out.Func = MergeFunctionFactType(out.Func, in.CandidateFunc)
 	}
 
-	// Keep summary and narrow channels mutually refining when post-flow narrow
-	// provides first-order information. MergeReturnSummary is the canonical
-	// policy and already encodes directional refinement preference.
+	// Solved flow supersedes an incomparable pre-flow estimate. A join of the
+	// two would introduce return shapes that no flow path actually produced.
 	if len(out.Narrow) > 0 {
 		if len(out.Summary) == 0 {
+			out.Summary = NormalizeReturnVector(out.Narrow)
+		} else if !returnVectorsComparable(out.Summary, out.Narrow) {
 			out.Summary = NormalizeReturnVector(out.Narrow)
 		} else {
 			out.Summary = MergeReturnSummary(out.Summary, out.Narrow)
@@ -75,7 +77,18 @@ func ReconcileFunctionFact(in ReconcileFunctionFactInput) ReconcileFunctionFactO
 			alignedSummary = out.Narrow
 		}
 		if len(alignedSummary) > 0 {
-			if aligned, changed := AlignFunctionTypeWithSummary(fn, alignedSummary); changed {
+			var aligned *typ.Function
+			var changed bool
+			if len(out.Narrow) > 0 && !returnVectorsComparable(fn.Returns, alignedSummary) {
+				if _, direct := out.Func.(*typ.Function); direct {
+					aligned = typjoin.WithReturns(fn, alignedSummary)
+					changed = aligned != nil && !ReturnTypesEqual(fn.Returns, alignedSummary)
+				}
+			}
+			if aligned == nil {
+				aligned, changed = AlignFunctionTypeWithSummary(fn, alignedSummary)
+			}
+			if changed {
 				out.Func = aligned
 				fn = aligned
 			}

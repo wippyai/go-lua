@@ -1,0 +1,1 @@
+{"description":"A recursive local function returning a table of its own results returns that table type alongside its base case.","files":["main.lua"]}

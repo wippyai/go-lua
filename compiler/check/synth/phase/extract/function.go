@@ -41,6 +41,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/erreffect"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/mutator"
+	"github.com/wippyai/go-lua/compiler/check/infer/captured"
 	"github.com/wippyai/go-lua/compiler/check/overlaymut"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth/phase/core"
@@ -374,6 +375,11 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 		}
 	}
 
+	untypedCall := captured.HasUntypedSelf(fnGraph.Bindings(), fn, overlay) || captured.HasUntypedAliasCall(fnGraph, overlay)
+	if untypedCall && len(summaryFallback) > 0 {
+		return summaryFallback, false
+	}
+
 	// Infer basic ordered-comparison hints (x > 0, name <= "zz") so unannotated
 	// params don't stay unknown when return typing depends on guarded branches.
 	enrichOverlayWithOrderedComparisonHints(fnGraph, overlay)
@@ -614,6 +620,9 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 	if typ.IsUnknownOnlyOrEmpty(returnTypes) && len(summaryFallback) > 0 {
 		return summaryFallback, false
 	}
+	if untypedCall && len(returnTypes) > 0 {
+		return typ.UnknownReturns(len(returnTypes)), false
+	}
 
 	return returnTypes, erreffect.HasStrictInverseReturnPattern(fnGraph, nil, tempSynth, 0, 1)
 }
@@ -693,28 +702,9 @@ func localFunctionSymbol(graph *cfg.Graph, fn *ast.FunctionExpr) cfg.SymbolID {
 		}
 	}
 	var fnSym cfg.SymbolID
-	graph.EachAssign(func(_ cfg.Point, info *cfg.AssignInfo) {
-		if fnSym != 0 || info == nil || !info.IsLocal || len(info.Targets) == 0 {
-			return
-		}
-		info.EachTargetSource(func(_ int, target cfg.AssignTarget, source ast.Expr) {
-			if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
-				return
-			}
-			if source == fn {
-				fnSym = target.Symbol
-			}
-		})
-	})
-	if fnSym != 0 {
-		return fnSym
-	}
-	graph.EachFuncDef(func(_ cfg.Point, info *cfg.FuncDefInfo) {
-		if fnSym != 0 || info == nil || info.Symbol == 0 {
-			return
-		}
-		if info.FuncExpr == fn {
-			fnSym = info.Symbol
+	graph.EachLocalFunction(func(_ cfg.Point, sym cfg.SymbolID, local *ast.FunctionExpr) {
+		if fnSym == 0 && local == fn {
+			fnSym = sym
 		}
 	})
 	return fnSym
