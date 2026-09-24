@@ -104,6 +104,16 @@ type Inputs struct {
 	DeadPoints map[cfg.Point]bool
 	// Assignments lists all variable assignments for constraint killing.
 	Assignments []Assignment
+	// Facts maps a CFG point to the condition its statement establishes,
+	// such as a key being present in a table after t[k] = v with v non-nil.
+	// It holds on every edge leaving the point; reads at the point itself
+	// happen before the statement's effect and do not see it.
+	Facts map[cfg.Point]constraint.Condition
+	// PhiRenames maps an edge into a join point to the SSA versions its phi
+	// nodes merge from that edge, each to the phi's version. On that edge the
+	// phi version holds the operand's value, so facts about the operand hold
+	// for the phi version.
+	PhiRenames map[EdgeKey]map[constraint.VersionRef]int
 }
 
 // Result holds the computed conditions at each CFG point.
@@ -261,6 +271,10 @@ func computeConditionAtPoint(
 		}
 	skipPreheaderReinforcement:
 
+		if fact, ok := inputs.Facts[pred]; ok && fact.HasConstraints() {
+			predCond = constraint.And(predCond, fact)
+		}
+
 		edgeCond, ok := inputs.EdgeConditions[EdgeKey{From: pred, To: p}]
 		if !ok || (!edgeCond.HasConstraints() && !edgeCond.IsFalse()) {
 			edgeCond = constraint.TrueCondition()
@@ -279,6 +293,9 @@ func computeConditionAtPoint(
 		}
 		if combinedCond.IsFalse() {
 			continue
+		}
+		if renames := inputs.PhiRenames[EdgeKey{From: pred, To: p}]; len(renames) > 0 {
+			combinedCond = constraint.RenameVersions(combinedCond, renames)
 		}
 
 		predConds = append(predConds, combinedCond)

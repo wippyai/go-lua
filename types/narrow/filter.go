@@ -1,6 +1,7 @@
 package narrow
 
 import (
+	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
@@ -329,10 +330,16 @@ func ByFieldLiteral(t typ.Type, field string, lit *typ.Literal, resolver Resolve
 	if t == nil || field == "" || lit == nil || resolver == nil {
 		return t
 	}
-	if t.Kind().IsPlaceholder() || unwrap.IsBuiltinTableTop(t) {
+	if t.Kind() == kind.Any {
+		// A dynamic value stays dynamic: the discriminant is known on the field
+		// path itself, and the value's other fields remain any rather than
+		// becoming the unknown fields of an open record.
+		return t
+	}
+	if t.Kind() == kind.Unknown || unwrap.IsBuiltinTableTop(t) {
 		// Refining `table` by a field literal should materialize a structural
 		// shape so downstream assignment/subtyping can use the discriminant.
-		// This also makes narrowing order-independent when placeholder and
+		// This also makes narrowing order-independent when unknown and
 		// table-type constraints are both present.
 		return typ.NewRecord().Field(field, lit).SetOpen(true).Build()
 	}

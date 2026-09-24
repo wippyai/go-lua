@@ -182,3 +182,80 @@ func TestPathAffectedByAssignment(t *testing.T) {
 		})
 	}
 }
+
+func TestPropagate_FactHoldsAfterPointAndThroughPhi(t *testing.T) {
+	// entry -> branch -> {write A, write B} -> join
+	// Each write establishes KeyOf on the table version it defines; the join
+	// merges those versions into one phi version.
+	g := &mockGraph{
+		entry: 1,
+		nodes: map[cfg.Point]*cfg.Node{
+			1: {Kind: cfg.NodeEntry},
+			2: {Kind: cfg.NodeBranch},
+			3: {Kind: cfg.NodeAssign},
+			4: {Kind: cfg.NodeAssign},
+			5: {Kind: cfg.NodeJoin},
+		},
+		preds: map[cfg.Point][]cfg.Point{1: {}, 2: {1}, 3: {2}, 4: {2}, 5: {3, 4}},
+		succs: map[cfg.Point][]cfg.Point{1: {2}, 2: {3, 4}, 3: {5}, 4: {5}, 5: {}},
+		rpo:   []cfg.Point{1, 2, 3, 4, 5},
+	}
+	keyOf := func(version int) constraint.Condition {
+		return constraint.FromConstraints(constraint.KeyOf{
+			Table: constraint.Path{Root: "t", Symbol: 1, Version: version},
+			Key:   constraint.Path{Root: "k", Symbol: 2, Version: 1},
+		})
+	}
+	inputs := &Inputs{
+		Graph:          g,
+		EdgeConditions: make(EdgeConditions),
+		Facts:          map[cfg.Point]constraint.Condition{3: keyOf(2), 4: keyOf(3)},
+		PhiRenames: map[EdgeKey]map[constraint.VersionRef]int{
+			{From: 3, To: 5}: {{Symbol: 1, Version: 2}: 4},
+			{From: 4, To: 5}: {{Symbol: 1, Version: 3}: 4},
+		},
+	}
+
+	result := Propagate(inputs)
+
+	if result.PointConditions[3].HasConstraints() {
+		t.Errorf("a write's fact must not hold at the write itself, got %v", result.PointConditions[3])
+	}
+	if !result.PointConditions[5].Equals(keyOf(4)) {
+		t.Errorf("expected the join to hold the fact for the phi version, got %v", result.PointConditions[5])
+	}
+}
+
+func TestPropagate_FactOnOneIncomingPathDoesNotHoldAtJoin(t *testing.T) {
+	g := &mockGraph{
+		entry: 1,
+		nodes: map[cfg.Point]*cfg.Node{
+			1: {Kind: cfg.NodeEntry},
+			2: {Kind: cfg.NodeBranch},
+			3: {Kind: cfg.NodeAssign},
+			4: {Kind: cfg.NodeJoin},
+		},
+		preds: map[cfg.Point][]cfg.Point{1: {}, 2: {1}, 3: {2}, 4: {2, 3}},
+		succs: map[cfg.Point][]cfg.Point{1: {2}, 2: {3, 4}, 3: {4}, 4: {}},
+		rpo:   []cfg.Point{1, 2, 3, 4},
+	}
+	fact := constraint.FromConstraints(constraint.KeyOf{
+		Table: constraint.Path{Root: "t", Symbol: 1, Version: 2},
+		Key:   constraint.Path{Root: "k", Symbol: 2, Version: 1},
+	})
+	inputs := &Inputs{
+		Graph:          g,
+		EdgeConditions: make(EdgeConditions),
+		Facts:          map[cfg.Point]constraint.Condition{3: fact},
+		PhiRenames: map[EdgeKey]map[constraint.VersionRef]int{
+			{From: 2, To: 4}: {{Symbol: 1, Version: 1}: 3},
+			{From: 3, To: 4}: {{Symbol: 1, Version: 2}: 3},
+		},
+	}
+
+	result := Propagate(inputs)
+
+	if result.PointConditions[4].HasConstraints() {
+		t.Errorf("expected no fact at the join, got %v", result.PointConditions[4])
+	}
+}

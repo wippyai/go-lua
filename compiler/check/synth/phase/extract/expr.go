@@ -266,8 +266,8 @@ func (s *Synthesizer) indexFromKeyOf(objType typ.Type, objExpr ast.Expr, key *as
 		return nil
 	}
 	if it, ok := s.deps.Types.Index(s.deps.Ctx, tableType, derivedKey); ok {
-		if opt, ok := it.(*typ.Optional); ok {
-			return opt.Inner
+		if present := narrow.RemoveNil(it); !typ.IsNever(present) {
+			return present
 		}
 		return it
 	}

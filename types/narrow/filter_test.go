@@ -359,10 +359,20 @@ func TestByFieldLiteral_PlaceholderMaterializesRecord(t *testing.T) {
 	resolver := newMockResolver()
 	lit := typ.LiteralString("image")
 
-	result := ByFieldLiteral(typ.Any, "type", lit, resolver)
+	result := ByFieldLiteral(typ.Unknown, "type", lit, resolver)
 	want := typ.NewRecord().Field("type", lit).SetOpen(true).Build()
 	if !typ.TypeEquals(result, want) {
-		t.Errorf("ByFieldLiteral(any, type, \"image\") = %v, want %v", result, want)
+		t.Errorf("ByFieldLiteral(unknown, type, \"image\") = %v, want %v", result, want)
+	}
+}
+
+func TestByFieldLiteral_AnyStaysAny(t *testing.T) {
+	resolver := newMockResolver()
+	lit := typ.LiteralString("image")
+
+	result := ByFieldLiteral(typ.Any, "type", lit, resolver)
+	if !typ.TypeEquals(result, typ.Any) {
+		t.Errorf("ByFieldLiteral(any, type, \"image\") = %v, want any", result)
 	}
 }
 
