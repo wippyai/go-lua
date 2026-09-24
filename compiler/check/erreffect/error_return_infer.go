@@ -22,21 +22,90 @@ func AttachInferredErrorReturnSpec(
 	solution *flow.Solution,
 	synth api.Synth,
 ) *typ.Function {
-	if fn == nil || graph == nil || synth == nil || len(fn.Returns) != 2 {
-		return fn
-	}
-	if HasErrorReturnLabel(fn) {
+	if fn == nil || graph == nil || synth == nil {
 		return fn
 	}
 	base := synth.Narrow()
 	if base == nil {
 		base = synth
 	}
-	if !HasStrictInverseReturnPattern(graph, solution, base, 0, 1) {
+	if len(fn.Returns) == 2 && !HasErrorReturnLabel(fn) &&
+		HasStrictInverseReturnPattern(graph, solution, base, 0, 1) {
+		fn = AttachErrorReturnSpec(fn, 0, 1)
+	}
+	// A multi-result function can have successful values before a trailing
+	// error, including a string-valued result that makes the error position
+	// ambiguous from the signature alone. Infer co-presence only when every
+	// reachable return branch proves the two slots nil or present together.
+	if len(fn.Returns) > 2 {
+		for i := 0; i < len(fn.Returns); i++ {
+			if !unwrap.IsOptionalLike(fn.Returns[i]) {
+				continue
+			}
+			for j := i + 1; j < len(fn.Returns); j++ {
+				if unwrap.IsOptionalLike(fn.Returns[j]) &&
+					HasStrictSameDirectionReturnPattern(graph, solution, base, i, j) {
+					fn = AttachCorrelatedReturnSpec(fn, i, j)
+				}
+			}
+		}
+	}
+	return fn
+}
+
+// HasStrictSameDirectionReturnPattern proves that both result slots have the
+// same nil state on every reachable explicit return, with evidence for both
+// a successful and an absent pair.
+func HasStrictSameDirectionReturnPattern(graph *cfg.Graph, solution *flow.Solution,
+	synth api.BaseSynth, first, second int) bool {
+	if graph == nil || synth == nil || first < 0 || second <= first {
+		return false
+	}
+	var sawPresent, sawNil, incompatible bool
+	graph.EachReturn(func(p cfg.Point, info *cfg.ReturnInfo) {
+		if incompatible || info == nil || solution != nil && solution.IsPointDead(p) {
+			return
+		}
+		if len(info.Exprs) == 0 && info.Stmt == nil {
+			return
+		}
+		values := synth.ExpandValues(info.Exprs, second+1, p)
+		if len(values) <= second {
+			incompatible = true
+			return
+		}
+		states := [2]nilState{}
+		for index, slot := range []int{first, second} {
+			state, ok := classifyNilState(values[slot])
+			if !ok && provenPresent(graph, solution, info.Exprs, slot, p) {
+				state, ok = nonNilOnly, true
+			}
+			if !ok && implicitReturnSlotIsNil(info.Exprs, slot) {
+				state, ok = nilOnly, true
+			}
+			if !ok {
+				incompatible = true
+				return
+			}
+			states[index] = state
+		}
+		if states[0] != states[1] {
+			incompatible = true
+			return
+		}
+		sawPresent = sawPresent || states[0] == nonNilOnly
+		sawNil = sawNil || states[0] == nilOnly
+	})
+	return !incompatible && sawPresent && sawNil
+}
+
+func AttachCorrelatedReturnSpec(fn *typ.Function, first, second int) *typ.Function {
+	spec, ok := cloneContractSpec(fn)
+	if !ok {
 		return fn
 	}
-
-	return AttachErrorReturnSpec(fn, 0, 1)
+	spec.Effects = spec.Effects.With(effect.CorrelatedReturn{Indices: []int{first, second}})
+	return cloneFunctionWithSpec(fn, spec)
 }
 
 func HasErrorReturnLabel(fn *typ.Function) bool {
