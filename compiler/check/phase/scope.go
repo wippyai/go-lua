@@ -139,14 +139,9 @@ func RunScope(input ScopeInput) ScopeOutput {
 	}
 
 	typeResolutionEngine := CreateTypeResolutionEngine(
-		input.Ctx,
-		input.Graph,
-		input.GlobalTypes,
+		input.PhaseEnv,
 		paramTypes,
 		base,
-		input.Types,
-		input.Manifests,
-		input.ModuleAliases,
 	)
 
 	localTypeAnnotations := make(map[cfg.SymbolID]ast.TypeExpr)

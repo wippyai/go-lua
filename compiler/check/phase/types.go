@@ -47,11 +47,8 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth"
 	"github.com/wippyai/go-lua/types/constraint"
-	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/flow"
-	"github.com/wippyai/go-lua/types/io"
 	"github.com/wippyai/go-lua/types/narrow"
-	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -69,43 +66,9 @@ func (m LiteralSigsMap) Lookup(fn *ast.FunctionExpr) *typ.Function {
 	return m[fn]
 }
 
-// PhaseEnv holds shared environment fields used across all analysis phases.
-// It is built once by the checker and embedded into each phase input struct,
-// reducing boilerplate while maintaining explicit dependency declaration.
-//
-// All fields are read-only during phase execution. Phases must not mutate
-// PhaseEnv fields; any derived data should be returned in the phase output.
-type PhaseEnv struct {
-	// Ctx provides query infrastructure for memoization and type caching.
-	Ctx *db.QueryContext
-
-	// Graph is the function's control flow graph.
-	Graph *cfg.Graph
-
-	// Fn is the function AST node being analyzed.
-	Fn *ast.FunctionExpr
-
-	// Types provides type construction and manipulation operations.
-	Types core.TypeOps
-
-	// Manifests provides imported module type information.
-	Manifests io.ManifestQuerier
-
-	// GlobalTypes contains built-in global function types (print, pairs, etc.).
-	GlobalTypes map[string]typ.Type
-
-	// ModuleAliases maps symbols to their require() module paths.
-	ModuleAliases map[cfg.SymbolID]string
-
-	// ModuleBindings is the binding table for the entire module.
-	ModuleBindings *bind.BindingTable
-
-	// RefinementStore provides function refinement lookups for callee analysis.
-	RefinementStore api.RefinementStore
-
-	// Scopes maps CFG points to scope states (populated after scope phase).
-	Scopes map[cfg.Point]*scope.State
-}
+// PhaseEnv is the single environment passed through phases and into synthesis.
+// The synthesis package owns its storage to avoid a package import cycle.
+type PhaseEnv = synth.Config
 
 // TypeResolver resolves type expressions to types.
 type TypeResolver interface {

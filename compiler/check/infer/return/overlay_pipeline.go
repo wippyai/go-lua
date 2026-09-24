@@ -383,7 +383,7 @@ func (i *Inferencer) inferLocalVariableTypes(
 		Graph:   fnGraph,
 		Scopes:  fnScopes,
 		API:     prelimEngine,
-		CallCtx: ctx.run.Ctx,
+		CallCtx: ctx.run.Env.Ctx,
 		TypeOps: i.types,
 		Derived: &fbcore.Derived{
 			SymResolver: symResolver,
@@ -761,7 +761,7 @@ func (i *Inferencer) runPhase2FlowNarrowing(
 	fnScopes := uniformFunctionScopes(fnGraph, ctx.resolveScope)
 
 	phaseEnv := phase.PhaseEnv{
-		Ctx:            ctx.run.Ctx,
+		Ctx:            ctx.run.Env.Ctx,
 		Graph:          fnGraph,
 		Fn:             ctx.info.Fn,
 		Types:          i.types,

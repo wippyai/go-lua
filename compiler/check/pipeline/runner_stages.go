@@ -10,13 +10,12 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth"
-	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
 func (r *Runner) resolveSynthesizedSignature(
-	ctx *db.QueryContext,
+	env phase.PhaseEnv,
 	store api.StoreView,
 	graph *cfg.Graph,
 	fn *ast.FunctionExpr,
@@ -37,12 +36,8 @@ func (r *Runner) resolveSynthesizedSignature(
 		return synthSig
 	}
 	if synthSig == nil {
-		engine := synth.New(synth.Config{
-			Ctx:       ctx,
-			Types:     r.types,
-			Manifests: r.manifests,
-			Phase:     api.PhaseTypeResolution,
-		})
+		env.Phase = api.PhaseTypeResolution
+		engine := synth.New(env)
 		if sig := engine.ResolveFunctionSignature(fn, parent); sig != nil {
 			synthSig = sig
 		} else if seedFn, ok := returns.BuildSeedFunctionTypeWithBindings(fn, engine, parent, graph.Bindings()).(*typ.Function); ok {
@@ -86,16 +81,10 @@ func (r *Runner) appendCapturedMutatorAssignments(
 		WithReturnSummaries(returnSummaries).
 		BuildDeclared()
 
-	synthEngine := synth.New(synth.Config{
-		Ctx:            env.Ctx,
-		Types:          env.Types,
-		Scopes:         scopeOut.Scopes,
-		Manifests:      env.Manifests,
-		Env:            declaredEnv,
-		Phase:          api.PhaseScopeCompute,
-		ModuleBindings: env.ModuleBindings,
-		ModuleAliases:  env.ModuleAliases,
-	})
+	env.Scopes = scopeOut.Scopes
+	env.Env = declaredEnv
+	env.Phase = api.PhaseScopeCompute
+	synthEngine := synth.New(env)
 
 	symResolver := resolve.BuildInputSymbolResolver(declaredEnv, extractOut.Inputs)
 	assignmentTypes := resolve.BuildAssignmentTypeResolver(extractOut.Inputs)

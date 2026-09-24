@@ -29,6 +29,7 @@ package synth
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
+	graphcfg "github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth/phase/extract"
@@ -46,20 +47,24 @@ import (
 //   - api.PhaseNarrowing: flow-refined (post-flow)
 //   - all earlier phases: declared-only (pre-flow)
 type Config struct {
-	Ctx            *db.QueryContext
-	Types          core.TypeOps
-	Scopes         api.ScopeMap
-	Manifests      io.ManifestQuerier
-	Env            api.BaseEnv
-	Flow           api.FlowOps
-	Paths          api.PathFromExprFunc
-	Conditions     api.ConditionFromExprFunc
-	PreCache       api.Cache
-	NarrowCache    api.Cache
-	Graphs         api.GraphProvider
-	Phase          api.Phase
-	ModuleBindings *bind.BindingTable
-	ModuleAliases  map[cfg.SymbolID]string
+	Ctx             *db.QueryContext
+	Graph           *graphcfg.Graph
+	Fn              *ast.FunctionExpr
+	Types           core.TypeOps
+	Scopes          api.ScopeMap
+	Manifests       io.ManifestQuerier
+	GlobalTypes     map[string]typ.Type
+	Env             api.BaseEnv
+	Flow            api.FlowOps
+	Paths           api.PathFromExprFunc
+	Conditions      api.ConditionFromExprFunc
+	PreCache        api.Cache
+	NarrowCache     api.Cache
+	Graphs          api.GraphProvider
+	Phase           api.Phase
+	ModuleBindings  *bind.BindingTable
+	ModuleAliases   map[cfg.SymbolID]string
+	RefinementStore api.RefinementStore
 }
 
 // Engine provides type synthesis configured by compilation phase.

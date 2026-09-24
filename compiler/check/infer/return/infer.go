@@ -49,7 +49,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth"
 	"github.com/wippyai/go-lua/types/constraint"
-	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/diag"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/io"
@@ -102,7 +101,7 @@ func New(cfg Config) *Inferencer {
 
 // RunContext carries per-run inputs for return inference.
 type RunContext struct {
-	Ctx *db.QueryContext
+	Env phase.PhaseEnv
 	// ParentFacts are the solved facts of the graph that defines the local
 	// functions, the parent of their bodies.
 	ParentFacts  flow.TypeFacts
@@ -151,16 +150,11 @@ func (i *Inferencer) newReturnInferenceEngine(
 	scopes map[cfg.Point]*scope.State,
 	ctx api.DeclaredEnv,
 ) *synth.Engine {
-	return synth.New(synth.Config{
-		Ctx:            run.Ctx,
-		Types:          i.types,
-		Scopes:         scopes,
-		Manifests:      i.manifests,
-		Env:            ctx,
-		Phase:          api.PhaseScopeCompute,
-		ModuleBindings: i.store.ModuleBindings(),
-		ModuleAliases:  i.store.ModuleAliases(),
-	})
+	env := run.Env
+	env.Scopes = scopes
+	env.Env = ctx
+	env.Phase = api.PhaseScopeCompute
+	return synth.New(env)
 }
 
 // computeReturnSummariesForGraph computes return summaries for local functions in a graph
@@ -176,7 +170,9 @@ func (i *Inferencer) ComputeForGraph(
 
 	parentScope := api.ParentScopeForGraph(i.store, graph.ID(), parent)
 
-	engine := phase.CreateTypeResolutionEngine(run.Ctx, graph, i.globalTypes, nil, parentScope, i.types, i.manifests, i.store.ModuleAliases())
+	env := run.Env
+	env.Graph = graph
+	engine := phase.CreateTypeResolutionEngine(env, nil, parentScope)
 	pointScopes := scope.BuildTypeDefScopes(graph, parentScope, engine.ResolveTypeDef)
 	localFuncs := i.collectLocalFunctions(graph, pointScopes, graph.Func())
 	if len(localFuncs) == 0 {
@@ -278,7 +274,7 @@ func (i *Inferencer) computeReturnSummariesForGroup(
 		return nil, nil
 	}
 
-	sccs := i.planLocalFunctionSCCs(localFuncs)
+	sccs := i.planLocalFunctionSCCs(run, localFuncs)
 	if len(sccs) == 0 {
 		return nil, nil
 	}
@@ -451,9 +447,12 @@ func (i *Inferencer) inferReturnWithSummary(
 	fn := info.Fn
 	fnGraph := info.Graph
 	parentScope := info.DefScope
-	moduleAliases := modules.MergeAliases(i.store.ModuleAliases(), modules.CollectAliases(fnGraph))
+	moduleAliases := modules.MergeAliases(run.Env.ModuleAliases, modules.CollectAliases(fnGraph))
 
-	engine := phase.CreateTypeResolutionEngine(run.Ctx, fnGraph, i.globalTypes, nil, parentScope, i.types, i.manifests, moduleAliases)
+	env := run.Env
+	env.Graph = fnGraph
+	env.ModuleAliases = moduleAliases
+	engine := phase.CreateTypeResolutionEngine(env, nil, parentScope)
 
 	resolveScope := parentScope
 	if len(fn.TypeParams) > 0 {

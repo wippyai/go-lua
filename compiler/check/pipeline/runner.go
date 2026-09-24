@@ -101,19 +101,7 @@ func (r *Runner) Run(ctx *db.QueryContext, key api.FuncKey) *api.FuncResult {
 		setter.SetGraphParentHash(graph.ID(), key.ParentHash)
 	}
 
-	paramHintSigs := paramhints.BuildParamHintSigView(store, graph, parent, r.stdlib)
-	synthSig := r.resolveSynthesizedSignature(ctx, store, graph, fn, parent, paramHintSigs)
-
-	// Canonical local function types for this graph (stable snapshot).
-	siblingTypes := store.GetLocalFuncTypesSnapshot(graph, parent)
-	// Return summaries include captured field assignments (stable snapshot).
-	returnSummaries := store.GetReturnSummariesSnapshot(graph, parent)
-	var narrowReturnSummaries map[cfg.SymbolID][]typ.Type
-	withPhase(api.PhaseNarrowing, func() {
-		narrowReturnSummaries = store.GetNarrowReturnSummariesSnapshot(graph, parent)
-	})
-
-	// Build shared phase environment once.
+	// Build the environment once for signature synthesis and all phases.
 	localAliases := modules.CollectAliases(graph)
 	mergedAliases := modules.MergeAliases(store.ModuleAliases(), localAliases)
 	env := phase.PhaseEnv{
@@ -127,6 +115,17 @@ func (r *Runner) Run(ctx *db.QueryContext, key api.FuncKey) *api.FuncResult {
 		ModuleBindings:  store.ModuleBindings(),
 		RefinementStore: effectStoreFrom(store),
 	}
+	paramHintSigs := paramhints.BuildParamHintSigView(store, graph, parent, r.stdlib)
+	synthSig := r.resolveSynthesizedSignature(env, store, graph, fn, parent, paramHintSigs)
+
+	// Canonical local function types for this graph (stable snapshot).
+	siblingTypes := store.GetLocalFuncTypesSnapshot(graph, parent)
+	// Return summaries include captured field assignments (stable snapshot).
+	returnSummaries := store.GetReturnSummariesSnapshot(graph, parent)
+	var narrowReturnSummaries map[cfg.SymbolID][]typ.Type
+	withPhase(api.PhaseNarrowing, func() {
+		narrowReturnSummaries = store.GetNarrowReturnSummariesSnapshot(graph, parent)
+	})
 
 	// Phase A: Resolve type annotations.
 	resolveOut := phase.RunResolve(phase.ResolveInput{

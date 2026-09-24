@@ -35,16 +35,12 @@ func RunExtract(input FlowExtractInput) FlowExtractOutput {
 		WithReturnSummaries(input.ReturnSummaries).
 		BuildDeclared()
 
-	engine := synth.New(synth.Config{
-		Ctx:            input.Ctx,
-		Types:          input.Types,
-		Scopes:         input.Scope.Scopes,
-		Manifests:      input.Manifests,
-		Env:            extractionCtx,
-		Phase:          api.PhaseScopeCompute,
-		ModuleBindings: input.ModuleBindings,
-		ModuleAliases:  moduleAliases,
-	})
+	env := input.PhaseEnv
+	env.Scopes = input.Scope.Scopes
+	env.Env = extractionCtx
+	env.Phase = api.PhaseScopeCompute
+	env.ModuleAliases = moduleAliases
+	engine := synth.New(env)
 
 	fc := &core.FlowContext{
 		Graph:    input.Graph,
@@ -95,16 +91,11 @@ func RunLiteral(input LiteralInput) LiteralOutput {
 		WithReturnSummaries(input.ReturnSummaries).
 		BuildDeclared()
 
-	engine := synth.New(synth.Config{
-		Ctx:            input.Ctx,
-		Types:          input.Types,
-		Scopes:         input.Scope.Scopes,
-		Manifests:      input.Manifests,
-		Env:            initialCtx,
-		Phase:          api.PhaseScopeCompute,
-		ModuleBindings: input.ModuleBindings,
-		ModuleAliases:  input.ModuleAliases,
-	})
+	env := input.PhaseEnv
+	env.Scopes = input.Scope.Scopes
+	env.Env = initialCtx
+	env.Phase = api.PhaseScopeCompute
+	engine := synth.New(env)
 
 	fnLiteralTypes := synth.FunctionLiteralTypes(input.Graph, func(expr ast.Expr, p cfg.Point) typ.Type {
 		return engine.TypeOf(expr, p)

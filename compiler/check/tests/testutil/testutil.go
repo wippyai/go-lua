@@ -70,7 +70,10 @@ func NewChecker(opts ...Option) *check.Checker {
 	for _, opt := range opts {
 		opt(cfg)
 	}
+	return newChecker(cfg)
+}
 
+func newChecker(cfg *Config) *check.Checker {
 	for path, manifest := range cfg.Manifests {
 		cfg.Database.Connect(path, manifest)
 	}
@@ -218,52 +221,7 @@ func CheckAndExport(source, name string, opts ...Option) *ModuleResult {
 	for _, opt := range opts {
 		opt(cfg)
 	}
-
-	for path, manifest := range cfg.Manifests {
-		cfg.Database.Connect(path, manifest)
-	}
-
-	var stdlibScope *scope.State
-	globalTypes := make(map[string]typ.Type)
-
-	if cfg.Stdlib {
-		stdlibScope = scope.NewWithBuiltins()
-		for sname, t := range stdlib.Library() {
-			globalTypes[sname] = t
-		}
-	}
-
-	for _, manifest := range cfg.Manifests {
-		if stdlibScope == nil {
-			stdlibScope = scope.New()
-		}
-		if manifest.Export != nil {
-			globalTypes[manifest.Path] = manifest.Export
-		}
-		for tname, t := range manifest.Types {
-			stdlibScope = stdlibScope.WithType(tname, t)
-		}
-		for name, t := range manifest.AllGlobals() {
-			globalTypes[name] = t
-		}
-	}
-
-	var engine *core.Engine
-	if cfg.Stdlib {
-		engine = core.NewEngineWithStdlib(stdlib.EngineConfig())
-	} else {
-		engine = core.NewEngine()
-	}
-
-	checker := check.NewChecker(cfg.Database, check.Deps{
-		Types:       engine,
-		Stdlib:      stdlibScope,
-		GlobalTypes: globalTypes,
-		Resolver: &core.FuncResolver{
-			FieldFunc: core.Field,
-			IndexFunc: core.Index,
-		},
-	}, hooks.All()...)
+	checker := newChecker(cfg)
 
 	sess := checker.Check(source, name+".lua")
 	manifest := sess.ExportManifest(name)
