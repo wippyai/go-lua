@@ -201,6 +201,8 @@ func CollectNestedFieldWrites(
 }
 
 // dynamicKeyType returns the type of the dynamic key of an index write at p.
+// A key whose type is not known stays unknown: it carries no evidence about
+// the key domain of the written table.
 func dynamicKeyType(key ast.Expr, p cfg.Point, synth func(ast.Expr, cfg.Point) typ.Type) typ.Type {
 	var keyType typ.Type
 	switch k := key.(type) {
@@ -211,8 +213,8 @@ func dynamicKeyType(key ast.Expr, p cfg.Point, synth func(ast.Expr, cfg.Point) t
 			keyType = synth(k, p)
 		}
 	}
-	if keyType == nil || keyType.Kind().IsPlaceholder() {
-		return typ.String
+	if keyType == nil {
+		return typ.Unknown
 	}
 	return keyType
 }
