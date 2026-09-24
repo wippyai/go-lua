@@ -98,17 +98,24 @@ func extractTableFields(mode subtype.Assignability, table *ast.TableExpr, expect
 				return nil, nil, recordOnly, true
 			}
 			name = k.Value
-		case *ast.NumberExpr:
-			_ = k
-			elemExpected := ops.ExpectedTableElementType(expected, len(arrayElems))
-			elemType := synth.SynthWithExpected(field.Value, p, elemExpected)
-			arrayElems = append(arrayElems, elemType)
-			continue
 		default:
 			if recordOnly {
 				return nil, nil, recordOnly, true
 			}
-			return nil, nil, recordOnly, true
+			keyType := synth.TypeOf(field.Key, p)
+			if keyType == nil {
+				keyType = typ.Unknown
+			}
+			var valueExpected typ.Type
+			if m, ok := unwrap.Alias(expected).(*typ.Map); ok {
+				valueExpected = m.Value
+			}
+			valueType := synth.SynthWithExpected(field.Value, p, valueExpected)
+			if valueType == nil {
+				valueType = typ.Unknown
+			}
+			fields = append(fields, ops.FieldDef{KeyType: keyType, Type: valueType})
+			continue
 		}
 
 		expectedFieldType := resolveExpectedFieldType(expected, expectedFields, name)

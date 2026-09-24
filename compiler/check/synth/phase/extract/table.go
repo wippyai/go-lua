@@ -61,6 +61,7 @@ func (s *Synthesizer) SynthTableWithExpected(ex *ast.TableExpr, sc *scope.State,
 	var arrayElements []typ.Type
 	hasVararg := false
 	fieldCount := 0
+	hasComputed := false
 
 	for _, field := range ex.Fields {
 		if field.Key == nil {
@@ -101,13 +102,21 @@ func (s *Synthesizer) SynthTableWithExpected(ex *ast.TableExpr, sc *scope.State,
 				builder.Field(k.Value, ft)
 			}
 			fieldCount++
-		case *ast.NumberExpr:
-			elemExpected := ops.ExpectedTableElementType(expected, len(arrayElements))
-			elemType := s.synthFieldValueWithExpected(field.Value, sc, recurse, elemExpected, selfType)
-			if elemType == nil {
-				elemType = typ.Unknown
+		default:
+			keyType := recurse(field.Key)
+			if keyType == nil {
+				keyType = typ.Unknown
 			}
-			arrayElements = append(arrayElements, elemType)
+			var valueExpected typ.Type
+			if m, ok := unwrap.Alias(expected).(*typ.Map); ok {
+				valueExpected = m.Value
+			}
+			valueType := s.synthFieldValueWithExpected(field.Value, sc, recurse, valueExpected, selfType)
+			if valueType == nil {
+				valueType = typ.Unknown
+			}
+			fieldDefs = append(fieldDefs, ops.FieldDef{KeyType: keyType, Type: valueType})
+			hasComputed = true
 		}
 	}
 
@@ -126,7 +135,10 @@ func (s *Synthesizer) SynthTableWithExpected(ex *ast.TableExpr, sc *scope.State,
 		return result
 	}
 
-	result := builder.Build()
+	var result typ.Type = builder.Build()
+	if hasComputed {
+		result = ops.CheckTable(querycore.AssignabilityOf(s.deps.Ctx), fieldDefs, arrayElements, nil).Type
+	}
 	if expected != nil && len(ops.CheckTable(querycore.AssignabilityOf(s.deps.Ctx), fieldDefs, arrayElements, expected).Errors) == 0 {
 		return expected
 	}

@@ -17,6 +17,7 @@ import (
 // FieldDef describes a field in a table constructor.
 type FieldDef struct {
 	Name     string
+	KeyType  typ.Type // Non-nil for an explicitly computed key.
 	Type     typ.Type
 	Optional bool
 }
@@ -35,17 +36,28 @@ func tableConstructor(fields []FieldDef, array []typ.Type) typ.Type {
 
 	// Record with named fields
 	rec := typ.NewRecord()
+	var mapKey, mapValue typ.Type
 
 	for _, f := range fields {
 		ft := f.Type
 		if ft == nil {
 			ft = typ.Unknown
 		}
-		if f.Optional {
+		if f.KeyType != nil {
+			if mapKey == nil {
+				mapKey, mapValue = f.KeyType, ft
+			} else {
+				mapKey = typ.NewUnion(mapKey, f.KeyType)
+				mapValue = typ.NewUnion(mapValue, ft)
+			}
+		} else if f.Optional {
 			rec = rec.OptField(f.Name, ft)
 		} else {
 			rec = rec.Field(f.Name, ft)
 		}
+	}
+	if mapKey != nil {
+		rec.MapComponent(mapKey, mapValue)
 	}
 
 	return rec.Build()

@@ -187,31 +187,35 @@ func checkTableAsArray(mode subtype.Assignability, fields []FieldDef, elems []ty
 func checkTableAsMap(mode subtype.Assignability, fields []FieldDef, elems []typ.Type, expected *typ.Map) CheckResult {
 	var errors []CheckError
 
-	// Check named fields (string keys)
-	if expected.Key.Kind() == kind.String {
-		for _, f := range fields {
-			if !mode.Assignable(f.Type, expected.Value) {
-				errors = append(errors, CheckError{
-					Message:  "field value type mismatch",
-					Expected: expected.Value,
-					Got:      f.Type,
-					Field:    f.Name,
-				})
-			}
+	for _, f := range fields {
+		key := f.KeyType
+		if key == nil {
+			key = typ.LiteralString(f.Name)
+		}
+		if !mode.Assignable(key, expected.Key) {
+			errors = append(errors, CheckError{
+				Message: "field key type mismatch", Expected: expected.Key, Got: key, Field: f.Name,
+			})
+		}
+		if !mode.Assignable(f.Type, expected.Value) {
+			errors = append(errors, CheckError{
+				Message: "field value type mismatch", Expected: expected.Value, Got: f.Type, Field: f.Name,
+			})
 		}
 	}
 
 	// Check array elements (integer keys)
-	if expected.Key.Kind() == kind.Integer || expected.Key.Kind() == kind.Number {
-		for i, elem := range elems {
-			if !mode.Assignable(elem, expected.Value) {
-				errors = append(errors, CheckError{
-					Message:  "element type mismatch",
-					Expected: expected.Value,
-					Got:      elem,
-					Field:    string(rune('0' + i + 1)),
-				})
-			}
+	for i, elem := range elems {
+		if !mode.Assignable(typ.Integer, expected.Key) {
+			errors = append(errors, CheckError{
+				Message: "element key type mismatch", Expected: expected.Key, Got: typ.Integer,
+			})
+		}
+		if !mode.Assignable(elem, expected.Value) {
+			errors = append(errors, CheckError{
+				Message: "element type mismatch", Expected: expected.Value, Got: elem,
+				Field: string(rune('0' + i + 1)),
+			})
 		}
 	}
 
