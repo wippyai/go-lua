@@ -38,11 +38,15 @@ import (
 func newConditionExtractor(fc *core.FlowContext, inputs *flow.Inputs, p cfg.Point) *ConditionExtractor {
 	return &ConditionExtractor{
 		P: p, SC: fc.Scopes[p], Inputs: inputs,
-		Synth:           fc.Derived.Synth,
-		SymResolver:     fc.Derived.SymResolver,
-		TypeKeyRes:      fc.Derived.TypeKeyRes,
-		ConstResolver:   predicate.BuildConstResolver(inputs, p),
-		RefinementBySym: fc.Derived.RefinementBySym,
+		Synth:            fc.Derived.Synth,
+		SymResolver:      fc.Derived.SymResolver,
+		TypeKeyRes:       fc.Derived.TypeKeyRes,
+		ConstResolver:    predicate.BuildConstResolver(inputs, p),
+		RefinementBySym:  fc.Derived.RefinementBySym,
+		UnstableSymbols:  fc.Derived.CapturedReassignments,
+		ReceiverRoots:    fc.Derived.ReceiverRoots,
+		NilableRoots:     fc.Derived.NilableRoots,
+		KnownNonNilPaths: fc.Derived.KnownNonNilPaths,
 	}
 }
 
@@ -53,7 +57,7 @@ func ConditionsFunc(fc *core.FlowContext, inputs *flow.Inputs) api.ConditionFrom
 		if fc == nil || fc.Derived == nil || inputs == nil || expr == nil {
 			return constraint.TrueCondition(), constraint.TrueCondition()
 		}
-		bc := newConditionExtractor(fc, inputs, p).ConstraintsFromConditionExpr(expr)
+		bc := newConditionExtractor(fc, inputs, p).conditionsFromEvaluatedExpr(expr)
 		return bc.OnTrue, bc.OnFalse
 	}
 }
@@ -73,6 +77,9 @@ func ExtractEdgeConstraints(fc *core.FlowContext, inputs *flow.Inputs) {
 
 		ce := newConditionExtractor(fc, inputs, p)
 		constraints := ce.ConstraintsFromBranch(info)
+		if info.Condition != nil {
+			constraints = ce.conditionsFromEvaluatedExpr(info.Condition)
+		}
 
 		// For generic for loops, add NotNil and KeyOf constraints for loop variables
 		if node := fc.Graph.CFG().Node(p); node != nil && len(node.LoopLocals) > 0 {

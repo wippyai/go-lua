@@ -171,6 +171,28 @@ func TestPathAffectedByAssignment(t *testing.T) {
 			},
 			want: false,
 		},
+		{
+			name: "string index write affects dot access",
+			path: constraint.Path{Symbol: 100, Segments: []constraint.Segment{
+				{Kind: constraint.SegmentField, Name: "value"},
+			}},
+			assignSym: 100,
+			assignSegs: []constraint.Segment{
+				{Kind: constraint.SegmentIndexString, Name: "value"},
+			},
+			want: true,
+		},
+		{
+			name: "dot write affects string index access",
+			path: constraint.Path{Symbol: 100, Segments: []constraint.Segment{
+				{Kind: constraint.SegmentIndexString, Name: "value"},
+			}},
+			assignSym: 100,
+			assignSegs: []constraint.Segment{
+				{Kind: constraint.SegmentField, Name: "value"},
+			},
+			want: true,
+		},
 	}
 
 	for _, tt := range tests {

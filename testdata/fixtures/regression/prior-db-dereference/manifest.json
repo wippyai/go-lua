@@ -1,0 +1,1 @@
+{"description":"A successful method call proves the same optional SQL receiver is non-nil at later uses.","check":{"errors":1}}

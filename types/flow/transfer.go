@@ -688,6 +688,16 @@ func (s *Solution) mapElementTypeAt(p cfg.Point, src *MapElementSource) typ.Type
 	if src == nil || src.MapPath.IsEmpty() {
 		return nil
 	}
+	// An escaped annotated map can acquire values through another reference.
+	// Its declared element type is the only guaranteed bound in that case.
+	if src.MapPath.Symbol != 0 && len(src.MapPath.Segments) == 0 &&
+		s.inputs.RefinableAnnotatedVars[src.MapPath.Symbol] && !s.inputs.ClosedMapVars[src.MapPath.Symbol] {
+		if declared := s.declaredTypeAtPath(src.MapPath); declared != nil {
+			if value := s.inputs.Decomposer.ValueType(declared); value != nil {
+				return value
+			}
+		}
+	}
 
 	mapType := s.NarrowedTypeAt(p, src.MapPath)
 	if mapType == nil || mapType.Kind().IsPlaceholder() {
@@ -744,6 +754,20 @@ func (s *Solution) mapElementTypeAt(p cfg.Point, src *MapElementSource) typ.Type
 //   - Existing map widens key/value types via union
 //
 // Returns the changed key if widening occurred, empty string otherwise.
+func (s *Solution) rootInitializedOnlyEmpty(sym cfg.SymbolID) bool {
+	count := 0
+	for _, assignment := range s.inputs.Assignments {
+		if assignment.TargetPath.Symbol != sym || len(assignment.TargetPath.Segments) != 0 {
+			continue
+		}
+		if !isEmptyRecordNoMapType(assignment.Type) {
+			return false
+		}
+		count++
+	}
+	return count == 1
+}
+
 func (s *Solution) processIndexerAssignmentReturnKey(p cfg.Point, ia IndexerAssignment) string {
 	if ia.Symbol == 0 {
 		return ""
@@ -805,7 +829,16 @@ func (s *Solution) processIndexerAssignmentReturnKey(p cfg.Point, ia IndexerAssi
 	// Get the current type of the indexed container, which is the value at the
 	// full path (root plus segments), not the root the path hangs off.
 	declared := s.declaredTypeAtPath(iaPath)
-	currentType := preferDeclaredTemplateForWiden(s.writtenTableTypeAt(p, pathKey, iaPath), declared)
+	rawType := s.writtenTableTypeAt(p, pathKey, iaPath)
+	fromEmpty := len(ia.Segments) == 0 && s.inputs.ClosedMapVars[ia.Symbol] && s.rootInitializedOnlyEmpty(ia.Symbol)
+	if rawType == nil && fromEmpty {
+		rawType = s.preAssignmentNarrowedTypeAt(p, iaPath)
+	}
+	currentType := preferDeclaredTemplateForWiden(rawType, declared)
+	if fromEmpty && isEmptyRecordNoMapType(rawType) &&
+		declared != nil && typ.IsSoft(declared, typ.SoftAnnotationPolicy) {
+		currentType = rawType
+	}
 
 	// Compute the widened type
 	newType := typ.WriteInto(currentType, func(t typ.Type) typ.Type {
@@ -826,7 +859,7 @@ func (s *Solution) processIndexerAssignmentReturnKey(p cfg.Point, ia IndexerAssi
 	// A refinable annotation such as {any} lets writes refine the table within
 	// it; a write that would take it outside, as a non-integer key would turn
 	// an array into a map, leaves the annotation standing.
-	if s.inputs.RefinableAnnotatedVars[ia.Symbol] && !subtype.IsSubtype(newType, declared) {
+	if s.inputs.RefinableAnnotatedVars[ia.Symbol] && !fromEmpty && !subtype.IsSubtype(newType, declared) {
 		return ""
 	}
 

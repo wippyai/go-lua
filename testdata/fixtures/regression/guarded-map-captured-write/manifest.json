@@ -1,0 +1,1 @@
+{"description":"A closure capturing a local map can insert a value lacking a common field.","check":{"errors":1}}
