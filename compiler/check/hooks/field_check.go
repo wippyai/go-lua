@@ -687,8 +687,9 @@ func checkIndexAccess(e *ast.AttrGetExpr, p cfg.Point, narrowView api.BaseSynth,
 	if rec := unwrap.Record(objType); rec != nil && !rec.HasMapComponent() && !rec.Open {
 		// Closed records support dynamic string indexing (Lua table semantics).
 		// Non-string keys remain invalid.
-		keyKind := keyType.Kind()
-		allowsStringIndex := keyKind.IsPlaceholder() || subtype.IsSubtype(keyType, typ.String)
+		presentKey := unwrap.Optional(keyType)
+		allowsStringIndex := keyType.Kind().IsPlaceholder() ||
+			presentKey != nil && subtype.IsSubtype(presentKey, typ.String)
 		if !allowsStringIndex {
 			return []diag.Diagnostic{indexError(objType, e, sourceName)}
 		}
@@ -702,6 +703,15 @@ func checkIndexAccess(e *ast.AttrGetExpr, p cfg.Point, narrowView api.BaseSynth,
 	}
 	if ok {
 		return nil
+	}
+	if rec := unwrap.Record(objType); rec != nil && !rec.HasMapComponent() {
+		// A computed string key can miss every field of a closed record.
+		// Lua returns nil for that read; a literal field name is checked by
+		// checkAttrGet above, and consumers still check the resulting value.
+		present := unwrap.Optional(keyType)
+		if present != nil && subtype.IsSubtype(present, typ.String) {
+			return nil
+		}
 	}
 
 	return []diag.Diagnostic{indexError(objType, e, sourceName)}
