@@ -4,6 +4,8 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/internal"
+	"github.com/wippyai/go-lua/types/contract"
+	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
@@ -901,6 +903,60 @@ func mergeLiteralSig(prev, next *typ.Function) *typ.Function {
 	// Literal signatures are constrained to *typ.Function. For incomparable
 	// function shapes, keep the prior stable signature instead of narrowing.
 	return prev
+}
+
+func copyFunctionWithSpec(fn *typ.Function, spec typ.SpecInfo) *typ.Function {
+	b := typ.Func().Effects(fn.Effects).Spec(spec).WithRefinement(fn.Refinement)
+	for _, tp := range fn.TypeParams {
+		b.TypeParam(tp.Name, tp.Constraint)
+	}
+	for _, p := range fn.Params {
+		if p.Optional {
+			b.OptParam(p.Name, p.Type)
+		} else {
+			b.Param(p.Name, p.Type)
+		}
+	}
+	if fn.Variadic != nil {
+		b.Variadic(fn.Variadic)
+	}
+	b.Returns(fn.Returns...)
+	return b.Build()
+}
+
+// JoinProvedEffects carries effects proved for one body onto an existing
+// callable signature without replacing its parameter or return estimates.
+func JoinProvedEffects(base, proved *typ.Function) *typ.Function {
+	if base == nil {
+		return proved
+	}
+	if proved == nil {
+		return base
+	}
+	provedSpec := contract.ExtractSpec(proved)
+	if provedSpec == nil || len(provedSpec.Effects.Labels) == 0 {
+		return base
+	}
+	var relations effect.Row
+	for _, label := range provedSpec.Effects.Labels {
+		switch label.(type) {
+		case effect.ErrorReturn, effect.CorrelatedReturn:
+			relations = relations.With(label)
+		}
+	}
+	if len(relations.Labels) == 0 {
+		return base
+	}
+	baseSpec := contract.ExtractSpec(base)
+	var joined contract.Spec
+	if baseSpec != nil {
+		joined = *baseSpec
+	}
+	joined.Effects = effect.Union(joined.Effects, relations)
+	if baseSpec != nil && baseSpec.Effects.Equals(joined.Effects) {
+		return base
+	}
+	return copyFunctionWithSpec(base, &joined)
 }
 
 // WidenCapturedTypes merges two captured type maps using monotone join.

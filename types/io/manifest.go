@@ -587,10 +587,15 @@ func ApplyFunctionSummary(fn *typ.Function, summary *FunctionSummary) *typ.Funct
 		builder.Effects(fn.Effects)
 	}
 
-	// Build spec from summary constraints, fall back to fn's spec
+	// Add summary constraints to the function's existing spec. Return effects
+	// proved from the body remain valid when a summary adds OnReturn facts.
 	if summary.Requires.HasConstraints() || summary.Ensures.HasConstraints() ||
 		len(summary.ExprRequires) > 0 || len(summary.ExprEnsures) > 0 {
 		spec := contract.NewSpec()
+		if existing := contract.ExtractSpec(fn); existing != nil {
+			clone := *existing
+			spec = &clone
+		}
 		spec.Requires = constraint.And(spec.Requires, summary.Requires)
 		spec.Ensures = constraint.And(spec.Ensures, summary.Ensures)
 

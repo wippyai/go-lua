@@ -920,6 +920,10 @@ func mergeFunctionFactsByShape(existing, candidate *typ.Function, alternatives b
 			} else {
 				merged.Effects = effect.Intersect(existingSpec.Effects, candidateSpec.Effects)
 			}
+		} else if existingSpec != nil && candidateSpec != nil {
+			// Repeated estimates describe one body. A round that cannot yet
+			// prove a return relation does not refute an earlier complete proof.
+			merged.Effects = effect.Union(existingSpec.Effects, candidateSpec.Effects)
 		}
 		builder = builder.Spec(&merged)
 	}

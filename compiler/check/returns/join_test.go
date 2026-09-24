@@ -28,6 +28,11 @@ func TestMergeFunctionFactType_OnlyKeepsGuaranteedReturnEffects(t *testing.T) {
 	if spec := contract.ExtractSpec(updated); spec == nil || spec.Effects.GetErrorReturn(0) == nil {
 		t.Fatalf("a later proof for the same function was lost: %v", updated)
 	}
+	incompleteEstimate := typ.Func().Returns(returns...).Spec(contract.NewSpec()).Build()
+	retained := MergeFunctionFactType(withRelation, incompleteEstimate)
+	if spec := contract.ExtractSpec(retained); spec == nil || spec.Effects.GetErrorReturn(0) == nil {
+		t.Fatalf("a proved relation was lost to an incomplete later estimate: %v", retained)
+	}
 }
 
 func TestJoinReturnVectors_Empty(t *testing.T) {

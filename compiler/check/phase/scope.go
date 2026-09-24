@@ -190,7 +190,17 @@ func RunScope(input ScopeInput) ScopeOutput {
 	exprSynth := func(expr ast.Expr, p cfg.Point, sc *scope.State) typ.Type {
 		return typeResolutionEngine.SynthExprAt(expr, p, sc)
 	}
-	fnSignatureResolver := buildFnSignatureResolver(input.FunctionLiteralSignatures, typeResolutionEngine)
+	annotationResolver := buildFnSignatureResolver(input.FunctionLiteralSignatures, typeResolutionEngine)
+	fnSignatureResolver := FunctionSignatureResolverFunc(func(fn *ast.FunctionExpr, sc *scope.State) *typ.Function {
+		base := annotationResolver.ResolveFunctionSignature(fn, sc)
+		if fn == nil || input.Graph == nil || input.Graph.Bindings() == nil {
+			return base
+		}
+		if sym, ok := input.Graph.Bindings().FuncLitSymbol(fn); ok {
+			return returns.JoinProvedEffects(base, unwrap.Function(input.SiblingTypes[sym]))
+		}
+		return base
+	})
 
 	callMutator := buildCallMutator(input.Types, input.Ctx, exprSynth)
 	services := ScopeServicesFuncs{
