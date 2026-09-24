@@ -37,6 +37,10 @@ func (s *Synthesizer) SynthTableCore(ex *ast.TableExpr, sc *scope.State, recurse
 // Empty tables return an open record (can have any additional fields assigned).
 func (s *Synthesizer) SynthTableWithExpected(ex *ast.TableExpr, sc *scope.State, recurse ExprSynth, expected typ.Type) typ.Type {
 	if len(ex.Fields) == 0 {
+		if expected != nil && !unwrap.Alias(expected).Kind().IsPlaceholder() &&
+			len(ops.CheckTable(querycore.AssignabilityOf(s.deps.Ctx), nil, nil, expected).Errors) == 0 {
+			return expected
+		}
 		return typ.NewRecord().SetOpen(true).Build()
 	}
 

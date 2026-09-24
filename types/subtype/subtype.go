@@ -868,6 +868,32 @@ func (c *checker) canWidenTo(narrow, wide typ.Type, depth int) bool {
 		if supRec, ok := wide.(*typ.Record); ok {
 			return c.canWidenRecordTo(subRec, supRec, depth+1)
 		}
+		if tableMap, ok := wide.(*typ.Map); ok && !subRec.Open &&
+			c.check(subRec, tableMap, depth+1) {
+			return true
+		}
+		// An empty table literal is represented by an open record until it
+		// receives writes. It can initialize an unknown-valued collection:
+		// there are no current elements to violate the contextual shape.
+		if len(subRec.Fields) == 0 && !subRec.HasMapComponent() {
+			if array, ok := wide.(*typ.Array); ok && typ.IsUnknown(array.Element) {
+				return true
+			}
+			if tableMap, ok := wide.(*typ.Map); ok && typ.IsUnknown(tableMap.Value) {
+				return true
+			}
+		}
+	}
+	if subTuple, ok := narrow.(*typ.Tuple); ok {
+		if _, ok := wide.(*typ.Array); ok {
+			return c.check(subTuple, wide, depth+1)
+		}
+	}
+	if subArray, ok := narrow.(*typ.Array); ok {
+		if supArray, ok := wide.(*typ.Array); ok {
+			return c.check(subArray.Element, supArray.Element, depth+1) ||
+				c.canWidenTo(subArray.Element, supArray.Element, depth+1)
+		}
 	}
 
 	// Tuples: allow element-wise widening for fresh tuple literals.
