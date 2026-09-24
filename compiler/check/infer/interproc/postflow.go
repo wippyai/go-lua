@@ -75,14 +75,10 @@ func StoreFactsFromResult(
 	summaryFromSnapshot := returnSummarySnapshotForSymbol(store, result, parent, fnSym)
 
 	writer.updateParentFactsForSymbol(fnSym, func(facts *api.Facts) {
-		candidateFunc := fnType
-		if hinted := paramhints.MergeIntoSignature(fn, facts.ParamHints[fnSym], unwrap.Function(candidateFunc)); hinted != nil {
-			candidateFunc = hinted
-		}
 		returns.MergeFunctionFactIntoFacts(facts, fnSym, returns.FunctionFactCandidate{
 			Summary: summaryFromSnapshot,
 			Narrow:  narrowReturns,
-			Func:    candidateFunc,
+			Func:    fnType,
 		})
 	})
 }
@@ -180,7 +176,39 @@ func narrowFunctionTypeFromResult(result *api.FuncResult, fn *ast.FunctionExpr) 
 			}
 		}
 	}
-	return erreffect.AttachInferredErrorReturnSpec(fnType, result.Graph, result.FlowSolution, result.NarrowSynth)
+	return erreffect.AttachInferredErrorReturnSpec(callableParams(fnType, fn), result.Graph, result.FlowSolution, result.NarrowSynth)
+}
+
+// callableParams returns fnType with its unannotated parameters typed unknown.
+// The returns were inferred from the body, which sees unannotated parameters
+// with their call-site hints; the callable type does not, as for any
+// unannotated parameter the synthesizer types (core.ApplyParamList), so hints
+// are never enforced on the call sites they came from.
+func callableParams(fnType *typ.Function, fn *ast.FunctionExpr) *typ.Function {
+	if fnType == nil || fn == nil || fn.ParList == nil {
+		return fnType
+	}
+	offset := len(fnType.Params) - len(fn.ParList.Names)
+	if offset < 0 {
+		return fnType
+	}
+	changed := false
+	params := make([]typ.Param, len(fnType.Params))
+	copy(params, fnType.Params)
+	for i := range fn.ParList.Names {
+		if i < len(fn.ParList.Types) && fn.ParList.Types[i] != nil {
+			continue
+		}
+		p := &params[offset+i]
+		if !typ.IsUnknown(p.Type) {
+			p.Type = typ.Unknown
+			changed = true
+		}
+	}
+	if !changed {
+		return fnType
+	}
+	return fnType.WithParams(params)
 }
 
 func returnSummarySnapshotForSymbol(store Store, result *api.FuncResult, parent *scope.State, sym cfg.SymbolID) []typ.Type {
@@ -301,6 +329,7 @@ func CollectParamHintsFromResult(store Store, result *api.FuncResult, parent *sc
 		bindings = moduleBindings
 	}
 	preAssignTargets := checkcallsite.PreAssignmentTargetsByCall(graph)
+	unhintedParams := unhintedOwnParams(store, graph, parent)
 	hasFunctionRef := func(sym cfg.SymbolID) bool {
 		return sym != 0 && store.FunctionRefBySym(sym) != nil
 	}
@@ -310,6 +339,7 @@ func CollectParamHintsFromResult(store Store, result *api.FuncResult, parent *sc
 		}
 		callTargets := preAssignTargets[info]
 		argTypes := make([]typ.Type, len(info.Args))
+		uninformative := make([]bool, len(info.Args))
 		for i, arg := range info.Args {
 			if arg == nil {
 				continue
@@ -321,6 +351,13 @@ func CollectParamHintsFromResult(store Store, result *api.FuncResult, parent *sc
 			}
 			if argSym == 0 && bindings != nil {
 				argSym = checkcallsite.SymbolFromExpr(arg, bindings)
+			}
+			if unhintedParams[argSym] && typ.IsAny(argType) {
+				// An unannotated parameter no call site has typed yet reads as
+				// its any default, which says nothing about the values that
+				// flow in; passing it on contributes no hint.
+				uninformative[i] = true
+				continue
 			}
 			preType := checkcallsite.PreAssignmentTypeAtJoin(graph, p, argSym, func(point cfg.Point, id cfg.SymbolID) (typ.Type, bool) {
 				tv := result.EffectiveTypeAt(point, id)
@@ -355,7 +392,7 @@ func CollectParamHintsFromResult(store Store, result *api.FuncResult, parent *sc
 			copy(updated, argTypes)
 			changed := false
 			for i, arg := range info.Args {
-				if arg == nil {
+				if arg == nil || uninformative[i] {
 					continue
 				}
 				expected := infer.ExpectedArgType(i)
@@ -423,6 +460,9 @@ func CollectParamHintsFromResult(store Store, result *api.FuncResult, parent *sc
 					}
 				}
 
+				if uninformative[i] {
+					continue
+				}
 				argType := argTypes[i]
 				if argType == nil {
 					argType = result.NarrowSynth.TypeOf(arg, p)
@@ -450,6 +490,34 @@ func CollectParamHintsFromResult(store Store, result *api.FuncResult, parent *sc
 			collectCallHints(p, nestedInfo)
 		}
 	})
+}
+
+// unhintedOwnParams returns the unannotated parameters of graph's function
+// that have no call-site hint in the current snapshot.
+func unhintedOwnParams(store Store, graph *cfg.Graph, parent *scope.State) map[cfg.SymbolID]bool {
+	fn := graph.Func()
+	if fn == nil {
+		return nil
+	}
+	var hints []typ.Type
+	if view := paramhints.BuildParamHintSigView(store, graph, parent, nil); view != nil {
+		hints = view[fn]
+	}
+	out := make(map[cfg.SymbolID]bool)
+	for _, slot := range graph.ParamSlotsReadOnly() {
+		if slot.Symbol == 0 || slot.TypeAnnotation != nil {
+			continue
+		}
+		idx, ok := slot.SourceParamIndex()
+		if !ok {
+			continue
+		}
+		if idx < len(hints) && hints[idx] != nil {
+			continue
+		}
+		out[slot.Symbol] = true
+	}
+	return out
 }
 
 func synthCallInfoFromExpr(ex *ast.FuncCallExpr, bindings *bind.BindingTable) *cfg.CallInfo {

@@ -118,6 +118,11 @@ func (b *FunctionBuilder) Build() *Function {
 	)
 }
 
+// WithParams returns f with its parameters replaced and everything else kept.
+func (f *Function) WithParams(params []Param) *Function {
+	return buildFunctionType(f.TypeParams, params, f.Variadic, f.Returns, f.Effects, f.Spec, f.Refinement)
+}
+
 func (f *Function) Kind() kind.Kind { return kind.Function }
 
 func (f *Function) String() string {

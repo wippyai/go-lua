@@ -42,7 +42,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
-	"github.com/wippyai/go-lua/compiler/check/infer/paramhints"
 	"github.com/wippyai/go-lua/compiler/check/modules"
 	"github.com/wippyai/go-lua/compiler/check/phase"
 	"github.com/wippyai/go-lua/compiler/check/returns"
@@ -269,11 +268,6 @@ func (i *Inferencer) buildLocalFuncTypes(
 		fnType := unwrap.Function(seed)
 		if fnType == nil {
 			continue
-		}
-		if len(info.ParamHints) > 0 {
-			if merged := paramhints.MergeIntoSignature(info.Fn, info.ParamHints, fnType); merged != nil {
-				fnType = merged
-			}
 		}
 		if summary := summaries[sym]; len(summary) > 0 {
 			if withSummary := returns.WithSummaryOrUnknown(fnType, summary); withSummary != nil {

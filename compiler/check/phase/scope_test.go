@@ -243,7 +243,7 @@ func TestBuildFnSignatureResolver_UsesLiteralSigs(t *testing.T) {
 
 	// Create resolver with literal sigs but nil engine - if literal sigs work,
 	// the engine won't be called and nil deref won't happen
-	resolver := buildFnSignatureResolver(literalSigs, nil, nil)
+	resolver := buildFnSignatureResolver(literalSigs, nil)
 	result := resolver.ResolveFunctionSignature(fn, nil)
 
 	if result == nil {

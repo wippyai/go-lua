@@ -12,8 +12,11 @@ import (
 
 type HintJoinFn func(prev, next typ.Type) typ.Type
 
-// MergeIntoSignature replaces unannotated parameter slots (and refinable
-// top-like annotations) with call-site hints.
+// MergeIntoSignature types the unannotated parameters of a function body with
+// the call-site hints for them. The result is the signature the body is
+// analyzed with; it is never the function's callable type, so hints are not
+// enforced on the call sites they came from. Annotated parameters keep their
+// annotation: it is the contract.
 func MergeIntoSignature(fn *ast.FunctionExpr, hints []typ.Type, sig *typ.Function) *typ.Function {
 	if sig == nil || fn == nil || fn.ParList == nil {
 		return sig
@@ -23,12 +26,10 @@ func MergeIntoSignature(fn *ast.FunctionExpr, hints []typ.Type, sig *typ.Functio
 		if i >= len(hints) || hints[i] == nil {
 			continue
 		}
-		if i < len(fn.ParList.Types) && fn.ParList.Types[i] != nil {
-			if !typ.IsRefinableAnnotation(p.Type) {
-				continue
-			}
+		if paramAnnotated(fn, i) && !typ.IsRefinableAnnotation(p.Type) {
+			continue
 		}
-		if !typ.TypeEquals(p.Type, hints[i]) {
+		if !typ.TypeEquals(p.Type, BodyParamType(hints[i])) {
 			modified = true
 		}
 	}
@@ -39,11 +40,8 @@ func MergeIntoSignature(fn *ast.FunctionExpr, hints []typ.Type, sig *typ.Functio
 	builder := typ.Func()
 	for i, p := range sig.Params {
 		paramType := p.Type
-		if i < len(hints) && hints[i] != nil {
-			annotated := i < len(fn.ParList.Types) && fn.ParList.Types[i] != nil
-			if !annotated || typ.IsRefinableAnnotation(paramType) {
-				paramType = hints[i]
-			}
+		if i < len(hints) && hints[i] != nil && (!paramAnnotated(fn, i) || typ.IsRefinableAnnotation(paramType)) {
+			paramType = BodyParamType(hints[i])
 		}
 		if p.Optional {
 			builder = builder.OptParam(p.Name, paramType)
@@ -67,6 +65,20 @@ func MergeIntoSignature(fn *ast.FunctionExpr, hints []typ.Type, sig *typ.Functio
 		builder = builder.WithRefinement(sig.Refinement)
 	}
 	return builder.Build()
+}
+
+func paramAnnotated(fn *ast.FunctionExpr, i int) bool {
+	return i < len(fn.ParList.Types) && fn.ParList.Types[i] != nil
+}
+
+// BodyParamType is the type a body sees for a parameter hint. A hint joined
+// only from nil arguments says the parameter may be nil but nothing about its
+// other values, so the body sees it as unknown.
+func BodyParamType(hint typ.Type) typ.Type {
+	if hint != nil && hint.Kind() == kind.Nil {
+		return typ.Unknown
+	}
+	return hint
 }
 
 func WidenParamHintType(t typ.Type) typ.Type {
@@ -186,10 +198,15 @@ func MergeHintAt(hints []typ.Type, idx int, hint typ.Type, join HintJoinFn) ([]t
 	return hints, true
 }
 
-// MergeCallArgHintAt merges a call-argument observation into a parameter hint
-// slot. Unlike MergeHintAt, unresolved/top-like argument observations are
-// preserved as uncertainty evidence so later literal calls cannot over-specialize
-// unannotated parameters.
+// MergeCallArgHintAt joins the type of one call-site argument into the hint
+// for that parameter. The hint is the join over every call site of the
+// function in this iteration, so it admits every value that flows in:
+//   - an any argument makes the hint any; an unknown argument is unresolved
+//     and yields to the other call sites;
+//   - a nil argument makes the hint optional, and a hint joined only from nil
+//     arguments stays nil (BodyParamType reads it as unknown);
+//   - table arguments join as open records, fields present on only some call
+//     sites becoming optional, so an empty table widens rather than vanishes.
 func MergeCallArgHintAt(hints []typ.Type, idx int, argType typ.Type, join HintJoinFn, unknownOnNil bool) ([]typ.Type, bool) {
 	if idx < 0 {
 		return hints, false
@@ -208,41 +225,57 @@ func MergeCallArgHintAt(hints []typ.Type, idx int, argType typ.Type, join HintJo
 		joinFn = typ.JoinPreferNonSoft
 	}
 
-	prev := NormalizeHintType(hints[idx])
-	if prev == nil {
-		prev = hints[idx]
-	}
-
-	mergeTopAware := func(a, b typ.Type) typ.Type {
-		if a == nil {
-			return b
-		}
-		if b == nil {
-			return a
-		}
-		if typ.IsAny(a) || typ.IsAny(b) {
-			return typ.Any
-		}
-		if typ.IsUnknown(a) {
-			return b
-		}
-		if typ.IsUnknown(b) {
-			return a
-		}
-		return joinFn(a, b)
-	}
-
-	topLikeArg := typ.IsAny(argType) || typ.IsUnknown(argType)
-	if !topLikeArg && !IsInformativeHintType(argType) {
-		return hints, false
-	}
-
-	merged := mergeTopAware(prev, argType)
+	merged := joinCallArgHints(hints[idx], argType, joinFn)
 	if typ.TypeEquals(hints[idx], merged) {
 		return hints, false
 	}
 	hints[idx] = merged
 	return hints, true
+}
+
+func joinCallArgHints(prev, arg typ.Type, joinFn HintJoinFn) typ.Type {
+	if prev == nil {
+		return arg
+	}
+	if typ.IsAny(prev) || typ.IsAny(arg) {
+		return typ.Any
+	}
+	// An unknown argument is most often an unresolved one: in early iterations
+	// a parameter without hints yet reaches its own recursive calls, and its
+	// callers' values, as unknown. It carries no information about the values
+	// that flow in, so it yields to a resolved hint rather than erasing it.
+	if typ.IsUnknown(prev) {
+		return arg
+	}
+	if typ.IsUnknown(arg) {
+		return prev
+	}
+	prevNil, argNil := prev.Kind() == kind.Nil, arg.Kind() == kind.Nil
+	switch {
+	case prevNil && argNil:
+		return typ.Nil
+	case prevNil:
+		return typ.NewOptional(arg)
+	case argNil:
+		return typ.NewOptional(prev)
+	}
+	prevInner, prevOptional := unwrapOptionalHint(prev)
+	argInner, argOptional := unwrapOptionalHint(arg)
+	joined, ok := typ.JoinCompatibleRecords(prevInner, argInner)
+	if !ok {
+		joined = joinFn(prevInner, argInner)
+	}
+	if prevOptional || argOptional {
+		return typ.NewOptional(joined)
+	}
+	return joined
+}
+
+func unwrapOptionalHint(t typ.Type) (typ.Type, bool) {
+	if opt, ok := t.(*typ.Optional); ok && opt.Inner != nil {
+		return opt.Inner, true
+	}
+	return t, false
 }
 
 // IsInformativeHintType reports whether a type carries useful call-site

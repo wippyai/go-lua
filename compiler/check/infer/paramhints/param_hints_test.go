@@ -3,6 +3,7 @@ package paramhints
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -186,4 +187,41 @@ func TestMergeHintAt(t *testing.T) {
 			t.Fatalf("expected normalized string hint, got %v", got[0])
 		}
 	})
+}
+
+func TestMergeCallArgHintAt_JoinsEveryCallSite(t *testing.T) {
+	join := func(args ...typ.Type) typ.Type {
+		var hints []typ.Type
+		for _, a := range args {
+			hints, _ = MergeCallArgHintAt(hints, 0, a, typ.JoinPreferNonSoft, true)
+		}
+		return hints[0]
+	}
+
+	if got := join(typ.String, typ.Any); !typ.IsAny(got) {
+		t.Fatalf("an any argument must make the hint any, got %s", got)
+	}
+	if got := join(typ.Unknown, typ.String); !typ.TypeEquals(got, typ.String) {
+		t.Fatalf("an unresolved argument must yield to a resolved one, got %s", got)
+	}
+	if got := join(typ.String, typ.Nil); !typ.TypeEquals(got, typ.NewOptional(typ.String)) {
+		t.Fatalf("a nil argument must make the hint optional, got %s", got)
+	}
+	if got := join(typ.Nil, typ.Nil); got.Kind() != kind.Nil {
+		t.Fatalf("a hint joined from nil arguments only stays nil, got %s", got)
+	}
+	if got := BodyParamType(join(typ.Nil)); !typ.IsUnknown(got) {
+		t.Fatalf("the body must read a nil-only hint as unknown, got %s", got)
+	}
+
+	withRetry := typ.NewRecord().Field("retry", typ.NewRecord().Field("attempts", typ.Integer).Build()).Build()
+	empty := typ.NewRecord().Build()
+	got := join(withRetry, empty)
+	rec, ok := got.(*typ.Record)
+	if !ok {
+		t.Fatalf("table arguments must join into a record, got %s", got)
+	}
+	if f := rec.GetField("retry"); f == nil || !f.Optional {
+		t.Fatalf("a field missing on one call site must become optional, got %s", got)
+	}
 }

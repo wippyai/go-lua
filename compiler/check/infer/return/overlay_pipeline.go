@@ -8,6 +8,7 @@ import (
 	fbcore "github.com/wippyai/go-lua/compiler/check/flowbuild/core"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/mutator"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/resolve"
+	"github.com/wippyai/go-lua/compiler/check/infer/paramhints"
 	"github.com/wippyai/go-lua/compiler/check/phase"
 	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/compiler/check/scope"
@@ -46,7 +47,7 @@ func (i *Inferencer) buildParameterOverlay(ctx *returnInferenceContext) map[cfg.
 		}
 		if typ.IsAbsentOrUnknown(paramType) {
 			if ctx.info.ParamHints != nil && i < len(ctx.info.ParamHints) && ctx.info.ParamHints[i] != nil {
-				paramType = ctx.info.ParamHints[i]
+				paramType = paramhints.BodyParamType(ctx.info.ParamHints[i])
 			}
 		}
 		if slot.TypeAnnotation != nil {

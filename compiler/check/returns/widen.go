@@ -456,6 +456,9 @@ func joinIterationFactAt(a, b typ.Type, invariant bool) typ.Type {
 	if softB && !softA {
 		return a
 	}
+	if joined, ok := joinIterationFunctions(a, b); ok {
+		return joined
+	}
 	if joined, ok := joinIterationRecords(a, b); ok {
 		return joined
 	}
@@ -475,6 +478,44 @@ func joinIterationFactAt(a, b typ.Type, invariant bool) typ.Type {
 		return b
 	}
 	return typ.JoinPreferNonSoft(a, b)
+}
+
+// joinIterationFunctions joins two function facts with the same parameter
+// shape return by return with joinIterationFact, so a return that was
+// unresolved in an earlier iteration yields to its resolved type. The
+// parameters are those of the current fact.
+func joinIterationFunctions(a, b typ.Type) (typ.Type, bool) {
+	af, ok := a.(*typ.Function)
+	if !ok {
+		return nil, false
+	}
+	bf, ok := b.(*typ.Function)
+	if !ok {
+		return nil, false
+	}
+	if len(af.Params) != len(bf.Params) ||
+		(af.Variadic == nil) != (bf.Variadic == nil) || len(af.TypeParams) != len(bf.TypeParams) {
+		return nil, false
+	}
+	// A return slot one fact lacks is unresolved there and yields to the other.
+	n := max(len(af.Returns), len(bf.Returns))
+	returns := make([]typ.Type, n)
+	sameAsB := len(bf.Returns) == n
+	for i := range n {
+		var ar, br typ.Type
+		if i < len(af.Returns) {
+			ar = af.Returns[i]
+		}
+		if i < len(bf.Returns) {
+			br = bf.Returns[i]
+		}
+		returns[i] = joinIterationFact(ar, br)
+		sameAsB = sameAsB && returns[i] == br
+	}
+	if sameAsB {
+		return b, true
+	}
+	return typjoin.WithReturns(bf, returns), true
 }
 
 // joinIterationRecords joins two record hints field by field with
