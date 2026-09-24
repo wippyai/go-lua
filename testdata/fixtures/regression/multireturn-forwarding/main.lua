@@ -25,4 +25,13 @@ local function handler(args: any): string
     return reply(reader.tree_page(eid, { parent_id = (args :: any).parent_id, cursor = (args :: any).cursor, limit = (args :: any).limit }))
 end
 
+-- Values a trailing call yields beyond the callee's parameters are dropped.
+local function decode(s: string): string
+    return s
+end
+local function body(): (string, string?)
+    return "{}", nil
+end
+local decoded: string = decode(body())
+
 return { handler = handler }

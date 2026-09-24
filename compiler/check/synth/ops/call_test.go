@@ -682,6 +682,7 @@ func TestCallFunction_MethodOnLiteralReceiverConsumesSelf(t *testing.T) {
 		nil,
 		fn,
 		[]typ.Type{typ.Integer, typ.Integer},
+		0,
 		typ.LiteralString("abc"),
 		true,
 		false,
@@ -703,7 +704,7 @@ func TestCallFunction_UnknownParamStillRequired(t *testing.T) {
 		Build()
 
 	ctx := db.NewQueryContext(db.New())
-	result := callFunction(ctx, nil, fn, nil, nil, false, false, nil)
+	result := callFunction(ctx, nil, fn, nil, 0, nil, false, false, nil)
 
 	if len(result.Errors) == 0 {
 		t.Fatal("expected arity error for missing required unknown param")
@@ -718,7 +719,7 @@ func TestCallFunction_RequiredAfterOptionalStillRequiresPosition(t *testing.T) {
 		Build()
 
 	ctx := db.NewQueryContext(db.New())
-	result := callFunction(ctx, nil, fn, []typ.Type{typ.Number}, nil, false, false, nil)
+	result := callFunction(ctx, nil, fn, []typ.Type{typ.Number}, 0, nil, false, false, nil)
 
 	if len(result.Errors) == 0 {
 		t.Fatal("expected arity error when required param appears after optional")
@@ -737,6 +738,7 @@ func TestCallFunction_MethodAlwaysConsumesReceiver(t *testing.T) {
 		nil,
 		fn,
 		[]typ.Type{typ.Number},
+		0,
 		typ.String,
 		true,
 		true,
@@ -754,7 +756,7 @@ func TestCallFunction_ZeroParamAllowsExtraArgs(t *testing.T) {
 		Build()
 
 	ctx := db.NewQueryContext(db.New())
-	result := callFunction(ctx, nil, fn, []typ.Type{typ.Number, typ.String}, nil, false, false, nil)
+	result := callFunction(ctx, nil, fn, []typ.Type{typ.Number, typ.String}, 0, nil, false, false, nil)
 
 	if len(result.Errors) != 0 {
 		t.Fatalf("zero-param function should accept extra args, got: %v", result.Errors)

@@ -168,6 +168,7 @@ func (s *Synthesizer) synthCallCoreWithCaptureTypes(
 	def := ops.CallDef{
 		Callee:         calleeType,
 		Args:           args,
+		ExplicitArgs:   len(ex.Args),
 		TypeArgs:       typeArgs,
 		Query:          s.GetCallQuery(),
 		ExpectedReturn: expected,
@@ -257,6 +258,7 @@ func (s *Synthesizer) synthMethodCallCoreWithExpected(ex *ast.FuncCallExpr, p cf
 		Receiver:            recvType,
 		MethodName:          ex.Method,
 		Args:                args,
+		ExplicitArgs:        len(ex.Args),
 		Query:               s.GetCallQuery(),
 		ExpectedReturn:      expected,
 		ForceMethodReceiver: s.forceMethodReceiverAtPoint(p, ex),
@@ -298,6 +300,7 @@ func (s *Synthesizer) SynthCallWithReceiverType(ex *ast.FuncCallExpr, p cfg.Poin
 		Receiver:            recvType,
 		MethodName:          ex.Method,
 		Args:                args,
+		ExplicitArgs:        len(ex.Args),
 		Query:               s.GetCallQuery(),
 		ForceMethodReceiver: s.forceMethodReceiverAtPoint(p, ex),
 	}

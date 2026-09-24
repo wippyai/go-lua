@@ -107,13 +107,18 @@ const (
 // For generic calls, TypeArgs can provide explicit type arguments.
 // If empty, type arguments are inferred from Args.
 type CallDef struct {
-	Callee     typ.Type     // The function being called
-	Args       []typ.Type   // Argument types
-	TypeArgs   []typ.Type   // Explicit type arguments for generic calls
-	IsMethod   bool         // True if this is a method call (obj:method)
-	Receiver   typ.Type     // Receiver type for method calls
-	MethodName string       // Method name for method calls
-	Query      core.TypeOps // Method/field resolver
+	Callee typ.Type   // The function being called
+	Args   []typ.Type // Argument types
+	// ExplicitArgs is the number of arguments written at the call site. When the
+	// last argument is a call or vararg, Args also holds its expanded values; the
+	// ones no parameter receives are dropped, as Lua drops them. Zero means every
+	// value in Args is written explicitly.
+	ExplicitArgs int
+	TypeArgs     []typ.Type   // Explicit type arguments for generic calls
+	IsMethod     bool         // True if this is a method call (obj:method)
+	Receiver     typ.Type     // Receiver type for method calls
+	MethodName   string       // Method name for method calls
+	Query        core.TypeOps // Method/field resolver
 	// ForceMethodReceiver consumes receiver as first runtime argument even when
 	// function shape alone does not imply explicit self.
 	ForceMethodReceiver bool
@@ -299,7 +304,7 @@ func inferAndCall(ctx *db.QueryContext, fn *typ.Function, def CallDef, isMethod 
 
 	instantiated := InstantiateFunction(fn, typeArgs)
 
-	return callFunction(ctx, def.Query, instantiated, def.Args, receiver, isMethod, def.ForceMethodReceiver, errors)
+	return callFunction(ctx, def.Query, instantiated, def.Args, def.ExplicitArgs, receiver, isMethod, def.ForceMethodReceiver, errors)
 }
 
 // InferCall performs the first phase of call synthesis: callee resolution,
@@ -478,7 +483,7 @@ func inferUnion(ctx *db.QueryContext, u *typ.Union, def CallDef, isMethod bool, 
 		}
 
 		expectedArgs, expectedVariadic := computeExpectedArgs(ctx, def.Query, instantiated, isMethod, receiver, def.ForceMethodReceiver)
-		candidateResult := callFunction(ctx, def.Query, instantiated, def.Args, receiver, isMethod, def.ForceMethodReceiver, nil)
+		candidateResult := callFunction(ctx, def.Query, instantiated, def.Args, def.ExplicitArgs, receiver, isMethod, def.ForceMethodReceiver, nil)
 		if !hasHardErrors(candidateResult.Errors) {
 			candidates = append(candidates, unionCallCandidate{
 				fn:       fn,
@@ -665,7 +670,7 @@ func FinishCall(ctx *db.QueryContext, def CallDef, infer InferResult) CallResult
 		)
 
 	case InferKindIntersection:
-		return callIntersection(ctx, def.Query, infer.Callee.(*typ.Intersection), def.Args, infer.Receiver, infer.IsMethod, infer.ForceMethodReceiver, infer.Errors)
+		return callIntersection(ctx, def.Query, infer.Callee.(*typ.Intersection), def.Args, def.ExplicitArgs, infer.Receiver, infer.IsMethod, infer.ForceMethodReceiver, infer.Errors)
 
 	case InferKindFunction:
 		fn := infer.Instantiated
@@ -675,7 +680,7 @@ func FinishCall(ctx *db.QueryContext, def CallDef, infer InferResult) CallResult
 		if fn == nil {
 			return singleValueCallResult(typ.Unknown, infer.Errors)
 		}
-		return callFunction(ctx, def.Query, fn, def.Args, infer.Receiver, infer.IsMethod, infer.ForceMethodReceiver, infer.Errors)
+		return callFunction(ctx, def.Query, fn, def.Args, def.ExplicitArgs, infer.Receiver, infer.IsMethod, infer.ForceMethodReceiver, infer.Errors)
 	}
 
 	return singleValueCallResult(typ.Unknown, infer.Errors)
@@ -729,7 +734,7 @@ func (r *InferResult) ExpectedArgType(idx int) typ.Type {
 // callIntersection handles calling an intersection type.
 // All function members are called with the same args; if any member fails, the whole call fails.
 // The return type is the intersection of all member return types.
-func callIntersection(ctx *db.QueryContext, query core.TypeOps, inter *typ.Intersection, args []typ.Type, receiver typ.Type, isMethod bool, forceMethodReceiver bool, baseErrors []CallError) CallResult {
+func callIntersection(ctx *db.QueryContext, query core.TypeOps, inter *typ.Intersection, args []typ.Type, explicit int, receiver typ.Type, isMethod bool, forceMethodReceiver bool, baseErrors []CallError) CallResult {
 	var returnTypes []typ.Type
 	var returnVectors [][]typ.Type
 
@@ -748,7 +753,7 @@ func callIntersection(ctx *db.QueryContext, query core.TypeOps, inter *typ.Inter
 		}
 
 		seedErrors := append([]CallError(nil), baseErrors...)
-		result := callFunction(ctx, query, fn, args, receiver, isMethod, forceMethodReceiver, seedErrors)
+		result := callFunction(ctx, query, fn, args, explicit, receiver, isMethod, forceMethodReceiver, seedErrors)
 		if hasHardErrors(result.Errors[len(seedErrors):]) {
 			return result
 		}
@@ -794,7 +799,7 @@ func callUnionWithGenericInference(ctx *db.QueryContext, u *typ.Union, def CallD
 		seedErrors := append([]CallError(nil), baseErrors...)
 		var result CallResult
 		if len(fn.TypeParams) == 0 {
-			result = callFunction(ctx, def.Query, fn, def.Args, receiver, isMethod, forceMethodReceiver, seedErrors)
+			result = callFunction(ctx, def.Query, fn, def.Args, def.ExplicitArgs, receiver, isMethod, forceMethodReceiver, seedErrors)
 		} else {
 			result = inferAndCall(ctx, fn, def, isMethod, receiver, seedErrors)
 		}
@@ -872,19 +877,31 @@ func methodConsumesReceiverSimple(fn *typ.Function, receiver typ.Type, isMethod 
 	return hasExplicitSelfSimple(fn, receiver)
 }
 
-func callFunction(ctx *db.QueryContext, query core.TypeOps, fn *typ.Function, args []typ.Type, receiver typ.Type, isMethod bool, forceMethodReceiver bool, errors []CallError) CallResult {
+func callFunction(ctx *db.QueryContext, query core.TypeOps, fn *typ.Function, args []typ.Type, explicit int, receiver typ.Type, isMethod bool, forceMethodReceiver bool, errors []CallError) CallResult {
 	if fn == nil {
 		return singleValueCallResult(typ.Unknown, append(errors, CallError{Kind: ErrNotCallable, Message: "nil function"}))
 	}
 
-	argCount := len(args)
 	methodHasReceiver := methodConsumesReceiver(ctx, query, fn, receiver, isMethod, forceMethodReceiver)
+	receiverSlots := 0
 	if methodHasReceiver {
-		argCount++
+		receiverSlots = 1
 	}
+	hasVariadic := fn.Variadic != nil
+	if !hasVariadic && explicit > 0 && explicit < len(args) {
+		// Values expanded from the last argument that no parameter receives are
+		// dropped at runtime; only explicitly written arguments can be surplus.
+		keep := len(fn.Params) - receiverSlots
+		if keep < explicit {
+			keep = explicit
+		}
+		if keep < len(args) {
+			args = args[:keep]
+		}
+	}
+	argCount := len(args) + receiverSlots
 
 	minArgs := typ.MinRequiredArgs(fn)
-	hasVariadic := fn.Variadic != nil
 	allowExtraArgs := len(fn.Params) == 0 && !hasVariadic
 
 	if argCount < minArgs {

@@ -106,8 +106,9 @@ func checkSingleCall(
 	)
 
 	def := ops.CallDef{
-		Args:  args,
-		Query: query,
+		Args:         args,
+		ExplicitArgs: len(info.Args),
+		Query:        query,
 	}
 
 	if callsite.IsMethodCallInfo(info) {
