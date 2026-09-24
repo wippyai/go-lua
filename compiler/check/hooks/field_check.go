@@ -66,8 +66,8 @@ func CheckFields(graph *cfg.Graph, narrowSynth api.Synth, narrowView api.BaseSyn
 		if info.Receiver != nil {
 			diags = append(diags, checkFieldExpr(info.Receiver, p, narrowView, resolver, seen, sourceName)...)
 		}
-		for i, arg := range info.Args {
-			diags = append(diags, checkCallArgument(arg, info.Callee, i, p, narrowView, resolver, seen, sourceName)...)
+		for _, arg := range info.Args {
+			diags = append(diags, checkFieldExpr(arg, p, narrowView, resolver, seen, sourceName)...)
 		}
 	})
 
@@ -204,8 +204,8 @@ func checkFieldExpr(expr ast.Expr, p cfg.Point, narrowView api.BaseSynth, resolv
 		diags = append(diags, checkAttrGet(e, p, narrowView, resolver, seen, sourceName)...)
 	case *ast.FuncCallExpr:
 		diags = append(diags, checkFieldExpr(e.Func, p, narrowView, resolver, seen, sourceName)...)
-		for i, arg := range e.Args {
-			diags = append(diags, checkCallArgument(arg, e.Func, i, p, narrowView, resolver, seen, sourceName)...)
+		for _, arg := range e.Args {
+			diags = append(diags, checkFieldExpr(arg, p, narrowView, resolver, seen, sourceName)...)
 		}
 	case *ast.TableExpr:
 		for _, f := range e.Fields {
@@ -247,45 +247,6 @@ func checkFieldExpr(expr ast.Expr, p cfg.Point, narrowView api.BaseSynth, resolv
 	}
 
 	return diags
-}
-
-func checkCallArgument(arg, callee ast.Expr, index int, p cfg.Point, view api.BaseSynth, resolver fieldResolverImpl, seen map[ast.Expr]bool, sourceName string) []diag.Diagnostic {
-	if attr, ok := arg.(*ast.AttrGetExpr); ok &&
-		assertsNilArgument(callee, index, p, view) &&
-		isAbsentClosedRecordField(attr, p, view) {
-		// A missing field reads as nil in Lua. An assertion that this
-		// argument is nil intentionally checks that absence.
-		seen[attr] = true
-		return checkFieldExpr(attr.Object, p, view, resolver, seen, sourceName)
-	}
-	return checkFieldExpr(arg, p, view, resolver, seen, sourceName)
-}
-
-func assertsNilArgument(callee ast.Expr, argIndex int, p cfg.Point, view api.BaseSynth) bool {
-	fn := unwrap.Function(view.TypeOf(callee, p))
-	if fn == nil {
-		return false
-	}
-	refinement, ok := fn.Refinement.(*constraint.FunctionRefinement)
-	if !ok {
-		return false
-	}
-	for _, c := range refinement.OnReturn.MustConstraints() {
-		if isNil, ok := c.(constraint.IsNil); ok &&
-			isNil.Path.Root == constraint.NewPlaceholder(argIndex).Root &&
-			len(isNil.Path.Segments) == 0 {
-			return true
-		}
-	}
-	return false
-}
-
-func isAbsentClosedRecordField(attr *ast.AttrGetExpr, p cfg.Point, view api.BaseSynth) bool {
-	if attr == nil || !isStringKeyExpr(attr.Key) {
-		return false
-	}
-	rec := unwrap.Record(view.TypeOf(attr.Object, p))
-	return rec != nil && !rec.Open && !rec.HasMapComponent() && rec.GetField(ast.KeyName(attr.Key)) == nil
 }
 
 func applyLogicalOpNarrowing(
