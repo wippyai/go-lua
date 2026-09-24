@@ -14,6 +14,10 @@ local function make_thread(db: store.DB): string
     return db:type()
 end
 
+local function run_once(external_db: store.DB?): boolean
+    return external_db ~= nil
+end
+
 local function run()
     with_db(function(db)
         local id = make_thread(db)
@@ -24,6 +28,12 @@ local function run()
     with_db(function(db)
         local rows = reader.rows(db, "x")
         return make_thread(db), rows
+    end)
+    -- An optional expectation admits the DB the other call requires.
+    with_db(function(db)
+        local id = make_thread(db)
+        local ran = run_once(db)
+        return make_thread(db), id, ran
     end)
 end
 
