@@ -1155,7 +1155,8 @@ func joinInferredType(old, next, selfPrev typ.Type) typ.Type {
 }
 
 // isSelfApproximation reports whether node approximates the symbol whose type
-// is old: it is old itself, which is how a folded type refers to itself, or it
+// is old: it is old itself when old is a folded self type, which is how a
+// folded type refers to itself, or it
 // is prev refined by a truthiness test (prev with at most nil and false
 // removed). Types without a table, function or tuple constructor are never
 // approximations, since a scalar reached inside next is a value of the same
@@ -1164,7 +1165,7 @@ func isSelfApproximation(node, old, prev typ.Type) bool {
 	if !hasConstructorMember(node) {
 		return false
 	}
-	if node == old || typ.TypeEquals(node, old) {
+	if isFoldedSelf(old) && (node == old || typ.TypeEquals(node, old)) {
 		return true
 	}
 	if prev == nil || typ.IsAbsentOrUnknown(prev) || !hasConstructorMember(prev) {
@@ -1194,6 +1195,14 @@ func coversMembers(old, next typ.Type) bool {
 		}
 	}
 	return true
+}
+
+// isFoldedSelf reports whether t is a recursive type joinInferredType folded.
+// Any other type that old happens to be, such as a module interface, can occur
+// inside next as an ordinary value type without embedding the symbol.
+func isFoldedSelf(t typ.Type) bool {
+	rec, ok := t.(*typ.Recursive)
+	return ok && rec.Name == inferredSelfName
 }
 
 // joinMembers lists the alternatives of t: the members of a union, the inner

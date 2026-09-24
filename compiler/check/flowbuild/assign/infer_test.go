@@ -602,3 +602,21 @@ func TestJoinMembers_RecursiveUnionListsItselfOnce(t *testing.T) {
 		t.Fatalf("expected leaf, node and the recursive self reference, got %v", members)
 	}
 }
+
+// A module interface that appears inside next as an ordinary parameter type is
+// not an embedding of the symbol, even when the symbol's type so far is that
+// interface: kickside's projection tests pass a sql.DB to builders whose
+// Executor methods take a sql.DB.
+func TestJoinInferredType_OrdinaryTypeInsideNextIsNotSelfEmbedding(t *testing.T) {
+	db := typ.NewInterface("sql.DB", []typ.Method{
+		{Name: "release", Type: typ.Func().Param("self", typ.Self).Build()},
+	})
+	executor := typ.NewInterface("sql.Executor", []typ.Method{
+		{Name: "run_with", Type: typ.Func().Param("self", typ.Self).Param("db", db).Returns(typ.Self).Build()},
+	})
+
+	got := joinInferredType(db, executor, typ.Unknown)
+	if _, folded := got.(*typ.Recursive); folded {
+		t.Fatalf("must not fold an ordinary occurrence of the old type, got %s", got)
+	}
+}
