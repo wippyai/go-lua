@@ -946,7 +946,7 @@ func (s *Solution) processTableMutatorAssignmentReturnKey(p cfg.Point, tm TableM
 		keyType = normalizeDynamicKeyType(keyType)
 		newType = WidenMapValueArray(currentType, keyType, valueType)
 	} else {
-		newType = WidenArrayElementType(currentType, valueType, typ.JoinPreferNonSoft)
+		newType = WidenArrayElementType(currentType, valueType, joinInsertedArrayElement)
 	}
 
 	if newType == nil || typ.TypeEquals(currentType, newType) {
@@ -955,6 +955,17 @@ func (s *Solution) processTableMutatorAssignmentReturnKey(p cfg.Point, tm TableM
 
 	s.setValue(string(pathKey), newType)
 	return string(pathKey)
+}
+
+// joinInsertedArrayElement keeps an explicit dynamic value written by a
+// table mutator among the array's possible elements. The general widening
+// helper also handles soft any placeholders, which may yield to concrete
+// evidence; a completed runtime write cannot.
+func joinInsertedArrayElement(a, b typ.Type) typ.Type {
+	if typ.IsAny(a) || typ.IsAny(b) {
+		return typ.Any
+	}
+	return typ.JoinPreferNonSoft(a, b)
 }
 
 func normalizeDynamicKeyType(keyType typ.Type) typ.Type {

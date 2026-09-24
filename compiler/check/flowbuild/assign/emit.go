@@ -1135,6 +1135,25 @@ func correlationsFromFunctionType(fnType typ.Type) ([]flow.ReturnCorrelation, []
 	if fnType == nil {
 		return nil, nil
 	}
+	if union, ok := typ.UnwrapAnnotated(fnType).(*typ.Union); ok {
+		var inverse, coCorr []flow.ReturnCorrelation
+		for i, member := range union.Members {
+			// A relation is valid for a union call only when every possible
+			// callee has it. A later return estimate may make one function
+			// into several callable alternatives without changing this fact.
+			if unwrap.Function(member) == nil {
+				return nil, nil
+			}
+			memberInverse, memberCo := correlationsFromFunctionType(member)
+			if i == 0 {
+				inverse, coCorr = memberInverse, memberCo
+			} else {
+				inverse = commonReturnCorrelations(inverse, memberInverse)
+				coCorr = commonReturnCorrelations(coCorr, memberCo)
+			}
+		}
+		return inverse, coCorr
+	}
 	spec := contract.ExtractSpec(fnType)
 	var inverse []flow.ReturnCorrelation
 	var coCorr []flow.ReturnCorrelation
@@ -1169,6 +1188,22 @@ func correlationsFromFunctionType(fnType typ.Type) ([]flow.ReturnCorrelation, []
 		}
 	}
 	return inverse, coCorr
+}
+
+func commonReturnCorrelations(a, b []flow.ReturnCorrelation) []flow.ReturnCorrelation {
+	if len(a) == 0 || len(b) == 0 {
+		return nil
+	}
+	out := make([]flow.ReturnCorrelation, 0, len(a))
+	for _, candidate := range a {
+		for _, other := range b {
+			if candidate == other {
+				out = append(out, candidate)
+				break
+			}
+		}
+	}
+	return out
 }
 
 func guardedTypeCorrelationsFromCall(
