@@ -101,7 +101,9 @@ func New(cfg Config) *Inferencer {
 
 // RunContext carries per-run inputs for return inference.
 type RunContext struct {
-	Ctx          *db.QueryContext
+	Ctx *db.QueryContext
+	// ParentFacts are the solved facts of the graph that defines the local
+	// functions, the parent of their bodies.
 	ParentFacts  flow.TypeFacts
 	EffectLookup constraint.RefinementLookupBySym
 }
