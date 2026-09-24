@@ -1426,8 +1426,8 @@ func isEmptyRecordNoMapType(t typ.Type) bool {
 //   - Empty record {}: Converts to map {[K]: V}
 //   - Record with fields: Adds or widens map component
 //   - Existing map: Widens key/value types via union
-//   - Placeholder types: Creates map {[K]: V}
-//   - Other types: Returns unchanged
+//   - Unknown: Creates map {[K]: V}
+//   - Other types, any among them: Returns unchanged
 //
 // Nil values are skipped: In Lua, t[k] = nil deletes the key rather than storing nil.
 // Map access already returns Optional to represent potentially missing keys.
@@ -1502,8 +1502,9 @@ func widenWithIndexer(t typ.Type, keyType, valType typ.Type) typ.Type {
 			return typ.NewMap(newKey, newVal)
 		},
 		Default: func(t typ.Type) typ.Type {
-			// For other types (unknown, any), create a map
-			if t.Kind().IsPlaceholder() {
+			// A dynamic value already admits every write and stays dynamic;
+			// an unresolved one becomes the map the write builds.
+			if t.Kind() == kind.Unknown {
 				return typ.NewMap(keyType, valType)
 			}
 			return t

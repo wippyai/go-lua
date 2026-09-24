@@ -1,0 +1,5 @@
+{
+  "description": "An integer-key write into a value typed any, directly or through a callee, keeps it any rather than widening it to {[integer]: V}.",
+  "files": ["main.lua"],
+  "check": {"errors": 0}
+}
