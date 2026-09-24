@@ -404,9 +404,58 @@ func joinParamHintVectors(a, b []typ.Type) []typ.Type {
 		if i < len(b) {
 			bi = b[i]
 		}
-		result[i] = joinIterationFact(ai, bi)
+		result[i] = joinParamHintIteration(ai, bi)
 	}
 	return result
+}
+
+// A parameter hint is rebuilt from all call sites on every iteration. Keep
+// fields discovered by an earlier pass, but use the current pass's presence
+// and nilability for fields it now resolves. Otherwise an early optional
+// approximation sticks after every caller supplies that field.
+func joinParamHintIteration(previous, current typ.Type) typ.Type {
+	joined := joinIterationFact(previous, current)
+	if previous != nil && current != nil &&
+		!typ.TypeEquals(narrow.RemoveNil(previous), previous) &&
+		typ.TypeEquals(narrow.RemoveNil(current), current) &&
+		!typ.TypeEquals(narrow.RemoveNil(joined), joined) {
+		return current
+	}
+	a, aOK := previous.(*typ.Record)
+	b, bOK := current.(*typ.Record)
+	r, rOK := joined.(*typ.Record)
+	if !aOK || !bOK || !rOK {
+		return joined
+	}
+	builder := typ.NewRecord().SetOpen(r.Open)
+	if r.Metatable != nil {
+		builder.Metatable(r.Metatable)
+	}
+	if r.HasMapComponent() {
+		builder.MapComponent(r.MapKey, r.MapValue)
+	}
+	changed := false
+	for _, field := range r.Fields {
+		if old := a.GetField(field.Name); old != nil {
+			if now := b.GetField(field.Name); now != nil {
+				if field.Optional != now.Optional {
+					field.Optional = now.Optional
+					changed = true
+				}
+				if !typ.TypeEquals(narrow.RemoveNil(old.Type), old.Type) &&
+					typ.TypeEquals(narrow.RemoveNil(now.Type), now.Type) &&
+					!typ.TypeEquals(narrow.RemoveNil(field.Type), field.Type) {
+					field.Type = now.Type
+					changed = true
+				}
+			}
+		}
+		addIterationField(builder, field)
+	}
+	if !changed {
+		return joined
+	}
+	return builder.Build()
 }
 
 // joinIterationFact joins a fact from the previous fixpoint iteration with the
