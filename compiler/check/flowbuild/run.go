@@ -107,6 +107,7 @@ func Run(fc *fbcore.FlowContext) *flow.Inputs {
 
 	// Assignments with const resolution.
 	assign.ExtractAssignments(fc, inputs, keyscoll.BuildKeysCollectorDetector(fc.Graph, fc.ModuleBindings))
+	inputs.ClosedMapVars = assign.ClosedMapVars(fc.Graph, inputs)
 	derived.ReceiverRoots, derived.NilableRoots, derived.KnownNonNilPaths = cond.ReceiverRoots(inputs)
 
 	// Table mutator assignments (table.insert-like).

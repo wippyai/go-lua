@@ -215,6 +215,11 @@ type Inputs struct {
 	// such as {any}: flow facts may refine their declared type, within it.
 	RefinableAnnotatedVars map[cfg.SymbolID]bool
 
+	// ClosedMapVars marks fresh local maps whose only aliases are their own
+	// indexed writes and one non-looping indexed read. Their observed writes
+	// describe every value that can be read through that map.
+	ClosedMapVars map[cfg.SymbolID]bool
+
 	Assignments    []UnifiedAssignment
 	ConstValues    map[cfg.SymbolID]map[cfg.Point]*ConstValue
 	EdgeConditions []EdgeCondition
