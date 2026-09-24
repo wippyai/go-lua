@@ -966,11 +966,13 @@ func callFunction(ctx *db.QueryContext, query core.TypeOps, fn *typ.Function, ar
 			expectedType = subst.Self(expectedType, receiver)
 		}
 
-		// A value expanded from the trailing call that lands on an optional
-		// parameter or the variadic tail is passed by Lua's adjustment rule, not
-		// written by the caller (assert(f()), test.ok(f()) forward the error).
-		// It fills required parameters and is checked there; elsewhere it is not
-		// an argument the caller wrote.
+		// Compatibility boundary: a value expanded from the trailing call is
+		// type-checked where it fills a required parameter. On an optional
+		// parameter or the variadic tail it is not checked, matching checkers
+		// that truncated expanded values, so existing code such as
+		// assert(f()) and test.ok(f()) keeps checking clean. This can miss a
+		// wrong-typed forwarded value there; full checking belongs to a strict
+		// mode.
 		if explicit > 0 && i >= explicit && (paramIdx >= len(fn.Params) || paramAcceptsAbsence(fn.Params[paramIdx])) {
 			continue
 		}
