@@ -294,8 +294,14 @@ func (s *Synthesizer) synthMultiCore(expr ast.Expr, sc *scope.State, synthSingle
 
 	switch ex := expr.(type) {
 	case *ast.FuncCallExpr:
+		if ex.AdjustRet {
+			return []typ.Type{synthSingle(expr)}
+		}
 		return synthCall(ex)
 	case *ast.Comma3Expr:
+		if ex.AdjustRet {
+			return []typ.Type{synthSingle(expr)}
+		}
 		if vt := sc.VariadicType(); vt != nil {
 			return []typ.Type{vt}
 		}

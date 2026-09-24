@@ -90,7 +90,7 @@ func (p *CallPipeline) Run() ops.CallResult {
 
 // reSynthArgs re-synthesizes arguments using the callback.
 func (p *CallPipeline) reSynthArgs() ([]typ.Type, bool) {
-	result := make([]typ.Type, len(p.astArgs))
+	result := make([]typ.Type, len(p.def.Args))
 	copy(result, p.def.Args)
 	changed := false
 

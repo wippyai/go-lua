@@ -97,7 +97,7 @@ func TestSynthArgs(t *testing.T) {
 		return typ.Unknown
 	}
 
-	args := synthArgs(exprs, recurse)
+	args := synthArgs(exprs, recurse, func(ex ast.Expr) []typ.Type { return []typ.Type{recurse(ex)} })
 	if len(args) != 2 {
 		t.Fatalf("got %d args, want 2", len(args))
 	}

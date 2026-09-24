@@ -100,10 +100,10 @@ func checkSingleCall(
 		}
 	}
 
-	args := make([]typ.Type, len(info.Args))
-	for i, arg := range info.Args {
-		args[i] = narrowView.TypeOf(arg, p)
-	}
+	args := callsite.ArgumentTypes(info.Args,
+		func(arg ast.Expr) typ.Type { return narrowView.TypeOf(arg, p) },
+		func(arg ast.Expr) []typ.Type { return narrowView.MultiTypeOf(arg, p) },
+	)
 
 	def := ops.CallDef{
 		Args:  args,

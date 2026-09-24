@@ -162,7 +162,7 @@ func (s *Synthesizer) synthCallCoreWithCaptureTypes(
 	if specialized := s.specializedLocalFunctionCalleeType(ex, p, sc, calleeType, captureTypes); specialized != nil {
 		calleeType = specialized
 	}
-	args := synthArgs(ex.Args, recurse)
+	args := synthArgs(ex.Args, recurse, func(arg ast.Expr) []typ.Type { return s.SynthMulti(arg, p, narrower) })
 	typeArgs := s.resolveTypeArgs(ex.TypeArgs, sc)
 
 	def := ops.CallDef{
@@ -249,7 +249,7 @@ func (s *Synthesizer) synthMethodCallCoreWithExpected(ex *ast.FuncCallExpr, p cf
 	}
 
 	recvType := recurse(ex.Receiver)
-	args := synthArgs(ex.Args, recurse)
+	args := synthArgs(ex.Args, recurse, func(arg ast.Expr) []typ.Type { return s.SynthMulti(arg, p, nil) })
 	calleeType := s.resolveMethodCallee(recvType, ex.Method)
 
 	def := ops.CallDef{
@@ -290,7 +290,7 @@ func (s *Synthesizer) SynthCallWithReceiverType(ex *ast.FuncCallExpr, p cfg.Poin
 		return result.Types
 	}
 
-	args := synthArgs(ex.Args, recurse)
+	args := synthArgs(ex.Args, recurse, func(arg ast.Expr) []typ.Type { return s.SynthMulti(arg, p, nil) })
 	calleeType := s.resolveMethodCallee(recvType, ex.Method)
 
 	def := ops.CallDef{
@@ -355,12 +355,8 @@ func (s *Synthesizer) buildInterceptChain(sc *scope.State) *intercept.Chain {
 }
 
 // synthArgs synthesizes types for argument expressions.
-func synthArgs(exprs []ast.Expr, recurse ExprSynth) []typ.Type {
-	args := make([]typ.Type, len(exprs))
-	for i, arg := range exprs {
-		args[i] = recurse(arg)
-	}
-	return args
+func synthArgs(exprs []ast.Expr, recurse ExprSynth, multi func(ast.Expr) []typ.Type) []typ.Type {
+	return callsite.ArgumentTypes(exprs, func(arg ast.Expr) typ.Type { return recurse(arg) }, multi)
 }
 
 // resolveTypeArgs resolves explicit type arguments.
