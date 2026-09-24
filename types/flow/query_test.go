@@ -6,8 +6,28 @@ import (
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/narrow"
+	querycore "github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
 )
+
+func TestFilterByChildNarrowings_MissingFieldCanBeNil(t *testing.T) {
+	success := typ.NewRecord().Field("result", typ.Any).Build()
+	failure := typ.NewRecord().Field("error", typ.Any).Build()
+	parent := constraint.NewPath(1, "entry")
+	child := parent.Field("result").Key()
+	solution := &Solution{resolver: querycore.Resolver()}
+	base := typ.NewUnion(success, failure)
+
+	got := solution.filterByChildNarrowings(base, parent, map[constraint.PathKey]typ.Type{child: typ.Nil})
+	if !typ.TypeEquals(got, base) {
+		t.Fatalf("nil result should retain both record shapes, got %v", got)
+	}
+
+	got = solution.filterByChildNarrowings(base, parent, map[constraint.PathKey]typ.Type{child: typ.String})
+	if !typ.TypeEquals(got, success) {
+		t.Fatalf("non-nil result should retain only the record with that field, got %v", got)
+	}
+}
 
 func TestTypeAt_EmptyPath(t *testing.T) {
 	c := cfg.New()

@@ -775,6 +775,11 @@ func (s *Solution) filterByChildNarrowings(baseType typ.Type, parentPath constra
 		for _, child := range parsedChildren {
 			memberChild, ok := s.deriveTypeFrom(member, child.segs)
 			if !ok || memberChild == nil {
+				// A missing field can read as nil. A nil constraint therefore
+				// cannot rule out a member without a projected field type.
+				if child.narrowed.Kind() == kind.Nil {
+					continue
+				}
 				compatible = false
 				break
 			}

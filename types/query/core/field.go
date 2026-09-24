@@ -206,18 +206,26 @@ func fieldInInterface(i *typ.Interface, name string) (typ.Type, bool) {
 // For a union A | B, field access t.name behaves as:
 //   - if all members expose the field, result is union of member field types
 //   - if some table-like members miss the field, result is optional(union(...))
-//   - if any non-table-like member misses the field, lookup fails
+//   - if the union contains nil, missing members contribute nil (gradual access)
+//   - otherwise, if a non-table-like member misses the field, lookup fails
 //
-// This matches Lua table semantics for partial record unions while remaining
-// sound for non-table members (where field access would be invalid).
+// Nil-bearing unions retain gradual field projection; other unions only allow
+// missing fields on table-like members.
 func fieldInUnion(u *typ.Union, name string, depth int) (typ.Type, bool) {
 	var types []typ.Type
 	missingFromSome := false
+	containsNil := false
+	for _, m := range u.Members {
+		if m != nil && m.Kind() == kind.Nil {
+			containsNil = true
+			break
+		}
+	}
 
 	for _, m := range u.Members {
 		ft, ok := fieldDepth(m, name, depth+1)
 		if !ok {
-			if allowsMissingFieldAsNil(m, depth+1) {
+			if containsNil || allowsMissingFieldAsNil(m, depth+1) {
 				missingFromSome = true
 				continue
 			}

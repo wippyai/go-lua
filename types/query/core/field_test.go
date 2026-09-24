@@ -103,6 +103,24 @@ func TestFieldUnionWithBuiltinTableTop(t *testing.T) {
 	}
 }
 
+func TestFieldUnionWithNilMember(t *testing.T) {
+	rec := typ.NewRecord().Field("value", typ.String).Build()
+	other := typ.NewRecord().Field("other", typ.Integer).Build()
+	for _, member := range []typ.Type{other, typ.Boolean} {
+		got, ok := Field(typ.NewUnion(typ.Nil, rec, member), "value")
+		if !ok || !typ.TypeEquals(got, typ.NewOptional(typ.String)) {
+			t.Fatalf("field of nil | %v | %v = %v, %v; want string?", rec, member, got, ok)
+		}
+	}
+
+	if _, ok := Field(typ.NewUnion(rec, typ.Boolean), "value"); ok {
+		t.Fatal("non-nil primitive branch must still reject the field")
+	}
+	if _, ok := Field(typ.NewUnion(typ.Nil, other, typ.Boolean), "value"); ok {
+		t.Fatal("nil-bearing union without the field must still reject it")
+	}
+}
+
 func TestFieldIntersection(t *testing.T) {
 	rec1 := typ.NewRecord().Field("a", typ.String).Build()
 	rec2 := typ.NewRecord().Field("b", typ.Integer).Build()
