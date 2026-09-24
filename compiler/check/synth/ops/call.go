@@ -877,16 +877,6 @@ func methodConsumesReceiverSimple(fn *typ.Function, receiver typ.Type, isMethod 
 	return hasExplicitSelfSimple(fn, receiver)
 }
 
-// paramAcceptsAbsence reports whether a call may leave the parameter unset:
-// it has a default or its type admits nil.
-func paramAcceptsAbsence(p typ.Param) bool {
-	if p.Optional {
-		return true
-	}
-	_, nilable := typ.SplitNilableFieldType(p.Type)
-	return nilable
-}
-
 func callFunction(ctx *db.QueryContext, query core.TypeOps, fn *typ.Function, args []typ.Type, explicit int, receiver typ.Type, isMethod bool, forceMethodReceiver bool, errors []CallError) CallResult {
 	if fn == nil {
 		return singleValueCallResult(typ.Unknown, append(errors, CallError{Kind: ErrNotCallable, Message: "nil function"}))
@@ -973,7 +963,7 @@ func callFunction(ctx *db.QueryContext, query core.TypeOps, fn *typ.Function, ar
 		// assert(f()) and test.ok(f()) keeps checking clean. This can miss a
 		// wrong-typed forwarded value there; full checking belongs to a strict
 		// mode.
-		if explicit > 0 && i >= explicit && (paramIdx >= len(fn.Params) || paramAcceptsAbsence(fn.Params[paramIdx])) {
+		if explicit > 0 && i >= explicit && (paramIdx >= len(fn.Params) || typ.ParamMayBeAbsent(fn.Params[paramIdx])) {
 			continue
 		}
 
