@@ -168,7 +168,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 		}
 		// Check if this is an attribute access where the full path has a truthy guard.
 		if attr, ok := expr.(*ast.AttrGetExpr); ok {
-			t := synth(expr, p)
+			t := baseSynth(expr, p)
 			if t != nil && bindings != nil {
 				if pathKey, ok := guard.TruthyKeyFromExpr(attr, bindings); ok && pathKey.Field != "" {
 					if guards, ok := typeGuards[p]; ok {
@@ -205,6 +205,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 
 	fc.Graph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
 		sc := fc.Scopes[p]
+		keyTypeAt := func(key ast.Expr) typ.Type { return wrappedSynth(key, p) }
 
 		// Handle numeric for loops
 		if info.NumericFor != nil {
@@ -353,15 +354,15 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 				var sourcePath constraint.Path
 				var mapElementSource *flow.MapElementSource
 				if source != nil {
-					if sp := path.FromExprWithBindings(source, constResolver, bindings); !sp.IsEmpty() {
+					if sp := path.FromExprWithKeyTypes(source, constResolver, bindings, keyTypeAt); !sp.IsEmpty() {
 						sourcePath = constraint.Path{
 							Root:     resolve.RootNameFromBindings(bindings, sp.Symbol, sp.Root),
 							Symbol:   sp.Symbol,
 							Segments: sp.Segments,
 						}
 					} else if attr, ok := source.(*ast.AttrGetExpr); ok {
-						if _, isStatic := staticSegmentForAttrKey(attr.Key, constResolver); !isStatic {
-							if mp := path.FromExprWithBindings(attr.Object, constResolver, bindings); !mp.IsEmpty() && mp.Symbol != 0 {
+						if _, isStatic := path.IndexKeySegment(attr.Key, constResolver, keyTypeAt); !isStatic {
+							if mp := path.FromExprWithKeyTypes(attr.Object, constResolver, bindings, keyTypeAt); !mp.IsEmpty() && mp.Symbol != 0 {
 								mp = constraint.Path{
 									Root:     resolve.RootNameFromBindings(bindings, mp.Symbol, mp.Root),
 									Symbol:   mp.Symbol,
@@ -478,7 +479,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 						if elemInfo.ReturnIndex == retIndex {
 							// For method calls, index 0 is self (receiver)
 							if callsite.IsMethodCallInfo(call) && elemInfo.SourceRef.Index == 0 {
-								if recvPath := path.FromExprWithBindings(call.Receiver, constResolver, bindings); !recvPath.IsEmpty() && recvPath.Symbol != 0 {
+								if recvPath := path.FromExprWithKeyTypes(call.Receiver, constResolver, bindings, keyTypeAt); !recvPath.IsEmpty() && recvPath.Symbol != 0 {
 									containerElemSrc = &flow.ContainerElementSource{
 										ContainerPath: constraint.Path{
 											Root:     resolve.RootNameFromBindings(bindings, recvPath.Symbol, recvPath.Root),
@@ -541,7 +542,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 				// Create assignment for the field path: root.field1.field2... = assignedType
 				sourcePath := constraint.Path{}
 				if source != nil {
-					if sp := path.FromExprWithBindings(source, constResolver, bindings); !sp.IsEmpty() {
+					if sp := path.FromExprWithKeyTypes(source, constResolver, bindings, keyTypeAt); !sp.IsEmpty() {
 						sourcePath = sp
 					}
 				}
@@ -568,7 +569,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 						Symbol: sym,
 					}
 				} else if target.Base != nil {
-					if bp := path.FromExprWithBindings(target.Base, constResolver, bindings); !bp.IsEmpty() && bp.Symbol != 0 {
+					if bp := path.FromExprWithKeyTypes(target.Base, constResolver, bindings, keyTypeAt); !bp.IsEmpty() && bp.Symbol != 0 {
 						basePath = constraint.Path{
 							Root:     resolve.RootNameFromBindings(bindings, bp.Symbol, bp.Root),
 							Symbol:   bp.Symbol,
@@ -629,6 +630,12 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 					}
 				}
 
+				if keySeg.Name == "" && keyType == nil && target.Key != nil {
+					if seg, ok := path.KeyTypeSegment(keyTypeAt(target.Key)); ok {
+						keySeg = seg
+					}
+				}
+
 				if basePath.IsEmpty() {
 					if lifted, ok := buildLiftedDynamicIndexerAssignment(
 						target,
@@ -673,7 +680,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 					}
 					valuePath := constraint.Path{}
 					if source != nil {
-						if sp := path.FromExprWithBindings(source, constResolver, bindings); !sp.IsEmpty() {
+						if sp := path.FromExprWithKeyTypes(source, constResolver, bindings, keyTypeAt); !sp.IsEmpty() {
 							valuePath = constraint.Path{
 								Root:     resolve.RootNameFromBindings(bindings, sp.Symbol, sp.Root),
 								Symbol:   sp.Symbol,
@@ -699,7 +706,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 				// Create assignment for the field path: root.fieldName = assignedType
 				sourcePath := constraint.Path{}
 				if source != nil {
-					if sp := path.FromExprWithBindings(source, constResolver, bindings); !sp.IsEmpty() {
+					if sp := path.FromExprWithKeyTypes(source, constResolver, bindings, keyTypeAt); !sp.IsEmpty() {
 						sourcePath = sp
 					}
 				}
@@ -787,7 +794,11 @@ func buildLiftedDynamicIndexerAssignment(
 		return flow.IndexerAssignment{}, false
 	}
 
-	rootExpr, steps, ok := flattenAttrChain(target.Expr, constResolver)
+	var keyTypeAt func(ast.Expr) typ.Type
+	if synth != nil {
+		keyTypeAt = func(key ast.Expr) typ.Type { return synth(key, p) }
+	}
+	rootExpr, steps, ok := flattenAttrChain(target.Expr, constResolver, keyTypeAt)
 	if !ok || rootExpr == nil || len(steps) == 0 {
 		return flow.IndexerAssignment{}, false
 	}
@@ -842,7 +853,7 @@ func buildLiftedDynamicIndexerAssignment(
 	// field's value.
 	valuePath := constraint.Path{}
 	if source != nil && firstDynamic == len(steps)-1 {
-		if sp := path.FromExprWithBindings(source, constResolver, bindings); !sp.IsEmpty() {
+		if sp := path.FromExprWithKeyTypes(source, constResolver, bindings, keyTypeAt); !sp.IsEmpty() {
 			valuePath = constraint.Path{
 				Root:     resolve.RootNameFromBindings(bindings, sp.Symbol, sp.Root),
 				Symbol:   sp.Symbol,
@@ -864,7 +875,11 @@ func buildLiftedDynamicIndexerAssignment(
 	}, true
 }
 
-func flattenAttrChain(expr ast.Expr, constResolver func(string) *flow.ConstValue) (ast.Expr, []attrChainStep, bool) {
+func flattenAttrChain(
+	expr ast.Expr,
+	constResolver func(string) *flow.ConstValue,
+	keyType func(ast.Expr) typ.Type,
+) (ast.Expr, []attrChainStep, bool) {
 	if expr == nil {
 		return nil, nil, false
 	}
@@ -873,41 +888,19 @@ func flattenAttrChain(expr ast.Expr, constResolver func(string) *flow.ConstValue
 		return expr, nil, true
 	}
 
-	root, steps, ok := flattenAttrChain(attr.Object, constResolver)
+	root, steps, ok := flattenAttrChain(attr.Object, constResolver, keyType)
 	if !ok || root == nil {
 		return nil, nil, false
 	}
 
 	step := attrChainStep{KeyExpr: attr.Key}
-	if seg, ok := staticSegmentForAttrKey(attr.Key, constResolver); ok {
+	if seg, ok := path.IndexKeySegment(attr.Key, constResolver, keyType); ok {
 		step.Static = true
 		step.Seg = seg
 	}
 
 	steps = append(steps, step)
 	return root, steps, true
-}
-
-func staticSegmentForAttrKey(key ast.Expr, constResolver func(string) *flow.ConstValue) (constraint.Segment, bool) {
-	switch k := key.(type) {
-	case *ast.StringExpr, *ast.NumberExpr:
-		return path.StaticKeySegment(k)
-	case *ast.IdentExpr:
-		if constResolver == nil {
-			return constraint.Segment{}, false
-		}
-		val := constResolver(k.Value)
-		if val == nil {
-			return constraint.Segment{}, false
-		}
-		switch val.Kind {
-		case flow.ConstString:
-			return path.StaticKeySegment(&ast.StringExpr{Value: val.Str})
-		case flow.ConstInt:
-			return constraint.Segment{Kind: constraint.SegmentIndexInt, Index: int(val.Int)}, true
-		}
-	}
-	return constraint.Segment{}, false
 }
 
 func keyInfoForStep(

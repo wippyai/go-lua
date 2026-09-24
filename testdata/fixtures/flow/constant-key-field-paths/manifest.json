@@ -1,0 +1,5 @@
+{
+  "description": "An index key typed as exactly one string literal addresses a static field: writes, reads, nested writes and presence narrowing through a module constant key agree with the literal key.",
+  "files": ["keys.lua", "main.lua"],
+  "check": {"errors": 0}
+}

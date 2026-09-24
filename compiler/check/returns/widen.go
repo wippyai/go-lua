@@ -459,6 +459,14 @@ func joinIterationFactAt(a, b typ.Type, invariant bool) typ.Type {
 	if softB && !softA {
 		return a
 	}
+	unresolvedA := hasUnresolvedKeyDomain(a)
+	unresolvedB := hasUnresolvedKeyDomain(b)
+	if unresolvedA && !unresolvedB {
+		return b
+	}
+	if unresolvedB && !unresolvedA {
+		return a
+	}
 	if !invariant {
 		if joined, ok := joinIterationOptionals(a, b); ok {
 			return joined
@@ -489,6 +497,19 @@ func joinIterationFactAt(a, b typ.Type, invariant bool) typ.Type {
 		return b
 	}
 	return typ.JoinPreferNonSoft(a, b)
+}
+
+// hasUnresolvedKeyDomain reports whether t is a table written by keys of
+// unknown type. Such a shape records writes whose keys an iteration could not
+// yet type, so it approximates the table as softly as an unknown value does.
+func hasUnresolvedKeyDomain(t typ.Type) bool {
+	switch v := t.(type) {
+	case *typ.Map:
+		return typ.IsUnknown(v.Key)
+	case *typ.Record:
+		return v.HasMapComponent() && typ.IsUnknown(v.MapKey)
+	}
+	return false
 }
 
 // joinIterationArrays joins two array facts element by element. Array slots

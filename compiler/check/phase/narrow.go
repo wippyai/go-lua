@@ -13,6 +13,7 @@ import (
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/io"
 	"github.com/wippyai/go-lua/types/query/core"
+	"github.com/wippyai/go-lua/types/typ"
 )
 
 // RunNarrow executes the narrowing phase.
@@ -112,7 +113,7 @@ func createNarrowedEngine(
 
 // newPathFromExprFunc returns a PathFromExprFunc using bindings-based path extraction.
 func newPathFromExprFunc(solution *flow.Solution, bindings *bind.BindingTable) api.PathFromExprFunc {
-	return func(p cfg.Point, expr ast.Expr, _ *scope.State) constraint.Path {
+	return func(p cfg.Point, expr ast.Expr, _ *scope.State, keyType func(ast.Expr) typ.Type) constraint.Path {
 		if solution == nil {
 			return constraint.Path{}
 		}
@@ -122,6 +123,6 @@ func newPathFromExprFunc(solution *flow.Solution, bindings *bind.BindingTable) a
 			}
 			return solution.ConstValueAt(p, name)
 		}
-		return path.FromExprWithBindings(expr, constResolver, bindings)
+		return path.FromExprWithKeyTypes(expr, constResolver, bindings, keyType)
 	}
 }
