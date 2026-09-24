@@ -805,7 +805,10 @@ func (s *SessionStore) GetInterprocFactsSnapshot(
 	if s == nil || s.InterprocPrev == nil || s.InterprocPrev.Facts == nil || graph == nil || parent == nil {
 		return api.Facts{}
 	}
-	key := api.KeyForGraph(graph, parent.Hash())
+	key, ok := s.GraphKeyFor(graph, parent)
+	if !ok {
+		return api.Facts{}
+	}
 	return s.InterprocPrev.Facts[key]
 }
 
