@@ -413,12 +413,24 @@ func KillRedefinedConditions(cond constraint.Condition, p cfg.Point, assignments
 
 	var newDisjuncts [][]constraint.Constraint
 	for _, d := range cond.Disjuncts {
+		invalidAliases := aliasesInvalidatedByWrites(d, assignedPaths)
 		var kept []constraint.Constraint
 		for _, c := range d {
 			shouldKeep := true
+			if eq, ok := c.(constraint.EqPath); ok &&
+				(invalidAliases[eq.Left.Key()].Symbol != 0 || invalidAliases[eq.Right.Key()].Symbol != 0) {
+				continue
+			}
 			constraint.VisitPaths(c, func(cpath constraint.Path) bool {
 				if cpath.Symbol == 0 {
 					return false
+				}
+				for _, alias := range invalidAliases {
+					if PathAffectedByAssignment(cpath, alias.Symbol, alias.Segments) &&
+						(len(cpath.Segments) > len(alias.Segments) || !rootFactSurvivesChildWrite(c)) {
+						shouldKeep = false
+						return true
+					}
 				}
 				for _, ap := range assignedPaths {
 					if PathAffectedByAssignment(cpath, ap.TargetSym, ap.TargetSegs) &&
@@ -444,6 +456,66 @@ func KillRedefinedConditions(cond constraint.Condition, p cfg.Point, assignments
 	}
 
 	return constraint.FromDisjuncts(newDisjuncts)
+}
+
+// A child write preserves the table's own truthiness and identity, while
+// predicates about its structure can become false through the alias.
+func rootFactSurvivesChildWrite(c constraint.Constraint) bool {
+	switch c.(type) {
+	case constraint.Truthy, constraint.Falsy, constraint.IsNil, constraint.NotNil, constraint.NotEqPath:
+		return true
+	}
+	return false
+}
+
+// The references stay equal at runtime, but their field types are stored
+// under separate symbols. A write through either reference makes those
+// independent shape facts unsafe to intersect or reuse.
+func aliasesInvalidatedByWrites(disjunct []constraint.Constraint, writes []Assignment) map[constraint.PathKey]constraint.Path {
+	var equalities []constraint.EqPath
+	for _, c := range disjunct {
+		if eq, ok := c.(constraint.EqPath); ok {
+			equalities = append(equalities, eq)
+		}
+	}
+	if len(equalities) == 0 {
+		return nil
+	}
+	invalid := make(map[constraint.PathKey]constraint.Path)
+	for _, eq := range equalities {
+		for _, write := range writes {
+			if mutableWriteTouchesAlias(write, eq.Left) {
+				invalid[eq.Left.Key()] = eq.Left
+			}
+			if mutableWriteTouchesAlias(write, eq.Right) {
+				invalid[eq.Right.Key()] = eq.Right
+			}
+		}
+	}
+	for changed := true; changed; {
+		changed = false
+		for _, eq := range equalities {
+			_, left := invalid[eq.Left.Key()]
+			_, right := invalid[eq.Right.Key()]
+			if left && !right {
+				invalid[eq.Right.Key()] = eq.Right
+				changed = true
+			} else if right && !left {
+				invalid[eq.Left.Key()] = eq.Left
+				changed = true
+			}
+		}
+	}
+	return invalid
+}
+
+func mutableWriteTouchesAlias(write Assignment, alias constraint.Path) bool {
+	if alias.Symbol == 0 || (!write.ChildrenOnly && len(write.TargetSegs) == 0) {
+		return false
+	}
+	writePath := constraint.Path{Symbol: write.TargetSym, Segments: write.TargetSegs}
+	return PathAffectedByAssignment(writePath, alias.Symbol, alias.Segments) ||
+		write.ChildrenOnly && PathAffectedByAssignment(alias, write.TargetSym, write.TargetSegs)
 }
 
 // PathAffectedByAssignment checks if a constraint path is invalidated by an assignment.

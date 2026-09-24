@@ -205,6 +205,32 @@ func TestPathAffectedByAssignment(t *testing.T) {
 	}
 }
 
+func TestKillRedefinedConditions_MutableAliasWrite(t *testing.T) {
+	x := constraint.Path{Root: "x", Symbol: 1, Version: 1}
+	y := constraint.Path{Root: "y", Symbol: 2, Version: 1}
+	z := constraint.Path{Root: "z", Symbol: 3, Version: 1}
+	u := constraint.Path{Root: "u", Symbol: 4, Version: 1}
+	v := constraint.Path{Root: "v", Symbol: 5, Version: 1}
+	cond := constraint.FromConstraints(
+		constraint.NewEqPath(x, y), constraint.NewEqPath(y, z),
+		constraint.NewEqPath(u, v),
+		constraint.NotNil{Path: x.Field("other")},
+		constraint.HasField{Path: x, Field: "other"},
+		constraint.KeyOf{Table: x, Key: u},
+		constraint.NotNil{Path: x},
+	)
+	write := Assignment{Point: 10, TargetSym: z.Symbol, TargetSegs: z.IndexStr("other").Segments}
+	got := KillRedefinedConditions(cond, 10, []Assignment{write})
+	want := constraint.FromConstraints(constraint.NewEqPath(u, v), constraint.NotNil{Path: x})
+	if !got.Equals(want) {
+		t.Fatalf("mutable alias write left stale facts: got %v, want %v", got, want)
+	}
+	dynamic := Assignment{Point: 10, TargetSym: z.Symbol, ChildrenOnly: true}
+	if got := KillRedefinedConditions(cond, 10, []Assignment{dynamic}); !got.Equals(want) {
+		t.Fatalf("dynamic alias write left stale facts: got %v, want %v", got, want)
+	}
+}
+
 func TestPropagate_FactHoldsAfterPointAndThroughPhi(t *testing.T) {
 	// entry -> branch -> {write A, write B} -> join
 	// Each write establishes KeyOf on the table version it defines; the join
