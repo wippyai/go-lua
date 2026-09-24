@@ -1807,11 +1807,9 @@ func compileLogicalOpExprAux(context *funcContext, reg int, expr ast.Expr, ec *e
 } // }}}
 
 func compileFuncCallExpr(context *funcContext, reg int, expr *ast.FuncCallExpr, ec *expcontext) int { // {{{
+	// The call frame starts above every live register: the callee, receiver and
+	// arguments may read the local that receives the result.
 	funcreg := reg
-	if ec.ctype == ecLocal && ec.reg == (int(context.Proto.NumParameters)-1) {
-		funcreg = ec.reg
-		reg = ec.reg
-	}
 	argc := len(expr.Args)
 	islastvararg := false
 	var name string
