@@ -22,9 +22,11 @@ type preciseSourceSynthStub struct {
 	preciseType typ.Type
 }
 
+// TypeOf types every call as preciseType, so a logical expression over calls
+// synthesizes to preciseType directly while its expanded value is any.
 func (s *preciseSourceSynthStub) TypeOf(expr ast.Expr, _ cfg.Point) typ.Type {
 	switch expr.(type) {
-	case *ast.LogicalOpExpr:
+	case *ast.FuncCallExpr:
 		return s.preciseType
 	default:
 		return typ.Unknown
@@ -308,9 +310,7 @@ func TestExtractAssignments_KeysCollectorEffectFallbackIgnoresNonCollectorEffect
 
 func TestExtractAssignments_PrefersPreciseDirectTypeOverExpandedAnyForLogicalOr(t *testing.T) {
 	code := `
-		local left = nil
-		local right = nil
-		local ctx = left or right
+		local ctx = get_left() or get_right()
 	`
 	chunk, err := parse.ParseString(code, "emit_precise_or.lua")
 	if err != nil {

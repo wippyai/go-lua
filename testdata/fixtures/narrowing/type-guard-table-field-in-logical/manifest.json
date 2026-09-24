@@ -1,0 +1,1 @@
+{"description": "a field read from a value a type() guard proved to be a table is dynamic, in an and/or operand as in a guarded branch and in assignment inference as in the check"}
