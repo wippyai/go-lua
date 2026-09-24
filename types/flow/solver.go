@@ -10,6 +10,7 @@ import (
 	"github.com/wippyai/go-lua/types/flow/pathkey"
 	"github.com/wippyai/go-lua/types/flow/propagate"
 	"github.com/wippyai/go-lua/types/narrow"
+	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -163,10 +164,88 @@ func (s *Solution) runPropagation() {
 		EdgeConditions: edgeConds,
 		DeadPoints:     s.inputs.DeadPoints,
 		Assignments:    assigns,
+		Facts:          s.indexerWriteFacts(),
+		PhiRenames:     phiRenames(s.inputs.Graph.PhiNodes()),
 	}
 
 	result := propagate.Propagate(propInputs)
 	s.pointConditions = result.PointConditions
+}
+
+// indexerWriteFacts returns, per point, the KeyOf facts established by
+// dynamic-key writes t[k] = v whose value excludes nil: after the write, k is
+// a key of the version of t it creates.
+func (s *Solution) indexerWriteFacts() map[cfg.Point]constraint.Condition {
+	if s.inputs == nil || s.inputs.Graph == nil {
+		return nil
+	}
+	var facts map[cfg.Point]constraint.Condition
+	for _, ia := range s.inputs.IndexerAssignments {
+		if ia.Symbol == 0 || ia.KeySymbol == 0 || !excludesNil(ia.ValType) {
+			continue
+		}
+		tableVer := s.inputs.Graph.VisibleVersion(ia.Point, ia.Symbol)
+		keyVer := s.inputs.Graph.VisibleVersion(ia.Point, ia.KeySymbol)
+		if tableVer.IsZero() || keyVer.IsZero() || s.definesAt(ia.Point, ia.KeySymbol, keyVer) {
+			continue
+		}
+		keyOf := constraint.KeyOf{
+			Table: constraint.Path{Root: ia.Root, Symbol: ia.Symbol, Segments: ia.Segments, Version: tableVer.ID},
+			Key:   constraint.Path{Root: ia.KeyVar, Symbol: ia.KeySymbol, Version: keyVer.ID},
+		}
+		if facts == nil {
+			facts = make(map[cfg.Point]constraint.Condition)
+		}
+		fact := constraint.FromConstraints(keyOf)
+		if existing, ok := facts[ia.Point]; ok {
+			fact = constraint.And(existing, fact)
+		}
+		facts[ia.Point] = fact
+	}
+	return facts
+}
+
+// definesAt reports whether the statement at p assigns sym, making ver, the
+// version visible after p, differ from the one its operands were read at.
+func (s *Solution) definesAt(p cfg.Point, sym cfg.SymbolID, ver cfg.Version) bool {
+	for _, pred := range graphPredecessors(s.inputs.Graph, p) {
+		if s.inputs.Graph.VisibleVersion(pred, sym).ID != ver.ID {
+			return true
+		}
+	}
+	return false
+}
+
+// phiRenames maps each edge into a join point to the operand versions its phi
+// nodes merge from that edge, each renamed to the phi's version.
+func phiRenames(phis []cfg.PhiNode) map[propagate.EdgeKey]map[constraint.VersionRef]int {
+	if len(phis) == 0 {
+		return nil
+	}
+	out := make(map[propagate.EdgeKey]map[constraint.VersionRef]int)
+	for _, phi := range phis {
+		for _, op := range phi.Operands {
+			if op.Version.IsZero() || op.Version.ID == phi.Target.ID {
+				continue
+			}
+			edge := propagate.EdgeKey{From: op.From, To: phi.Point}
+			renames := out[edge]
+			if renames == nil {
+				renames = make(map[constraint.VersionRef]int)
+				out[edge] = renames
+			}
+			renames[constraint.VersionRef{Symbol: phi.Target.Symbol, Version: op.Version.ID}] = phi.Target.ID
+		}
+	}
+	return out
+}
+
+// excludesNil reports whether no value of t is nil.
+func excludesNil(t typ.Type) bool {
+	if t == nil || t.Kind().IsPlaceholder() {
+		return false
+	}
+	return !subtype.IsSubtype(typ.Nil, t)
 }
 
 // buildPointValueMap creates a type environment for constraint solving at a point.
