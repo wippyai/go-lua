@@ -104,38 +104,18 @@ func buildLocalSignatureResolver(localFuncs map[cfg.SymbolID]*LocalFuncInfo, env
 // local function, it scans call sites to identify argument types:
 //
 //   - Literal arguments (numbers, strings, booleans, nil) provide direct type hints
-//   - Identifier arguments that reference caller parameters with known hints
-//     propagate those hints transitively
+//   - Function arguments inherit callback signatures when a callee declares one
 //
-// The algorithm iterates to fixpoint, bounded by the number of local functions.
-// This ensures that chains like f(x) -> g(x) -> h(x) are fully resolved even
-// if functions are processed in arbitrary order.
+// Identifier arguments are left to post-flow hint collection, which sees the
+// value under guards at each call site. Propagating the caller's entire
+// parameter hint here would admit values excluded before the call.
+// The bounded fixpoint carries callback signatures through local functions.
 //
 // Hints are accumulated using typ.JoinPreferNonSoft, producing union types when a parameter
 // is called with multiple different types across call sites.
 func PropagateParamHintsFromCallGraph(localFuncs map[cfg.SymbolID]*LocalFuncInfo, env SignatureEnv) {
 	if len(localFuncs) == 0 {
 		return
-	}
-
-	// Map each parameter symbol to its owning function and parameter index.
-	type paramRef struct {
-		owner *LocalFuncInfo
-		index int
-	}
-	paramOwner := make(map[cfg.SymbolID]paramRef)
-	for _, sym := range cfg.SortedSymbolIDs(localFuncs) {
-		info := localFuncs[sym]
-		if info.Graph == nil {
-			continue
-		}
-		for _, slot := range info.Graph.ParamSlotsReadOnly() {
-			srcIdx, hasSource := slot.SourceParamIndex()
-			if !hasSource || slot.Symbol == 0 {
-				continue
-			}
-			paramOwner[slot.Symbol] = paramRef{owner: info, index: srcIdx}
-		}
 	}
 
 	resolveLocalSignature := buildLocalSignatureResolver(localFuncs, env)
@@ -196,20 +176,6 @@ func PropagateParamHintsFromCallGraph(localFuncs map[cfg.SymbolID]*LocalFuncInfo
 					argType = typ.Boolean
 				case *ast.NilExpr:
 					argType = typ.Nil
-				}
-
-				// For identifiers, check if the ident refers to a caller
-				// parameter with a known hint.
-				if argType == nil {
-					if ident, ok := arg.(*ast.IdentExpr); ok && bindings != nil {
-						if sym, found := bindings.SymbolOf(ident); found {
-							if ref, isParam := paramOwner[sym]; isParam {
-								if ref.index < len(ref.owner.ParamHints) {
-									argType = ref.owner.ParamHints[ref.index]
-								}
-							}
-						}
-					}
 				}
 
 				// If a local function is passed as an argument and the callee has
