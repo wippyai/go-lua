@@ -72,6 +72,9 @@ func indexDepth(t, keyType typ.Type, depth int) (typ.Type, bool) {
 			return indexResult{}
 		},
 		Tuple: func(tup *typ.Tuple) indexResult {
+			if keyType == nil {
+				return indexResult{}
+			}
 			// Integer literal index
 			if lit, ok := keyType.(*typ.Literal); ok && lit.Base == kind.Integer {
 				idx := lit.Value.(int64)
@@ -91,6 +94,9 @@ func indexDepth(t, keyType typ.Type, depth int) (typ.Type, bool) {
 		Record: func(r *typ.Record) indexResult {
 			if len(r.Fields) == 0 && !r.HasMapComponent() {
 				return indexResult{t: typ.Nil, ok: true}
+			}
+			if keyType == nil {
+				return indexResult{}
 			}
 			if keySet, ok := exactStringKeyDomain(keyType, depth+1); ok {
 				return indexRecordByExactStringKeyDomain(r, keySet, depth+1)

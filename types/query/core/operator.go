@@ -104,9 +104,15 @@ func unaryOpCompute(op string, operand typ.Type) typ.Type {
 		return top
 	}
 
+	// A recursive type applies the operator to its body; references back to
+	// the type itself contribute nothing beyond the other members.
+	if rec, ok := operand.(*typ.Recursive); ok {
+		return unaryOpRecursive(op, rec)
+	}
+
 	// Handle unions
 	if u, ok := operand.(*typ.Union); ok {
-		return unaryOpUnion(op, u)
+		return unaryOpMembers(op, u.Members)
 	}
 
 	switch op {
@@ -687,14 +693,37 @@ func binaryOpRightUnion(left typ.Type, op string, u *typ.Union) typ.Type {
 	return typ.NewUnion(results...)
 }
 
-// unaryOpUnion distributes a unary operator over union members.
+// unaryOpRecursive applies a unary operator to a recursive type's body.
+func unaryOpRecursive(op string, rec *typ.Recursive) typ.Type {
+	if rec.Body == nil || rec.Body == rec {
+		return nil
+	}
+	if u, ok := rec.Body.(*typ.Union); ok {
+		members := make([]typ.Type, 0, len(u.Members))
+		for _, m := range u.Members {
+			if m != rec {
+				members = append(members, m)
+			}
+		}
+		if len(members) == 0 {
+			return nil
+		}
+		if len(members) == 1 {
+			return unaryOpCompute(op, members[0])
+		}
+		return unaryOpMembers(op, members)
+	}
+	return unaryOpCompute(op, rec.Body)
+}
+
+// unaryOpMembers distributes a unary operator over union members.
 // The result is the union of results for each member.
-func unaryOpUnion(op string, u *typ.Union) typ.Type {
+func unaryOpMembers(op string, members []typ.Type) typ.Type {
 	var results []typ.Type
 
 	seen := make(map[uint64]bool)
 
-	for _, m := range u.Members {
+	for _, m := range members {
 		if r := unaryOpCompute(op, m); r != nil {
 			h := r.Hash()
 			if !seen[h] {

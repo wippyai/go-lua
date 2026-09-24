@@ -318,3 +318,13 @@ func TestIsNumericKey(t *testing.T) {
 		})
 	}
 }
+
+func TestIndex_UnresolvedKeyTypeResolvesNothing(t *testing.T) {
+	rec := typ.NewRecord().Field("a", typ.String).Build()
+	tuple := typ.NewTuple(typ.String, typ.Integer)
+	for name, container := range map[string]typ.Type{"record": rec, "tuple": tuple} {
+		if got, ok := Index(container, nil); ok {
+			t.Fatalf("%s indexed by an unresolved key type resolved to %v", name, got)
+		}
+	}
+}
