@@ -1,0 +1,1 @@
+{"description":"A loop may pass the map to an opaque writer before the guarded lookup.","check":{"errors":1}}
