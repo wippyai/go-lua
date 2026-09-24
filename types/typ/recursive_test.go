@@ -2,6 +2,7 @@ package typ
 
 import (
 	"testing"
+	"time"
 
 	"github.com/wippyai/go-lua/types/kind"
 )
@@ -799,5 +800,27 @@ func TestFoldApproximationsReturnsInputWithoutApproximations(t *testing.T) {
 
 	if got := FoldApproximations("self", root, func(Type) bool { return false }); got != root {
 		t.Fatalf("fold without approximations = %v, want the input unchanged", got)
+	}
+}
+
+// A recursive body that shares substructure hashes in time linear in its
+// distinct nodes, not in its paths.
+func TestRecursiveHash_SharedSubstructureHashesOnce(t *testing.T) {
+	rec := NewRecursive("Shared", func(self Type) Type {
+		node := NewUnion(Nil, self)
+		for i := 0; i < 64; i++ {
+			node = NewRecord().Field("left", node).Field("right", node).Build()
+		}
+		return node
+	})
+	done := make(chan uint64, 1)
+	go func() { done <- rec.Hash() }()
+	select {
+	case h := <-done:
+		if h == 0 {
+			t.Fatal("expected a non-zero hash")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("hashing a shared recursive body did not finish")
 	}
 }
