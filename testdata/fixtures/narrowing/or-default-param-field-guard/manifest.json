@@ -1,0 +1,1 @@
+{"description": "a field of an unannotated param defaulted with `or {}` is unresolved, not nil: a type guard on it narrows to the guarded type and the code after it is live"}
