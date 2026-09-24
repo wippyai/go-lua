@@ -1029,10 +1029,16 @@ func (s *Solution) processFieldWriteEffectReturnKey(p cfg.Point, fw FieldWriteEf
 	var newType typ.Type
 	if fw.Field == IndexerWriteField {
 		m, ok := fw.Type.(*typ.Map)
-		if !ok || currentType == nil {
+		if !ok {
 			return ""
 		}
-		newType = widenWithIndexer(currentType, m.Key, subtype.WidenForInference(m.Value))
+		// As for a direct index write, a declared template stands in for an
+		// empty or unresolved current value.
+		base := preferDeclaredTemplateForWiden(currentType, s.declaredTypeAtPath(fw.Target))
+		if base == nil {
+			return ""
+		}
+		newType = widenWithIndexer(base, m.Key, subtype.WidenForInference(m.Value))
 	} else {
 		newType = widenFieldWrite(currentType, fw.Field, subtype.WidenForInference(fw.Type))
 	}
