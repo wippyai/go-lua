@@ -104,12 +104,36 @@ type conditionNarrowView struct {
 func (v *conditionNarrowView) TypeOf(expr ast.Expr, p cfg.Point) typ.Type {
 	if v.bindings != nil && v.solution != nil {
 		if exprPath := path.FromExprWithBindings(expr, nil, v.bindings); !exprPath.IsEmpty() {
+			// Assignment sources run before the write at this point. Preserve the
+			// pre-write type installed by applyAssignPreStateNarrowing when a
+			// logical operand adds another condition to that same source.
+			if preType := assignmentPreStateType(v.BaseSynth, exprPath); preType != nil {
+				if narrower, ok := v.solution.(interface {
+					NarrowTypeAssuming(cfg.Point, constraint.Path, typ.Type, constraint.Condition) typ.Type
+				}); ok {
+					return narrower.NarrowTypeAssuming(p, exprPath, preType, v.assumption)
+				}
+				return preType
+			}
 			if narrowed := v.solution.NarrowedTypeAssuming(p, exprPath, v.assumption); narrowed != nil && !typ.IsUnknown(narrowed) {
 				return narrowed
 			}
 		}
 	}
 	return v.BaseSynth.TypeOf(expr, p)
+}
+
+func assignmentPreStateType(view api.BaseSynth, exprPath constraint.Path) typ.Type {
+	switch v := view.(type) {
+	case *localNarrowView:
+		if v.overrideType != nil && exprPath.Equal(v.overridePath) {
+			return v.overrideType
+		}
+		return assignmentPreStateType(v.base, exprPath)
+	case *conditionNarrowView:
+		return assignmentPreStateType(v.BaseSynth, exprPath)
+	}
+	return nil
 }
 
 func (r fieldResolverImpl) TypeOf(expr ast.Expr, p cfg.Point) typ.Type {
