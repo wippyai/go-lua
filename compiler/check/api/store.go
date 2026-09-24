@@ -143,6 +143,8 @@ type IterationStore interface {
 
 	RefinementStore() RefinementStore
 	StoreFunctionRefinement(sym cfg.SymbolID, eff *constraint.FunctionRefinement)
+	SeedFunctionRefinements(refinements map[cfg.SymbolID]*constraint.FunctionRefinement)
+	FunctionRefs() []*FunctionRef
 
 	SetModuleBindings(bindings *bind.BindingTable)
 	SetModuleAliases(aliases map[cfg.SymbolID]string)

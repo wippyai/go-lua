@@ -443,6 +443,24 @@ func (s *SessionStore) StoreFunctionRefinement(sym cfg.SymbolID, eff *constraint
 	s.InterprocNext.Refinements[sym] = eff
 }
 
+// SeedFunctionRefinements records refinements known before the first
+// iteration in the snapshot that iteration reads. Each iteration's own
+// refinements then replace them.
+func (s *SessionStore) SeedFunctionRefinements(refinements map[cfg.SymbolID]*constraint.FunctionRefinement) {
+	if s == nil || len(refinements) == 0 {
+		return
+	}
+	s.ensureInterprocStates()
+	if s.InterprocPrev.Refinements == nil {
+		s.InterprocPrev.Refinements = make(map[cfg.SymbolID]*constraint.FunctionRefinement, len(refinements))
+	}
+	for sym, eff := range refinements {
+		if sym != 0 && eff != nil {
+			s.InterprocPrev.Refinements[sym] = eff
+		}
+	}
+}
+
 // StoreConstructorFields stores constructor fields for a class symbol.
 func (s *SessionStore) StoreConstructorFields(classSym cfg.SymbolID, fields map[string]typ.Type) {
 	if classSym == 0 || len(fields) == 0 {
@@ -657,6 +675,19 @@ func (s *SessionStore) FunctionRefBySym(sym cfg.SymbolID) *api.FunctionRef {
 		return nil
 	}
 	return s.Module.Functions.BySym[sym]
+}
+
+// FunctionRefs returns the registered function refs ordered by symbol.
+func (s *SessionStore) FunctionRefs() []*api.FunctionRef {
+	if s == nil || s.Module == nil || s.Module.Functions == nil {
+		return nil
+	}
+	bySym := s.Module.Functions.BySym
+	refs := make([]*api.FunctionRef, 0, len(bySym))
+	for _, sym := range cfg.SortedSymbolIDs(bySym) {
+		refs = append(refs, bySym[sym])
+	}
+	return refs
 }
 
 // FunctionRefByFunc returns the function ref for a function literal.

@@ -89,6 +89,10 @@ func (d *Driver) Run(sess api.AnalysisSession, chunk []ast.Stmt) {
 		}
 	}
 
+	if store != nil {
+		store.SeedFunctionRefinements(structuralTerminators(store, d.cfg.GlobalTypes))
+	}
+
 	d.runFixpoint(sess, fn, d.cfg.Stdlib)
 }
 
