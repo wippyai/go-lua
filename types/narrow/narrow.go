@@ -47,7 +47,8 @@ func narrowType(t typ.Type, cfg narrowConfig) typ.Type {
 //
 // It handles the following type wrappers before delegating to config handlers:
 //   - nil: Returns Never (narrowing nil always produces the empty type).
-//   - Instantiated: Expands generic instantiation and recurses.
+//   - Instantiated: Expands generic instantiation and recurses, keeping the
+//     instantiation when narrowing leaves its expansion unchanged.
 //   - Alias: Recurses into target, preserving alias wrapper if changed.
 //   - Intersection: Recurses into all members; any Never makes result Never.
 //   - Optional: Delegates to handleOptional.
@@ -60,10 +61,15 @@ func narrowTypeImpl(t typ.Type, cfg narrowConfig, recurse func(typ.Type) typ.Typ
 
 	return typ.Visit(t, typ.Visitor[typ.Type]{
 		Instantiated: func(inst *typ.Instantiated) typ.Type {
-			if expanded := unwrap.Instantiated(inst); expanded != inst {
-				return recurse(expanded)
+			expanded := unwrap.Instantiated(inst)
+			if expanded == inst {
+				return t
 			}
-			return t
+			narrowed := recurse(expanded)
+			if typ.TypeEquals(narrowed, expanded) {
+				return t
+			}
+			return narrowed
 		},
 		Alias: func(a *typ.Alias) typ.Type {
 			inner := recurse(a.Target)

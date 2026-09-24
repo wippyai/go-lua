@@ -104,7 +104,11 @@ func FilterByMatch(t typ.Type, matches TypeMatcher, exclude bool) typ.Type {
 	}
 
 	if expanded := unwrap.Instantiated(t); expanded != t {
-		return FilterByMatch(expanded, matches, exclude)
+		filtered := FilterByMatch(expanded, matches, exclude)
+		if typ.TypeEquals(filtered, expanded) {
+			return t
+		}
+		return filtered
 	}
 
 	if exclude {
