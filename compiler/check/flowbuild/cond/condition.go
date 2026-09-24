@@ -266,6 +266,10 @@ func (ce *ConditionExtractor) ConstraintsFromConditionExpr(expr ast.Expr) Branch
 		}
 	}
 
+	if composed, ok := ce.composedBranchConditions(expr); ok {
+		return composed
+	}
+
 	onTrue := ce.ConditionFromExpr(expr)
 	if onTrue.IsFalse() {
 		return BranchConditions{
@@ -292,6 +296,44 @@ func (ce *ConditionExtractor) ConstraintsFromConditionExpr(expr ast.Expr) Branch
 		OnTrue:  onTrue,
 		OnFalse: constraint.Not(onTrue),
 	}
+}
+
+// composedBranchConditions builds the branch conditions of a logical operator
+// from those of its operands, and those of an ordered comparison.
+//
+// An operand's facts land exactly on the paths where it was evaluated:
+// `A or B` is false only when both are false, and true when A is true or when
+// A is false and B is true. An ordered comparison that evaluates proves its
+// operand has the compared type whatever its outcome, so both branches carry
+// that type; negating it would drop the operand from the false branch.
+func (ce *ConditionExtractor) composedBranchConditions(expr ast.Expr) (BranchConditions, bool) {
+	switch e := expr.(type) {
+	case *ast.LogicalOpExpr:
+		left := ce.ConstraintsFromConditionExpr(e.Lhs)
+		right := ce.ConstraintsFromConditionExpr(e.Rhs)
+		switch e.Operator {
+		case "and":
+			return BranchConditions{
+				OnTrue:  constraint.And(left.OnTrue, right.OnTrue),
+				OnFalse: constraint.Or(left.OnFalse, constraint.And(left.OnTrue, right.OnFalse)),
+			}, true
+		case "or":
+			return BranchConditions{
+				OnTrue:  constraint.Or(left.OnTrue, constraint.And(left.OnFalse, right.OnTrue)),
+				OnFalse: constraint.And(left.OnFalse, right.OnFalse),
+			}, true
+		}
+	case *ast.UnaryNotOpExpr:
+		inner := ce.ConstraintsFromConditionExpr(e.Expr)
+		return BranchConditions{OnTrue: inner.OnFalse, OnFalse: inner.OnTrue}, true
+	case *ast.RelationalOpExpr:
+		switch e.Operator {
+		case "<", "<=", ">", ">=":
+			evaluated := ce.conditionFromOrderedComparison(e.Lhs, e.Rhs)
+			return BranchConditions{OnTrue: evaluated, OnFalse: evaluated}, true
+		}
+	}
+	return BranchConditions{}, false
 }
 
 // conditionFromExpr extracts predicate conditions from an expression (true branch).
