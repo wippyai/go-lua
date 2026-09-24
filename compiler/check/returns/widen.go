@@ -320,7 +320,9 @@ func joinReturnTypeMonotone(a, b typ.Type) typ.Type {
 	if subtype.IsSubtype(b, a) || TypeExtendsRecord(b, a) || typeElidesOptional(b, a) {
 		return a
 	}
-	return typ.JoinPreferNonSoft(a, b)
+	// Incomparable types join as return slots, which coalesce approximations
+	// of one record field by field.
+	return typ.JoinReturnSlot(a, b)
 }
 
 // WidenParamHints merges two param hint maps using monotone union.

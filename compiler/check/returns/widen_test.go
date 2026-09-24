@@ -103,6 +103,36 @@ func TestWidenReturnSummaries_UsesMonotoneJoinForHigherOrderReturns(t *testing.T
 	}
 }
 
+// Incomparable approximations of one higher-order record join into a single
+// record whose fields admit both, rather than a union of the approximations.
+func TestWidenReturnSummaries_JoinsIncomparableHigherOrderRecords(t *testing.T) {
+	method := typ.Func().Returns(typ.Func().Returns(typ.String).Build()).Build()
+	earlier := typ.NewRecord().
+		Field("run", method).
+		Field("id", typ.Any).
+		Field("cache", typ.Nil).
+		Build()
+	current := typ.NewRecord().
+		Field("run", method).
+		Field("id", typ.String).
+		Field("cache", typ.Any).
+		Build()
+
+	merged := WidenReturnSummaries(
+		api.ReturnSummaries{1: []typ.Type{earlier}},
+		api.ReturnSummaries{1: []typ.Type{current}},
+	)
+	got := merged[1]
+	want := typ.NewRecord().
+		Field("cache", typ.Any).
+		Field("id", typ.Any).
+		Field("run", method).
+		Build()
+	if len(got) != 1 || !typ.TypeEquals(got[0], want) {
+		t.Fatalf("expected [%v], got %v", want, got)
+	}
+}
+
 func TestWidenReturnSummaries_InterfaceMethodsDoNotBlockOptionalElision(t *testing.T) {
 	dbType := typ.NewInterface("sql.DB", []typ.Method{
 		{
