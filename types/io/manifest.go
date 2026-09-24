@@ -480,48 +480,32 @@ func enrichTopLevelTypeWithSummaries(t typ.Type, summaries summaryIndex, depth i
 	}
 }
 
-// enrichRecordWithSummaries creates a new record with function fields enriched.
+// enrichRecordWithSummaries returns r with its function fields enriched. Every
+// other property of the record (openness, map component, metatable, field
+// flags) is kept.
 func enrichRecordWithSummaries(r *typ.Record, summaries summaryIndex) *typ.Record {
 	if r == nil || len(r.Fields) == 0 {
 		return r
 	}
 
-	changed := false
-
-	newFields := make([]typ.Field, len(r.Fields))
-	for i, f := range r.Fields {
-		newFields[i] = f
-
-		if fn, ok := f.Type.(*typ.Function); ok {
-			if summary, exists := summaries.lookup(f.Name); exists {
-				enriched := ApplyFunctionSummary(fn, summary)
-				if enriched != nil && enriched != fn {
-					newFields[i].Type = enriched
-					changed = true
-				}
-			}
+	out := r
+	for _, f := range r.Fields {
+		fn, ok := f.Type.(*typ.Function)
+		if !ok {
+			continue
 		}
-	}
-
-	if !changed {
-		return r
-	}
-
-	builder := typ.NewRecord()
-
-	for _, f := range newFields {
-		if f.Optional {
-			builder.OptField(f.Name, f.Type)
-		} else {
-			builder.Field(f.Name, f.Type)
+		summary, exists := summaries.lookup(f.Name)
+		if !exists {
+			continue
 		}
+		enriched := ApplyFunctionSummary(fn, summary)
+		if enriched == nil || enriched == fn {
+			continue
+		}
+		f.Type = enriched
+		out = out.WithField(f)
 	}
-
-	if r.Metatable != nil {
-		builder.Metatable(r.Metatable)
-	}
-
-	return builder.Build()
+	return out
 }
 
 // enrichInterfaceWithSummaries creates a new interface with method types enriched.

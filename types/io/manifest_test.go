@@ -495,3 +495,36 @@ func TestManifest_EnrichedExport_SummarySuffixAmbiguityDoesNotGuess(t *testing.T
 		t.Fatal("expected LookupSummary to reject ambiguous suffix match")
 	}
 }
+
+func TestEnrichedExport_KeepsRecordShape(t *testing.T) {
+	m := NewManifest("shape")
+	add := typ.Func().Param("id", typ.String).Build()
+	exportRec := typ.NewRecord().
+		Field("add", add).
+		ReadonlyField("version", typ.Integer).
+		MapComponent(typ.String, typ.Number).
+		SetOpen(true).
+		Build()
+	m.SetExport(exportRec)
+
+	summary := NewSummary([]typ.Type{typ.String}, nil)
+	summary.Ensures = constraint.FromConstraints(constraint.NotNil{Path: constraint.Path{Root: "$0"}})
+	m.DefineSummary("add", summary)
+
+	rec, ok := m.EnrichedExport().(*typ.Record)
+	if !ok {
+		t.Fatalf("expected record export, got %T", m.EnrichedExport())
+	}
+	if fn, ok := rec.GetField("add").Type.(*typ.Function); !ok || fn.Refinement == nil {
+		t.Fatal("expected add to be enriched")
+	}
+	if !rec.Open {
+		t.Error("expected the enriched export to stay open")
+	}
+	if !rec.HasMapComponent() {
+		t.Error("expected the enriched export to keep its map component")
+	}
+	if f := rec.GetField("version"); f == nil || !f.Readonly {
+		t.Error("expected version to stay readonly")
+	}
+}
