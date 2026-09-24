@@ -578,7 +578,7 @@ func (c *checker) checkFunction(sub, super *typ.Function, depth int) bool {
 func (c *checker) checkRecord(sub, super *typ.Record, depth int) bool {
 	// For each field in super, sub must have compatible field
 	for _, sf := range super.Fields {
-		subField := sub.GetField(sf.Name)
+		subField := recordFieldOrInherited(sub, sf.Name)
 		if subField == nil {
 			// Allow missing field if field is optional or type accepts nil
 			if !sf.Optional && !unwrap.IsOptionalLike(sf.Type) {
@@ -633,6 +633,45 @@ func (c *checker) checkRecord(sub, super *typ.Record, depth int) bool {
 	}
 
 	return true
+}
+
+// recordFieldOrInherited returns r's own field name, or the field a read of
+// name reaches through r's metatable __index table, as a value built by
+// setmetatable(obj, {__index = Class}) exposes Class's methods.
+func recordFieldOrInherited(r *typ.Record, name string) *typ.Field {
+	if f := r.GetField(name); f != nil {
+		return f
+	}
+	seen := map[*typ.Record]bool{r: true}
+	for meta := r.Metatable; meta != nil; {
+		mr, ok := metatableRecord(meta)
+		if !ok {
+			return nil
+		}
+		index := mr.GetField("__index")
+		if index == nil {
+			return nil
+		}
+		ir, ok := metatableRecord(index.Type)
+		if !ok || seen[ir] {
+			return nil
+		}
+		seen[ir] = true
+		if f := ir.GetField(name); f != nil {
+			return f
+		}
+		meta = ir.Metatable
+	}
+	return nil
+}
+
+func metatableRecord(t typ.Type) (*typ.Record, bool) {
+	t = unwrap.Alias(t)
+	if rec, ok := t.(*typ.Recursive); ok && rec.Body != nil {
+		t = unwrap.Alias(rec.Body)
+	}
+	r, ok := t.(*typ.Record)
+	return r, ok
 }
 
 // canWidenTo reports whether narrow can safely widen to wide in a mutable context.

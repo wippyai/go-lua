@@ -375,6 +375,7 @@ const (
 	returnTypeStringUnpackValue = 7
 	returnTypeSelectCaseOfParam = 8
 	returnTypeSelectResultCases = 9
+	returnTypeWithMetatable     = 10
 )
 
 func writeReturnType(w Writer, rt ReturnType) error {
@@ -439,6 +440,15 @@ func writeReturnType(w Writer, rt ReturnType) error {
 				return err
 			}
 			return w.WriteInt32(int32(v.Default.Index))
+		},
+		WithMetatable: func(v WithMetatable) error {
+			if err := w.WriteByte(returnTypeWithMetatable); err != nil {
+				return err
+			}
+			if err := w.WriteInt32(int32(v.Table.Index)); err != nil {
+				return err
+			}
+			return w.WriteInt32(int32(v.Metatable.Index))
 		},
 		Default: func(ReturnType) error {
 			return w.WriteByte(returnTypeNil)
@@ -525,6 +535,19 @@ func readReturnType(r Reader) (ReturnType, error) {
 		return SelectResultOfCases{
 			Cases:   ParamRef{Index: int(casesIdx)},
 			Default: ParamRef{Index: int(defaultIdx)},
+		}, nil
+	case returnTypeWithMetatable:
+		tableIdx, err := r.ReadInt32()
+		if err != nil {
+			return nil, err
+		}
+		metaIdx, err := r.ReadInt32()
+		if err != nil {
+			return nil, err
+		}
+		return WithMetatable{
+			Table:     ParamRef{Index: int(tableIdx)},
+			Metatable: ParamRef{Index: int(metaIdx)},
 		}, nil
 	default:
 		return nil, fmt.Errorf("unknown return type tag: %d", tag)

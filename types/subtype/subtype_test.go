@@ -2319,3 +2319,21 @@ func TestBuiltinTableTopFlowsIntoTableShapes(t *testing.T) {
 		t.Error("table must not subtype string")
 	}
 }
+
+// A value built by setmetatable(obj, {__index = Class}) reads Class's fields.
+func TestRecordFieldsReachedThroughMetatableIndex(t *testing.T) {
+	methods := typ.NewRecord().Field("get", typ.Func().Param("self", typ.Any).Returns(typ.Number).Build()).Build()
+	mt := typ.NewRecord().Field("__index", methods).Build()
+	obj := typ.NewRecord().Field("n", typ.Number).Build().WithMetatable(mt)
+	reader := typ.NewRecord().
+		Field("n", typ.Number).
+		Field("get", typ.Func().Param("self", typ.Any).Returns(typ.Number).Build()).
+		Build()
+
+	if !IsSubtype(obj, reader) {
+		t.Fatal("inherited method must satisfy the record type")
+	}
+	if IsSubtype(typ.NewRecord().Field("n", typ.Number).Build(), reader) {
+		t.Fatal("without the metatable the method is missing")
+	}
+}

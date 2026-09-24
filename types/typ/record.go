@@ -118,6 +118,11 @@ func (b *RecordBuilder) Build() *Record {
 	return buildRecordType(b.fields, b.metatable, b.mapKey, b.mapValue, b.open, false)
 }
 
+// WithMetatable returns r with meta as its metatable and everything else kept.
+func (r *Record) WithMetatable(meta Type) *Record {
+	return buildRecordType(r.Fields, meta, r.MapKey, r.MapValue, r.Open, true)
+}
+
 func (r *Record) Kind() kind.Kind { return kind.Record }
 
 func (r *Record) String() string {

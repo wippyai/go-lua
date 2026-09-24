@@ -289,6 +289,7 @@ type ReturnTypeVisitor[R any] struct {
 	StringUnpackValue     func(StringUnpackValue) R
 	SelectCaseOfParam     func(SelectCaseOfParam) R
 	SelectResultOfCases   func(SelectResultOfCases) R
+	WithMetatable         func(WithMetatable) R
 	Default               func(ReturnType) R
 }
 
@@ -366,6 +367,14 @@ func VisitReturnType[R any](t ReturnType, v ReturnTypeVisitor[R]) R {
 	case *SelectResultOfCases:
 		if v.SelectResultOfCases != nil {
 			return v.SelectResultOfCases(*tt)
+		}
+	case WithMetatable:
+		if v.WithMetatable != nil {
+			return v.WithMetatable(tt)
+		}
+	case *WithMetatable:
+		if v.WithMetatable != nil {
+			return v.WithMetatable(*tt)
 		}
 	}
 	if v.Default != nil {
