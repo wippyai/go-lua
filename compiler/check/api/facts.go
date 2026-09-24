@@ -58,11 +58,12 @@ type CapturedTypes = map[cfg.SymbolID]typ.Type
 // FieldWrites maps function symbols to the fields a function may write on
 // tables it reaches through captured variables or its own parameters.
 //
-// Structure: funcSymbol -> targetSymbol -> fieldName -> fieldType, where the
-// target is a variable captured from an enclosing scope or a parameter of the
-// function. Writes include those made by closures the function creates and by
-// functions it passes the target to.
-type FieldWrites = map[cfg.SymbolID]map[cfg.SymbolID]map[string]typ.Type
+// Structure: funcSymbol -> targetSymbol -> FieldWriteKey -> fieldType, where
+// the target is a variable captured from an enclosing scope or a parameter of
+// the function, and the key locates the written field in a table the target
+// holds or reaches by static fields. Writes include those made by closures the
+// function creates and by functions it passes the target to.
+type FieldWrites = map[cfg.SymbolID]map[cfg.SymbolID]FieldWriteSet
 
 // ContainerMutation records a container element mutation on a captured variable.
 // Segments capture the path from the base symbol (e.g., .ch, ["queue"]).

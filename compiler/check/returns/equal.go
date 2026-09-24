@@ -115,8 +115,8 @@ func FieldWritesEqual(a, b api.FieldWrites) bool {
 			if len(fields) != len(otherFields) {
 				return false
 			}
-			for _, name := range cfg.SortedFieldNames(fields) {
-				if !typ.TypeEquals(fields[name], otherFields[name]) {
+			for _, key := range api.SortedFieldWriteKeys(fields) {
+				if !typ.TypeEquals(fields[key], otherFields[key]) {
 					return false
 				}
 			}

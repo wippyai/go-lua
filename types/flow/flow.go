@@ -385,7 +385,7 @@ const IndexerWriteField = "[]"
 
 type FieldWriteEffect struct {
 	Point  cfg.Point
-	Target constraint.Path // Table path (symbol-only)
+	Target constraint.Path // Table path: a symbol, or a static field path below one
 	Field  string
 	Type   typ.Type
 }

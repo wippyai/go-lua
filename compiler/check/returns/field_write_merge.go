@@ -2,20 +2,21 @@ package returns
 
 import (
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-// FieldTypeMerger merges an incoming field type with an existing field type.
+// FieldTypeMerger merges an incoming type written at key with an existing one.
 // When prev is nil, next is a new field value.
-type FieldTypeMerger func(prev typ.Type, next typ.Type) typ.Type
+type FieldTypeMerger func(key api.FieldWriteKey, prev typ.Type, next typ.Type) typ.Type
 
 // MergeFieldWriteSymbolMaps merges field-write maps keyed by target symbol.
-// Structure: targetSymbol -> fieldName -> fieldType.
+// Structure: targetSymbol -> FieldWriteKey -> fieldType.
 func MergeFieldWriteSymbolMaps(
-	existing map[cfg.SymbolID]map[string]typ.Type,
-	next map[cfg.SymbolID]map[string]typ.Type,
+	existing map[cfg.SymbolID]api.FieldWriteSet,
+	next map[cfg.SymbolID]api.FieldWriteSet,
 	merge FieldTypeMerger,
-) map[cfg.SymbolID]map[string]typ.Type {
+) map[cfg.SymbolID]api.FieldWriteSet {
 	if existing == nil {
 		return next
 	}
@@ -25,7 +26,7 @@ func MergeFieldWriteSymbolMaps(
 
 	mergeFn := merge
 	if mergeFn == nil {
-		mergeFn = func(prev typ.Type, n typ.Type) typ.Type {
+		mergeFn = func(_ api.FieldWriteKey, prev typ.Type, n typ.Type) typ.Type {
 			if prev != nil {
 				return prev
 			}
@@ -33,7 +34,7 @@ func MergeFieldWriteSymbolMaps(
 		}
 	}
 
-	merged := make(map[cfg.SymbolID]map[string]typ.Type, len(existing)+len(next))
+	merged := make(map[cfg.SymbolID]api.FieldWriteSet, len(existing)+len(next))
 	for _, sym := range cfg.SortedSymbolIDs(existing) {
 		merged[sym] = existing[sym]
 	}
@@ -44,13 +45,12 @@ func MergeFieldWriteSymbolMaps(
 			merged[sym] = fields
 			continue
 		}
-		out := make(map[string]typ.Type, len(existingFields)+len(fields))
-		for _, name := range cfg.SortedFieldNames(existingFields) {
-			out[name] = existingFields[name]
+		out := make(api.FieldWriteSet, len(existingFields)+len(fields))
+		for _, key := range api.SortedFieldWriteKeys(existingFields) {
+			out[key] = existingFields[key]
 		}
-		for _, name := range cfg.SortedFieldNames(fields) {
-			t := fields[name]
-			out[name] = mergeFn(out[name], t)
+		for _, key := range api.SortedFieldWriteKeys(fields) {
+			out[key] = mergeFn(key, out[key], fields[key])
 		}
 		merged[sym] = out
 	}
