@@ -356,3 +356,21 @@ func TestUnionAnnotatedUnionMember(t *testing.T) {
 		t.Fatal("union should not be nil")
 	}
 }
+
+// The empty table is the empty value of every array and map, so a union with
+// an array or map member absorbs it (`return rows or {}`).
+func TestNewUnion_ArrayOrMapAbsorbsEmptyTable(t *testing.T) {
+	empty := NewRecord().Build()
+	arr := NewArray(String)
+	m := NewMap(String, Number)
+	if got := NewUnion(arr, empty); !TypeEquals(got, arr) {
+		t.Fatalf("T[] | {} = %v, want %v", got, arr)
+	}
+	if got := NewUnion(empty, m, Nil); !TypeEquals(got, NewOptional(m)) {
+		t.Fatalf("{} | map | nil = %v, want %v", got, NewOptional(m))
+	}
+	rec := NewRecord().Field("a", String).Build()
+	if got := NewUnion(rec, empty); TypeEquals(got, rec) {
+		t.Fatalf("a record with required fields must not absorb {}: %v", got)
+	}
+}

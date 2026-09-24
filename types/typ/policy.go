@@ -80,7 +80,7 @@ func isEmptyRecordNoMap(t Type) bool {
 	case *Alias:
 		return isEmptyRecordNoMap(v.Target)
 	case *Record:
-		return len(v.Fields) == 0 && !v.HasMapComponent()
+		return len(v.Fields) == 0 && !v.HasMapComponent() && v.Metatable == nil
 	default:
 		return false
 	}

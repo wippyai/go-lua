@@ -118,6 +118,26 @@ func NewUnion(members ...Type) Type {
 		unique = filtered
 	}
 
+	// Subsume the empty table: {} is the empty value of every array and map,
+	// so an array or map member absorbs it (`return rows or {}`).
+	hasContainer := false
+	for _, m := range unique {
+		switch UnwrapAnnotated(m).(type) {
+		case *Array, *Map:
+			hasContainer = true
+		}
+	}
+	if hasContainer {
+		filtered := unique[:0]
+		for _, m := range unique {
+			if isEmptyRecordNoMap(UnwrapAnnotated(m)) {
+				continue
+			}
+			filtered = append(filtered, m)
+		}
+		unique = filtered
+	}
+
 	// Subsume literals: if a base type is present, drop literal members with matching base.
 	// e.g. string | "" => string, number | 42 => number
 	var baseMask uint8

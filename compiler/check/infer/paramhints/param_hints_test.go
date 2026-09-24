@@ -243,3 +243,18 @@ func TestRefineAnnotation_NarrowsSoftAnnotationOnlyWithinIt(t *testing.T) {
 		t.Fatalf("a concrete annotation is the contract, got %s", got)
 	}
 }
+
+// A dynamic argument absorbs the hint: once any value can flow in, the
+// parameter is any, whatever earlier call sites or iterations contributed.
+func TestMergeCallArgHintAt_DynamicArgumentAbsorbs(t *testing.T) {
+	for _, prev := range []typ.Type{typ.Nil, typ.String, typ.NewOptional(typ.String)} {
+		hints, _ := MergeCallArgHintAt([]typ.Type{prev}, 0, typ.Any, nil, false)
+		if !typ.IsAny(hints[0]) {
+			t.Fatalf("hint %v joined with any = %v, want any", prev, hints[0])
+		}
+	}
+	hints, _ := MergeCallArgHintAt(nil, 0, typ.Any, nil, false)
+	if len(hints) != 1 || !typ.IsAny(hints[0]) {
+		t.Fatalf("first any argument = %v, want any", hints)
+	}
+}
