@@ -35,7 +35,7 @@ func TestField(t *testing.T) {
 		{"record missing field", rec, "missing", false, nil},
 		{"interface method", iface, "read", true, func(t typ.Type) bool { return t.Kind() == typ.String.Kind() || true }},
 		{"interface missing", iface, "write", false, nil},
-		{"builtin table marker", typ.NewInterface("table", nil), "anything", true, func(t typ.Type) bool { return t == typ.Unknown }},
+		{"builtin table marker", typ.NewInterface("table", nil), "anything", true, func(t typ.Type) bool { return t == typ.Any }},
 		{"any type", typ.Any, "anything", true, func(t typ.Type) bool { return t == typ.Any }},
 		{"unknown type", typ.Unknown, "anything", true, func(t typ.Type) bool { return t == typ.Unknown }},
 		{"never type", typ.Never, "anything", true, func(t typ.Type) bool { return t == typ.Never }},
