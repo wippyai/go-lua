@@ -7,6 +7,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/internal"
 	"github.com/wippyai/go-lua/types/kind"
+	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -21,50 +22,45 @@ func MergeIntoSignature(fn *ast.FunctionExpr, hints []typ.Type, sig *typ.Functio
 	if sig == nil || fn == nil || fn.ParList == nil {
 		return sig
 	}
+	types := make([]typ.Type, len(sig.Params))
 	modified := false
 	for i, p := range sig.Params {
+		types[i] = p.Type
 		if i >= len(hints) || hints[i] == nil {
 			continue
 		}
-		if paramAnnotated(fn, i) && !typ.IsRefinableAnnotation(p.Type) {
-			continue
+		if paramAnnotated(fn, i) {
+			types[i] = RefineAnnotation(p.Type, hints[i])
+		} else {
+			types[i] = BodyParamType(hints[i])
 		}
-		if !typ.TypeEquals(p.Type, BodyParamType(hints[i])) {
+		if !typ.TypeEquals(p.Type, types[i]) {
 			modified = true
 		}
 	}
 	if !modified {
 		return sig
 	}
-
-	builder := typ.Func()
+	params := make([]typ.Param, len(sig.Params))
 	for i, p := range sig.Params {
-		paramType := p.Type
-		if i < len(hints) && hints[i] != nil && (!paramAnnotated(fn, i) || typ.IsRefinableAnnotation(paramType)) {
-			paramType = BodyParamType(hints[i])
-		}
-		if p.Optional {
-			builder = builder.OptParam(p.Name, paramType)
-		} else {
-			builder = builder.Param(p.Name, paramType)
-		}
+		params[i] = typ.Param{Name: p.Name, Type: types[i], Optional: p.Optional}
 	}
-	if sig.Variadic != nil {
-		builder = builder.Variadic(sig.Variadic)
+	return sig.WithParams(params)
+}
+
+// RefineAnnotation returns the type the body sees for an annotated parameter
+// with a call-site hint. A soft top-like annotation (any, {[string]: any})
+// is narrowed to the hint when the hint fits within it; otherwise, and for
+// every other annotation, the annotation stands.
+func RefineAnnotation(annotation, hint typ.Type) typ.Type {
+	if annotation == nil || hint == nil || !typ.IsRefinableAnnotation(annotation) {
+		return annotation
 	}
-	if len(sig.Returns) > 0 {
-		builder = builder.Returns(sig.Returns...)
+	refined := BodyParamType(hint)
+	if refined == nil || typ.IsUnknown(refined) || !subtype.IsSubtype(refined, annotation) {
+		return annotation
 	}
-	if sig.Effects != nil {
-		builder = builder.Effects(sig.Effects)
-	}
-	if sig.Spec != nil {
-		builder = builder.Spec(sig.Spec)
-	}
-	if sig.Refinement != nil {
-		builder = builder.WithRefinement(sig.Refinement)
-	}
-	return builder.Build()
+	return refined
 }
 
 func paramAnnotated(fn *ast.FunctionExpr, i int) bool {

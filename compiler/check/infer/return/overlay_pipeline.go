@@ -53,13 +53,11 @@ func (i *Inferencer) buildParameterOverlay(ctx *returnInferenceContext) map[cfg.
 		if slot.TypeAnnotation != nil {
 			resolved := ctx.engine.ResolveType(slot.TypeAnnotation, ctx.resolveScope)
 			if resolved != nil {
-				if typ.IsRefinableAnnotation(resolved) {
-					if typ.IsAbsentOrUnknown(paramType) {
-						paramType = resolved
-					}
-				} else {
-					paramType = resolved
+				hint := typ.Type(nil)
+				if ctx.info.ParamHints != nil && i < len(ctx.info.ParamHints) {
+					hint = ctx.info.ParamHints[i]
 				}
+				paramType = paramhints.RefineAnnotation(resolved, hint)
 			}
 		}
 		overlay[slot.Symbol] = paramType

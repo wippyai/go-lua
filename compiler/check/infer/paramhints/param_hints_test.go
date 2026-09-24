@@ -225,3 +225,21 @@ func TestMergeCallArgHintAt_JoinsEveryCallSite(t *testing.T) {
 		t.Fatalf("a field missing on one call site must become optional, got %s", got)
 	}
 }
+
+func TestRefineAnnotation_NarrowsSoftAnnotationOnlyWithinIt(t *testing.T) {
+	anyMap := typ.NewMap(typ.String, typ.Any)
+	row := typ.NewRecord().Field("binding_id", typ.String).Build()
+
+	if got := RefineAnnotation(anyMap, row); !typ.TypeEquals(got, row) {
+		t.Fatalf("a hint within the soft annotation must refine it, got %s", got)
+	}
+	if got := RefineAnnotation(anyMap, typ.NewOptional(row)); got != typ.Type(anyMap) {
+		t.Fatalf("a nilable hint must not replace a non-nilable annotation, got %s", got)
+	}
+	if got := RefineAnnotation(anyMap, typ.Nil); got != typ.Type(anyMap) {
+		t.Fatalf("a nil-only hint must keep the annotation, got %s", got)
+	}
+	if got := RefineAnnotation(typ.String, typ.LiteralString("x")); got != typ.Type(typ.String) {
+		t.Fatalf("a concrete annotation is the contract, got %s", got)
+	}
+}
