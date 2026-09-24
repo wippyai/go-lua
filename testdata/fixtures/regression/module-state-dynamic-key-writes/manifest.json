@@ -1,0 +1,4 @@
+{
+  "description": "A module whose functions write dynamic keys of a table stored in a module field keeps that field in its exported type",
+  "files": ["test_state.lua", "main.lua"]
+}
