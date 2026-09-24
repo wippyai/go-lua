@@ -47,11 +47,11 @@ func ApplyFieldMergeToOverlay(
 // The merge strategy depends on the base type:
 //   - nil base: Creates an open record with the given fields
 //   - Map base: Creates an open record with map component plus fields
-//   - Record base: Adds new fields, preserving existing fields and metadata
+//   - Record base: Adds new fields and joins written types into existing
+//     fields, preserving metadata
 //   - Other base: Creates an open record with just the fields
 //
-// Field names are sorted for deterministic output. Existing record fields
-// are preserved (not overwritten) since they represent more precise type info.
+// Field names are sorted for deterministic output.
 func MergeFieldsIntoType(baseType typ.Type, fields map[string]typ.Type) typ.Type {
 	return overlaymut.MergeFieldsIntoType(baseType, fields)
 }

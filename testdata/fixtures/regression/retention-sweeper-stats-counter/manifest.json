@@ -1,0 +1,5 @@
+{
+  "description": "Counters seeded with literal 0 and reassigned inside a pcall closure (stats.data = remove(...), stats.data_candidates = #rows) keep the written number domain in the returned record",
+  "files": ["test.lua", "sweeper.lua", "main.lua"],
+  "packages": ["time"]
+}

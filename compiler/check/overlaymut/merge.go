@@ -48,7 +48,8 @@ func ApplyFieldMergeToOverlay(
 	}
 }
 
-// MergeFieldsIntoType merges a set of field types into a base type.
+// MergeFieldsIntoType merges a set of written field types into a base type.
+// A written field already present on a record base joins with its existing type.
 func MergeFieldsIntoType(baseType typ.Type, fields map[string]typ.Type) typ.Type {
 	if len(fields) == 0 {
 		return baseType
@@ -79,7 +80,13 @@ func MergeFieldsIntoType(baseType typ.Type, fields map[string]typ.Type) typ.Type
 		}
 		existing := make(map[string]bool)
 		for _, f := range v.Fields {
-			builder.Field(f.Name, f.Type)
+			fieldType := f.Type
+			if written, ok := fields[f.Name]; ok {
+				// A field holds every value stored into it, so its domain is
+				// the join of the initializer type and the written types.
+				fieldType = typ.JoinPreferNonSoft(fieldType, written)
+			}
+			builder.Field(f.Name, fieldType)
 			existing[f.Name] = true
 		}
 		for _, name := range fieldNames {
