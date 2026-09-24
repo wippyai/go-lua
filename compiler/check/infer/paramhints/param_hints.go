@@ -202,7 +202,9 @@ func MergeHintAt(hints []typ.Type, idx int, hint typ.Type, join HintJoinFn) ([]t
 //   - a nil argument makes the hint optional, and a hint joined only from nil
 //     arguments stays nil (BodyParamType reads it as unknown);
 //   - table arguments join as open records, fields present on only some call
-//     sites becoming optional, so an empty table widens rather than vanishes.
+//     sites becoming optional, so an empty table widens rather than vanishes;
+//   - a never argument comes from an unreachable call site and contributes
+//     nothing.
 func MergeCallArgHintAt(hints []typ.Type, idx int, argType typ.Type, join HintJoinFn, unknownOnNil bool) ([]typ.Type, bool) {
 	if idx < 0 {
 		return hints, false
@@ -213,6 +215,10 @@ func MergeCallArgHintAt(hints []typ.Type, idx int, argType typ.Type, join HintJo
 			return hints, false
 		}
 		argType = typ.Unknown
+	}
+	// A never argument carries no values: its call site is unreachable.
+	if argType.Kind() == kind.Never {
+		return hints, false
 	}
 	hints = EnsureHintCapacity(hints, idx+1)
 

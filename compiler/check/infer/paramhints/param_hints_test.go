@@ -258,3 +258,16 @@ func TestMergeCallArgHintAt_DynamicArgumentAbsorbs(t *testing.T) {
 		t.Fatalf("first any argument = %v, want any", hints)
 	}
 }
+
+// An argument typed never carries no values (its call site is unreachable),
+// so it contributes nothing to the hint.
+func TestMergeCallArgHintAt_NeverArgumentContributesNothing(t *testing.T) {
+	hints, changed := MergeCallArgHintAt(nil, 0, typ.Never, nil, false)
+	if changed || (len(hints) > 0 && hints[0] != nil) {
+		t.Fatalf("never argument set hint %v", hints)
+	}
+	hints, _ = MergeCallArgHintAt([]typ.Type{typ.String}, 0, typ.Never, nil, false)
+	if !typ.TypeEquals(hints[0], typ.String) {
+		t.Fatalf("string hint joined with never = %v, want string", hints[0])
+	}
+}
