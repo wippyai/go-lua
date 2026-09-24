@@ -1,0 +1,4 @@
+{
+  "description": "a local assigned from a call sees its argument narrowed by the guards dominating the call: the generic result and the selected overload follow the narrowed type",
+  "packages": ["channel", "process"]
+}

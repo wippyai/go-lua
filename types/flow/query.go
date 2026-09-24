@@ -414,6 +414,16 @@ func (s *Solution) NarrowedTypeAt(p cfg.Point, path constraint.Path) typ.Type {
 	return result
 }
 
+// NarrowTypeAt narrows t, a type the caller holds for path, by the condition
+// reaching p. It serves callers that know the value's type from outside the
+// solution, such as assignment inference running before the full solve.
+func (s *Solution) NarrowTypeAt(p cfg.Point, path constraint.Path, t typ.Type) typ.Type {
+	if s == nil || t == nil || path.IsEmpty() {
+		return t
+	}
+	return s.applyCondition(p, t, path, s.ConditionAt(p))
+}
+
 func (s *Solution) narrowedTypeCacheKey(p cfg.Point, path constraint.Path) (narrowedTypeCacheKey, bool) {
 	if path.IsEmpty() {
 		return narrowedTypeCacheKey{}, false
