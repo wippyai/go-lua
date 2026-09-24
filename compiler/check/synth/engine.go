@@ -53,6 +53,7 @@ type Config struct {
 	Env            api.BaseEnv
 	Flow           api.FlowOps
 	Paths          api.PathFromExprFunc
+	Conditions     api.ConditionFromExprFunc
 	PreCache       api.Cache
 	NarrowCache    api.Cache
 	Graphs         api.GraphProvider
@@ -120,6 +121,7 @@ func New(cfg Config) *Engine {
 		Graphs:         graphs,
 		Flow:           cfg.Flow,
 		Paths:          cfg.Paths,
+		Conditions:     cfg.Conditions,
 		PreCache:       preCache,
 		NarrowCache:    narrowCache,
 		ModuleBindings: cfg.ModuleBindings,

@@ -185,6 +185,14 @@ type FlowOps interface {
 	// HasKeyOf checks if table contains a key from another path.
 	// Used for key-existence narrowing after table access patterns.
 	HasKeyOf(p cfg.Point, tablePath, keyPath constraint.Path) bool
+
+	// NarrowedTypeAssuming is NarrowedTypeAt with extra holding at p as well.
+	// The right operand of `and`/`or` is typed under the condition its left
+	// operand establishes, as a branch is typed under its guard.
+	NarrowedTypeAssuming(p cfg.Point, path constraint.Path, extra constraint.Condition) typ.Type
+
+	// HasKeyOfAssuming is HasKeyOf with extra holding at p as well.
+	HasKeyOfAssuming(p cfg.Point, tablePath, keyPath constraint.Path, extra constraint.Condition) bool
 }
 
 // LiteralSynth provides synthesis capabilities for function literals.
@@ -205,6 +213,11 @@ type ExprSynth = func(ast.Expr, cfg.Point) typ.Type
 // keyType types index keys, so t[k] with k typed as exactly one string literal
 // resolves to the static field path of t.
 type PathFromExprFunc func(p cfg.Point, expr ast.Expr, sc *scope.State, keyType func(ast.Expr) typ.Type) constraint.Path
+
+// ConditionFromExprFunc returns the conditions an expression establishes at a
+// CFG point when it is truthy and when it is falsy. They are the same
+// conditions a branch on the expression puts on its edges.
+type ConditionFromExprFunc func(p cfg.Point, expr ast.Expr) (onTrue, onFalse constraint.Condition)
 
 // SynthAPI provides type synthesis operations for flow extraction.
 // synth.Engine satisfies this interface directly.

@@ -40,7 +40,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/constprop"
 	fbcore "github.com/wippyai/go-lua/compiler/check/flowbuild/core"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/decl"
-	"github.com/wippyai/go-lua/compiler/check/flowbuild/guard"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/keyscoll"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/mutator"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/path"
@@ -53,7 +52,6 @@ import (
 	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/kind"
-	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
@@ -86,7 +84,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 	// Collects spec-narrowed types from contract specs and propagates through method calls.
 	// Uses expandValues with SpecTypes overlay for method call synthesis.
 	specNarrowed := CollectSpecNarrowedTypes(fc.Graph, fc.Scopes, synth, symResolver, fc.API, fc.ModuleBindings)
-	preflowBranchSolution := buildPreflowBranchSolution(fc, inputs)
+	preflowBranchSolution := buildPreflowFacts(fc, inputs)
 	inferredTypes := collectInferredTypes(fc.Graph, fc.Scopes, synth, fc.API, symResolver, specNarrowed, inputs.AnnotatedVars, inputs, fc.ModuleBindings, fc.CallCtx, fc.TypeOps, preflowBranchSolution, fc.Services)
 	// Promote inferred parameter types into DeclaredTypes for unannotated params.
 	// This enables bidirectional inference at call sites (e.g., custom assert helpers).
@@ -151,10 +149,6 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 	overlayTypes = mergeSpecTypesInto(overlayTypes, inferredTypes)
 	overlayTypes = mergeSpecTypesInto(overlayTypes, specNarrowed)
 	overlayTypes = mergeSpecTypesInto(overlayTypes, loopVarTypes)
-	// Precompute truthy guards: map from CFG point to paths that are narrowed (non-nil) at that point.
-	// Used during table literal synthesis to unwrap optional types.
-	truthyGuards := guard.CollectTruthyGuards(fc.Graph, bindings)
-	typeGuards := guard.CollectTypeGuards(fc.Graph, bindings)
 
 	baseSynth := synthWithOverlayAndPreflow(overlayTypes, bindings, inputs, fc.CallCtx, fc.TypeOps, preflowBranchSolution, synth)
 	idom, _ := cfganalysis.ComputeDominators(fc.Graph.CFG())
@@ -165,29 +159,6 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 			if t := tblutil.SynthTableLiteralWithWrapper(table, p, wrappedSynth); t != nil {
 				return t
 			}
-		}
-		// Check if this is an attribute access where the full path has a truthy guard.
-		if attr, ok := expr.(*ast.AttrGetExpr); ok {
-			t := baseSynth(expr, p)
-			if t != nil && bindings != nil {
-				if pathKey, ok := guard.TruthyKeyFromExpr(attr, bindings); ok && pathKey.Field != "" {
-					if guards, ok := typeGuards[p]; ok {
-						if tk, ok := guards[pathKey]; ok && !tk.IsZero() {
-							if narrowed := narrow.ByTypeKey(t, tk, nil); narrowed != nil {
-								t = narrowed
-							}
-						}
-					}
-					if guards, ok := truthyGuards[p]; ok {
-						if guards[pathKey] {
-							if opt, ok := t.(*typ.Optional); ok {
-								return opt.Inner
-							}
-						}
-					}
-				}
-			}
-			return t
 		}
 		return baseSynth(expr, p)
 	}
@@ -648,8 +619,8 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 						constResolver,
 						wrappedSynth,
 						resolverWithSpec,
-						truthyGuards,
-						typeGuards,
+						inputs,
+						preflowBranchSolution,
 					); ok {
 						inputs.IndexerAssignments = append(inputs.IndexerAssignments, lifted)
 					}
@@ -671,13 +642,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 						keyType = wrappedSynth(target.Key, p)
 					}
 					keyType = canonicalDynamicKeyType(keyType)
-					// Apply truthy guards to narrow optional fields in table literals.
-					valType := assignedType
-					if source != nil && bindings != nil && truthyGuards != nil {
-						if tbl, ok := source.(*ast.TableExpr); ok {
-							valType = guard.NarrowTableFieldsByGuard(valType, tbl, p, bindings, truthyGuards, typeGuards)
-						}
-					}
+					valType := narrowTableFieldsAtPoint(assignedType, source, p, bindings, inputs, preflowBranchSolution)
 					valuePath := constraint.Path{}
 					if source != nil {
 						if sp := path.FromExprWithKeyTypes(source, constResolver, bindings, keyTypeAt); !sp.IsEmpty() {
@@ -787,8 +752,8 @@ func buildLiftedDynamicIndexerAssignment(
 	constResolver func(string) *flow.ConstValue,
 	synth func(ast.Expr, cfg.Point) typ.Type,
 	symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool),
-	truthyGuards map[cfg.Point]map[guard.TruthyPathKey]bool,
-	typeGuards map[cfg.Point]map[guard.TruthyPathKey]narrow.TypeKey,
+	inputs *flow.Inputs,
+	preflow *preflowFacts,
 ) (flow.IndexerAssignment, bool) {
 	if target.Expr == nil {
 		return flow.IndexerAssignment{}, false
@@ -832,12 +797,7 @@ func buildLiftedDynamicIndexerAssignment(
 	outer := steps[firstDynamic]
 	keyVar, keySym, keyType := keyInfoForStep(outer, graph, bindings, synth, symResolver, p, true)
 
-	valType := assignedType
-	if source != nil && bindings != nil && truthyGuards != nil {
-		if tbl, ok := source.(*ast.TableExpr); ok {
-			valType = guard.NarrowTableFieldsByGuard(valType, tbl, p, bindings, truthyGuards, typeGuards)
-		}
-	}
+	valType := narrowTableFieldsAtPoint(assignedType, source, p, bindings, inputs, preflow)
 	valType = resolve.Ref(valType, sc)
 	if valType == nil {
 		valType = typ.Unknown

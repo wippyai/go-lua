@@ -4,9 +4,9 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/cond"
 	fbcore "github.com/wippyai/go-lua/compiler/check/flowbuild/core"
-	"github.com/wippyai/go-lua/compiler/check/flowbuild/guard"
 	fbpath "github.com/wippyai/go-lua/compiler/check/flowbuild/path"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/predicate"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
@@ -39,18 +39,67 @@ func (r narrowResolverAdapter) Index(t typ.Type, key typ.Type) (typ.Type, bool) 
 	return r.ops.Index(r.ctx, t, key)
 }
 
-// buildPreflowBranchSolution solves only branch/numeric edge facts that are
-// already available before assignment extraction completes.
+// preflowFacts is what assignment inference knows about conditions before
+// the full solve: the branch facts reaching each point, and the conditions an
+// expression establishes, extracted as for branch edges.
+type preflowFacts struct {
+	solution   *flow.Solution
+	conditions api.ConditionFromExprFunc
+}
+
+// buildPreflowFacts solves only branch/numeric edge facts that are already
+// available before assignment extraction completes.
 //
 // This gives local inference access to canonical branch narrowing such as
 // discriminant checks on parameters, without depending on later assignment-
 // derived facts or full post-extraction solve. Every write in the graph is
 // recorded without a type, so a branch fact about a value ends where the
 // value is reassigned.
-func buildPreflowBranchSolution(fc *fbcore.FlowContext, inputs *flow.Inputs) *flow.Solution {
+func buildPreflowFacts(fc *fbcore.FlowContext, inputs *flow.Inputs) *preflowFacts {
 	if fc == nil || inputs == nil || inputs.Graph == nil || fc.TypeOps == nil {
 		return nil
 	}
+	return &preflowFacts{
+		solution:   buildPreflowBranchSolution(fc, inputs),
+		conditions: cond.ConditionsFunc(fc, inputs),
+	}
+}
+
+// narrowTypeAssuming narrows t, the type of path at p, by the branch facts
+// reaching p conjoined with extra.
+func (f *preflowFacts) narrowTypeAssuming(p cfg.Point, path constraint.Path, t typ.Type, extra constraint.Condition) typ.Type {
+	if f == nil || f.solution == nil {
+		return t
+	}
+	return f.solution.NarrowTypeAssuming(p, path, t, extra)
+}
+
+// narrowedTypeAt returns the type of path at p the branch facts give.
+func (f *preflowFacts) narrowedTypeAt(p cfg.Point, path constraint.Path) typ.Type {
+	if f == nil || f.solution == nil {
+		return nil
+	}
+	return f.solution.NarrowedTypeAt(p, path)
+}
+
+// operandCondition returns the condition under which the right operand of ex
+// is evaluated: the left operand's truthy condition for `and`, its falsy
+// condition for `or`.
+func (f *preflowFacts) operandCondition(ex *ast.LogicalOpExpr, p cfg.Point) constraint.Condition {
+	if f == nil || f.conditions == nil {
+		return constraint.TrueCondition()
+	}
+	onTrue, onFalse := f.conditions(p, ex.Lhs)
+	switch ex.Operator {
+	case "and":
+		return onTrue
+	case "or":
+		return onFalse
+	}
+	return constraint.TrueCondition()
+}
+
+func buildPreflowBranchSolution(fc *fbcore.FlowContext, inputs *flow.Inputs) *flow.Solution {
 
 	temp := *inputs
 	temp.Assignments = untypedWrites(fc.Graph)
@@ -107,17 +156,18 @@ func untypedWrites(graph *cfg.Graph) []flow.UnifiedAssignment {
 // This keeps assignment inference on the canonical synthesis path while letting
 // recursive field/index expressions observe already-provable branch facts.
 // The operands of `and`/`or` are synthesized the same way, and the right
-// operand sees the facts its left operand establishes, as in the check phase.
+// operand is narrowed under the condition its left operand establishes, the
+// condition a branch on it would carry.
 func synthWithOverlayAndPreflow(
 	overlay map[cfg.SymbolID]typ.Type,
 	bindings *bind.BindingTable,
 	inputs *flow.Inputs,
 	callCtx *db.QueryContext,
 	typeOps core.TypeOps,
-	preflow *flow.Solution,
+	preflow *preflowFacts,
 	base func(ast.Expr, cfg.Point) typ.Type,
 ) func(ast.Expr, cfg.Point) typ.Type {
-	var synth func(ast.Expr, cfg.Point, []operandFact) typ.Type
+	var synth func(ast.Expr, cfg.Point, constraint.Condition) typ.Type
 
 	pathOf := func(expr ast.Expr, p cfg.Point) constraint.Path {
 		if bindings == nil {
@@ -126,53 +176,9 @@ func synthWithOverlayAndPreflow(
 		return fbpath.FromExprWithBindings(expr, predicate.BuildConstResolver(inputs, p), bindings)
 	}
 
-	// leftOperandFact returns the fact the right operand of ex observes about
-	// a path read by its left operand: a type() test of the path, or the
-	// truthiness of the left operand itself.
-	leftOperandFact := func(ex *ast.LogicalOpExpr, left typ.Type, p cfg.Point, facts []operandFact) (operandFact, bool) {
-		if rel, ok := ex.Lhs.(*ast.RelationalOpExpr); ok {
-			if arg, key, holdsOnEqual, ok := guard.TypeGuardOperand(rel); ok {
-				holds := (ex.Operator == "and") == holdsOnEqual
-				if path := pathOf(arg, p); holds && !path.IsEmpty() {
-					if narrowed := narrow.ByTypeKey(synth(arg, p, facts), key, nil); narrowed != nil && !narrowed.Kind().IsNever() {
-						return operandFact{path: path, t: narrowed}, true
-					}
-				}
-				return operandFact{}, false
-			}
-		}
-		path := pathOf(ex.Lhs, p)
-		if path.IsEmpty() || !ops.CanBeFalsy(left) {
-			return operandFact{}, false
-		}
-		var narrowed typ.Type
-		switch ex.Operator {
-		case "and":
-			narrowed = narrow.ToTruthy(left)
-		case "or":
-			narrowed = narrow.ToFalsy(left)
-		}
-		if narrowed == nil || narrowed.Kind().IsNever() {
-			return operandFact{}, false
-		}
-		return operandFact{path: path, t: narrowed}, true
-	}
-
-	synth = func(expr ast.Expr, p cfg.Point, facts []operandFact) typ.Type {
-		if expr == nil {
-			return nil
-		}
-
-		if len(facts) > 0 {
-			if path := pathOf(expr, p); !path.IsEmpty() {
-				for i := len(facts) - 1; i >= 0; i-- {
-					if facts[i].path.Equal(path) {
-						return facts[i].t
-					}
-				}
-			}
-		}
-
+	// read types an identifier or attribute read, before the operand
+	// condition applies.
+	read := func(expr ast.Expr, p cfg.Point, assumed constraint.Condition) typ.Type {
 		if ident, ok := expr.(*ast.IdentExpr); ok && bindings != nil {
 			if sym, ok := bindings.SymbolOf(ident); ok && sym != 0 {
 				if t, exists := overlay[sym]; exists {
@@ -181,22 +187,18 @@ func synthWithOverlayAndPreflow(
 			}
 		}
 
-		if preflow != nil && bindings != nil && inputs != nil {
+		if bindings != nil && inputs != nil {
 			if path := pathOf(expr, p); !path.IsEmpty() {
-				if narrowed := preflow.NarrowedTypeAt(p, path); !typ.IsAbsentOrUnknown(narrowed) {
+				if narrowed := preflow.narrowedTypeAt(p, path); !typ.IsAbsentOrUnknown(narrowed) {
 					return narrowed
 				}
 			}
 		}
 
-		switch ex := expr.(type) {
-		case *ast.AttrGetExpr:
-			if typeOps == nil {
-				break
-			}
-			objType := synth(ex.Object, p, facts)
+		if attr, ok := expr.(*ast.AttrGetExpr); ok && typeOps != nil {
+			objType := synth(attr.Object, p, assumed)
 			if !typ.IsAbsentOrUnknown(objType) {
-				switch key := ex.Key.(type) {
+				switch key := attr.Key.(type) {
 				case *ast.StringExpr:
 					if ft, ok := typeOps.Field(callCtx, objType, key.Value); ok && !typ.IsAbsentOrUnknown(ft) {
 						return ft
@@ -205,26 +207,13 @@ func synthWithOverlayAndPreflow(
 						return it
 					}
 				default:
-					keyType := synth(ex.Key, p, facts)
+					keyType := synth(attr.Key, p, assumed)
 					if !typ.IsAbsentOrUnknown(keyType) {
 						if it, ok := typeOps.Index(callCtx, objType, keyType); ok && !typ.IsAbsentOrUnknown(it) {
 							return it
 						}
 					}
 				}
-			}
-		case *ast.LogicalOpExpr:
-			left := synth(ex.Lhs, p, facts)
-			rightFacts := facts
-			if fact, ok := leftOperandFact(ex, left, p, facts); ok {
-				rightFacts = append(append(make([]operandFact, 0, len(facts)+1), facts...), fact)
-			}
-			right := synth(ex.Rhs, p, rightFacts)
-			switch ex.Operator {
-			case "and":
-				return ops.LogicalAndTyped(left, right)
-			case "or":
-				return ops.LogicalOrTyped(left, right)
 			}
 		}
 
@@ -234,14 +223,77 @@ func synthWithOverlayAndPreflow(
 		return base(expr, p)
 	}
 
+	synth = func(expr ast.Expr, p cfg.Point, assumed constraint.Condition) typ.Type {
+		if expr == nil {
+			return nil
+		}
+		if ex, ok := expr.(*ast.LogicalOpExpr); ok && (ex.Operator == "and" || ex.Operator == "or") {
+			left := synth(ex.Lhs, p, assumed)
+			right := synth(ex.Rhs, p, constraint.And(assumed, preflow.operandCondition(ex, p)))
+			if ex.Operator == "and" {
+				return ops.LogicalAndTyped(left, right)
+			}
+			return ops.LogicalOrTyped(left, right)
+		}
+		t := read(expr, p, assumed)
+		if t == nil {
+			return t
+		}
+		switch expr.(type) {
+		case *ast.IdentExpr, *ast.AttrGetExpr:
+			if path := pathOf(expr, p); !path.IsEmpty() {
+				return preflow.narrowTypeAssuming(p, path, t, assumed)
+			}
+		}
+		return t
+	}
+
 	return func(expr ast.Expr, p cfg.Point) typ.Type {
-		return synth(expr, p, nil)
+		return synth(expr, p, constraint.TrueCondition())
 	}
 }
 
-// operandFact is the type a logical operator's left operand establishes for
-// a path read by its right operand.
-type operandFact struct {
-	path constraint.Path
-	t    typ.Type
+// narrowTableFieldsAtPoint narrows the fields of recType, the type of the table
+// literal source, whose values read a path, by the branch facts reaching p:
+// `{from = event.from}` under `if event.from then` has a present from.
+func narrowTableFieldsAtPoint(recType typ.Type, source ast.Expr, p cfg.Point, bindings *bind.BindingTable, inputs *flow.Inputs, preflow *preflowFacts) typ.Type {
+	tbl, ok := source.(*ast.TableExpr)
+	if !ok || bindings == nil || preflow == nil {
+		return recType
+	}
+	rec, ok := recType.(*typ.Record)
+	if !ok || len(rec.Fields) == 0 {
+		return recType
+	}
+	constResolver := predicate.BuildConstResolver(inputs, p)
+	fieldPaths := make(map[string]constraint.Path)
+	for _, field := range tbl.Fields {
+		if field == nil || field.Key == nil {
+			continue
+		}
+		name := ast.KeyName(field.Key)
+		if name == "" {
+			continue
+		}
+		if path := fbpath.FromExprWithBindings(field.Value, constResolver, bindings); !path.IsEmpty() {
+			fieldPaths[name] = path
+		}
+	}
+	if len(fieldPaths) == 0 {
+		return recType
+	}
+	out := rec
+	for _, f := range rec.Fields {
+		path, ok := fieldPaths[f.Name]
+		if !ok {
+			continue
+		}
+		narrowed := preflow.narrowTypeAssuming(p, path, f.Type, constraint.TrueCondition())
+		if narrowed == nil || typ.IsNever(narrowed) || typ.TypeEquals(narrowed, f.Type) {
+			continue
+		}
+		f.Type = narrowed
+		out = out.WithField(f)
+	}
+	return out
 }

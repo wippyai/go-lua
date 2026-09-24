@@ -705,6 +705,7 @@ func (s *Synthesizer) withEnvOverlay(overlay map[string]typ.Type) *Synthesizer {
 		Graphs:                 s.deps.Graphs,
 		Flow:                   s.deps.Flow,
 		Paths:                  s.deps.Paths,
+		Conditions:             s.deps.Conditions,
 		PreCache:               make(api.Cache),
 		NarrowCache:            make(api.Cache),
 		FunctionTypeInProgress: s.deps.FunctionTypeInProgress,

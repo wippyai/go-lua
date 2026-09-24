@@ -68,6 +68,7 @@ func RunNarrow(input NarrowInput) NarrowOutput {
 		narrowingCtx,
 		input.ModuleBindings,
 		input.ModuleAliases,
+		input.Extract.Conditions,
 	)
 
 	fnEffect := InferRefinement(input.Graph, input.Solve.Solution, input.Extract.Params, input.Extract.ReturnType)
@@ -89,6 +90,7 @@ func createNarrowedEngine(
 	checkCtx api.NarrowEnv,
 	moduleBindings *bind.BindingTable,
 	moduleAliases map[cfg.SymbolID]string,
+	conditions api.ConditionFromExprFunc,
 ) *synth.Engine {
 	var bindings *bind.BindingTable
 	if checkCtx != nil {
@@ -103,6 +105,7 @@ func createNarrowedEngine(
 		Scopes:         scopes,
 		Flow:           solution,
 		Paths:          newPathFromExprFunc(solution, bindings),
+		Conditions:     conditions,
 		Manifests:      manifests,
 		Env:            checkCtx,
 		Phase:          api.PhaseNarrowing,

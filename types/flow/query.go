@@ -380,11 +380,18 @@ func (s *Solution) NarrowedTypeAt(p cfg.Point, path constraint.Path) typ.Type {
 		}
 	}
 
+	result := s.narrowedTypeUnder(p, path, s.ConditionAt(p))
+	if cacheable {
+		s.narrowedTypeCache[cacheKey] = narrowedTypeCacheValue{t: result, ok: result != nil}
+	}
+	return result
+}
+
+// narrowedTypeUnder returns the type at point p for path, narrowed by
+// condition.
+func (s *Solution) narrowedTypeUnder(p cfg.Point, path constraint.Path, condition constraint.Condition) typ.Type {
 	baseType := s.baseTypeAt(p, path)
 	if baseType == nil {
-		if cacheable {
-			s.narrowedTypeCache[cacheKey] = narrowedTypeCacheValue{}
-		}
 		return nil
 	}
 	// For annotated symbols, ensure base type does not drop required structure.
@@ -398,30 +405,38 @@ func (s *Solution) NarrowedTypeAt(p cfg.Point, path constraint.Path) typ.Type {
 			}
 		}
 	}
-
-	condition := s.ConditionAt(p)
 	if !condition.HasConstraints() {
-		if cacheable {
-			s.narrowedTypeCache[cacheKey] = narrowedTypeCacheValue{t: baseType, ok: true}
-		}
 		return baseType
 	}
-
-	result := s.applyCondition(p, baseType, path, condition)
-	if cacheable {
-		s.narrowedTypeCache[cacheKey] = narrowedTypeCacheValue{t: result, ok: true}
-	}
-	return result
+	return s.applyCondition(p, baseType, path, condition)
 }
 
 // NarrowTypeAt narrows t, a type the caller holds for path, by the condition
 // reaching p. It serves callers that know the value's type from outside the
 // solution, such as assignment inference running before the full solve.
 func (s *Solution) NarrowTypeAt(p cfg.Point, path constraint.Path, t typ.Type) typ.Type {
+	return s.NarrowTypeAssuming(p, path, t, constraint.TrueCondition())
+}
+
+// NarrowTypeAssuming narrows t, a type the caller holds for path, by the
+// condition reaching p conjoined with extra.
+func (s *Solution) NarrowTypeAssuming(p cfg.Point, path constraint.Path, t typ.Type, extra constraint.Condition) typ.Type {
 	if s == nil || t == nil || path.IsEmpty() {
 		return t
 	}
-	return s.applyCondition(p, t, path, s.ConditionAt(p))
+	return s.applyCondition(p, t, path, constraint.And(s.ConditionAt(p), extra))
+}
+
+// NarrowedTypeAssuming returns the type at p for path narrowed by the
+// condition reaching p conjoined with extra. An operand evaluated only when
+// another operand's condition holds, such as the right operand of `and`, is
+// typed with that condition as extra, so an expression guard narrows exactly
+// as the same guard on a branch does.
+func (s *Solution) NarrowedTypeAssuming(p cfg.Point, path constraint.Path, extra constraint.Condition) typ.Type {
+	if s == nil {
+		return nil
+	}
+	return s.narrowedTypeUnder(p, path, constraint.And(s.ConditionAt(p), extra))
 }
 
 func (s *Solution) narrowedTypeCacheKey(p cfg.Point, path constraint.Path) (narrowedTypeCacheKey, bool) {
@@ -800,11 +815,23 @@ func (s *Solution) IsPointDead(p cfg.Point) bool {
 // HasKeyOf checks if a KeyOf constraint exists at point p for the given table
 // and key paths, read as operands of the statement at p.
 func (s *Solution) HasKeyOf(p cfg.Point, tablePath, keyPath constraint.Path) bool {
-	if s == nil || s.pkResolver == nil {
+	if s == nil {
 		return false
 	}
-	cond := s.ConditionAt(p)
-	if !cond.HasConstraints() {
+	return s.hasKeyOfUnder(p, tablePath, keyPath, s.ConditionAt(p))
+}
+
+// HasKeyOfAssuming checks for a KeyOf fact under the condition reaching p
+// conjoined with extra.
+func (s *Solution) HasKeyOfAssuming(p cfg.Point, tablePath, keyPath constraint.Path, extra constraint.Condition) bool {
+	if s == nil {
+		return false
+	}
+	return s.hasKeyOfUnder(p, tablePath, keyPath, constraint.And(s.ConditionAt(p), extra))
+}
+
+func (s *Solution) hasKeyOfUnder(p cfg.Point, tablePath, keyPath constraint.Path, cond constraint.Condition) bool {
+	if s.pkResolver == nil || !cond.HasConstraints() {
 		return false
 	}
 	resolve := func(path constraint.Path) constraint.PathKey {

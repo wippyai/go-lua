@@ -39,58 +39,6 @@ import (
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
-// localNarrowOps wraps a api.FlowOps and overrides NarrowedTypeAt for one path.
-type localNarrowOps struct {
-	inner        api.FlowOps
-	overridePath constraint.Path
-	overrideType typ.Type
-}
-
-func (n *localNarrowOps) NarrowedTypeAt(p cfg.Point, path constraint.Path) typ.Type {
-	if path.Equal(n.overridePath) {
-		return n.overrideType
-	}
-	if n.inner != nil {
-		return n.inner.NarrowedTypeAt(p, path)
-	}
-	return nil
-}
-
-func (n *localNarrowOps) BoundsAt(p cfg.Point, name string) (int64, int64, bool) {
-	if n.inner != nil {
-		return n.inner.BoundsAt(p, name)
-	}
-	return 0, 0, false
-}
-
-func (n *localNarrowOps) ArrayLenBoundAt(p cfg.Point, varName string) (string, bool) {
-	if n.inner != nil {
-		return n.inner.ArrayLenBoundAt(p, varName)
-	}
-	return "", false
-}
-
-func (n *localNarrowOps) ArrayLenBoundWithOffsetAt(p cfg.Point, varName string) (string, int64, bool) {
-	if n.inner != nil {
-		return n.inner.ArrayLenBoundWithOffsetAt(p, varName)
-	}
-	return "", 0, false
-}
-
-func (n *localNarrowOps) IsPointDead(p cfg.Point) bool {
-	if n.inner != nil {
-		return n.inner.IsPointDead(p)
-	}
-	return false
-}
-
-func (n *localNarrowOps) HasKeyOf(p cfg.Point, tablePath, keyPath constraint.Path) bool {
-	if n.inner != nil {
-		return n.inner.HasKeyOf(p, tablePath, keyPath)
-	}
-	return false
-}
-
 // keyTypeAt types index keys for path extraction at p.
 func (s *Synthesizer) keyTypeAt(p cfg.Point, narrower api.FlowOps) func(ast.Expr) typ.Type {
 	return func(key ast.Expr) typ.Type { return s.SynthExpr(key, p, narrower) }
@@ -468,123 +416,83 @@ func (s *Synthesizer) synthLogicalOpCore(ex *ast.LogicalOpExpr, recurse ExprSynt
 	}
 }
 
-// synthLogicalOpWithNarrowing synthesizes logical op with LHS path narrowing in RHS.
-// For `and`: RHS sees LHS narrowed to truthy.
-// For `or`: RHS sees LHS narrowed to falsy.
-func (s *Synthesizer) synthLogicalOpWithNarrowing(ex *ast.LogicalOpExpr, p cfg.Point, sc *scope.State, narrower api.FlowOps, recurse ExprSynth) typ.Type {
+// assumingFlowOps views flow ops with an extra condition holding at every
+// point.
+type assumingFlowOps struct {
+	inner api.FlowOps
+	extra constraint.Condition
+}
+
+// assumeFlow returns flow ops in which cond holds at every point in addition to
+// what ops already establishes.
+func assumeFlow(ops api.FlowOps, cond constraint.Condition) api.FlowOps {
+	if a, ok := ops.(*assumingFlowOps); ok {
+		return &assumingFlowOps{inner: a.inner, extra: constraint.And(a.extra, cond)}
+	}
+	return &assumingFlowOps{inner: ops, extra: cond}
+}
+
+func (a *assumingFlowOps) NarrowedTypeAt(p cfg.Point, path constraint.Path) typ.Type {
+	return a.inner.NarrowedTypeAssuming(p, path, a.extra)
+}
+
+func (a *assumingFlowOps) NarrowedTypeAssuming(p cfg.Point, path constraint.Path, extra constraint.Condition) typ.Type {
+	return a.inner.NarrowedTypeAssuming(p, path, constraint.And(a.extra, extra))
+}
+
+func (a *assumingFlowOps) BoundsAt(p cfg.Point, name string) (int64, int64, bool) {
+	return a.inner.BoundsAt(p, name)
+}
+
+func (a *assumingFlowOps) ArrayLenBoundAt(p cfg.Point, varName string) (string, bool) {
+	return a.inner.ArrayLenBoundAt(p, varName)
+}
+
+func (a *assumingFlowOps) ArrayLenBoundWithOffsetAt(p cfg.Point, varName string) (string, int64, bool) {
+	return a.inner.ArrayLenBoundWithOffsetAt(p, varName)
+}
+
+func (a *assumingFlowOps) IsPointDead(p cfg.Point) bool {
+	return a.inner.IsPointDead(p)
+}
+
+func (a *assumingFlowOps) HasKeyOf(p cfg.Point, tablePath, keyPath constraint.Path) bool {
+	return a.inner.HasKeyOfAssuming(p, tablePath, keyPath, a.extra)
+}
+
+func (a *assumingFlowOps) HasKeyOfAssuming(p cfg.Point, tablePath, keyPath constraint.Path, extra constraint.Condition) bool {
+	return a.inner.HasKeyOfAssuming(p, tablePath, keyPath, constraint.And(a.extra, extra))
+}
+
+// synthLogicalOpWithNarrowing synthesizes a logical operator whose right
+// operand is typed under the condition the left operand establishes: its truthy
+// condition for `and`, its falsy condition for `or`. The condition is the one a
+// branch on the left operand puts on its edge, applied by the flow solution the
+// same way, so `type(x) == "table" and x.f` types x.f exactly as
+// `if type(x) == "table" then ... x.f ... end` does.
+func (s *Synthesizer) synthLogicalOpWithNarrowing(ex *ast.LogicalOpExpr, p cfg.Point, narrower api.FlowOps, recurse ExprSynth) typ.Type {
+	if s.deps.Conditions == nil {
+		return s.synthLogicalOpCore(ex, recurse)
+	}
+	onTrue, onFalse := s.deps.Conditions(p, ex.Lhs)
+	var cond constraint.Condition
+	switch ex.Operator {
+	case "and":
+		cond = onTrue
+	case "or":
+		cond = onFalse
+	default:
+		return s.synthLogicalOpCore(ex, recurse)
+	}
+	if !cond.HasConstraints() {
+		return s.synthLogicalOpCore(ex, recurse)
+	}
 	left := recurse(ex.Lhs)
-
-	// A type() guard on the left narrows the value it tests for the right
-	// operand: `type(x) == "k" and x` sees x as k, as does `type(x) ~= "k" or x`.
-	if guarded, ok := s.typeGuardNarrowing(ex, p, sc, narrower); ok {
-		right := s.SynthExpr(ex.Rhs, p, guarded)
-		switch ex.Operator {
-		case "and":
-			return ops.LogicalAndTyped(left, right)
-		case "or":
-			return ops.LogicalOrTyped(left, right)
-		}
+	right := s.SynthExpr(ex.Rhs, p, assumeFlow(narrower, cond))
+	if ex.Operator == "and" {
+		return ops.LogicalAndTyped(left, right)
 	}
-
-	// Extract path for LHS expression
-	var lhsPath constraint.Path
-	if s.deps.Paths != nil {
-		lhsPath = s.deps.Paths(p, ex.Lhs, sc, recurse)
-	} else if ident, ok := ex.Lhs.(*ast.IdentExpr); ok {
-		if s.deps.CheckCtx != nil {
-			if bindings := s.deps.CheckCtx.Bindings(); bindings != nil {
-				if sym, ok := bindings.SymbolOf(ident); ok && sym != 0 {
-					lhsPath = constraint.Path{Root: ident.Value, Symbol: sym}
-				}
-			}
-		}
-	}
-
-	if !lhsPath.IsEmpty() && ops.CanBeFalsy(left) {
-		var narrowedType typ.Type
-		switch ex.Operator {
-		case "and":
-			narrowedType = narrow.ToTruthy(left)
-		case "or":
-			narrowedType = narrow.ToFalsy(left)
-		}
-
-		if !typ.IsNever(narrowedType) {
-			wrapped := &localNarrowOps{
-				inner:        narrower,
-				overridePath: lhsPath,
-				overrideType: narrowedType,
-			}
-			wrappedRecurse := func(expr ast.Expr) typ.Type {
-				return s.SynthExpr(expr, p, wrapped)
-			}
-			right := wrappedRecurse(ex.Rhs)
-			switch ex.Operator {
-			case "and":
-				return ops.LogicalAndTyped(left, right)
-			case "or":
-				return ops.LogicalOrTyped(left, right)
-			}
-		}
-	}
-
-	return s.synthLogicalOpCore(ex, recurse)
-}
-
-// typeGuardNarrowing returns flow ops under which the right operand of ex is
-// evaluated when its left operand is a type() test of a path: the test holds
-// for the right operand of `and` when it compares with ==, and of `or` when
-// it compares with ~=.
-func (s *Synthesizer) typeGuardNarrowing(ex *ast.LogicalOpExpr, p cfg.Point, sc *scope.State, narrower api.FlowOps) (api.FlowOps, bool) {
-	rel, ok := ex.Lhs.(*ast.RelationalOpExpr)
-	if !ok || s.deps.Paths == nil {
-		return nil, false
-	}
-	holds := (ex.Operator == "and" && rel.Operator == "==") || (ex.Operator == "or" && rel.Operator == "~=")
-	if !holds {
-		return nil, false
-	}
-	call, lit := typeCallAndLiteral(rel.Lhs, rel.Rhs)
-	if call == nil {
-		return nil, false
-	}
-	key, ok := narrow.KnownBuiltinTypeKey(lit.Value)
-	if !ok || !s.isTypePredicateCall(call, p, narrower) {
-		return nil, false
-	}
-	path := s.deps.Paths(p, call.Args[0], sc, s.keyTypeAt(p, narrower))
-	if path.IsEmpty() {
-		return nil, false
-	}
-	current := s.SynthExpr(call.Args[0], p, narrower)
-	narrowed := narrow.ByTypeKey(current, key, nil)
-	if narrowed == nil || typ.IsNever(narrowed) {
-		return nil, false
-	}
-	return &localNarrowOps{inner: narrower, overridePath: path, overrideType: narrowed}, true
-}
-
-// typeCallAndLiteral splits a comparison into a one-argument call and a string
-// literal, in either order.
-func typeCallAndLiteral(a, b ast.Expr) (*ast.FuncCallExpr, *ast.StringExpr) {
-	if call, ok := a.(*ast.FuncCallExpr); ok && len(call.Args) == 1 && call.Receiver == nil {
-		if lit, ok := b.(*ast.StringExpr); ok {
-			return call, lit
-		}
-	}
-	if call, ok := b.(*ast.FuncCallExpr); ok && len(call.Args) == 1 && call.Receiver == nil {
-		if lit, ok := a.(*ast.StringExpr); ok {
-			return call, lit
-		}
-	}
-	return nil, nil
-}
-
-// isTypePredicateCall reports whether call's callee declares the type
-// predicate effect, as the builtin type does.
-func (s *Synthesizer) isTypePredicateCall(call *ast.FuncCallExpr, p cfg.Point, narrower api.FlowOps) bool {
-	row, ok := querycore.EffectRowOf(s.SynthExpr(call.Func, p, narrower))
-	return ok && row.HasTypePredicate()
+	return ops.LogicalOrTyped(left, right)
 }
 
 // synthArithmeticOpCore synthesizes type for arithmetic operators.

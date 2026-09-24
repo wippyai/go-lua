@@ -238,7 +238,10 @@ type FlowExtractInput struct {
 // FlowExtractOutput contains outputs from the flow extraction phase.
 // Phase B outputs: flow inputs for the solver.
 type FlowExtractOutput struct {
-	Inputs     *flow.Inputs
+	Inputs *flow.Inputs
+	// Conditions gives the conditions an expression establishes, extracted as
+	// for branch edges.
+	Conditions api.ConditionFromExprFunc
 	Params     []flow.ParamInfo
 	ReturnType typ.Type
 }

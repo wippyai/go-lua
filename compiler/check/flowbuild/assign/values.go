@@ -5,7 +5,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/api"
 	checkcallsite "github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/types/constraint"
-	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -28,7 +27,7 @@ func rhsSpecTypesAtAssignPoint(
 	p cfg.Point,
 	base api.SpecTypes,
 	resolve checkcallsite.SymbolTypeAtPoint,
-	preflow *flow.Solution,
+	preflow *preflowFacts,
 ) api.SpecTypes {
 	if graph == nil || info == nil || len(info.Targets) == 0 {
 		return base
@@ -90,7 +89,7 @@ func preAssignmentTargetTypes(
 
 // narrowReadSymbolsAtPoint narrows the overlay types of the symbols read by the
 // sources of info by the branch conditions reaching p.
-func narrowReadSymbolsAtPoint(graph *cfg.Graph, info *cfg.AssignInfo, p cfg.Point, overlay api.SpecTypes, preflow *flow.Solution) api.SpecTypes {
+func narrowReadSymbolsAtPoint(graph *cfg.Graph, info *cfg.AssignInfo, p cfg.Point, overlay api.SpecTypes, preflow *preflowFacts) api.SpecTypes {
 	if preflow == nil || len(overlay) == 0 {
 		return overlay
 	}
@@ -113,7 +112,7 @@ func narrowReadSymbolsAtPoint(graph *cfg.Graph, info *cfg.AssignInfo, p cfg.Poin
 			continue
 		}
 		path := constraint.Path{Root: name, Symbol: sym}
-		narrowed := preflow.NarrowTypeAt(p, path, t)
+		narrowed := preflow.narrowTypeAssuming(p, path, t, constraint.TrueCondition())
 		if narrowed == nil || typ.TypeEquals(narrowed, t) {
 			continue
 		}
