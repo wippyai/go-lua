@@ -158,6 +158,51 @@ func (s *Solution) runPropagation() {
 			})
 		}
 	}
+	for _, write := range s.inputs.IndexerAssignments {
+		if write.Symbol != 0 {
+			assigns = append(assigns, propagate.Assignment{
+				Point: write.Point, TargetSym: write.Symbol,
+				TargetSegs: write.Segments, ChildrenOnly: true,
+			})
+		}
+	}
+	// A call can write a captured or parameter-reachable field without an
+	// assignment to the caller's local symbol. Those writes invalidate facts
+	// about the field just as a direct assignment does.
+	for _, write := range s.inputs.FieldWriteEffects {
+		if write.Target.Symbol == 0 {
+			continue
+		}
+		if write.Field == IndexerWriteField {
+			assigns = append(assigns, propagate.Assignment{
+				Point: write.Point, TargetSym: write.Target.Symbol,
+				TargetSegs: write.Target.Segments, ChildrenOnly: true,
+			})
+			continue
+		}
+		segments := append(append([]constraint.Segment(nil), write.Target.Segments...), constraint.Segment{
+			Kind: constraint.SegmentField, Name: write.Field,
+		})
+		assigns = append(assigns, propagate.Assignment{
+			Point:      write.Point,
+			TargetSym:  write.Target.Symbol,
+			TargetSegs: segments,
+		})
+	}
+	for _, write := range s.inputs.TableMutatorAssignments {
+		if write.Target.Symbol != 0 {
+			assigns = append(assigns, propagate.Assignment{
+				Point: write.Point, TargetSym: write.Target.Symbol,
+				TargetSegs: write.Target.Segments, ChildrenOnly: true,
+			})
+		}
+	}
+	// Facts produced while evaluating a statement describe values before its
+	// writes. A later argument or the assignment target may change those values
+	// before the outgoing edge is reached.
+	for edge, condition := range edgeConds {
+		edgeConds[edge] = propagate.KillRedefinedConditions(condition, edge.From, assigns)
+	}
 
 	propInputs := &propagate.Inputs{
 		Graph:          s.inputs.Graph,

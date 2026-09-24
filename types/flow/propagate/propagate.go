@@ -87,6 +87,9 @@ type Assignment struct {
 	// TargetSegs specifies field path for nested assignments (x.foo.bar = ...).
 	// Empty for simple variable assignments.
 	TargetSegs []constraint.Segment
+	// ChildrenOnly marks a dynamic index write: it can change any child of
+	// TargetSegs, while the table at TargetSegs keeps its identity.
+	ChildrenOnly bool
 }
 
 // Inputs provides all data needed for constraint propagation.
@@ -418,7 +421,8 @@ func KillRedefinedConditions(cond constraint.Condition, p cfg.Point, assignments
 					return false
 				}
 				for _, ap := range assignedPaths {
-					if PathAffectedByAssignment(cpath, ap.TargetSym, ap.TargetSegs) {
+					if PathAffectedByAssignment(cpath, ap.TargetSym, ap.TargetSegs) &&
+						(!ap.ChildrenOnly || len(cpath.Segments) > len(ap.TargetSegs)) {
 						shouldKeep = false
 						return true
 					}
@@ -470,7 +474,12 @@ func PathAffectedByAssignment(cpath constraint.Path, assignSym cfg.SymbolID, ass
 
 	for i, seg := range assignSegs {
 		cseg := cpath.Segments[i]
-		if cseg.Kind != seg.Kind || cseg.Name != seg.Name || cseg.Index != seg.Index {
+		if cseg.Kind == constraint.SegmentIndexInt || seg.Kind == constraint.SegmentIndexInt {
+			if cseg.Kind != seg.Kind || cseg.Index != seg.Index {
+				return false
+			}
+		} else if cseg.Name != seg.Name {
+			// Dot access and string index access name the same Lua field.
 			return false
 		}
 	}
