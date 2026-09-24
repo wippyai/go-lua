@@ -48,13 +48,10 @@ func PropagatePhi(graph *cfg.Graph, inputs *flow.Inputs, solution *flow.Solution
 	impossible := func(p cfg.Point) bool {
 		if !checked[p] {
 			checked[p] = true
+			// This preliminary estimate only selects phi operands for pair
+			// propagation. It cannot certify global CFG reachability: publishing
+			// its answer as a DeadPoint removes unrelated live guard branches.
 			dead[p] = literalConditionImpossibleAt(solution, inputs, p)
-			if dead[p] {
-				if inputs.DeadPoints == nil {
-					inputs.DeadPoints = make(map[cfg.Point]bool)
-				}
-				inputs.DeadPoints[p] = true
-			}
 		}
 		return dead[p]
 	}

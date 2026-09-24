@@ -689,6 +689,22 @@ func TestCorrelationsFromFunctionType_ExplicitErrorReturn(t *testing.T) {
 	}
 }
 
+func TestCorrelationsFromFunctionType_UnionCallRequiresEveryBranch(t *testing.T) {
+	value := typ.NewOptional(typ.NewRecord().Field("get_messages", typ.Func().Build()).Build())
+	stringError := typ.Func().Returns(value, typ.NewOptional(typ.String)).Build()
+	luaError := typ.Func().Returns(value, typ.NewOptional(typ.LuaError)).Build()
+	uncorrelated := typ.Func().Returns(value, typ.NewOptional(typ.Number)).Build()
+
+	shared, _ := correlationsFromFunctionType(typ.NewUnion(stringError, luaError))
+	if len(shared) != 1 || shared[0] != (flow.ReturnCorrelation{ValueIndex: 0, ErrorIndex: 1}) {
+		t.Fatalf("both callable branches return a correlated value/error pair: %v", shared)
+	}
+	unsafe, _ := correlationsFromFunctionType(typ.NewUnion(stringError, uncorrelated))
+	if len(unsafe) != 0 {
+		t.Fatalf("a branch without the relation must prevent narrowing: %v", unsafe)
+	}
+}
+
 func TestCorrelationsFromFunctionType_ImplicitLuaErrorConvention(t *testing.T) {
 	fnType := typ.Func().
 		Returns(typ.NewOptional(typ.String), typ.NewOptional(typ.LuaError)).
