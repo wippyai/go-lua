@@ -87,6 +87,24 @@ func IsSubtype(sub, super typ.Type) bool {
 	return isSubtype(sub, super)
 }
 
+// Session decides plain subtyping for a batch of queries. A pair a query
+// proves or refutes stays decided for later queries, so repeated comparisons
+// of shared substructure are derived once. A session is not safe for
+// concurrent use.
+type Session struct {
+	c checker
+}
+
+// NewSession returns an empty subtyping session.
+func NewSession() *Session {
+	return &Session{}
+}
+
+// IsSubtype reports whether sub is a subtype of super, as IsSubtype does.
+func (s *Session) IsSubtype(sub, super typ.Type) bool {
+	return s.c.check(sub, super, 0)
+}
+
 // IsConsistentSubtype reports whether a value of type sub may be used where
 // super is expected under gradual typing: the consistent-subtyping relation of
 // Siek and Taha, in which any is consistent with every type in both

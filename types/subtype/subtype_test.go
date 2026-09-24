@@ -2337,3 +2337,21 @@ func TestRecordFieldsReachedThroughMetatableIndex(t *testing.T) {
 		t.Fatal("without the metatable the method is missing")
 	}
 }
+
+// A session decides each query as IsSubtype does and keeps its decisions for
+// later queries.
+func TestSession_AgreesWithIsSubtype(t *testing.T) {
+	rec := func(v typ.Type) typ.Type { return typ.NewRecord().Field("f", typ.Func().Param("x", v).Returns(v).Build()).Build() }
+	pairs := [][2]typ.Type{
+		{typ.Integer, typ.Number}, {typ.Number, typ.Integer},
+		{rec(typ.String), rec(typ.String)}, {rec(typ.String), rec(typ.Number)},
+	}
+	sess := NewSession()
+	for round := 0; round < 2; round++ {
+		for _, p := range pairs {
+			if got, want := sess.IsSubtype(p[0], p[1]), IsSubtype(p[0], p[1]); got != want {
+				t.Fatalf("round %d: session %v <: %v = %v, want %v", round, p[0], p[1], got, want)
+			}
+		}
+	}
+}

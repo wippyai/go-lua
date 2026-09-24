@@ -1002,6 +1002,9 @@ const selfRecursiveRecordName = "self"
 // yields mu X. T[T' := X], an upper bound of the whole chain and its limit.
 func foldSelfRecursiveRecords(t typ.Type) typ.Type {
 	folded := make(map[*typ.Record]typ.Type)
+	// One subtyping session serves the whole pass: the approximation checks
+	// compare the same shared substructure many times.
+	sess := subtype.NewSession()
 	return typ.Rewrite(t, func(node typ.Type) (typ.Type, bool) {
 		rec, ok := node.(*typ.Record)
 		if !ok {
@@ -1010,7 +1013,7 @@ func foldSelfRecursiveRecords(t typ.Type) typ.Type {
 		if out, ok := folded[rec]; ok {
 			return out, true
 		}
-		out := foldSelfRecursiveRecord(rec)
+		out := foldSelfRecursiveRecord(rec, sess)
 		if out == typ.Type(rec) {
 			return nil, false
 		}
@@ -1021,16 +1024,16 @@ func foldSelfRecursiveRecords(t typ.Type) typ.Type {
 
 // foldSelfRecursiveRecord returns mu X. owner[T' := X] for every approximation
 // T' of owner nested in owner, or owner itself when none is nested.
-func foldSelfRecursiveRecord(owner *typ.Record) typ.Type {
+func foldSelfRecursiveRecord(owner *typ.Record, sess *subtype.Session) typ.Type {
 	return typ.FoldApproximations(selfRecursiveRecordName, owner, func(node typ.Type) bool {
-		return isRecordApproximation(node, owner)
+		return isRecordApproximation(node, owner, sess)
 	})
 }
 
 // isRecordApproximation reports whether t is an approximation of owner: a
 // record, or a recursive record, with exactly owner's fields that lies below
 // owner in the information order of inference.
-func isRecordApproximation(t typ.Type, owner *typ.Record) bool {
+func isRecordApproximation(t typ.Type, owner *typ.Record, sess *subtype.Session) bool {
 	shape := unwrap.Alias(t)
 	if rr, ok := shape.(*typ.Recursive); ok {
 		shape = rr.Body
@@ -1039,21 +1042,21 @@ func isRecordApproximation(t typ.Type, owner *typ.Record) bool {
 	if !ok || !rec.HasSameFieldNames(owner) {
 		return false
 	}
-	return informationBelow(t, owner, make(map[[2]typ.Type]bool))
+	return informationBelow(t, owner, make(map[[2]typ.Type]bool), sess)
 }
 
 // informationBelow reports whether a is an earlier approximation of b: a
 // subtype of b, or a type that differs from one only where an earlier
 // iteration had not yet resolved a type (unknown). Records compare field by
 // field, unions member by member, and recursive types coinductively.
-func informationBelow(a, b typ.Type, assumed map[[2]typ.Type]bool) bool {
+func informationBelow(a, b typ.Type, assumed map[[2]typ.Type]bool, sess *subtype.Session) bool {
 	if a == nil || typ.IsUnknown(a) {
 		return true
 	}
 	if b == nil {
 		return false
 	}
-	if subtype.IsSubtype(a, b) {
+	if sess.IsSubtype(a, b) {
 		return true
 	}
 	key := [2]typ.Type{a, b}
@@ -1065,42 +1068,42 @@ func informationBelow(a, b typ.Type, assumed map[[2]typ.Type]bool) bool {
 	a = unwrap.Alias(a)
 	b = unwrap.Alias(b)
 	if ar, ok := a.(*typ.Recursive); ok {
-		return informationBelow(ar.Body, b, assumed)
+		return informationBelow(ar.Body, b, assumed, sess)
 	}
 	if br, ok := b.(*typ.Recursive); ok {
-		return informationBelow(a, br.Body, assumed)
+		return informationBelow(a, br.Body, assumed, sess)
 	}
 	if au, ok := a.(*typ.Union); ok {
 		for _, m := range au.Members {
-			if !informationBelow(m, b, assumed) {
+			if !informationBelow(m, b, assumed, sess) {
 				return false
 			}
 		}
 		return true
 	}
 	if ao, ok := a.(*typ.Optional); ok {
-		return informationBelow(typ.Nil, b, assumed) && informationBelow(ao.Inner, b, assumed)
+		return informationBelow(typ.Nil, b, assumed, sess) && informationBelow(ao.Inner, b, assumed, sess)
 	}
 	switch bt := b.(type) {
 	case *typ.Optional:
-		return unwrap.IsNilType(a) || informationBelow(a, bt.Inner, assumed)
+		return unwrap.IsNilType(a) || informationBelow(a, bt.Inner, assumed, sess)
 	case *typ.Union:
 		for _, m := range bt.Members {
-			if informationBelow(a, m, assumed) {
+			if informationBelow(a, m, assumed, sess) {
 				return true
 			}
 		}
 		return false
 	case *typ.Array:
 		aa, ok := a.(*typ.Array)
-		return ok && informationBelow(aa.Element, bt.Element, assumed)
+		return ok && informationBelow(aa.Element, bt.Element, assumed, sess)
 	case *typ.Record:
 		ar, ok := a.(*typ.Record)
 		if !ok || ar.HasMapComponent() != bt.HasMapComponent() {
 			return false
 		}
 		if ar.HasMapComponent() &&
-			(!informationBelow(ar.MapKey, bt.MapKey, assumed) || !informationBelow(ar.MapValue, bt.MapValue, assumed)) {
+			(!informationBelow(ar.MapKey, bt.MapKey, assumed, sess) || !informationBelow(ar.MapValue, bt.MapValue, assumed, sess)) {
 			return false
 		}
 		for _, af := range ar.Fields {
@@ -1114,7 +1117,7 @@ func informationBelow(a, b typ.Type, assumed map[[2]typ.Type]bool) bool {
 			if af.Optional && !bf.Optional && !typ.IsUnknown(af.Type) {
 				return false
 			}
-			if !informationBelow(af.Type, bf.Type, assumed) {
+			if !informationBelow(af.Type, bf.Type, assumed, sess) {
 				return false
 			}
 		}
