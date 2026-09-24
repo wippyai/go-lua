@@ -767,11 +767,18 @@ func (s *Solution) processIndexerAssignmentReturnKey(p cfg.Point, ia IndexerAssi
 
 	// Get the current type of the indexed container, which is the value at the
 	// full path (root plus segments), not the root the path hangs off.
-	currentType := preferDeclaredTemplateForWiden(s.writtenTableTypeAt(p, pathKey, iaPath), s.declaredTypeAtPath(iaPath))
+	declared := s.declaredTypeAtPath(iaPath)
+	currentType := preferDeclaredTemplateForWiden(s.writtenTableTypeAt(p, pathKey, iaPath), declared)
 
 	// Compute the widened type
 	newType := widenWithIndexer(currentType, keyType, valueType)
 	if newType == nil || typ.TypeEquals(currentType, newType) {
+		return ""
+	}
+	// A refinable annotation such as {any} lets writes refine the table within
+	// it; a write that would take it outside, as a non-integer key would turn
+	// an array into a map, leaves the annotation standing.
+	if s.inputs.RefinableAnnotatedVars[ia.Symbol] && !subtype.IsSubtype(newType, declared) {
 		return ""
 	}
 
@@ -1060,11 +1067,15 @@ func (s *Solution) processFieldWriteEffectReturnKey(p cfg.Point, fw FieldWriteEf
 		}
 		// As for a direct index write, a declared template stands in for an
 		// empty or unresolved current value.
-		base := preferDeclaredTemplateForWiden(currentType, s.declaredTypeAtPath(fw.Target))
+		declared := s.declaredTypeAtPath(fw.Target)
+		base := preferDeclaredTemplateForWiden(currentType, declared)
 		if base == nil {
 			return ""
 		}
 		newType = widenWithIndexer(base, m.Key, subtype.WidenForInference(m.Value))
+		if s.inputs.RefinableAnnotatedVars[fw.Target.Symbol] && !subtype.IsSubtype(newType, declared) {
+			return ""
+		}
 	} else {
 		newType = widenFieldWrite(currentType, fw.Field, subtype.WidenForInference(fw.Type))
 	}

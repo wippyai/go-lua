@@ -211,6 +211,10 @@ type Inputs struct {
 	// AnnotatedVars tracks variables with explicit type annotations.
 	AnnotatedVars map[cfg.SymbolID]bool
 
+	// RefinableAnnotatedVars tracks variables whose annotation is refinable,
+	// such as {any}: flow facts may refine their declared type, within it.
+	RefinableAnnotatedVars map[cfg.SymbolID]bool
+
 	Assignments    []UnifiedAssignment
 	ConstValues    map[cfg.SymbolID]map[cfg.Point]*ConstValue
 	EdgeConditions []EdgeCondition
