@@ -42,6 +42,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/infer/captured"
 	"github.com/wippyai/go-lua/compiler/check/modules"
 	"github.com/wippyai/go-lua/compiler/check/phase"
 	"github.com/wippyai/go-lua/compiler/check/returns"
@@ -395,7 +396,7 @@ func (i *Inferencer) inferReturnTypesFromBody(
 	if fnGraph == nil {
 		return narrowed
 	}
-	phaseReturnSummaries := summarizeWithoutCurrent(ctx.summaries, ctx.info)
+	phaseReturnSummaries := ctx.summaries
 	declCheckCtx := api.NewReturnInferenceEnv(api.ReturnInferenceEnvConfig{
 		Graph:           fnGraph,
 		Bindings:        ctx.bindings,
@@ -506,6 +507,7 @@ func (i *Inferencer) inferReturnWithSummary(
 
 	// Add captured variable types from parent.
 	i.enrichOverlayWithCaptured(ctx, overlay)
+	untypedCapture := captured.HasUntypedSelf(fnGraph.Bindings(), fn, overlay) || captured.HasUntypedAliasCall(fnGraph, overlay)
 
 	// Add local declared types (annotations, loop variables) as overlay hints.
 	i.enrichOverlayWithLocalDeclarations(ctx, overlay)
@@ -517,5 +519,14 @@ func (i *Inferencer) inferReturnWithSummary(
 	finalOverlay := i.collectAndApplyMutations(ctx, overlay, inferred, synthAdapter)
 
 	// Phase 2: Infer return types from body.
-	return i.inferReturnTypesFromBody(ctx, finalOverlay)
+	rets := i.inferReturnTypesFromBody(ctx, finalOverlay)
+
+	// Captured types come from the parent's solved flow, so the first round has
+	// none. Returns reading an untyped capture are unknown, and the return-slot
+	// join drops unknown members, so the body result would omit those branches;
+	// the returns stay unknown until the captured types are known.
+	if untypedCapture && len(rets) > 0 {
+		return typ.UnknownReturns(len(rets))
+	}
+	return rets
 }

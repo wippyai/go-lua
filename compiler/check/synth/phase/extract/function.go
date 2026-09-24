@@ -41,6 +41,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/erreffect"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/mutator"
+	"github.com/wippyai/go-lua/compiler/check/infer/captured"
 	"github.com/wippyai/go-lua/compiler/check/overlaymut"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth/phase/core"
@@ -374,6 +375,11 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 		}
 	}
 
+	untypedCall := captured.HasUntypedSelf(fnGraph.Bindings(), fn, overlay) || captured.HasUntypedAliasCall(fnGraph, overlay)
+	if untypedCall && len(summaryFallback) > 0 {
+		return summaryFallback, false
+	}
+
 	// Infer basic ordered-comparison hints (x > 0, name <= "zz") so unannotated
 	// params don't stay unknown when return typing depends on guarded branches.
 	enrichOverlayWithOrderedComparisonHints(fnGraph, overlay)
@@ -611,6 +617,9 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 
 	if typ.IsUnknownOnlyOrEmpty(returnTypes) && len(summaryFallback) > 0 {
 		return summaryFallback, false
+	}
+	if untypedCall && len(returnTypes) > 0 {
+		return typ.UnknownReturns(len(returnTypes)), false
 	}
 
 	return returnTypes, erreffect.HasStrictInverseReturnPattern(fnGraph, nil, tempSynth, 0, 1)
