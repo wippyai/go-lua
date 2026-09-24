@@ -513,7 +513,7 @@ func collectInferredTypes(
 						return t, true
 					}
 					return rhsResolver(point, sym)
-				})
+				}, preflowBranchSolution)
 				callOverlay = enrichStructuredOverlayAtPoint(graph, idom, structuredWrites, p, callOverlay, rhsResolver, wrappedSynth)
 
 				return synthWithInferenceOverlay(graph, callOverlay, funcSigTypes, paramSet, annotated, bindings, inputs, callCtx, typeOps, preflowBranchSolution, synth)
@@ -698,7 +698,7 @@ func collectInferredTypes(
 										return t, true
 									}
 									return rhsResolver(point, sym)
-								})
+								}, preflowBranchSolution)
 								rhsOverlay = enrichStructuredOverlayAtPoint(graph, idom, structuredWrites, p, rhsOverlay, rhsResolver, wrappedSynth)
 								values = expandedAssignValues(synthAPI, info, p, rhsOverlay)
 								valuesComputed = true

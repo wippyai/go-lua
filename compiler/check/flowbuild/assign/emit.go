@@ -271,7 +271,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 			}
 			// Use pre-assignment symbol overlays for assignment targets so RHS
 			// synthesis follows Lua evaluation order (`x = f(x, ...)`).
-			rhsOverlay := rhsSpecTypesAtAssignPoint(fc.Graph, info, p, overlayTypes, resolverWithSpec)
+			rhsOverlay := rhsSpecTypesAtAssignPoint(fc.Graph, info, p, overlayTypes, resolverWithSpec, preflowBranchSolution)
 			rhsOverlay = enrichStructuredOverlayAtPoint(fc.Graph, idom, structuredWrites, p, rhsOverlay, resolverWithSpec, wrappedSynth)
 			values = expandedAssignValues(fc.API, info, p, rhsOverlay)
 			valuesComputed = true

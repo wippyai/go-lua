@@ -201,34 +201,36 @@ func buildSelectResultUnion(args []typ.Type, transform effect.SelectResultOfCase
 	seen := make(map[uint64]bool)
 
 	for caseIdx, caseType := range caseTypes {
-		channelType, valueType := extractSelectCaseParts(caseType)
-		if channelType == nil {
-			// Keep unknown/any case elements conservative; skip concrete non-case fields.
-			if !typ.IsAny(caseType) && !typ.IsUnknown(caseType) {
-				continue
+		for _, alternative := range selectCaseAlternatives(caseType) {
+			channelType, valueType := extractSelectCaseParts(alternative)
+			if channelType == nil {
+				// Keep unknown/any case elements conservative; skip concrete non-case fields.
+				if !typ.IsAny(alternative) && !typ.IsUnknown(alternative) {
+					continue
+				}
+				channelType = typ.Any
+				valueType = typ.Any
 			}
-			channelType = typ.Any
-			valueType = typ.Any
-		}
 
-		builder := typ.NewRecord().
-			Field("channel", channelType).
-			Field("ok", typ.Boolean).
-			Field("value", valueType).
-			// Preserve case multiplicity even when channel/value types are equal.
-			// This keeps identity-sensitive narrowing sound for `result.channel ~= ch`.
-			Field("__select_case_id", typ.LiteralInt(int64(caseIdx)))
+			builder := typ.NewRecord().
+				Field("channel", channelType).
+				Field("ok", typ.Boolean).
+				Field("value", valueType).
+				// Preserve case multiplicity even when channel/value types are equal.
+				// This keeps identity-sensitive narrowing sound for `result.channel ~= ch`.
+				Field("__select_case_id", typ.LiteralInt(int64(caseIdx)))
 
-		if addDefault {
-			builder = builder.OptField("default", typ.Boolean)
-		}
+			if addDefault {
+				builder = builder.OptField("default", typ.Boolean)
+			}
 
-		resultRecord := builder.Build()
+			resultRecord := builder.Build()
 
-		h := resultRecord.Hash()
-		if !seen[h] {
-			seen[h] = true
-			resultTypes = append(resultTypes, resultRecord)
+			h := resultRecord.Hash()
+			if !seen[h] {
+				seen[h] = true
+				resultTypes = append(resultTypes, resultRecord)
+			}
 		}
 	}
 
@@ -352,6 +354,16 @@ func extractSelectCaseElements(casesArg typ.Type) []typ.Type {
 	}
 
 	return []typ.Type{casesArg}
+}
+
+// selectCaseAlternatives returns the case types one case element may be: the
+// members of a union, as a case built on a channel of union type is, or the
+// element itself.
+func selectCaseAlternatives(caseType typ.Type) []typ.Type {
+	if u, ok := unwrap.Alias(caseType).(*typ.Union); ok {
+		return u.Members
+	}
+	return []typ.Type{caseType}
 }
 
 // extractSelectCaseParts extracts the channel and value types from a SelectCase<Ch, T>.
