@@ -530,6 +530,9 @@ func joinIterationFactAt(a, b typ.Type, invariant bool) typ.Type {
 	if joined, ok := joinIterationArrays(a, b); ok {
 		return joined
 	}
+	if joined, ok := joinIterationMaps(a, b); ok {
+		return joined
+	}
 	// The previous fact stays while it admits the current one, so equivalent
 	// facts with different spellings do not alternate between iterations. A
 	// record admits one with other fields when their field types admit nil,
@@ -549,6 +552,29 @@ func joinIterationFactAt(a, b typ.Type, invariant bool) typ.Type {
 		return b
 	}
 	return typ.JoinPreferNonSoft(a, b)
+}
+
+// A map value can gain resolved fields in a later iteration, just like an
+// array element or record field. Preserve the key domain while refreshing
+// provisional value members.
+func joinIterationMaps(a, b typ.Type) (typ.Type, bool) {
+	am, ok := a.(*typ.Map)
+	if !ok {
+		return nil, false
+	}
+	bm, ok := b.(*typ.Map)
+	if !ok {
+		return nil, false
+	}
+	key := joinIterationFactAt(am.Key, bm.Key, true)
+	value := joinIterationFactAt(am.Value, bm.Value, true)
+	if typ.TypeEquals(key, am.Key) && typ.TypeEquals(value, am.Value) {
+		return a, true
+	}
+	if typ.TypeEquals(key, bm.Key) && typ.TypeEquals(value, bm.Value) {
+		return b, true
+	}
+	return typ.NewMap(key, value), true
 }
 
 // hasUnresolvedKeyDomain reports whether t is a table written by keys of

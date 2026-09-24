@@ -353,7 +353,15 @@ type IndexerAssignment struct {
 	KeySymbol cfg.SymbolID         // Symbol ID for the key variable (for SSA-aware lookup)
 	KeyType   typ.Type             // Optional explicit key type (overrides KeySymbol lookup)
 	ValuePath constraint.Path      // Path to value expression for flow-resolved type lookup
-	ValType   typ.Type             // Fallback type when ValuePath is unavailable
+	// Field paths inside a table literal value, resolved after call returns and
+	// branch facts are available to the flow solver.
+	ValueFieldPaths []IndexerValueFieldPath
+	ValType         typ.Type // Fallback type when ValuePath is unavailable
+}
+
+type IndexerValueFieldPath struct {
+	Name string
+	Path constraint.Path
 }
 
 // TableMutatorAssignment describes table.insert-like mutations that widen

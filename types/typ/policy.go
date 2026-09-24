@@ -63,8 +63,16 @@ func JoinReturnSlot(a, b Type) Type {
 	}
 	a = PruneSoftUnionMembers(a)
 	b = PruneSoftUnionMembers(b)
+	if TypeEquals(a, b) {
+		return a
+	}
 	if preferred, ok := preferArrayOverEmptyRecord(a, b); ok {
 		return preferred
+	}
+	if am, ok := a.(*Map); ok {
+		if bm, ok := b.(*Map); ok && TypeEquals(am.Key, bm.Key) {
+			return NewMap(am.Key, JoinReturnSlot(am.Value, bm.Value))
+		}
 	}
 	if merged, ok := JoinCompatibleRecords(a, b); ok {
 		return merged
