@@ -515,10 +515,12 @@ func hasUnresolvedKeyDomain(t typ.Type) bool {
 	return false
 }
 
-// coversRecordFields reports whether a keeps the record fields of b: every
-// record of b, at the same position in a (a union or optional member, a field
-// both records have, an array element or a map value), has its fields in a
-// record of a, or a is open there.
+// coversRecordFields reports whether a keeps the record shapes of b: every
+// closed record of b, at the same position in a (a union or optional member,
+// a field both records have, an array element or a map value), has its fields
+// in a record of a, or a is open there. An open record of b states fields a
+// value has, not its shape, so its fields need no counterpart in a; the
+// records at its fields and containers still do.
 func coversRecordFields(a, b typ.Type) bool {
 	return coversFieldsAt(a, b, make(map[[2]typ.Type]bool))
 }
@@ -568,7 +570,7 @@ func coversMemberFields(a, b typ.Type, visiting map[[2]typ.Type]bool) bool {
 		for _, bf := range br.Fields {
 			af := ar.GetField(bf.Name)
 			if af == nil {
-				if !ar.Open && !ar.HasMapComponent() {
+				if !br.Open && !ar.Open && !ar.HasMapComponent() {
 					return false
 				}
 				continue

@@ -751,3 +751,14 @@ func TestJoinIterationFact_KeepsRecordShapesTheCurrentFactDiscovered(t *testing.
 		t.Errorf("expected the join to keep the success entries, got %v", joined)
 	}
 }
+
+func TestReturnTypesRefine_OpenPartialRecordDoesNotBlockRefinement(t *testing.T) {
+	entry := typ.NewRecord().Field("id", typ.String).Field("name", typ.Any).Build()
+	partial := typ.NewRecord().SetOpen(true).Field("provider_metadata", typ.Any).Build()
+	complete := []typ.Type{typ.NewArray(entry)}
+	withPartial := []typ.Type{typ.NewArray(typ.NewUnion(entry, partial))}
+
+	if !ReturnTypesRefine(complete, withPartial) {
+		t.Error("an open record states fields of a value, not a shape the refinement must keep")
+	}
+}
