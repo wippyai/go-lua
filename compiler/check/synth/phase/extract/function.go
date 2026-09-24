@@ -691,28 +691,9 @@ func localFunctionSymbol(graph *cfg.Graph, fn *ast.FunctionExpr) cfg.SymbolID {
 		}
 	}
 	var fnSym cfg.SymbolID
-	graph.EachAssign(func(_ cfg.Point, info *cfg.AssignInfo) {
-		if fnSym != 0 || info == nil || !info.IsLocal || len(info.Targets) == 0 {
-			return
-		}
-		info.EachTargetSource(func(_ int, target cfg.AssignTarget, source ast.Expr) {
-			if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
-				return
-			}
-			if source == fn {
-				fnSym = target.Symbol
-			}
-		})
-	})
-	if fnSym != 0 {
-		return fnSym
-	}
-	graph.EachFuncDef(func(_ cfg.Point, info *cfg.FuncDefInfo) {
-		if fnSym != 0 || info == nil || info.Symbol == 0 {
-			return
-		}
-		if info.FuncExpr == fn {
-			fnSym = info.Symbol
+	graph.EachLocalFunction(func(_ cfg.Point, sym cfg.SymbolID, local *ast.FunctionExpr) {
+		if fnSym == 0 && local == fn {
+			fnSym = sym
 		}
 	})
 	return fnSym

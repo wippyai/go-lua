@@ -108,57 +108,21 @@ type RunContext struct {
 	EffectLookup constraint.RefinementLookupBySym
 }
 
-// collectLocalFunctions gathers local function definitions from assignments and FuncDef nodes.
+// collectLocalFunctions gathers the local functions of graph (see cfg.Graph.EachLocalFunction).
 func (i *Inferencer) collectLocalFunctions(
 	graph *cfg.Graph,
 	pointScopes map[cfg.Point]*scope.State,
 	parentFn *ast.FunctionExpr,
 ) map[cfg.SymbolID]*returns.LocalFuncInfo {
 	localFuncs := make(map[cfg.SymbolID]*returns.LocalFuncInfo)
-
-	graph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
-		if info == nil || !info.IsLocal || len(info.Targets) == 0 {
-			return
-		}
-		info.EachTargetSource(func(idx int, target cfg.AssignTarget, source ast.Expr) {
-			if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
-				return
-			}
-			fnExpr, ok := source.(*ast.FunctionExpr)
-			if !ok {
-				return
-			}
-
-			fnGraph := (*cfg.Graph)(nil)
-			if i.graphs != nil {
-				fnGraph = i.graphs.GetOrBuildCFG(fnExpr)
-			}
-			localFuncs[target.Symbol] = &returns.LocalFuncInfo{
-				Sym:         target.Symbol,
-				Fn:          fnExpr,
-				DefScope:    pointScopes[p],
-				Graph:       fnGraph,
-				ParentGraph: graph,
-				ParentFn:    parentFn,
-				DefPoint:    p,
-			}
-		})
-	})
-
-	graph.EachFuncDef(func(p cfg.Point, info *cfg.FuncDefInfo) {
-		if info == nil || info.Symbol == 0 || info.FuncExpr == nil {
-			return
-		}
-		if _, exists := localFuncs[info.Symbol]; exists {
-			return
-		}
+	graph.EachLocalFunction(func(p cfg.Point, sym cfg.SymbolID, fnExpr *ast.FunctionExpr) {
 		fnGraph := (*cfg.Graph)(nil)
 		if i.graphs != nil {
-			fnGraph = i.graphs.GetOrBuildCFG(info.FuncExpr)
+			fnGraph = i.graphs.GetOrBuildCFG(fnExpr)
 		}
-		localFuncs[info.Symbol] = &returns.LocalFuncInfo{
-			Sym:         info.Symbol,
-			Fn:          info.FuncExpr,
+		localFuncs[sym] = &returns.LocalFuncInfo{
+			Sym:         sym,
+			Fn:          fnExpr,
 			DefScope:    pointScopes[p],
 			Graph:       fnGraph,
 			ParentGraph: graph,
