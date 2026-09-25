@@ -480,6 +480,10 @@ func collectInferredTypes(
 		var overlayScratch api.SpecTypes
 		for iter := 0; iter < maxInferIterations; iter++ {
 			changed := false
+			previous := make(api.SpecTypes, len(sccSyms))
+			for _, sym := range sccSyms {
+				previous[sym] = inferred[sym]
+			}
 			overlayScratch = mergeSpecTypesSoftInto(overlayScratch, inferred, specTypes)
 			overlay := overlayScratch
 
@@ -834,6 +838,17 @@ func collectInferredTypes(
 				changed = true
 			}
 
+			// Replaying assignments and mutators can change intermediate types
+			// while leaving the SCC's complete round result unchanged.
+			if changed {
+				changed = false
+				for _, sym := range sccSyms {
+					if !typ.TypeEquals(previous[sym], inferred[sym]) {
+						changed = true
+						break
+					}
+				}
+			}
 			if !changed {
 				converged = true
 				break
