@@ -359,6 +359,11 @@ func (s *Solution) carryForwardStructuredVersionFacts(p cfg.Point, targetPath co
 	if targetPath.Symbol == 0 || len(targetPath.Segments) == 0 {
 		return nil
 	}
+	// A root assignment at this point replaces the table. Child facts emitted
+	// for the assigned value must not inherit fields from its old version.
+	if s.hasRootAssignmentAtPoint(p, targetPath.Symbol) {
+		return nil
+	}
 
 	currentBase := constraint.Path{
 		Root:    targetPath.Root,
