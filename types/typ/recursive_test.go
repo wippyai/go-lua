@@ -68,6 +68,22 @@ func TestRecursiveEqualsEquivalent(t *testing.T) {
 	}
 }
 
+func TestRecursiveSnapshotsCompareTheirBodies(t *testing.T) {
+	identity := NewRecursivePlaceholder("class")
+	first := BindRecursiveSnapshotWithFields(identity, NewRecord().Field("value", String).Field("self", Unknown).Build(), map[string]bool{"self": true})
+	second := BindRecursiveSnapshotWithFields(identity, NewRecord().Field("value", Number).Field("self", Unknown).Build(), map[string]bool{"self": true})
+	firstAgain := BindRecursiveSnapshotWithFields(identity, NewRecord().Field("value", String).Field("self", Unknown).Build(), map[string]bool{"self": true})
+	if TypeEquals(first, second) {
+		t.Fatal("snapshots with changed bodies compared equal by identity")
+	}
+	if !TypeEquals(first, firstAgain) {
+		t.Fatal("equivalent snapshots should compare equal")
+	}
+	if field := first.Body.(*Record).GetField("value"); field == nil || !TypeEquals(field.Type, String) {
+		t.Fatal("binding a later snapshot changed the first body")
+	}
+}
+
 // TestRecursiveNotEqualsNonRecursive tests that recursive types don't equal non-recursive.
 func TestRecursiveNotEqualsNonRecursive(t *testing.T) {
 	rec := NewRecursive("Node", func(self Type) Type {

@@ -6,7 +6,9 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	cfganalysis "github.com/wippyai/go-lua/compiler/cfg/analysis"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/nested"
 	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/constraint"
@@ -31,13 +33,73 @@ type SessionStore struct {
 	InterprocNext *InterprocState
 
 	// GraphParentHash records the parent scope hash for each graph ID.
-	GraphParentHash map[uint64]uint64
+	GraphParentHash     map[uint64]uint64
+	classSelfIdentities map[classSelfKey]*typ.Recursive
 
 	// lastSwapDiffs records which channels changed during the most recent FixpointSwap.
 	// Stored per-session to avoid cross-session contamination.
 	lastSwapDiffs []string
 
 	phase api.Phase
+}
+
+type classSelfKey struct {
+	graphID uint64
+	symbol  cfg.SymbolID
+}
+
+// BindClassSelf gives a class table one recursion identity across fixpoint
+// rounds. Its body is a fresh, complete snapshot on every call.
+func (s *SessionStore) BindClassSelf(graph *cfg.Graph, at cfg.Point, sym cfg.SymbolID, name string, body typ.Type) typ.Type {
+	if s == nil || graph == nil || sym == 0 || body == nil {
+		return body
+	}
+	body = nested.EnrichSelfTypeWithConstructorFields(body, sym, s)
+	body = nested.NormalizeMethodSelfType(body)
+	if typ.IsAny(body) || typ.IsUnknown(body) {
+		return body
+	}
+	if s.classSelfIdentities == nil {
+		s.classSelfIdentities = make(map[classSelfKey]*typ.Recursive)
+	}
+	key := classSelfKey{graphID: graph.ID(), symbol: sym}
+	identity := s.classSelfIdentities[key]
+	if identity == nil {
+		identity = typ.NewRecursivePlaceholder(name)
+		s.classSelfIdentities[key] = identity
+	}
+	return typ.BindRecursiveSnapshotWithFields(identity, body, directSelfFields(graph, at, sym))
+}
+
+// directSelfFields finds fields definitely assigned the table itself before
+// the method definition. Later writes make the alias uncertain.
+func directSelfFields(graph *cfg.Graph, at cfg.Point, sym cfg.SymbolID) map[string]bool {
+	idom, _ := cfganalysis.ComputeDominators(graph.CFG())
+	fields := make(map[string]bool)
+	graph.EachAssign(func(point cfg.Point, info *cfg.AssignInfo) {
+		info.EachTargetSource(func(i int, target cfg.AssignTarget, _ ast.Expr) {
+			if target.Kind != cfg.TargetField || target.BaseSymbol != sym || len(target.FieldPath) != 1 {
+				return
+			}
+			name := target.FieldPath[0]
+			if point >= at {
+				if i >= len(info.SourceSymbols) || info.SourceSymbols[i] != sym {
+					delete(fields, name)
+				}
+				return
+			}
+			if !cfganalysis.Dominates(idom, point, at) {
+				delete(fields, name)
+				return
+			}
+			if i < len(info.SourceSymbols) && info.SourceSymbols[i] == sym {
+				fields[name] = true
+			} else {
+				delete(fields, name)
+			}
+		})
+	})
+	return fields
 }
 
 // InterprocState holds interprocedural facts and refinements for an iteration snapshot.

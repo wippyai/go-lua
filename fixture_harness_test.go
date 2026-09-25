@@ -294,6 +294,12 @@ func runCheckPhase(t *testing.T, s namedSuite, mode string) {
 	entryFile := files[len(files)-1]
 	result := testutil.Check(sources[entryFile], entryOpts...)
 	allDiagnostics = append(allDiagnostics, result.Diagnostics...)
+	for _, d := range allDiagnostics {
+		if d.Severity == diag.SeverityWarning && (strings.Contains(d.Message, "fixpoint did not converge") ||
+			strings.Contains(d.Message, "type inference did not converge")) {
+			t.Errorf("non-convergence at %s:%d: %s", d.Position.File, d.Position.Line, d.Message)
+		}
+	}
 
 	// Verify expectations
 	if len(allExpectations) > 0 {

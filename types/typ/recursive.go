@@ -68,6 +68,47 @@ func NewRecursivePlaceholder(name string) *Recursive {
 	}
 }
 
+// BindRecursiveSnapshot closes body over a stable recursion identity. Each
+// snapshot owns its body; an earlier snapshot is never changed by a later one.
+func BindRecursiveSnapshot(identity *Recursive, body Type) *Recursive {
+	return BindRecursiveSnapshotWithFields(identity, body, nil)
+}
+
+// BindRecursiveSnapshotWithFields also binds fields that the CFG proves are
+// direct assignments of the owning table to itself.
+func BindRecursiveSnapshotWithFields(identity *Recursive, body Type, selfFields map[string]bool) *Recursive {
+	if identity == nil || body == nil {
+		return nil
+	}
+	self := &Recursive{ID: identity.ID, Name: identity.Name}
+	if old, ok := body.(*Recursive); ok && old.ID == identity.ID {
+		body = old.Body
+	}
+	if record, ok := body.(*Record); ok && len(selfFields) > 0 {
+		builder := NewRecord().SetOpen(record.Open)
+		for _, field := range record.Fields {
+			if selfFields[field.Name] {
+				field.Type = self
+			}
+			builder.AddField(field)
+		}
+		if record.Metatable != nil {
+			builder.Metatable(record.Metatable)
+		}
+		if record.HasMapComponent() {
+			builder.MapComponentWithFlags(record.MapKey, record.MapValue, record.MapInferredPresence, record.MapExplicitNilWrite)
+		}
+		body = builder.Build()
+	}
+	self.SetBody(Rewrite(body, func(node Type) (Type, bool) {
+		if old, ok := node.(*Recursive); ok && old.ID == identity.ID {
+			return self, true
+		}
+		return nil, false
+	}))
+	return self
+}
+
 // SetBody assigns the body to a placeholder recursive type.
 func (r *Recursive) SetBody(body Type) {
 	r.Body = body

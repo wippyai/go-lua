@@ -118,6 +118,7 @@ type NestedStore interface {
 	StoreView
 	ConstructorFieldStore
 	InterprocFactSink
+	BindClassSelf(graph *cfg.Graph, at cfg.Point, sym cfg.SymbolID, name string, body typ.Type) typ.Type
 }
 
 // LiteralSigSource is used by phase runners to supply literal signatures.
