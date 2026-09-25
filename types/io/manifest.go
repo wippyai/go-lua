@@ -16,7 +16,7 @@ import (
 // Manifest file format constants.
 const (
 	manifestMagic   = 0x4D414E49 // "MANI" - identifies valid manifest files
-	manifestVersion = 10         // v10: carry writes to imported module tables at call sites
+	manifestVersion = 11         // v11: record callback fields invoked on truthy returns
 )
 
 // Manifest decoding errors.
@@ -61,6 +61,9 @@ type Manifest struct {
 	// CallWrites records writes an exported function makes to another imported
 	// module's table. The caller applies them only after that function executes.
 	CallWrites map[string][]ModuleWrite
+	// TruthyCallbackCalls records module fields invoked on every path that
+	// returns a truthy first result from an exported function.
+	TruthyCallbackCalls map[string][]CallbackCall
 
 	// Globals records types assigned to _G for global namespace pollution tracking.
 	Globals map[string]typ.Type
@@ -79,6 +82,17 @@ type ModuleWrite struct {
 	Path   string
 	Field  string
 	Type   typ.Type
+}
+
+// CallbackCall describes a call through a mutable field of this module's
+// export. NonNilArgs are callback argument positions whose values are proved
+// nonnil at the call point.
+type CallbackCall struct {
+	Field      string
+	NonNilArgs []int
+	// PriorFields are mutable callbacks read before this call. The importer
+	// must prove its installed versions cannot replace Field.
+	PriorFields []string
 }
 
 type lookupValueResult struct {
@@ -770,6 +784,23 @@ func (m *Manifest) Encode() ([]byte, error) {
 			w.writeType(write.Type)
 		}
 	}
+	w.writeUint32(uint32(len(m.TruthyCallbackCalls)))
+	for _, name := range sortedKeys(m.TruthyCallbackCalls) {
+		w.writeString(name)
+		calls := m.TruthyCallbackCalls[name]
+		w.writeUint32(uint32(len(calls)))
+		for _, call := range calls {
+			w.writeString(call.Field)
+			w.writeUint32(uint32(len(call.NonNilArgs)))
+			for _, arg := range call.NonNilArgs {
+				w.writeUint32(uint32(arg))
+			}
+			w.writeUint32(uint32(len(call.PriorFields)))
+			for _, field := range call.PriorFields {
+				w.writeString(field)
+			}
+		}
+	}
 
 	// Globals
 	w.writeUint32(uint32(len(m.Globals)))
@@ -849,6 +880,41 @@ func DecodeManifest(data []byte) (*Manifest, error) {
 			writes[j] = ModuleWrite{Module: r.readString(), Path: r.readString(), Field: r.readString(), Type: r.readType()}
 		}
 		m.CallWrites[name] = writes
+	}
+	count = r.readUint32()
+	if !r.checkSliceLen(count) {
+		return nil, r.err
+	}
+	if count > 0 {
+		m.TruthyCallbackCalls = make(map[string][]CallbackCall, count)
+	}
+	for i := uint32(0); i < count; i++ {
+		name := r.readString()
+		length := r.readUint32()
+		if !r.checkSliceLen(length) {
+			return nil, r.err
+		}
+		calls := make([]CallbackCall, length)
+		for j := range calls {
+			calls[j].Field = r.readString()
+			argsLength := r.readUint32()
+			if !r.checkSliceLen(argsLength) {
+				return nil, r.err
+			}
+			calls[j].NonNilArgs = make([]int, argsLength)
+			for k := range calls[j].NonNilArgs {
+				calls[j].NonNilArgs[k] = int(r.readUint32())
+			}
+			priorLength := r.readUint32()
+			if !r.checkSliceLen(priorLength) {
+				return nil, r.err
+			}
+			calls[j].PriorFields = make([]string, priorLength)
+			for k := range calls[j].PriorFields {
+				calls[j].PriorFields[k] = r.readString()
+			}
+		}
+		m.TruthyCallbackCalls[name] = calls
 	}
 
 	// Globals

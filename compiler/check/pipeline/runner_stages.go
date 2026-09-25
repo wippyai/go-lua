@@ -123,6 +123,8 @@ func (r *Runner) appendFieldWriteEffects(
 	extractOut.Inputs.FieldWriteEffects = append(extractOut.Inputs.FieldWriteEffects, effects...)
 	extractOut.Inputs.FieldWriteEffects = append(extractOut.Inputs.FieldWriteEffects,
 		r.importedModuleCallWrites(store, graph, bindings)...)
+	extractOut.Inputs.FieldWriteEffects = append(extractOut.Inputs.FieldWriteEffects,
+		r.importedTruthyCallbackWrites(store, graph, bindings)...)
 }
 
 func (r *Runner) runComputePasses(graph *cfg.Graph, scopes map[cfg.Point]*scope.State) map[string]any {

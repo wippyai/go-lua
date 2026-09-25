@@ -46,6 +46,25 @@ func TestManifest_CallWritesRoundTrip(t *testing.T) {
 	}
 }
 
+func TestManifest_TruthyCallbackCallsRoundTrip(t *testing.T) {
+	m := NewManifest("callback")
+	m.TruthyCallbackCalls = map[string][]CallbackCall{
+		"create": {{Field: "_tool_call", NonNilArgs: []int{1, 2}, PriorFields: []string{"_available"}}},
+	}
+	data, err := m.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := DecodeManifest(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := decoded.TruthyCallbackCalls["create"]
+	if len(calls) != 1 || calls[0].Field != "_tool_call" || len(calls[0].NonNilArgs) != 2 || calls[0].NonNilArgs[0] != 1 || calls[0].NonNilArgs[1] != 2 || len(calls[0].PriorFields) != 1 || calls[0].PriorFields[0] != "_available" {
+		t.Fatalf("callback call changed across manifest encoding: %v", calls)
+	}
+}
+
 func TestNewSummary(t *testing.T) {
 	params := []typ.Type{typ.String, typ.Number}
 	returns := []typ.Type{typ.Boolean}

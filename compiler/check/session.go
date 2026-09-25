@@ -474,6 +474,7 @@ func (s *Session) ExportManifest(modulePath string) *io.Manifest {
 
 	modules.ExportFunctionSummaries(manifest, exportType, s.RootGraph(), s.RefinementsForExport())
 	s.exportModuleCallWrites(manifest)
+	s.exportTruthyCallbackCalls(manifest)
 	return manifest
 }
 

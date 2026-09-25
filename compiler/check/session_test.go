@@ -198,6 +198,59 @@ func TestSession_ExportManifest_OnlyGuaranteedImportedWrites(t *testing.T) {
 	}
 }
 
+func TestSession_ExportManifest_TruthyCallbackRequiresEverySuccessfulPath(t *testing.T) {
+	sess := newSessionTestChecker(nil).Check(`
+		local M = { callback = nil }
+		function M.always(): string
+			local cb = M.callback or function(_) end
+			cb({ value = 1 })
+			return "ok"
+		end
+		function M.maybe(skip: boolean): string
+			if skip then return "ok" end
+			local cb = M.callback or function(_) end
+			cb({ value = 1 })
+			return "ok"
+		end
+		function M.mutated(): string
+			local function clear() M.callback = nil end
+			clear()
+			local cb = M.callback or function(_) end
+			cb({ value = 1 })
+			return "ok"
+		end
+		return M
+	`, "callbacks.lua")
+	manifest := sess.ExportManifest("callbacks")
+	call := manifest.TruthyCallbackCalls["always"]
+	if len(call) != 1 || call[0].Field != "callback" || len(call[0].NonNilArgs) != 1 || call[0].NonNilArgs[0] != 0 {
+		t.Fatalf("expected guaranteed callback with nonnil argument, got %v", call)
+	}
+	if len(manifest.TruthyCallbackCalls["maybe"]) != 0 {
+		t.Fatalf("conditional callback must not be exported: %v", manifest.TruthyCallbackCalls["maybe"])
+	}
+	if len(manifest.TruthyCallbackCalls["mutated"]) != 0 {
+		t.Fatalf("local helper can clear the callback before use: %v", manifest.TruthyCallbackCalls["mutated"])
+	}
+}
+
+func TestSession_TruthyCallbackRecordsEarlierMutableHook(t *testing.T) {
+	producer := newSessionTestChecker(nil).Check(`
+		local M = { gate = nil :: any, hook = nil :: any }
+		function M.create(): string?
+			if not (M.gate or function() return true end)() then return nil end
+			local cb = M.hook or function(_) end
+			cb({ value = 1 })
+			return "ok"
+		end
+		return M
+	`, "producer.lua")
+	manifest := producer.ExportManifest("producer")
+	if calls := manifest.TruthyCallbackCalls["create"]; len(calls) != 1 || len(calls[0].PriorFields) != 1 || calls[0].PriorFields[0] != "gate" {
+		t.Fatalf("expected the preceding mutable gate in the callback summary: %v", calls)
+	}
+}
+
 func TestSession_ExportManifest_EnablesCrossModuleNarrowing(t *testing.T) {
 	producerChecker := newSessionTestChecker(nil)
 	producer := producerChecker.Check(`
