@@ -741,6 +741,48 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 
 		// The call establishes relations between its returned values at this
 		// assignment. The solver carries them with ordinary branch conditions.
+		// A truthy result of `local flag = value and expr` proves that the
+		// original local value was truthy. Keep the relation on SSA versions so
+		// later writes to either local do not inherit this proof.
+		info.EachTargetSource(func(_ int, target cfg.AssignTarget, source ast.Expr) {
+			logical, ok := source.(*ast.LogicalOpExpr)
+			if !ok || logical.Operator != "and" || target.Kind != cfg.TargetIdent || target.Symbol == 0 {
+				return
+			}
+			lhs, ok := logical.Lhs.(*ast.IdentExpr)
+			if !ok || bindings == nil {
+				return
+			}
+			lhsSym, ok := bindings.SymbolOf(lhs)
+			if !ok || lhsSym == 0 || fc.Derived.CapturedReassignments[lhsSym] {
+				return
+			}
+			if k, ok := bindings.Kind(lhsSym); !ok || k == cfg.SymbolGlobal {
+				return
+			}
+			for _, assigned := range info.Targets {
+				if assigned.Symbol == lhsSym {
+					return
+				}
+			}
+			lhsVersion := fc.Graph.VisibleVersion(p, lhsSym)
+			targetVersion := fc.Graph.VisibleVersion(p, target.Symbol)
+			if lhsVersion.ID == 0 || targetVersion.ID == 0 {
+				return
+			}
+			lhsPath := constraint.Path{Root: lhs.Value, Symbol: lhsSym, Version: lhsVersion.ID}
+			targetPath := constraint.Path{Root: target.Name, Symbol: target.Symbol, Version: targetVersion.ID}
+			fact := constraint.Or(
+				constraint.FromConstraints(constraint.Falsy{Path: targetPath}),
+				constraint.FromConstraints(constraint.Truthy{Path: lhsPath}),
+			)
+			if previous, ok := inputs.Facts[p]; ok {
+				inputs.Facts[p] = constraint.And(previous, fact)
+			} else {
+				inputs.Facts[p] = fact
+			}
+		})
+
 		if sourceCall, start := info.ExpandingSourceCall(); sourceCall != nil {
 			count := len(info.Targets) - start
 			paths := make([]constraint.Path, count)
