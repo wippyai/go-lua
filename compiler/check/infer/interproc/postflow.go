@@ -13,7 +13,9 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	"github.com/wippyai/go-lua/types/flow"
+	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/typ"
+	typjoin "github.com/wippyai/go-lua/types/typ/join"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
@@ -28,6 +30,7 @@ type Store interface {
 	UpdateInterprocFactsNext(key api.GraphKey, update func(*api.Facts))
 	StoreLiteralSigs(graphID uint64, sigs map[*ast.FunctionExpr]*typ.Function)
 	ParentGraphKeyForSymbol(sym cfg.SymbolID) (api.GraphKey, bool)
+	BindClassSelf(graph *cfg.Graph, at cfg.Point, sym cfg.SymbolID, name string, body typ.Type) typ.Type
 }
 
 // StoreFactsFromResult records post-flow interproc facts for the current iteration.
@@ -73,6 +76,21 @@ func StoreFactsFromResult(
 		}
 	}
 	summaryFromSnapshot := returnSummarySnapshotForSymbol(store, result, parent, fnSym)
+	if tableSym, point := returnedMethodTable(result.Graph); tableSym != 0 && len(fnType.Returns) > 0 && (fn == nil || len(fn.ReturnTypes) == 0) {
+		present := narrow.RemoveNil(fnType.Returns[0])
+		if _, ok := present.(*typ.Record); ok {
+			bound := store.BindClassSelf(result.Graph, point, tableSym, result.Graph.NameOf(tableSym), present)
+			returns := append([]typ.Type(nil), fnType.Returns...)
+			returns[0] = boundReturnedTable(fnType.Returns[0], bound)
+			fnType = typjoin.WithReturns(fnType, returns)
+			if len(narrowReturns) > 0 {
+				narrowReturns[0] = boundReturnedTable(narrowReturns[0], bound)
+			}
+			if len(summaryFromSnapshot) > 0 {
+				summaryFromSnapshot[0] = boundReturnedTable(summaryFromSnapshot[0], bound)
+			}
+		}
+	}
 
 	writer.updateParentFactsForSymbol(fnSym, func(facts *api.Facts) {
 		returns.MergeFunctionFactIntoFacts(facts, fnSym, returns.FunctionFactCandidate{
@@ -81,6 +99,66 @@ func StoreFactsFromResult(
 			Func:    fnType,
 		})
 	})
+}
+
+// returnedMethodTable identifies a local table returned directly by every
+// value-returning path and populated with function fields in this graph.
+func returnedMethodTable(graph *cfg.Graph) (cfg.SymbolID, cfg.Point) {
+	if graph == nil {
+		return 0, 0
+	}
+	var symbol cfg.SymbolID
+	var point cfg.Point
+	valid := true
+	graph.EachReturn(func(at cfg.Point, info *cfg.ReturnInfo) {
+		if !valid || len(info.Exprs) == 0 {
+			return
+		}
+		if _, nilReturn := info.Exprs[0].(*ast.NilExpr); nilReturn {
+			return
+		}
+		if len(info.Symbols) == 0 || info.Symbols[0] == 0 {
+			valid = false
+			return
+		}
+		if symbol != 0 && symbol != info.Symbols[0] {
+			valid = false
+			return
+		}
+		symbol, point = info.Symbols[0], at
+	})
+	if !valid || symbol == 0 {
+		return 0, 0
+	}
+	hasMethod := false
+	graph.EachFuncDef(func(_ cfg.Point, info *cfg.FuncDefInfo) {
+		if info.TargetPath.Symbol == symbol && len(info.TargetPath.Segments) > 0 {
+			hasMethod = true
+		}
+	})
+	graph.EachAssign(func(_ cfg.Point, info *cfg.AssignInfo) {
+		info.EachTargetSource(func(_ int, target cfg.AssignTarget, src ast.Expr) {
+			if target.Kind == cfg.TargetField && target.BaseSymbol == symbol && len(target.FieldPath) > 0 {
+				if _, ok := src.(*ast.FunctionExpr); ok {
+					hasMethod = true
+				}
+			}
+		})
+	})
+	if !hasMethod {
+		return 0, 0
+	}
+	return symbol, point
+}
+
+func boundReturnedTable(previous, bound typ.Type) typ.Type {
+	if previous == nil || bound == nil {
+		return previous
+	}
+	if !typ.TypeEquals(narrow.RemoveNil(previous), previous) {
+		return typ.NewOptional(bound)
+	}
+	return bound
 }
 
 // storeWriteEffectsFromResult records the field writes and container
