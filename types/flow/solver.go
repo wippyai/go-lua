@@ -1025,6 +1025,7 @@ func (s *Solution) mergeFields(baseType typ.Type, baseKey string) typ.Type {
 			for _, f := range r.Fields {
 				fieldType := f.Type
 				optional := f.Optional
+				inferredPresence := f.InferredPresence
 				if assigned, ok := assignedByName[f.Name]; ok {
 					// Child-path facts already represent the current value of the
 					// field at this program point. Rebuilding the root should
@@ -1038,19 +1039,14 @@ func (s *Solution) mergeFields(baseType typ.Type, baseKey string) typ.Type {
 					} else {
 						fieldType = assigned.t
 						optional = assigned.optional
+						inferredPresence = false
 					}
 					delete(assignedByName, f.Name)
 				}
-				switch {
-				case optional && f.Readonly:
-					builder.OptReadonlyField(f.Name, fieldType)
-				case optional:
-					builder.OptField(f.Name, fieldType)
-				case f.Readonly:
-					builder.ReadonlyField(f.Name, fieldType)
-				default:
-					builder.Field(f.Name, fieldType)
-				}
+				f.Type = fieldType
+				f.Optional = optional
+				f.InferredPresence = inferredPresence && optional
+				builder.AddField(f)
 			}
 			for name, field := range assignedByName {
 				if field.optional {

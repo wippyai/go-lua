@@ -299,7 +299,8 @@ func expandInstantiatedCore(t typ.Type, orig typ.Type, guard internal.RecursionG
 					copy(fields, v.Fields)
 				}
 				changed = true
-				fields[i] = typ.Field{Name: f.Name, Type: newType, Optional: f.Optional, Readonly: f.Readonly}
+				fields[i] = f
+				fields[i].Type = newType
 			} else if fields != nil {
 				fields[i] = f
 			}
@@ -340,16 +341,7 @@ func expandInstantiatedCore(t typ.Type, orig typ.Type, guard internal.RecursionG
 			fieldsSrc = fields
 		}
 		for _, f := range fieldsSrc {
-			switch {
-			case f.Optional && f.Readonly:
-				builder = builder.OptReadonlyField(f.Name, f.Type)
-			case f.Optional:
-				builder = builder.OptField(f.Name, f.Type)
-			case f.Readonly:
-				builder = builder.ReadonlyField(f.Name, f.Type)
-			default:
-				builder = builder.Field(f.Name, f.Type)
-			}
+			builder.AddField(f)
 		}
 		if metatable != nil {
 			builder = builder.Metatable(metatable)

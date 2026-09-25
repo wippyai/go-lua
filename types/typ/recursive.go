@@ -210,6 +210,9 @@ func hashCompound(t Type, st *recursiveHashState) uint64 {
 				if f.Optional {
 					h = internal.HashCombine(h, 1)
 				}
+				if f.InferredPresence {
+					h = internal.HashCombine(h, 4)
+				}
 				if f.Readonly {
 					h = internal.HashCombine(h, 2)
 				}

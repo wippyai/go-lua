@@ -289,17 +289,7 @@ func overwriteStructuredIntIndexNonDynamic(baseType typ.Type, elemType typ.Type)
 			builder.SetOpen(true)
 		}
 		for _, f := range t.Fields {
-			if f.Optional {
-				if f.Readonly {
-					builder.OptReadonlyField(f.Name, f.Type)
-				} else {
-					builder.OptField(f.Name, f.Type)
-				}
-			} else if f.Readonly {
-				builder.ReadonlyField(f.Name, f.Type)
-			} else {
-				builder.Field(f.Name, f.Type)
-			}
+			builder.AddField(f)
 		}
 		if t.Metatable != nil {
 			builder.Metatable(t.Metatable)

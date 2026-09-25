@@ -178,12 +178,8 @@ func substituteVisited(t typ.Type, subst map[string]typ.Type, visited map[typ.Ty
 					changed = true
 				}
 
-				newFields[i] = typ.Field{
-					Name:     f.Name,
-					Type:     newType,
-					Optional: f.Optional,
-					Readonly: f.Readonly,
-				}
+				newFields[i] = f
+				newFields[i].Type = newType
 			}
 
 			if !changed {
@@ -193,13 +189,7 @@ func substituteVisited(t typ.Type, subst map[string]typ.Type, visited map[typ.Ty
 			builder := typ.NewRecord()
 
 			for _, f := range newFields {
-				if f.Optional {
-					builder.OptField(f.Name, f.Type)
-				} else if f.Readonly {
-					builder.ReadonlyField(f.Name, f.Type)
-				} else {
-					builder.Field(f.Name, f.Type)
-				}
+				builder.AddField(f)
 			}
 
 			if r.Metatable != nil {

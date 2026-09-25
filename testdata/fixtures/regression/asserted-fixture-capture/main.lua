@@ -19,3 +19,7 @@ test.eq(seen.submit.id, "spiralscout.leads.binding:submit_func")
 local lead = seen.submit.payload.lead
 test.eq(lead.person_ref, "kjell@impactdata.example")
 test.eq(result.thread_id, "t-1")
+
+-- A declared optional field still needs a presence check.
+local declared: { submit: { id: string }? } = {}
+local declared_id: string = declared.submit.id -- expect-error: cannot assign string? to string

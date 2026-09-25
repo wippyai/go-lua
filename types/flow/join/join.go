@@ -233,16 +233,7 @@ func CoalesceRecordOpenness(types []typ.Type) []typ.Type {
 		}
 		builder := typ.NewRecord().SetOpen(true)
 		for _, f := range r.Fields {
-			switch {
-			case f.Optional && f.Readonly:
-				builder.OptReadonlyField(f.Name, f.Type)
-			case f.Optional:
-				builder.OptField(f.Name, f.Type)
-			case f.Readonly:
-				builder.ReadonlyField(f.Name, f.Type)
-			default:
-				builder.Field(f.Name, f.Type)
-			}
+			builder.AddField(f)
 		}
 		if r.Metatable != nil {
 			builder.Metatable(r.Metatable)
@@ -367,16 +358,7 @@ func CoalesceRecordMapComponents(types []typ.Type) []typ.Type {
 				builder.SetOpen(true)
 			}
 			for _, f := range template.Fields {
-				switch {
-				case f.Optional && f.Readonly:
-					builder.OptReadonlyField(f.Name, f.Type)
-				case f.Optional:
-					builder.OptField(f.Name, f.Type)
-				case f.Readonly:
-					builder.ReadonlyField(f.Name, f.Type)
-				default:
-					builder.Field(f.Name, f.Type)
-				}
+				builder.AddField(f)
 			}
 			if template.Metatable != nil {
 				builder.Metatable(template.Metatable)
@@ -420,7 +402,7 @@ func sameRecordFieldSignature(a, b *typ.Record) bool {
 	}
 	for i, af := range a.Fields {
 		bf := b.Fields[i]
-		if af.Name != bf.Name || af.Optional != bf.Optional || af.Readonly != bf.Readonly {
+		if af.Name != bf.Name || af.Optional != bf.Optional || af.InferredPresence != bf.InferredPresence || af.Readonly != bf.Readonly {
 			return false
 		}
 		if !typ.TypeEquals(af.Type, bf.Type) {
@@ -442,6 +424,9 @@ func recordFieldSignatureHash(r *typ.Record) uint64 {
 		h = internal.HashCombine(h, internal.FnvString(f.Name))
 		if f.Optional {
 			h = internal.HashCombine(h, 2)
+		}
+		if f.InferredPresence {
+			h = internal.HashCombine(h, 4)
 		}
 		if f.Readonly {
 			h = internal.HashCombine(h, 3)

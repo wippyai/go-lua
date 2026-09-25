@@ -190,6 +190,7 @@ func JoinCompatibleRecords(a, b Type) (Type, bool) {
 
 		fieldType := Type(nil)
 		optional := true
+		inferredPresence := false
 		readonly := false
 		switch {
 		case oka && okb:
@@ -198,27 +199,23 @@ func JoinCompatibleRecords(a, b Type) (Type, bool) {
 			// interactions are handled consistently in nested return records.
 			fieldType = JoinReturnSlot(fa.Type, fb.Type)
 			optional = fa.Optional || fb.Optional
+			inferredPresence = optional && (fa.InferredPresence || fb.InferredPresence) &&
+				(!fa.Optional || fa.InferredPresence) && (!fb.Optional || fb.InferredPresence)
 			readonly = fa.Readonly && fb.Readonly
 		case oka:
 			fieldType = fa.Type
 			optional = true
+			inferredPresence = fa.InferredPresence
 			readonly = fa.Readonly
 		case okb:
 			fieldType = fb.Type
 			optional = true
+			inferredPresence = fb.InferredPresence
 			readonly = fb.Readonly
 		}
 
-		switch {
-		case optional && readonly:
-			builder.OptReadonlyField(name, fieldType)
-		case optional:
-			builder.OptField(name, fieldType)
-		case readonly:
-			builder.ReadonlyField(name, fieldType)
-		default:
-			builder.Field(name, fieldType)
-		}
+		builder.AddField(Field{Name: name, Type: fieldType, Optional: optional,
+			InferredPresence: inferredPresence, Readonly: readonly})
 	}
 
 	return builder.Build(), true

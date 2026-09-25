@@ -77,6 +77,9 @@ func buildRecordType(fields []Field, metatable, mapKey, mapValue Type, open bool
 		if sorted[i].Type == nil {
 			sorted[i].Type = Unknown
 		}
+		if !sorted[i].Optional {
+			sorted[i].InferredPresence = false
+		}
 	}
 
 	if mapKey == nil && mapValue != nil {
@@ -92,6 +95,9 @@ func buildRecordType(fields []Field, metatable, mapKey, mapValue Type, open bool
 		h = internal.HashCombine(h, f.Type.Hash())
 		if f.Optional {
 			h = internal.HashCombine(h, 1)
+		}
+		if f.InferredPresence {
+			h = internal.HashCombine(h, 4)
 		}
 		if f.Readonly {
 			h = internal.HashCombine(h, 2)

@@ -38,19 +38,7 @@ func extendRecordWithField(base Type, field string, fieldType Type) Type {
 			added = true
 			continue
 		}
-		if f.Optional {
-			if f.Readonly {
-				builder.OptReadonlyField(f.Name, f.Type)
-			} else {
-				builder.OptField(f.Name, f.Type)
-			}
-			continue
-		}
-		if f.Readonly {
-			builder.ReadonlyField(f.Name, f.Type)
-		} else {
-			builder.Field(f.Name, f.Type)
-		}
+		builder.AddField(f)
 	}
 	if !added {
 		builder.Field(field, fieldType)

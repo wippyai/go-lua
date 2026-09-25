@@ -146,16 +146,7 @@ func exportFieldNameFromEffectSymbol(rootName, name string) (string, bool) {
 }
 
 func appendRecordField(builder *typ.RecordBuilder, f typ.Field) *typ.RecordBuilder {
-	if f.Optional && f.Readonly {
-		return builder.OptReadonlyField(f.Name, f.Type)
-	}
-	if f.Optional {
-		return builder.OptField(f.Name, f.Type)
-	}
-	if f.Readonly {
-		return builder.ReadonlyField(f.Name, f.Type)
-	}
-	return builder.Field(f.Name, f.Type)
+	return builder.AddField(f)
 }
 
 func applyFunctionRefinement(fn *typ.Function, eff *constraint.FunctionRefinement) *typ.Function {

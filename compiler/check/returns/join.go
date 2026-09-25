@@ -336,7 +336,7 @@ func typeNeverRepairRelation(candidate, baseline typ.Type) (bool, bool) {
 		strict := false
 		for _, bf := range b.Fields {
 			cf := c.GetField(bf.Name)
-			if cf == nil || cf.Optional != bf.Optional || cf.Readonly != bf.Readonly {
+			if cf == nil || cf.Optional != bf.Optional || cf.InferredPresence != bf.InferredPresence || cf.Readonly != bf.Readonly {
 				return false, false
 			}
 			ok, repaired := typeNeverRepairRelation(cf.Type, bf.Type)

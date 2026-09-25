@@ -12,7 +12,11 @@ type Field struct {
 	Name     string
 	Type     Type
 	Optional bool // True if field may be absent (nil access returns nil)
-	Readonly bool // True if field cannot be reassigned
+	// InferredPresence marks absence inferred from a possible write to a
+	// locally built table. Gradual reads use Type; declared optionality and
+	// explicit nil values still contribute nil to the read type.
+	InferredPresence bool
+	Readonly         bool // True if field cannot be reassigned
 }
 
 // Record represents a Lua table with named fields: {field1: T1, field2: T2, ...}.
@@ -62,6 +66,12 @@ func NewRecord() *RecordBuilder {
 // Field adds a required field.
 func (b *RecordBuilder) Field(name string, t Type) *RecordBuilder {
 	b.fields = append(b.fields, Field{Name: name, Type: t})
+	return b
+}
+
+// AddField preserves all field metadata when rebuilding a record.
+func (b *RecordBuilder) AddField(f Field) *RecordBuilder {
+	b.fields = append(b.fields, f)
 	return b
 }
 

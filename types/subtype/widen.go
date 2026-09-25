@@ -88,6 +88,7 @@ func widenDepth(t typ.Type, depth int) typ.Type {
 //   - Array elements: the element type is recursively widened
 //   - Map key/value: both are recursively widened
 //   - Record fields: each field type is recursively widened
+//
 // Record field names are retained even for large records so accesses to a
 // known field do not become accesses to a union of unrelated field values.
 //
@@ -150,17 +151,8 @@ func widenForInferenceDepth(t typ.Type, depth int) typ.Type {
 
 			for _, f := range r.Fields {
 				fieldType := widenForInferenceDepth(f.Type, depth+1)
-
-				switch {
-				case f.Optional && f.Readonly:
-					builder.OptReadonlyField(f.Name, fieldType)
-				case f.Optional:
-					builder.OptField(f.Name, fieldType)
-				case f.Readonly:
-					builder.ReadonlyField(f.Name, fieldType)
-				default:
-					builder.Field(f.Name, fieldType)
-				}
+				f.Type = fieldType
+				builder.AddField(f)
 			}
 
 			if r.Metatable != nil {

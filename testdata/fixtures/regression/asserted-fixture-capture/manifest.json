@@ -1,1 +1,1 @@
-{"description":"Captured fixture fields narrow only after a successful indexed assertion.","check":{"errors":1}}
+{"description":"Captured fixture fields with inferred presence read gradually, while a declared optional field remains checked.","check":{"errors":1}}

@@ -28,9 +28,11 @@ local function read(flag: boolean)
     fill_on_both_paths(box, flag)
     local either: string = box.both.value
     maybe_fill(box, false)
-    local missing: string = box.optional.value -- expect-error: cannot assign unknown
+    local missing: string = box.optional.value
     fill_then_clear(box)
-    local cleared: string = box.cleared.value -- expect-error: cannot assign unknown
+    local cleared: string = box.cleared.value -- expect-error: cannot assign
+    local declared: { value: { text: string }? } = {}
+    local text: string = declared.value.text -- expect-error: cannot assign string? to string
     return value .. either
 end
 

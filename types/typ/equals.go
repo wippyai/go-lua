@@ -129,7 +129,7 @@ func typeEqualsGuard(a, b Type, guard internal.RecursionGuard, seen map[typePair
 		}
 		for i, f := range va.Fields {
 			fb := vb.Fields[i]
-			if f.Name != fb.Name || f.Optional != fb.Optional || f.Readonly != fb.Readonly {
+			if f.Name != fb.Name || f.Optional != fb.Optional || f.InferredPresence != fb.InferredPresence || f.Readonly != fb.Readonly {
 				return false
 			}
 			if !typeEqualsGuard(f.Type, fb.Type, next, seen) {

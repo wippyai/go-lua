@@ -393,7 +393,7 @@ func TestProcessJoinReturnChangedKeys_WithPhi(t *testing.T) {
 func TestWidenFieldWrite_AddsAbsentFieldAsOptional(t *testing.T) {
 	rec := typ.NewRecord().Field("n", typ.Integer).Build()
 	got := applyFieldWrite(rec, "label", typ.String, false)
-	want := typ.NewRecord().Field("n", typ.Integer).OptField("label", typ.String).Build()
+	want := typ.NewRecord().Field("n", typ.Integer).AddField(typ.Field{Name: "label", Type: typ.String, Optional: true, InferredPresence: true}).Build()
 	if !typ.TypeEquals(got, want) {
 		t.Fatalf("applyFieldWrite = %s, want %s", got, want)
 	}
@@ -414,7 +414,7 @@ func TestWidenFieldWrite_JoinsPresentFieldKeepingOptionality(t *testing.T) {
 func TestWidenFieldWrite_WidensRecordMembers(t *testing.T) {
 	rec := typ.NewRecord().Field("n", typ.Integer).Build()
 	got := applyFieldWrite(typ.NewOptional(rec), "label", typ.String, false)
-	want := typ.NewOptional(typ.NewRecord().Field("n", typ.Integer).OptField("label", typ.String).Build())
+	want := typ.NewOptional(typ.NewRecord().Field("n", typ.Integer).AddField(typ.Field{Name: "label", Type: typ.String, Optional: true, InferredPresence: true}).Build())
 	if !typ.TypeEquals(got, want) {
 		t.Fatalf("applyFieldWrite = %s, want %s", got, want)
 	}
@@ -423,10 +423,22 @@ func TestWidenFieldWrite_WidensRecordMembers(t *testing.T) {
 	}
 }
 
-func TestWidenFieldWrite_OpenRecordKeepsAbsentFieldUnknown(t *testing.T) {
+func TestWidenFieldWrite_OpenRecordRecordsPossibleWrite(t *testing.T) {
 	rec := typ.NewRecord().Field("n", typ.Integer).SetOpen(true).Build()
-	if got := applyFieldWrite(rec, "label", typ.String, false); got != rec {
-		t.Fatalf("an open record admits the write already, got %s", got)
+	got := applyFieldWrite(rec, "label", typ.String, false)
+	f := got.(*typ.Record).GetField("label")
+	if f == nil || !f.Optional || !f.InferredPresence || !typ.TypeEquals(f.Type, typ.String) {
+		t.Fatalf("an open record must retain the possible write's value and provenance, got %s", got)
+	}
+}
+
+func TestWidenFieldWrite_ExplicitNilKeepsCheckedOptionality(t *testing.T) {
+	rec := typ.NewRecord().SetOpen(true).Build()
+	written := applyFieldWrite(rec, "label", typ.String, false)
+	cleared := applyFieldWrite(written, "label", typ.Nil, false).(*typ.Record)
+	f := cleared.GetField("label")
+	if f == nil || !f.Optional || f.InferredPresence {
+		t.Fatalf("a possible nil write must not retain inferred presence, got %s", cleared)
 	}
 }
 

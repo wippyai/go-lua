@@ -1185,9 +1185,9 @@ func (s *Solution) processFieldWriteEffectReturnKey(p cfg.Point, fw FieldWriteEf
 
 // applyFieldWrite writes field into the record members of t. A definite write
 // sets the field; a possible write joins into a present field, keeping its
-// optionality, and adds an absent field as optional. A field read as unknown
-// already admits a possible write, so a record whose field is unknown, or an
-// open record without the field, stays unchanged.
+// optionality, and adds an absent field with inferred presence uncertainty.
+// An open record still records a possible write so its known value type is
+// available to gradual reads. A field already typed unknown needs no widening.
 func applyFieldWrite(t typ.Type, field string, valueType typ.Type, definite bool) typ.Type {
 	if t == nil {
 		return nil
@@ -1201,23 +1201,31 @@ func applyFieldWrite(t typ.Type, field string, valueType typ.Type, definite bool
 				// later than this call, so keep its value domain.
 				written.Type = join.Types(existing.Type, valueType)
 				written.Optional = false
+				written.InferredPresence = false
 				return v.WithField(written)
 			}
 			if typ.IsUnknown(existing.Type) {
 				return v
 			}
 			joined := join.Types(existing.Type, valueType)
-			if typ.TypeEquals(existing.Type, joined) {
+			_, nilable := typ.SplitNilableFieldType(valueType)
+			nilable = nilable || valueType == typ.Nil
+			if typ.TypeEquals(existing.Type, joined) && !(nilable && existing.InferredPresence) {
 				return v
 			}
 			widened := *existing
 			widened.Type = joined
+			if nilable {
+				widened.InferredPresence = false
+			}
 			return v.WithField(widened)
 		}
-		if v.Open && !definite {
-			return v
-		}
-		return v.WithField(typ.Field{Name: field, Type: valueType, Optional: !definite})
+		// A possible write supplies a value type but cannot prove presence.
+		// Explicit nil is a real value/removal, not inference uncertainty.
+		_, nilable := typ.SplitNilableFieldType(valueType)
+		nilable = nilable || valueType == typ.Nil
+		inferred := !definite && !nilable
+		return v.WithField(typ.Field{Name: field, Type: valueType, Optional: !definite, InferredPresence: inferred})
 	case *typ.Optional:
 		inner := applyFieldWrite(v.Inner, field, valueType, definite)
 		if inner == v.Inner {
@@ -1734,16 +1742,7 @@ func rebuildRecordWithMapComponent(rec *typ.Record, mapKey, mapVal typ.Type) typ
 		builder.SetOpen(true)
 	}
 	for _, f := range rec.Fields {
-		switch {
-		case f.Optional && f.Readonly:
-			builder.OptReadonlyField(f.Name, f.Type)
-		case f.Optional:
-			builder.OptField(f.Name, f.Type)
-		case f.Readonly:
-			builder.ReadonlyField(f.Name, f.Type)
-		default:
-			builder.Field(f.Name, f.Type)
-		}
+		builder.AddField(f)
 	}
 	if rec.Metatable != nil {
 		builder.Metatable(rec.Metatable)

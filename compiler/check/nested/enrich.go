@@ -67,11 +67,8 @@ func EnrichTableTypeWithFuncTypes(
 				}
 			}
 		}
-		if f.Optional {
-			builder = builder.OptField(f.Name, fieldType)
-		} else {
-			builder = builder.Field(f.Name, fieldType)
-		}
+		f.Type = fieldType
+		builder.AddField(f)
 	}
 
 	if !modified {
@@ -213,11 +210,7 @@ func mergeFieldsIntoSelfType(selfType typ.Type, fields map[string]typ.Type) typ.
 
 		existingFields := make(map[string]bool)
 		for _, f := range v.Fields {
-			if f.Optional {
-				builder.OptField(f.Name, f.Type)
-			} else {
-				builder.Field(f.Name, f.Type)
-			}
+			builder.AddField(f)
 			existingFields[f.Name] = true
 		}
 

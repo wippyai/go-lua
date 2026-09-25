@@ -14,6 +14,10 @@ func TestField(t *testing.T) {
 	recWithOpt := typ.NewRecord().
 		OptField("name", typ.String).
 		Build()
+	recWithInferredPresence := typ.NewRecord().
+		AddField(typ.Field{Name: "name", Type: typ.String, Optional: true, InferredPresence: true}).
+		AddField(typ.Field{Name: "declared_value", Type: typ.NewOptional(typ.String), Optional: true, InferredPresence: true}).
+		Build()
 
 	iface := typ.NewInterface("Reader", []typ.Method{
 		{Name: "read", Type: typ.Func().Param("n", typ.Integer).Returns(typ.String).Build()},
@@ -30,6 +34,12 @@ func TestField(t *testing.T) {
 		{"record existing field", rec, "name", true, func(t typ.Type) bool { return t == typ.String }},
 		{"record another field", rec, "age", true, func(t typ.Type) bool { return t == typ.Integer }},
 		{"record optional field", recWithOpt, "name", true, func(t typ.Type) bool {
+			return typ.TypeEquals(t, typ.NewOptional(typ.String))
+		}},
+		{"inferred presence keeps the written type", recWithInferredPresence, "name", true, func(t typ.Type) bool {
+			return typ.TypeEquals(t, typ.String)
+		}},
+		{"inferred presence preserves a nilable value", recWithInferredPresence, "declared_value", true, func(t typ.Type) bool {
 			return typ.TypeEquals(t, typ.NewOptional(typ.String))
 		}},
 		{"record missing field", rec, "missing", false, nil},

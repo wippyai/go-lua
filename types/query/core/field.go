@@ -135,7 +135,7 @@ func fieldInRecordDepth(r *typ.Record, name string, depth int) (typ.Type, bool) 
 
 	// Direct field lookup
 	if f := r.GetField(name); f != nil {
-		if f.Optional {
+		if f.Optional && !f.InferredPresence {
 			return typ.NewOptional(f.Type), true
 		}
 		return f.Type, true

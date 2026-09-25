@@ -442,6 +442,7 @@ func joinParamHintIteration(previous, current typ.Type) typ.Type {
 			if now := b.GetField(field.Name); now != nil {
 				if field.Optional != now.Optional {
 					field.Optional = now.Optional
+					field.InferredPresence = now.InferredPresence
 					changed = true
 				}
 				if !typ.TypeEquals(narrow.RemoveNil(old.Type), old.Type) &&
@@ -822,6 +823,8 @@ func joinIterationRecords(a, b typ.Type) (typ.Type, bool) {
 		fb := br.GetField(fa.Name)
 		if fb != nil {
 			field.Optional = fa.Optional || fb.Optional
+			field.InferredPresence = field.Optional && (fa.InferredPresence || fb.InferredPresence) &&
+				(!fa.Optional || fa.InferredPresence) && (!fb.Optional || fb.InferredPresence)
 			field.Readonly = fa.Readonly && fb.Readonly
 			field.Type = joinIterationFactAt(fa.Type, fb.Type, !field.Readonly)
 		}
@@ -845,16 +848,7 @@ func joinIterationRecords(a, b typ.Type) (typ.Type, bool) {
 }
 
 func addIterationField(builder *typ.RecordBuilder, f typ.Field) {
-	switch {
-	case f.Optional && f.Readonly:
-		builder.OptReadonlyField(f.Name, f.Type)
-	case f.Optional:
-		builder.OptField(f.Name, f.Type)
-	case f.Readonly:
-		builder.ReadonlyField(f.Name, f.Type)
-	default:
-		builder.Field(f.Name, f.Type)
-	}
+	builder.AddField(f)
 }
 
 // WidenLiteralSigs merges two literal signature maps.

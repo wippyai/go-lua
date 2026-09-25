@@ -795,7 +795,8 @@ func applyInferSubst(t typ.Type, s InferSubstitution, visited map[int]bool, memo
 
 			for i, f := range r.Fields {
 				fType := applyInferSubst(f.Type, s, visited, memo, depth+1)
-				fields[i] = typ.Field{Name: f.Name, Type: fType, Optional: f.Optional, Readonly: f.Readonly}
+				fields[i] = f
+				fields[i].Type = fType
 
 				if fType != f.Type {
 					changed = true

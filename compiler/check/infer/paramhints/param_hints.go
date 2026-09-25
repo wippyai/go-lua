@@ -131,11 +131,8 @@ func WidenParamHintType(t typ.Type) typ.Type {
 			if ft != f.Type {
 				changed = true
 			}
-			if f.Optional {
-				builder.OptField(f.Name, ft)
-			} else {
-				builder.Field(f.Name, ft)
-			}
+			f.Type = ft
+			builder.AddField(f)
 		}
 		if v.MapKey != nil && v.MapValue != nil {
 			k := WidenParamHintType(v.MapKey)

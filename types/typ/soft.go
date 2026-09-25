@@ -415,7 +415,8 @@ func pruneSoftRecord(
 				copy(fields, r.Fields)
 			}
 			changed = true
-			fields[i] = Field{Name: f.Name, Type: newType, Optional: f.Optional, Readonly: f.Readonly}
+			fields[i] = f
+			fields[i].Type = newType
 		} else if fields != nil {
 			fields[i] = f
 		}

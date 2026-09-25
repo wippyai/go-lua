@@ -342,7 +342,8 @@ func rewriteRecord(v *Record, orig Type, fn func(Type) (Type, bool), guard inter
 				copy(fields, v.Fields)
 			}
 			changed = true
-			fields[i] = Field{Name: f.Name, Type: newType, Optional: f.Optional, Readonly: f.Readonly}
+			fields[i] = f
+			fields[i].Type = newType
 		} else if fields != nil {
 			fields[i] = f
 		}
