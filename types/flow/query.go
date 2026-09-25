@@ -95,7 +95,10 @@ func (s *Solution) typeAtWithOrigin(p cfg.Point, path constraint.Path) (typ.Type
 		}
 	}
 
-	if full != nil && (derived == nil || !full.Kind().IsPlaceholder()) {
+	// A recorded any write describes the actual child value even when the
+	// enclosing open record does not yet list that field. A nil projection
+	// from the record cannot replace the dynamic value stored by the write.
+	if full != nil && (derived == nil || typ.IsAny(full) || !full.Kind().IsPlaceholder()) {
 		return full, pathTypeRecorded
 	}
 	return derived, pathTypeProjected
