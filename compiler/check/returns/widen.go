@@ -489,6 +489,9 @@ func joinIterationFactAt(a, b typ.Type, invariant bool) typ.Type {
 	if b == nil {
 		return a
 	}
+	if typ.TypeEquals(a, b) {
+		return a
+	}
 	if unwrap.IsNilType(a) && !unwrap.IsNilType(b) {
 		return b
 	}
