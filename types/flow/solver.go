@@ -151,10 +151,23 @@ func (s *Solution) runPropagation() {
 	assigns := make([]propagate.Assignment, 0, len(s.inputs.Assignments))
 	for _, a := range s.inputs.Assignments {
 		if a.TargetPath.Symbol != 0 {
+			var sourceSym cfg.SymbolID
+			if a.SourcePath.Symbol != 0 && len(a.SourcePath.Segments) == 0 &&
+				(a.TargetPath.Symbol != a.SourcePath.Symbol || len(a.TargetPath.Segments) != 0) {
+				sourceSym = a.SourcePath.Symbol
+			}
 			assigns = append(assigns, propagate.Assignment{
 				Point:      a.Point,
 				TargetSym:  a.TargetPath.Symbol,
+				SourceSym:  sourceSym,
 				TargetSegs: a.TargetPath.Segments,
+			})
+		}
+	}
+	for p, symbols := range s.inputs.CallAliasRoots {
+		for _, sym := range symbols {
+			assigns = append(assigns, propagate.Assignment{
+				Point: p, TargetSym: sym, SourceSym: sym, AliasEscape: true,
 			})
 		}
 	}

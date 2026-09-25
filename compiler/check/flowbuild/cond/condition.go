@@ -79,6 +79,7 @@ type ConditionExtractor struct {
 	ReceiverRoots    map[cfg.SymbolID]bool
 	NilableRoots     map[cfg.SymbolID]bool
 	KnownNonNilPaths map[constraint.PathKey]bool
+	ModuleBindings   *bind.BindingTable
 }
 
 // constraintsFromBranch extracts type constraints from branch info.
@@ -177,6 +178,19 @@ func (ce *ConditionExtractor) pathFromExpr(expr ast.Expr) constraint.Path {
 
 // constraintsFromConditionExpr extracts predicate conditions from a full condition expression.
 func (ce *ConditionExtractor) ConstraintsFromConditionExpr(expr ast.Expr) BranchConditions {
+	if call, ok := expr.(*ast.FuncCallExpr); ok {
+		if graph, ok := ce.graph().(*cfg.Graph); ok {
+			info := graph.CallSiteAt(ce.P, call)
+			if info == nil {
+				info = cfg.BuildCallInfoWithBindings(call, graph.Bindings())
+			}
+			if info != nil {
+				if link := ExtractPredicateLinkFromCallInfo(info, 0, ce.P, ce.SC, ce.Inputs, ce.TypeKeyRes, ce.Synth, ce.RefinementBySym, ce.SymResolver, graph, ce.ModuleBindings); link != nil {
+					return BranchConditions{OnTrue: link.OnTruthy, OnFalse: link.OnFalsy}
+				}
+			}
+		}
+	}
 	// Predicate links have branch-specific implications beyond the ordinary
 	// nil condition. Return relations are already facts in the flow domain.
 	if rel, ok := expr.(*ast.RelationalOpExpr); ok && (rel.Operator == "==" || rel.Operator == "~=") {
@@ -665,6 +679,11 @@ func (ce *ConditionExtractor) ConditionFromInequality(lhs, rhs ast.Expr) constra
 		if path := ce.pathFromExpr(rhs); !path.IsEmpty() {
 			return constraint.FromConstraints(constraint.NotNil{Path: path})
 		}
+		if indexed, ok := rhs.(*ast.AttrGetExpr); ok {
+			if keyOf, ok := ce.dynamicKeyOf(indexed); ok {
+				return constraint.FromConstraints(keyOf)
+			}
+		}
 	}
 	if literal.IsNilExpr(rhs) {
 		if ident, ok := lhs.(*ast.IdentExpr); ok {
@@ -682,6 +701,11 @@ func (ce *ConditionExtractor) ConditionFromInequality(lhs, rhs ast.Expr) constra
 		}
 		if path := ce.pathFromExpr(lhs); !path.IsEmpty() {
 			return constraint.FromConstraints(constraint.NotNil{Path: path})
+		}
+		if indexed, ok := lhs.(*ast.AttrGetExpr); ok {
+			if keyOf, ok := ce.dynamicKeyOf(indexed); ok {
+				return constraint.FromConstraints(keyOf)
+			}
 		}
 	}
 
@@ -994,8 +1018,19 @@ func ExtractReturnExprConstraints(expr ast.Expr, p cfg.Point, sc *scope.State, i
 	}
 
 	return flow.ReturnExprConstraints{
-		OnTrue: cond,
+		OnTrue:    cond,
+		Predicate: definitelyBooleanReturnExpr(expr),
 	}
+}
+
+func definitelyBooleanReturnExpr(expr ast.Expr) bool {
+	switch e := expr.(type) {
+	case *ast.TrueExpr, *ast.FalseExpr, *ast.RelationalOpExpr, *ast.UnaryNotOpExpr:
+		return true
+	case *ast.LogicalOpExpr:
+		return definitelyBooleanReturnExpr(e.Lhs) && definitelyBooleanReturnExpr(e.Rhs)
+	}
+	return false
 }
 
 // ChannelValueConstraint emits a HasType constraint for result.value when

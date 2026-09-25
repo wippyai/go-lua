@@ -44,6 +44,8 @@ package flowbuild
 import (
 	"slices"
 
+	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/assign"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/cond"
@@ -107,6 +109,7 @@ func Run(fc *fbcore.FlowContext) *flow.Inputs {
 	// Assignments with const resolution.
 	assign.ExtractAssignments(fc, inputs, keyscoll.BuildKeysCollectorDetector(fc.Graph, fc.ModuleBindings))
 	inputs.ClosedMapVars = assign.ClosedMapVars(fc.Graph, inputs)
+	inputs.CallAliasRoots = collectCallAliasRoots(fc.Graph)
 	if bindings := fc.Graph.Bindings(); bindings != nil {
 		fresh := bindings.FreshTablePaths()
 		capturedFresh := make(map[cfg.SymbolID]map[string]bool, len(fresh))
@@ -177,6 +180,132 @@ func Run(fc *fbcore.FlowContext) *flow.Inputs {
 	cond.ExtractNumericConstraints(fc, inputs)
 
 	return inputs
+}
+
+func collectCallAliasRoots(graph *cfg.Graph) map[cfg.Point][]cfg.SymbolID {
+	if graph == nil || graph.Bindings() == nil {
+		return nil
+	}
+	bindings := graph.Bindings()
+	byPoint := make(map[cfg.Point]map[cfg.SymbolID]bool)
+	record := func(p cfg.Point, expr ast.Expr) {
+		visitCalls(expr, func(call *ast.FuncCallExpr) {
+			roots := byPoint[p]
+			if roots == nil {
+				roots = make(map[cfg.SymbolID]bool)
+				byPoint[p] = roots
+			}
+			collectAliasedRoots(call.Receiver, bindings, roots)
+			for _, arg := range call.Args {
+				collectAliasedRoots(arg, bindings, roots)
+			}
+		})
+	}
+	graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
+		if info != nil {
+			record(p, info.Call)
+		}
+	})
+	graph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
+		for _, expr := range info.Sources {
+			record(p, expr)
+		}
+		for _, expr := range info.IterExprs {
+			record(p, expr)
+		}
+		for _, target := range info.Targets {
+			record(p, target.Base)
+			record(p, target.Key)
+		}
+	})
+	graph.EachReturn(func(p cfg.Point, info *cfg.ReturnInfo) {
+		for _, expr := range info.Exprs {
+			record(p, expr)
+		}
+	})
+	graph.EachBranch(func(p cfg.Point, info *cfg.BranchInfo) {
+		if info != nil {
+			record(p, info.Condition)
+		}
+	})
+	result := make(map[cfg.Point][]cfg.SymbolID, len(byPoint))
+	for p, roots := range byPoint {
+		for sym := range roots {
+			result[p] = append(result[p], sym)
+		}
+		slices.Sort(result[p])
+	}
+	return result
+}
+
+func visitCalls(expr ast.Expr, visit func(*ast.FuncCallExpr)) {
+	switch e := expr.(type) {
+	case *ast.FuncCallExpr:
+		visit(e)
+		visitCalls(e.Func, visit)
+		visitCalls(e.Receiver, visit)
+		for _, arg := range e.Args {
+			visitCalls(arg, visit)
+		}
+	case *ast.AttrGetExpr:
+		visitCalls(e.Object, visit)
+		visitCalls(e.Key, visit)
+	case *ast.TableExpr:
+		for _, field := range e.Fields {
+			if field != nil {
+				visitCalls(field.Key, visit)
+				visitCalls(field.Value, visit)
+			}
+		}
+	case *ast.LogicalOpExpr:
+		visitCalls(e.Lhs, visit)
+		visitCalls(e.Rhs, visit)
+	case *ast.RelationalOpExpr:
+		visitCalls(e.Lhs, visit)
+		visitCalls(e.Rhs, visit)
+	case *ast.ArithmeticOpExpr:
+		visitCalls(e.Lhs, visit)
+		visitCalls(e.Rhs, visit)
+	case *ast.StringConcatOpExpr:
+		visitCalls(e.Lhs, visit)
+		visitCalls(e.Rhs, visit)
+	case *ast.UnaryNotOpExpr:
+		visitCalls(e.Expr, visit)
+	case *ast.UnaryMinusOpExpr:
+		visitCalls(e.Expr, visit)
+	case *ast.UnaryLenOpExpr:
+		visitCalls(e.Expr, visit)
+	case *ast.UnaryBNotOpExpr:
+		visitCalls(e.Expr, visit)
+	case *ast.CastExpr:
+		visitCalls(e.Expr, visit)
+	case *ast.NonNilAssertExpr:
+		visitCalls(e.Expr, visit)
+	}
+}
+
+// Only expressions that can carry the table reference itself are recorded.
+// Indexing and scalar operations yield values rather than the source table.
+func collectAliasedRoots(expr ast.Expr, bindings *bind.BindingTable, roots map[cfg.SymbolID]bool) {
+	switch e := expr.(type) {
+	case *ast.IdentExpr:
+		if sym, ok := bindings.SymbolOf(e); ok {
+			roots[sym] = true
+		}
+	case *ast.TableExpr:
+		for _, field := range e.Fields {
+			if field != nil {
+				collectAliasedRoots(field.Value, bindings, roots)
+			}
+		}
+	case *ast.CastExpr:
+		collectAliasedRoots(e.Expr, bindings, roots)
+	case *ast.NonNilAssertExpr:
+		collectAliasedRoots(e.Expr, bindings, roots)
+	case *ast.LogicalOpExpr:
+		collectAliasedRoots(e.Lhs, bindings, roots)
+		collectAliasedRoots(e.Rhs, bindings, roots)
+	}
 }
 
 // initInputsFromContext creates and seeds the Inputs struct from FlowContext.

@@ -221,6 +221,9 @@ type Inputs struct {
 	// FreshLocalTablePaths records literal table origins shared with nested
 	// closures. Keys within each symbol are dot-separated static field paths.
 	FreshLocalTablePaths map[cfg.SymbolID]map[string]bool
+	// CallAliasRoots lists local table references passed to a call at each point.
+	// Calls can retain or mutate those references after a key fact is learned.
+	CallAliasRoots map[cfg.Point][]cfg.SymbolID
 
 	Assignments    []UnifiedAssignment
 	ConstValues    map[cfg.SymbolID]map[cfg.Point]*ConstValue
@@ -303,6 +306,8 @@ type Inputs struct {
 type ReturnExprConstraints struct {
 	OnTrue  constraint.Condition
 	OnFalse constraint.Condition
+	// Predicate is true when the return expression itself is definitely boolean.
+	Predicate bool
 }
 
 // PredicateLink stores predicate constraints for a variable assigned from a predicate call.

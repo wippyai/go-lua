@@ -46,6 +46,7 @@ func newConditionExtractor(fc *core.FlowContext, inputs *flow.Inputs, p cfg.Poin
 		ReceiverRoots:    fc.Derived.ReceiverRoots,
 		NilableRoots:     fc.Derived.NilableRoots,
 		KnownNonNilPaths: fc.Derived.KnownNonNilPaths,
+		ModuleBindings:   fc.ModuleBindings,
 	}
 }
 
@@ -1108,6 +1109,8 @@ func ExtractPredicateLinkFromCallInfo(
 
 	onTruthy := eff.OnTrue.Substitute(argPaths)
 	onFalsy := eff.OnFalse.Substitute(argPaths)
+	onTruthy = rebaseCapturedKeyOf(onTruthy, p, graph, bindings, inputs)
+	onFalsy = rebaseCapturedKeyOf(onFalsy, p, graph, bindings, inputs)
 
 	if !onTruthy.HasConstraints() && !onFalsy.HasConstraints() {
 		return nil
@@ -1117,6 +1120,105 @@ func ExtractPredicateLinkFromCallInfo(
 		OnTruthy: onTruthy,
 		OnFalsy:  onFalsy,
 	}
+}
+
+// A captured table has a different SSA version inside its predicate than in
+// the caller. The call observes the caller's current binding, so attach that
+// version to the returned key fact. A captured rebind prevents that identity
+// from being stable across the call.
+func rebaseCapturedKeyOf(cond constraint.Condition, p cfg.Point, graph *cfg.Graph, bindings *bind.BindingTable, inputs *flow.Inputs) constraint.Condition {
+	if !cond.HasConstraints() || graph == nil || bindings == nil {
+		return cond
+	}
+	reassigned := CapturedReassignments(graph)
+	disjuncts := make([][]constraint.Constraint, 0, len(cond.Disjuncts))
+	for _, disjunct := range cond.Disjuncts {
+		updated := make([]constraint.Constraint, 0, len(disjunct))
+		for _, c := range disjunct {
+			keyOf, ok := c.(constraint.KeyOf)
+			if !ok || keyOf.Table.Symbol == 0 || keyOf.Table.IsPlaceholder() {
+				updated = append(updated, c)
+				continue
+			}
+			kind, bound := bindings.Kind(keyOf.Table.Symbol)
+			version := graph.VisibleVersion(p, keyOf.Table.Symbol)
+			if !bound || kind != cfg.SymbolLocal || reassigned[keyOf.Table.Symbol] || version.IsZero() ||
+				capturedTableMayHaveAlias(inputs, graph, p, keyOf.Table.Symbol) {
+				continue
+			}
+			keyOf.Table.Version = version.ID
+			updated = append(updated, keyOf)
+		}
+		if len(updated) == 0 {
+			return constraint.TrueCondition()
+		}
+		disjuncts = append(disjuncts, updated)
+	}
+	return constraint.FromDisjuncts(disjuncts)
+}
+
+// An alias created before this call can mutate the captured table after the
+// predicate returns. Do not publish a portable key fact in that case.
+func capturedTableMayHaveAlias(inputs *flow.Inputs, graph *cfg.Graph, callPoint cfg.Point, tableSym cfg.SymbolID) bool {
+	if inputs == nil {
+		return true
+	}
+	captures := 0
+	for _, nested := range graph.NestedFunctions() {
+		if nested.Func == nil {
+			continue
+		}
+		for _, sym := range graph.Bindings().CapturedSymbols(nested.Func) {
+			if sym == tableSym {
+				captures++
+			}
+		}
+	}
+	if captures != 1 {
+		return true
+	}
+	for point, roots := range inputs.CallAliasRoots {
+		if point != callPoint && !graphPathExists(graph, point, callPoint) {
+			continue
+		}
+		for _, sym := range roots {
+			if sym == tableSym {
+				return true
+			}
+		}
+	}
+	for _, assignment := range inputs.Assignments {
+		if assignment.SourcePath.Symbol != tableSym || len(assignment.SourcePath.Segments) != 0 ||
+			assignment.TargetPath.Symbol == 0 ||
+			(assignment.TargetPath.Symbol == tableSym && len(assignment.TargetPath.Segments) == 0) {
+			continue
+		}
+		if graphPathExists(graph, assignment.Point, callPoint) {
+			return true
+		}
+	}
+	return false
+}
+
+func graphPathExists(graph *cfg.Graph, from, to cfg.Point) bool {
+	if graph == nil {
+		return false
+	}
+	seen := map[cfg.Point]bool{from: true}
+	stack := append([]cfg.Point(nil), graph.Successors(from)...)
+	for len(stack) > 0 {
+		p := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if p == to {
+			return true
+		}
+		if seen[p] {
+			continue
+		}
+		seen[p] = true
+		stack = append(stack, graph.Successors(p)...)
+	}
+	return false
 }
 
 // ComputeDeadPoints computes dead points from a graph using effect-based termination analysis.
