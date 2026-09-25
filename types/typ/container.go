@@ -13,19 +13,50 @@ import (
 // describes what each element contains. Arrays support ipairs iteration
 // and length operator (#).
 type Array struct {
-	Element      Type
-	hash         uint64
-	softPrunable bool
-	strCache     stringCache
+	Element Type
+	// InferredPresence records an unannotated array built by non-nil writes.
+	InferredPresence bool
+	ExplicitNilWrite bool
+	hash             uint64
+	softPrunable     bool
+	strCache         stringCache
 }
 
 // NewArray creates an array type.
 func NewArray(elem Type) *Array {
+	return newArrayWithPresence(elem, false)
+}
+
+func NewInferredArray(elem Type) *Array {
+	return newArrayWithPresence(elem, true)
+}
+
+func newArrayWithPresence(elem Type, inferred bool) *Array {
+	return newArrayWithFlags(elem, inferred, false)
+}
+
+func newArrayWithFlags(elem Type, inferred, explicitNil bool) *Array {
 	if elem == nil {
 		elem = Unknown
 	}
 	h := internal.HashCombine(uint64(kind.Array), elem.Hash())
-	return &Array{Element: elem, hash: h, softPrunable: softPruneMayRewrite(elem)}
+	if inferred {
+		h = internal.HashCombine(h, 4)
+	}
+	if explicitNil {
+		h = internal.HashCombine(h, 8)
+	}
+	return &Array{Element: elem, InferredPresence: inferred, ExplicitNilWrite: explicitNil, hash: h, softPrunable: softPruneMayRewrite(elem)}
+}
+
+func (a *Array) WithElement(elem Type) *Array {
+	return newArrayWithFlags(elem, a.InferredPresence, a.ExplicitNilWrite)
+}
+func (a *Array) WithInferredPresence(inferred bool) *Array {
+	return newArrayWithFlags(a.Element, inferred, a.ExplicitNilWrite)
+}
+func (a *Array) WithExplicitNilWrite() *Array {
+	return newArrayWithFlags(a.Element, a.InferredPresence, true)
 }
 
 func (a *Array) Kind() kind.Kind { return kind.Array }
@@ -48,15 +79,31 @@ func (a *Array) Equals(o Type) bool {
 // Unlike Records, Maps have uniform types for all entries rather than
 // named fields with potentially different types.
 type Map struct {
-	Key          Type
-	Value        Type
-	hash         uint64
-	softPrunable bool
-	strCache     stringCache
+	Key   Type
+	Value Type
+	// InferredPresence marks possible absence from non-nil writes to a fresh,
+	// unannotated table. It does not describe declared optionality or value nil.
+	InferredPresence bool
+	ExplicitNilWrite bool
+	hash             uint64
+	softPrunable     bool
+	strCache         stringCache
 }
 
 // NewMap creates a map type.
 func NewMap(key, value Type) *Map {
+	return newMapWithPresence(key, value, false)
+}
+
+func NewInferredMap(key, value Type) *Map {
+	return newMapWithPresence(key, value, true)
+}
+
+func newMapWithPresence(key, value Type, inferred bool) *Map {
+	return newMapWithFlags(key, value, inferred, false)
+}
+
+func newMapWithFlags(key, value Type, inferred, explicitNil bool) *Map {
 	if key == nil {
 		key = Unknown
 	}
@@ -65,8 +112,24 @@ func NewMap(key, value Type) *Map {
 	}
 	h := internal.HashCombine(uint64(kind.Map), key.Hash())
 	h = internal.HashCombine(h, value.Hash())
+	if inferred {
+		h = internal.HashCombine(h, 4)
+	}
+	if explicitNil {
+		h = internal.HashCombine(h, 8)
+	}
 
-	return &Map{Key: key, Value: value, hash: h, softPrunable: softPruneAny(key, value)}
+	return &Map{Key: key, Value: value, InferredPresence: inferred, ExplicitNilWrite: explicitNil, hash: h, softPrunable: softPruneAny(key, value)}
+}
+
+func (m *Map) WithTypes(key, value Type) *Map {
+	return newMapWithFlags(key, value, m.InferredPresence, m.ExplicitNilWrite)
+}
+func (m *Map) WithInferredPresence(inferred bool) *Map {
+	return newMapWithFlags(m.Key, m.Value, inferred, m.ExplicitNilWrite)
+}
+func (m *Map) WithExplicitNilWrite() *Map {
+	return newMapWithFlags(m.Key, m.Value, m.InferredPresence, true)
 }
 
 func (m *Map) Kind() kind.Kind { return kind.Map }

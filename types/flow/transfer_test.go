@@ -160,7 +160,7 @@ func TestWidenArrayElementType_EmptyRecord(t *testing.T) {
 }
 
 func TestWidenWithIndexer_NilBase(t *testing.T) {
-	result := widenWithIndexer(nil, typ.String, typ.Integer)
+	result := widenWithIndexer(nil, typ.String, typ.Integer, false)
 	m, ok := result.(*typ.Map)
 	if !ok {
 		t.Fatalf("widenWithIndexer(nil, string, int) = %T, want *typ.Map", result)
@@ -175,7 +175,7 @@ func TestWidenWithIndexer_NilBase(t *testing.T) {
 
 func TestWidenWithIndexer_EmptyRecord(t *testing.T) {
 	emptyRecord := typ.NewRecord().Build()
-	result := widenWithIndexer(emptyRecord, typ.String, typ.Number)
+	result := widenWithIndexer(emptyRecord, typ.String, typ.Number, false)
 	m, ok := result.(*typ.Map)
 	if !ok {
 		t.Fatalf("widenWithIndexer({}, string, number) = %T, want *typ.Map", result)
@@ -190,7 +190,7 @@ func TestWidenWithIndexer_EmptyRecord(t *testing.T) {
 
 func TestWidenWithIndexer_ExistingMap(t *testing.T) {
 	existingMap := typ.NewMap(typ.String, typ.Integer)
-	result := widenWithIndexer(existingMap, typ.Number, typ.Boolean)
+	result := widenWithIndexer(existingMap, typ.Number, typ.Boolean, false)
 	m, ok := result.(*typ.Map)
 	if !ok {
 		t.Fatalf("widenWithIndexer(map, number, bool) = %T, want *typ.Map", result)
@@ -231,7 +231,7 @@ func TestMergeMapValueDomain_PreservesAcceptedRefinement(t *testing.T) {
 				typ.NewMap(typ.String, tt.domain),
 				typ.NewRecord().Field("name", typ.String).MapComponent(typ.String, tt.domain).Build(),
 			} {
-				if got := widenWithIndexer(container, typ.String, refined); !typ.TypeEquals(got, container) {
+				if got := widenWithIndexer(container, typ.String, refined, false); !typ.TypeEquals(got, container) {
 					t.Errorf("widenWithIndexer = %v, want original container %v", got, container)
 				}
 			}

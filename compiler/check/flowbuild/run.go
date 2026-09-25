@@ -107,6 +107,30 @@ func Run(fc *fbcore.FlowContext) *flow.Inputs {
 	// Assignments with const resolution.
 	assign.ExtractAssignments(fc, inputs, keyscoll.BuildKeysCollectorDetector(fc.Graph, fc.ModuleBindings))
 	inputs.ClosedMapVars = assign.ClosedMapVars(fc.Graph, inputs)
+	if bindings := fc.Graph.Bindings(); bindings != nil {
+		fresh := bindings.FreshTablePaths()
+		capturedFresh := make(map[cfg.SymbolID]map[string]bool, len(fresh))
+		captured := make(map[cfg.SymbolID]bool)
+		if fn := fc.Graph.Func(); fn != nil {
+			for _, sym := range bindings.CapturedSymbols(fn) {
+				captured[sym] = true
+			}
+		}
+		for _, nested := range fc.Graph.NestedFunctions() {
+			if nested.Func == nil {
+				continue
+			}
+			for _, sym := range bindings.CapturedSymbols(nested.Func) {
+				captured[sym] = true
+			}
+		}
+		for sym, paths := range fresh {
+			if captured[sym] {
+				capturedFresh[sym] = paths
+			}
+		}
+		inputs.FreshLocalTablePaths = capturedFresh
+	}
 	derived.ReceiverRoots, derived.NilableRoots, derived.KnownNonNilPaths = cond.ReceiverRoots(inputs, fc.Graph)
 
 	// Table mutator assignments (table.insert-like).

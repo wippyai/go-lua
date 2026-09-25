@@ -12,6 +12,7 @@ package flow
 
 import (
 	"sort"
+	"strings"
 
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
@@ -148,6 +149,7 @@ func (s *Solution) processAssignmentReturnChangedKeys(p cfg.Point) []string {
 		}
 		if key := s.processIndexerAssignmentReturnKey(p, ia); key != "" {
 			changedKeys = append(changedKeys, key)
+			changedKeys = append(changedKeys, s.refreshIndexedValueAliases(p, ia, s.values[key])...)
 		}
 	}
 
@@ -851,7 +853,7 @@ func (s *Solution) processIndexerAssignmentReturnKey(p cfg.Point, ia IndexerAssi
 				}
 			}
 		}
-		return widenWithIndexer(t, keyType, valueType)
+		return widenWithIndexer(t, keyType, valueType, s.inferredIndexedOrigin(iaPath))
 	})
 	if newType == nil || typ.TypeEquals(currentType, newType) {
 		return ""
@@ -865,6 +867,78 @@ func (s *Solution) processIndexerAssignmentReturnKey(p cfg.Point, ia IndexerAssi
 
 	s.setValue(string(pathKey), newType)
 	return string(pathKey)
+}
+
+// A dynamic map entry can hold the same table as a local value path. Later
+// mutations of that local change the entry's value in place; the value written
+// at the earlier assignment is only a snapshot of its evolving shape.
+func (s *Solution) refreshIndexedValueAliases(p cfg.Point, mutated IndexerAssignment, valueType typ.Type) []string {
+	if s == nil || s.inputs == nil || s.inputs.Graph == nil || valueType == nil || mutated.Symbol == 0 {
+		return nil
+	}
+	mutatedPath := constraint.Path{Root: mutated.Root, Symbol: mutated.Symbol, Segments: mutated.Segments}
+	var changed []string
+	for _, alias := range s.inputs.IndexerAssignments {
+		if !alias.ValuePath.HasSymbol() || !alias.ValuePath.Equal(mutatedPath) || alias.Symbol == 0 ||
+			!flowPathExists(s.inputs.Graph, alias.Point, p) || s.rootReboundBetween(alias.Point, p, alias.ValuePath.Symbol, alias.Symbol) {
+			continue
+		}
+		target := constraint.Path{Root: alias.Root, Symbol: alias.Symbol, Segments: alias.Segments}
+		key := s.pkResolver.KeyAt(p, target)
+		if key == "" {
+			continue
+		}
+		current := s.writtenTableTypeAt(p, key, target)
+		keyType := alias.KeyType
+		if keyType == nil || typ.IsAbsentOrUnknown(keyType) {
+			keyType = s.resolveSymbolKeyType(p, alias.KeySymbol, alias.KeyVar)
+		}
+		keyType = normalizeDynamicKeyType(keyType)
+		updated := typ.WriteInto(current, func(t typ.Type) typ.Type {
+			return widenWithIndexer(t, keyType, valueType, s.inferredIndexedOrigin(target))
+		})
+		if updated != nil && !typ.TypeEquals(current, updated) {
+			s.setValue(string(key), updated)
+			changed = append(changed, string(key))
+		}
+	}
+	return changed
+}
+
+func (s *Solution) rootReboundBetween(from, to cfg.Point, symbols ...cfg.SymbolID) bool {
+	for _, assignment := range s.inputs.Assignments {
+		if len(assignment.TargetPath.Segments) != 0 || assignment.Point == from {
+			continue
+		}
+		for _, sym := range symbols {
+			if assignment.TargetPath.Symbol == sym && flowPathExists(s.inputs.Graph, from, assignment.Point) &&
+				flowPathExists(s.inputs.Graph, assignment.Point, to) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func flowPathExists(graph cfg.VersionedGraph, from, to cfg.Point) bool {
+	if graph == nil || from == to {
+		return false
+	}
+	seen := map[cfg.Point]bool{from: true}
+	stack := append([]cfg.Point(nil), graph.Successors(from)...)
+	for len(stack) > 0 {
+		p := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if p == to {
+			return true
+		}
+		if seen[p] {
+			continue
+		}
+		seen[p] = true
+		stack = append(stack, graph.Successors(p)...)
+	}
+	return false
 }
 
 // declaredTypeAtPath returns the declared type of the value the path denotes.
@@ -1000,11 +1074,8 @@ func (s *Solution) processTableMutatorAssignmentReturnKey(p cfg.Point, tm TableM
 		return ""
 	}
 
-	currentType := s.values[string(pathKey)]
-	currentType = preferDeclaredTemplateForWiden(currentType, s.lookupDeclaredType(constraint.Path{
-		Root:   tm.Target.Root,
-		Symbol: tm.Target.Symbol,
-	}))
+	currentType := s.writtenTableTypeAt(p, pathKey, tm.Target)
+	currentType = preferDeclaredTemplateForWiden(currentType, s.declaredTypeAtPath(tm.Target))
 
 	var newType typ.Type
 	if tm.KeySymbol != 0 || tm.KeyType != nil {
@@ -1165,7 +1236,7 @@ func (s *Solution) processFieldWriteEffectReturnKey(p cfg.Point, fw FieldWriteEf
 			return ""
 		}
 		newType = typ.WriteInto(base, func(t typ.Type) typ.Type {
-			return widenWithIndexer(t, m.Key, subtype.WidenForInference(m.Value))
+			return widenWithIndexer(t, m.Key, subtype.WidenForInference(m.Value), s.inferredIndexedOrigin(fw.Target))
 		})
 		if s.inputs.RefinableAnnotatedVars[fw.Target.Symbol] && !subtype.IsSubtype(newType, declared) {
 			return ""
@@ -1645,23 +1716,61 @@ func isEmptyRecordNoMapType(t typ.Type) bool {
 //
 // Nil values are skipped: In Lua, t[k] = nil deletes the key rather than storing nil.
 // Map access already returns Optional to represent potentially missing keys.
-func widenWithIndexer(t typ.Type, keyType, valType typ.Type) typ.Type {
+func (s *Solution) inferredIndexedOrigin(path constraint.Path) bool {
+	if s == nil || s.inputs == nil || path.Symbol == 0 {
+		return false
+	}
+	fields := make([]string, 0, len(path.Segments))
+	for _, segment := range path.Segments {
+		if segment.Kind != constraint.SegmentField && segment.Kind != constraint.SegmentIndexString {
+			return false
+		}
+		fields = append(fields, segment.Name)
+	}
+	fresh := s.inputs.FreshLocalTablePaths[path.Symbol][strings.Join(fields, ".")]
+	return fresh
+}
+
+func widenWithIndexer(t typ.Type, keyType, valType typ.Type, fresh bool) typ.Type {
 	// Storing nil under a key removes the entry, so only the non-nil part of
 	// the written value becomes a value of the table.
+	nilable := false
 	if valType != nil {
-		valType = narrow.RemoveNil(valType)
+		present := narrow.RemoveNil(valType)
+		nilable = !typ.TypeEquals(present, valType)
+		valType = present
 		if valType.Kind() == kind.Never {
+			switch v := t.(type) {
+			case *typ.Map:
+				return v.WithExplicitNilWrite()
+			case *typ.Array:
+				return v.WithExplicitNilWrite()
+			case *typ.Record:
+				if len(v.Fields) == 0 && !v.HasMapComponent() && fresh {
+					if isIntegerKey(keyType) {
+						return typ.NewInferredArray(typ.Unknown).WithExplicitNilWrite()
+					}
+					return typ.NewInferredMap(keyType, typ.Unknown).WithExplicitNilWrite()
+				}
+			}
 			return t
 		}
 	}
 
 	if t == nil {
+		if fresh {
+			m := typ.NewInferredMap(keyType, valType)
+			if nilable {
+				return m.WithExplicitNilWrite()
+			}
+			return m
+		}
 		return typ.NewMap(keyType, valType)
 	}
 
 	return typ.Visit(t, typ.Visitor[typ.Type]{
 		Alias: func(a *typ.Alias) typ.Type {
-			widened := widenWithIndexer(a.Target, keyType, valType)
+			widened := widenWithIndexer(a.Target, keyType, valType, fresh)
 			if widened == nil || typ.TypeEquals(widened, a.Target) {
 				return t
 			}
@@ -1683,7 +1792,21 @@ func widenWithIndexer(t typ.Type, keyType, valType typ.Type) typ.Type {
 			// by integer keys (t[#t + 1] = v), a map otherwise.
 			if len(r.Fields) == 0 && !r.HasMapComponent() && r.Metatable == nil {
 				if isIntegerKey(keyType) {
+					if fresh {
+						array := typ.NewInferredArray(valType)
+						if nilable {
+							return array.WithExplicitNilWrite()
+						}
+						return array
+					}
 					return typ.NewArray(valType)
+				}
+				if fresh {
+					m := typ.NewInferredMap(keyType, valType)
+					if nilable {
+						return m.WithExplicitNilWrite()
+					}
+					return m
 				}
 				return typ.NewMap(keyType, valType)
 			}
@@ -1691,13 +1814,15 @@ func widenWithIndexer(t typ.Type, keyType, valType typ.Type) typ.Type {
 			if r.HasMapComponent() {
 				newKey := mergeMapKeyDomain(r.MapKey, keyType)
 				newVal := mergeMapValueDomain(r.MapValue, valType)
-				if typ.TypeEquals(r.MapKey, newKey) && typ.TypeEquals(r.MapValue, newVal) {
+				inferred := r.MapInferredPresence || (fresh && !r.MapExplicitNilWrite && !nilable)
+				explicit := r.MapExplicitNilWrite || nilable
+				if typ.TypeEquals(r.MapKey, newKey) && typ.TypeEquals(r.MapValue, newVal) && inferred == r.MapInferredPresence && explicit == r.MapExplicitNilWrite {
 					return t
 				}
-				return rebuildRecordWithMapComponent(r, newKey, newVal)
+				return rebuildRecordWithMapComponentFlags(r, newKey, newVal, inferred, explicit)
 			}
 			// Record with fields but no map component: add map component
-			return rebuildRecordWithMapComponent(r, keyType, valType)
+			return rebuildRecordWithMapComponentFlags(r, keyType, valType, fresh && !nilable, nilable)
 		},
 		Array: func(a *typ.Array) typ.Type {
 			// Integer writes keep an array and widen its element; other keys
@@ -1705,24 +1830,45 @@ func widenWithIndexer(t typ.Type, keyType, valType typ.Type) typ.Type {
 			elem := mergeMapValueDomain(a.Element, valType)
 			if isIntegerKey(keyType) {
 				if typ.TypeEquals(a.Element, elem) {
+					if nilable {
+						return a.WithExplicitNilWrite()
+					}
 					return t
 				}
-				return typ.NewArray(elem)
+				updated := a.WithElement(elem)
+				if nilable {
+					return updated.WithExplicitNilWrite()
+				}
+				return updated
 			}
-			return typ.NewMap(mergeMapKeyDomain(typ.Integer, keyType), elem)
+			updated := typ.NewMap(mergeMapKeyDomain(typ.Integer, keyType), elem).WithInferredPresence(a.InferredPresence)
+			if nilable || a.ExplicitNilWrite {
+				return updated.WithExplicitNilWrite()
+			}
+			return updated
 		},
 		Map: func(m *typ.Map) typ.Type {
 			// Widen existing map by unioning key/value types, preferring non-soft.
 			newKey := mergeMapKeyDomain(m.Key, keyType)
 			newVal := mergeMapValueDomain(m.Value, valType)
-			if typ.TypeEquals(m.Key, newKey) && typ.TypeEquals(m.Value, newVal) {
+			updated := m.WithTypes(newKey, newVal)
+			if fresh && !m.ExplicitNilWrite && !nilable {
+				updated = updated.WithInferredPresence(true)
+			}
+			if nilable {
+				updated = updated.WithExplicitNilWrite()
+			}
+			if typ.TypeEquals(m, updated) {
 				return t
 			}
-			return typ.NewMap(newKey, newVal)
+			return updated
 		},
 		Default: func(t typ.Type) typ.Type {
 			// An unresolved value becomes the map the write builds.
 			if t.Kind() == kind.Unknown {
+				if fresh {
+					return typ.NewInferredMap(keyType, valType)
+				}
 				return typ.NewMap(keyType, valType)
 			}
 			return t
@@ -1744,6 +1890,10 @@ func isIntegerKey(keyType typ.Type) bool {
 // The resulting type represents a table that can be accessed both by known field
 // names and by dynamic keys of type mapKey.
 func rebuildRecordWithMapComponent(rec *typ.Record, mapKey, mapVal typ.Type) typ.Type {
+	return rebuildRecordWithMapComponentFlags(rec, mapKey, mapVal, rec.MapInferredPresence, rec.MapExplicitNilWrite)
+}
+
+func rebuildRecordWithMapComponentFlags(rec *typ.Record, mapKey, mapVal typ.Type, inferred, explicitNil bool) typ.Type {
 	builder := typ.NewRecord()
 	if rec.Open {
 		builder.SetOpen(true)
@@ -1754,7 +1904,7 @@ func rebuildRecordWithMapComponent(rec *typ.Record, mapKey, mapVal typ.Type) typ
 	if rec.Metatable != nil {
 		builder.Metatable(rec.Metatable)
 	}
-	builder.MapComponent(mapKey, mapVal)
+	builder.MapComponentWithFlags(mapKey, mapVal, inferred, explicitNil)
 	return builder.Build()
 }
 

@@ -218,6 +218,9 @@ type Inputs struct {
 	// indexed writes and one non-looping indexed read. Their observed writes
 	// describe every value that can be read through that map.
 	ClosedMapVars map[cfg.SymbolID]bool
+	// FreshLocalTablePaths records literal table origins shared with nested
+	// closures. Keys within each symbol are dot-separated static field paths.
+	FreshLocalTablePaths map[cfg.SymbolID]map[string]bool
 
 	Assignments    []UnifiedAssignment
 	ConstValues    map[cfg.SymbolID]map[cfg.Point]*ConstValue

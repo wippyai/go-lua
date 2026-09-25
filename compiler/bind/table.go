@@ -28,6 +28,7 @@ package bind
 
 import (
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -48,6 +49,10 @@ import (
 // BindingTable is the primary output of the binding phase and is consumed
 // by type checking and CFG construction phases.
 type BindingTable struct {
+	// freshTablePaths records unannotated local table literals and nested
+	// literal tables, intersected across direct reassignments.
+	freshTablePaths map[cfg.SymbolID]map[string]bool
+	emptyTablePaths map[cfg.SymbolID]map[string]bool
 	// symbols maps identifier references to their resolved symbols
 	symbols map[*ast.IdentExpr]cfg.SymbolID
 
@@ -123,6 +128,8 @@ func NewBindingTableWithHint(symbolHint, stmtHint int) *BindingTable {
 	}
 
 	return &BindingTable{
+		freshTablePaths:   make(map[cfg.SymbolID]map[string]bool),
+		emptyTablePaths:   make(map[cfg.SymbolID]map[string]bool),
 		symbols:           make(map[*ast.IdentExpr]cfg.SymbolID, identHint),
 		kind:              make(map[cfg.SymbolID]cfg.SymbolKind, symbolHint),
 		names:             make(map[cfg.SymbolID]string, symbolHint),
@@ -135,6 +142,98 @@ func NewBindingTableWithHint(symbolHint, stmtHint int) *BindingTable {
 		funcLitSymbols:    make(map[*ast.FunctionExpr]cfg.SymbolID),
 		funcLitBySymbol:   make(map[cfg.SymbolID]*ast.FunctionExpr),
 		capturedCache:     make(map[*ast.FunctionExpr][]cfg.SymbolID),
+	}
+}
+
+// FreshTablePath reports whether this local table path originates from a
+// literal table on every direct assignment to its root.
+func (t *BindingTable) FreshTablePath(sym cfg.SymbolID, fields []string) bool {
+	paths := t.freshTablePaths[sym]
+	if paths == nil {
+		return false
+	}
+	return paths[strings.Join(fields, ".")]
+}
+
+// EmptyFreshTablePath requires every direct initialization to be an empty
+// unannotated literal; it is used when summarizing values stored into a map.
+func (t *BindingTable) EmptyFreshTablePath(sym cfg.SymbolID, fields []string) bool {
+	return t.emptyTablePaths[sym][strings.Join(fields, ".")]
+}
+
+// FreshTablePaths returns a snapshot for flow analysis, including captures.
+func (t *BindingTable) FreshTablePaths() map[cfg.SymbolID]map[string]bool {
+	out := make(map[cfg.SymbolID]map[string]bool, len(t.freshTablePaths))
+	for sym, paths := range t.freshTablePaths {
+		copyPaths := make(map[string]bool, len(paths))
+		for path, fresh := range paths {
+			copyPaths[path] = fresh
+		}
+		out[sym] = copyPaths
+	}
+	return out
+}
+
+func (t *BindingTable) setFreshTableLiteral(sym cfg.SymbolID, expr ast.Expr, annotated bool, reassignment bool) {
+	if kind, ok := t.Kind(sym); !ok || kind != cfg.SymbolLocal {
+		return
+	}
+	next := make(map[string]bool)
+	empty := make(map[string]bool)
+	if !annotated {
+		collectFreshTablePaths(expr, "", next, empty)
+	}
+	if !reassignment {
+		t.freshTablePaths[sym] = next
+		t.emptyTablePaths[sym] = empty
+		return
+	}
+	old := t.freshTablePaths[sym]
+	for path := range old {
+		if !next[path] {
+			delete(old, path)
+		}
+	}
+	for path := range t.emptyTablePaths[sym] {
+		if !empty[path] {
+			delete(t.emptyTablePaths[sym], path)
+		}
+	}
+}
+
+func (t *BindingTable) invalidateFreshPath(sym cfg.SymbolID, fields []string) {
+	prefix := strings.Join(fields, ".")
+	for path := range t.freshTablePaths[sym] {
+		if path == prefix || strings.HasPrefix(path, prefix+".") {
+			delete(t.freshTablePaths[sym], path)
+		}
+	}
+	for path := range t.emptyTablePaths[sym] {
+		if path == prefix || strings.HasPrefix(path, prefix+".") {
+			delete(t.emptyTablePaths[sym], path)
+		}
+	}
+}
+
+func collectFreshTablePaths(expr ast.Expr, prefix string, paths, empty map[string]bool) {
+	table, ok := expr.(*ast.TableExpr)
+	if !ok {
+		return
+	}
+	paths[prefix] = true
+	if len(table.Fields) == 0 {
+		empty[prefix] = true
+	}
+	for _, field := range table.Fields {
+		key, ok := field.Key.(*ast.StringExpr)
+		if !ok {
+			continue
+		}
+		child := key.Value
+		if prefix != "" {
+			child = prefix + "." + child
+		}
+		collectFreshTablePaths(field.Value, child, paths, empty)
 	}
 }
 

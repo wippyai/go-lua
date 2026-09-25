@@ -9,6 +9,9 @@ import (
 	flowpath "github.com/wippyai/go-lua/compiler/check/flowbuild/path"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow"
+	"github.com/wippyai/go-lua/types/kind"
+	"github.com/wippyai/go-lua/types/narrow"
+	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -139,14 +142,209 @@ func CollectIndexerAssignments(
 				continue
 			}
 
+			valType := assignedValueType(source, p, synth)
+			if evolved := evolvingIndexedAliasValue(graph, bindings, sym, p, source, synth); evolved != nil {
+				valType = evolved
+			}
 			result[sym] = append(result[sym], mutator.IndexerInfo{
 				KeyType: dynamicKeyType(target.Key, p, synth),
-				ValType: assignedValueType(source, p, synth),
+				ValType: valType,
 			})
 		}
 	})
 
 	return result
+}
+
+// When a fresh map stores a local list and that list is extended later, the
+// map entry still refers to the extended list. Recognize the self-contained
+// map lookup-or-empty-list cycle and summarize the later indexed writes.
+func evolvingIndexedAliasValue(graph *cfg.Graph, bindings *bind.BindingTable, mapSym cfg.SymbolID, storePoint cfg.Point, source ast.Expr, synth func(ast.Expr, cfg.Point) typ.Type) typ.Type {
+	ident, ok := source.(*ast.IdentExpr)
+	if !ok || bindings == nil || !bindings.EmptyFreshTablePath(mapSym, nil) {
+		return nil
+	}
+	localSym, ok := bindings.SymbolOf(ident)
+	if !ok || localSym == 0 {
+		return nil
+	}
+	var rootAssignments, mapWrites int
+	validOrigin := false
+	escaped := false
+	graph.EachAssign(func(_ cfg.Point, info *cfg.AssignInfo) {
+		for i, target := range info.Targets {
+			var assigned ast.Expr
+			if i < len(info.Sources) {
+				assigned = info.Sources[i]
+			}
+			if assigned != source && (carriesTableAlias(assigned, bindings, mapSym) || carriesTableAlias(assigned, bindings, localSym)) {
+				escaped = true
+			}
+			if callReceivesTableAlias(assigned, bindings, mapSym, localSym) {
+				escaped = true
+			}
+			if target.Kind == cfg.TargetIndex && target.BaseSymbol == mapSym {
+				mapWrites++
+			}
+			if target.Kind != cfg.TargetIdent || target.Symbol != localSym {
+				continue
+			}
+			rootAssignments++
+			if !info.IsLocal || i >= len(info.Sources) || i < len(info.TypeAnnotations) && info.TypeAnnotations[i] != nil {
+				continue
+			}
+			choice, ok := info.Sources[i].(*ast.LogicalOpExpr)
+			if !ok || choice.Operator != "or" {
+				continue
+			}
+			if _, ok := choice.Rhs.(*ast.TableExpr); !ok {
+				continue
+			}
+			lookup, ok := choice.Lhs.(*ast.AttrGetExpr)
+			if !ok {
+				continue
+			}
+			base, ok := lookup.Object.(*ast.IdentExpr)
+			if !ok {
+				continue
+			}
+			baseSym, ok := bindings.SymbolOf(base)
+			validOrigin = ok && baseSym == mapSym
+		}
+	})
+	graph.EachStmtCall(func(_ cfg.Point, info *cfg.CallInfo) {
+		if info == nil {
+			return
+		}
+		for _, arg := range info.Args {
+			if carriesTableAlias(arg, bindings, mapSym) || carriesTableAlias(arg, bindings, localSym) {
+				escaped = true
+			}
+		}
+		if carriesTableAlias(info.Receiver, bindings, mapSym, localSym) {
+			escaped = true
+		}
+	})
+	graph.EachReturn(func(_ cfg.Point, info *cfg.ReturnInfo) {
+		for _, expr := range info.Exprs {
+			if carriesTableAlias(expr, bindings, mapSym, localSym) || callReceivesTableAlias(expr, bindings, mapSym, localSym) {
+				escaped = true
+			}
+		}
+	})
+	if escaped || !validOrigin || rootAssignments != 1 || mapWrites != 1 {
+		return nil
+	}
+	var element typ.Type
+	var explicitNil bool
+	graph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
+		if !graphReachable(graph, storePoint, p) {
+			return
+		}
+		for i, target := range info.Targets {
+			if target.Kind != cfg.TargetIndex || target.BaseSymbol != localSym || !numericIndexedKey(dynamicKeyType(target.Key, p, synth)) || i >= len(info.Sources) {
+				continue
+			}
+			written := assignedValueType(info.Sources[i], p, synth)
+			present := narrow.RemoveNil(written)
+			if !typ.TypeEquals(present, written) {
+				explicitNil = true
+			}
+			if present != nil && present.Kind() != kind.Never {
+				element = typ.JoinPreferNonSoft(element, present)
+			}
+		}
+	})
+	if element == nil {
+		return nil
+	}
+	array := typ.NewInferredArray(element)
+	if explicitNil {
+		return array.WithExplicitNilWrite()
+	}
+	return array
+}
+
+func callReceivesTableAlias(expr ast.Expr, bindings *bind.BindingTable, symbols ...cfg.SymbolID) bool {
+	switch e := expr.(type) {
+	case *ast.FuncCallExpr:
+		if carriesTableAlias(e.Receiver, bindings, symbols...) {
+			return true
+		}
+		for _, arg := range e.Args {
+			if carriesTableAlias(arg, bindings, symbols...) || callReceivesTableAlias(arg, bindings, symbols...) {
+				return true
+			}
+		}
+	case *ast.LogicalOpExpr:
+		return callReceivesTableAlias(e.Lhs, bindings, symbols...) || callReceivesTableAlias(e.Rhs, bindings, symbols...)
+	case *ast.TableExpr:
+		for _, field := range e.Fields {
+			if field != nil && callReceivesTableAlias(field.Value, bindings, symbols...) {
+				return true
+			}
+		}
+	case *ast.CastExpr:
+		return callReceivesTableAlias(e.Expr, bindings, symbols...)
+	case *ast.NonNilAssertExpr:
+		return callReceivesTableAlias(e.Expr, bindings, symbols...)
+	}
+	return false
+}
+
+// carriesTableAlias recognizes expressions that can retain a table reference.
+// Scalar operations such as #table and table[index] do not expose the table.
+func carriesTableAlias(expr ast.Expr, bindings *bind.BindingTable, symbols ...cfg.SymbolID) bool {
+	switch e := expr.(type) {
+	case *ast.IdentExpr:
+		sym, ok := bindings.SymbolOf(e)
+		if !ok {
+			return false
+		}
+		for _, candidate := range symbols {
+			if sym == candidate {
+				return true
+			}
+		}
+	case *ast.TableExpr:
+		for _, field := range e.Fields {
+			if field != nil && carriesTableAlias(field.Value, bindings, symbols...) {
+				return true
+			}
+		}
+	case *ast.CastExpr:
+		return carriesTableAlias(e.Expr, bindings, symbols...)
+	case *ast.NonNilAssertExpr:
+		return carriesTableAlias(e.Expr, bindings, symbols...)
+	case *ast.LogicalOpExpr:
+		return carriesTableAlias(e.Lhs, bindings, symbols...) || carriesTableAlias(e.Rhs, bindings, symbols...)
+	}
+	return false
+}
+
+func numericIndexedKey(t typ.Type) bool {
+	return t != nil && subtype.IsSubtype(t, typ.Number)
+}
+
+func graphReachable(graph *cfg.Graph, from, to cfg.Point) bool {
+	if graph == nil || from == to {
+		return false
+	}
+	seen := map[cfg.Point]bool{from: true}
+	stack := append([]cfg.Point(nil), graph.Successors(from)...)
+	for len(stack) > 0 {
+		p := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if p == to {
+			return true
+		}
+		if seen[p] {
+			continue
+		}
+		seen[p] = true
+		stack = append(stack, graph.Successors(p)...)
+	}
+	return false
 }
 
 // CollectNestedFieldWrites scans the graph for writes into tables that

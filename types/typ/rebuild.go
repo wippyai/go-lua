@@ -66,6 +66,10 @@ func buildFunctionType(
 }
 
 func buildRecordType(fields []Field, metatable, mapKey, mapValue Type, open bool, assumeSorted bool) *Record {
+	return buildRecordTypeWithFlags(fields, metatable, mapKey, mapValue, open, assumeSorted, false, false)
+}
+
+func buildRecordTypeWithFlags(fields []Field, metatable, mapKey, mapValue Type, open bool, assumeSorted, inferred, explicitNil bool) *Record {
 	sorted := make([]Field, len(fields))
 	copy(sorted, fields)
 	if !assumeSorted || !fieldsSortedByName(sorted) {
@@ -118,17 +122,25 @@ func buildRecordType(fields []Field, metatable, mapKey, mapValue Type, open bool
 		h = internal.HashCombine(h, recordMapValueHash)
 		h = internal.HashCombine(h, mapValue.Hash())
 	}
+	if inferred {
+		h = internal.HashCombine(h, 4)
+	}
+	if explicitNil {
+		h = internal.HashCombine(h, 8)
+	}
 	softPrunable := softPruneFields(sorted) || softPruneAny(metatable, mapKey, mapValue)
 
 	return &Record{
-		Fields:       sorted,
-		Metatable:    metatable,
-		MapKey:       mapKey,
-		MapValue:     mapValue,
-		Open:         open,
-		sorted:       true,
-		hash:         h,
-		softPrunable: softPrunable,
+		Fields:              sorted,
+		Metatable:           metatable,
+		MapKey:              mapKey,
+		MapValue:            mapValue,
+		MapInferredPresence: inferred,
+		MapExplicitNilWrite: explicitNil,
+		Open:                open,
+		sorted:              true,
+		hash:                h,
+		softPrunable:        softPrunable,
 	}
 }
 

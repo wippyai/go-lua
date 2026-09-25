@@ -990,7 +990,7 @@ func (s *Solution) mergeFields(baseType typ.Type, baseKey string) typ.Type {
 		Map: func(m *typ.Map) typ.Type {
 			// Map base: create Record(open) with MapComponent + merged fields
 			builder := typ.NewRecord().SetOpen(true)
-			builder.MapComponent(m.Key, m.Value)
+			builder.MapComponentWithFlags(m.Key, m.Value, m.InferredPresence, m.ExplicitNilWrite)
 			for _, f := range fields {
 				if f.Optional {
 					builder.OptField(f.Name, f.Type)
@@ -1059,7 +1059,7 @@ func (s *Solution) mergeFields(baseType typ.Type, baseKey string) typ.Type {
 				builder.Metatable(r.Metatable)
 			}
 			if r.HasMapComponent() {
-				builder.MapComponent(r.MapKey, r.MapValue)
+				builder.MapComponentWithFlags(r.MapKey, r.MapValue, r.MapInferredPresence, r.MapExplicitNilWrite)
 			}
 			return builder.Build()
 		},
