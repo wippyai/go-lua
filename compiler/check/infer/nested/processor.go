@@ -48,7 +48,6 @@ type Config struct {
 	Graphs        api.GraphProvider
 	Check         CheckFunc
 	ResultForFunc ResultFunc
-	RootResult    *api.FuncResultView
 }
 
 // Processor analyzes nested functions for a parent graph.
@@ -58,7 +57,6 @@ type Processor struct {
 	graphs        api.GraphProvider
 	check         CheckFunc
 	resultForFunc ResultFunc
-	rootResult    *api.FuncResultView
 	classSelf     map[cfg.SymbolID]typ.Type
 }
 
@@ -70,7 +68,6 @@ func New(cfg Config) *Processor {
 		graphs:        cfg.Graphs,
 		check:         cfg.Check,
 		resultForFunc: cfg.ResultForFunc,
-		rootResult:    cfg.RootResult,
 	}
 }
 

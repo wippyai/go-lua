@@ -206,7 +206,6 @@ func (d *Driver) processNestedFunctions(
 			}
 			return api.ViewFromResult(results[fn])
 		},
-		RootResult: api.ViewFromResult(sess.RootResultValue()),
 	})
 	nestedProc.ProcessNestedFunctions(graph, api.ViewFromResult(result))
 }
