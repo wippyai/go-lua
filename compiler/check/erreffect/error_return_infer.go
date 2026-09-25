@@ -164,6 +164,7 @@ func HasStrictInverseReturnPattern(
 	var sawFailure bool
 	var incompatible bool
 	var classified bool
+	var forwarded bool
 
 	graph.EachReturn(func(p cfg.Point, info *cfg.ReturnInfo) {
 		if incompatible || info == nil {
@@ -179,6 +180,11 @@ func HasStrictInverseReturnPattern(
 			if solution != nil {
 				incompatible = true
 			}
+			return
+		}
+		if forwardsErrorReturn(info.Exprs, synth, p, valueIdx, errorIdx) {
+			classified = true
+			forwarded = true
 			return
 		}
 
@@ -226,7 +232,50 @@ func HasStrictInverseReturnPattern(
 		}
 	})
 
-	return classified && !incompatible && (solution != nil || sawSuccess && sawFailure)
+	return classified && !incompatible && (solution != nil || forwarded || sawSuccess && sawFailure)
+}
+
+// A direct multi-result return preserves every relation guaranteed by its
+// callee. It needs no independent success and failure witnesses in this body.
+func forwardsErrorReturn(exprs []ast.Expr, synth api.BaseSynth, p cfg.Point, valueIdx, errorIdx int) bool {
+	if len(exprs) != 1 {
+		return false
+	}
+	call, ok := exprs[0].(*ast.FuncCallExpr)
+	if !ok || call.AdjustRet || call.Func == nil {
+		return false
+	}
+	return allCallableAlternativesHaveErrorReturn(synth.TypeOf(call.Func, p), valueIdx, errorIdx)
+}
+
+func allCallableAlternativesHaveErrorReturn(t typ.Type, valueIdx, errorIdx int) bool {
+	if t == nil {
+		return false
+	}
+	if union, ok := typ.UnwrapAnnotated(t).(*typ.Union); ok {
+		if len(union.Members) == 0 {
+			return false
+		}
+		for _, member := range union.Members {
+			if !allCallableAlternativesHaveErrorReturn(member, valueIdx, errorIdx) {
+				return false
+			}
+		}
+		return true
+	}
+	if unwrap.Function(t) == nil {
+		return false
+	}
+	spec := contract.ExtractSpec(t)
+	if spec == nil {
+		return false
+	}
+	for _, label := range spec.Effects.Labels {
+		if relation, ok := label.(effect.ErrorReturn); ok && relation.ValueIndex == valueIdx && relation.ErrorIndex == errorIdx {
+			return true
+		}
+	}
+	return false
 }
 
 // provenPresent reports whether the returned expression at idx is a path the
