@@ -107,7 +107,7 @@ func InferTypeArgsWithExpectedAndMode(fn *typ.Function, args []typ.Type, isMetho
 
 	// Validate that inferred type arguments satisfy their constraints
 	for i, tp := range fn.TypeParams {
-		if tp.Constraint != nil && !typ.IsAbsentOrUnknown(result[i]) {
+		if tp.Constraint != nil && !typ.IsAbsentOrUnknown(result[i]) && !typ.IsAny(result[i]) {
 			if !subtype.IsSubtype(result[i], tp.Constraint) {
 				return nil, fmt.Errorf("infer: type argument %s does not satisfy constraint %s", result[i], tp.Constraint)
 			}

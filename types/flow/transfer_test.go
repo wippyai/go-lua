@@ -247,7 +247,7 @@ func TestMergeMapValueDomain_WidensUnrelatedValuesAndReplacesPlaceholders(t *tes
 	}{
 		{"unrelated", typ.String, typ.Number, typ.NewUnion(typ.String, typ.Number)},
 		{"unknown", typ.Unknown, typ.String, typ.String},
-		{"any", typ.Any, typ.String, typ.String},
+		{"any", typ.Any, typ.String, typ.Any},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := mergeMapValueDomain(tt.existing, tt.incoming); !typ.TypeEquals(got, tt.want) {

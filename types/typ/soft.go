@@ -176,9 +176,10 @@ func pruneSoftUnionMembersMemo(
 	case *Record:
 		out = pruneSoftRecord(node, t, next, memo, visiting, softMemo)
 	case *Union:
-		// Fast path: if this union has no soft members and no nested changes needed,
-		// skip the expensive isSoftWithMemo checks entirely.
-		if !node.HasSoftMember() {
+		// Pending union paths cannot borrow evidence from other members. Keep
+		// every runtime alternative while still pruning their nested types.
+		// Unions without soft members take the same fast path.
+		if !node.HasSoftMember() || node.Contains(Unresolved) {
 			anyChildChanged := false
 			var rewrittenFast []Type
 			for idx, m := range node.Members {

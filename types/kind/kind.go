@@ -62,6 +62,7 @@ const (
 	FieldAccess
 	IndexAccess
 	Recursive
+	Unresolved
 )
 
 var kindNames = [...]string{
@@ -97,6 +98,7 @@ var kindNames = [...]string{
 	FieldAccess:  "fieldaccess",
 	IndexAccess:  "indexaccess",
 	Recursive:    "recursive",
+	Unresolved:   "unresolved",
 }
 
 func (k Kind) String() string {
@@ -140,7 +142,7 @@ func (k Kind) IsPlaceholder() bool {
 
 // IsConcrete returns true for types that are fully resolved (not Any, Unknown, or Never).
 func (k Kind) IsConcrete() bool {
-	return k != Any && k != Unknown && k != Never
+	return k != Any && k != Unknown && k != Never && k != Unresolved
 }
 
 // IsTopOrBottom returns true for Any (top), Unknown (unresolved), or Never (bottom).

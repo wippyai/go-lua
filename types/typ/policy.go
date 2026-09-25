@@ -15,6 +15,9 @@ func JoinPreferNonSoft(a, b Type) Type {
 	if b == nil {
 		return a
 	}
+	if IsUnresolved(a) || IsUnresolved(b) {
+		return NewUnion(a, b)
+	}
 	a = PruneSoftUnionMembers(a)
 	b = PruneSoftUnionMembers(b)
 	// Nil is a real return value, and even an empty table is a real value on
@@ -388,6 +391,14 @@ func JoinBranchOutcome(a, b Type) Type {
 	}
 	if b == nil {
 		return a
+	}
+	if IsUnresolved(a) || IsUnresolved(b) {
+		return NewUnion(a, b)
+	}
+	// Both outcomes can occur at runtime. A dynamic outcome must survive the
+	// soft-pruning policy used for unfinished inference elsewhere.
+	if IsAny(a) || IsAny(b) {
+		return Any
 	}
 
 	a = PruneSoftUnionMembers(a)

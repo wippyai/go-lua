@@ -1,0 +1,327 @@
+package typ
+
+import "github.com/wippyai/go-lua/types/kind"
+
+// IsUnresolved reports an inference hole, distinct from a dynamic value.
+func IsUnresolved(t Type) bool {
+	return t != nil && t.Kind() == kind.Unresolved
+}
+
+// IsFinal reports whether every reachable inference position has evidence.
+// Unknown and Any are final: both describe values, rather than work left to do.
+func IsFinal(t Type) bool {
+	if t == nil || IsUnresolved(t) {
+		return false
+	}
+	switch t.(type) {
+	case *Annotated, *Alias, *Optional, *Array, *Map, *Tuple, *Union,
+		*Intersection, *Record, *Function, *Recursive, *Meta,
+		*TypeParam, *Generic, *Instantiated, *Interface, *Sum,
+		*FieldAccess, *IndexAccess:
+	default:
+		return true
+	}
+	seen := make(map[Type]bool)
+	var visit func(Type) bool
+	visit = func(t Type) bool {
+		if t == nil || IsUnresolved(t) {
+			return false
+		}
+		if seen[t] {
+			return true
+		}
+		seen[t] = true
+		switch v := t.(type) {
+		case *Annotated:
+			return visit(v.Inner)
+		case *Alias:
+			return visit(v.Target)
+		case *Optional:
+			return visit(v.Inner)
+		case *Array:
+			return visit(v.Element)
+		case *Map:
+			return visit(v.Key) && visit(v.Value)
+		case *Tuple:
+			for _, e := range v.Elements {
+				if !visit(e) {
+					return false
+				}
+			}
+		case *Union:
+			for _, m := range v.Members {
+				if !visit(m) {
+					return false
+				}
+			}
+		case *Intersection:
+			for _, m := range v.Members {
+				if !visit(m) {
+					return false
+				}
+			}
+		case *Record:
+			for _, f := range v.Fields {
+				if !visit(f.Type) {
+					return false
+				}
+			}
+			if v.MapKey != nil && (!visit(v.MapKey) || !visit(v.MapValue)) {
+				return false
+			}
+			if v.Metatable != nil && !visit(v.Metatable) {
+				return false
+			}
+		case *Function:
+			for _, p := range v.TypeParams {
+				if p != nil && p.Constraint != nil && !visit(p.Constraint) {
+					return false
+				}
+			}
+			for _, p := range v.Params {
+				if !visit(p.Type) {
+					return false
+				}
+			}
+			for _, r := range v.Returns {
+				if !visit(r) {
+					return false
+				}
+			}
+			if v.Variadic != nil && !visit(v.Variadic) {
+				return false
+			}
+		case *Recursive:
+			return v.Body != nil && visit(v.Body)
+		case *Meta:
+			return visit(v.Of)
+		case *TypeParam:
+			return v.Constraint == nil || visit(v.Constraint)
+		case *Generic:
+			for _, p := range v.TypeParams {
+				if p != nil && !visit(p) {
+					return false
+				}
+			}
+			return v.Body != nil && visit(v.Body)
+		case *Instantiated:
+			if v.Generic == nil || !visit(v.Generic) {
+				return false
+			}
+			for _, arg := range v.TypeArgs {
+				if !visit(arg) {
+					return false
+				}
+			}
+		case *Interface:
+			for _, method := range v.Methods {
+				if !visit(method.Type) {
+					return false
+				}
+			}
+		case *Sum:
+			for _, variant := range v.Variants {
+				for _, arg := range variant.Types {
+					if !visit(arg) {
+						return false
+					}
+				}
+			}
+		case *FieldAccess:
+			return visit(v.Base)
+		case *IndexAccess:
+			return visit(v.Base) && visit(v.Index)
+		}
+		return true
+	}
+	return visit(t)
+}
+
+// Resolve fills only pending positions, matching composite positions in the
+// current estimate with the corresponding positions in evidence. A final leaf
+// is never replaced by a later estimate.
+func Resolve(current, evidence Type) Type {
+	if IsFinal(current) {
+		return current
+	}
+	return resolvePending(current, evidence, make(map[resolvePair]Type))
+}
+
+type resolvePair struct{ current, evidence Type }
+
+func resolvePending(current, evidence Type, seen map[resolvePair]Type) Type {
+	pair := resolvePair{current, evidence}
+	if prior, ok := seen[pair]; ok {
+		return prior
+	}
+	seen[pair] = current
+	resolved := resolvePendingNode(current, evidence, seen)
+	seen[pair] = resolved
+	return resolved
+}
+
+func resolvePendingNode(current, evidence Type, seen map[resolvePair]Type) Type {
+	if current == nil || evidence == nil || IsUnresolved(evidence) {
+		return current
+	}
+	if IsUnresolved(current) {
+		return evidence
+	}
+	if a, ok := current.(*Annotated); ok {
+		other := evidence
+		if b, ok := evidence.(*Annotated); ok {
+			other = b.Inner
+		}
+		inner := resolvePending(a.Inner, other, seen)
+		if inner == a.Inner {
+			return current
+		}
+		return NewAnnotated(inner, a.Annotations)
+	}
+	if a, ok := current.(*Alias); ok {
+		other := evidence
+		if b, ok := evidence.(*Alias); ok {
+			other = b.Target
+		}
+		target := resolvePending(a.Target, other, seen)
+		if target == a.Target {
+			return current
+		}
+		return NewAlias(a.Name, target)
+	}
+	switch a := current.(type) {
+	case *Optional:
+		other := evidence
+		if b, ok := evidence.(*Optional); ok {
+			other = b.Inner
+		}
+		inner := resolvePending(a.Inner, other, seen)
+		if inner == a.Inner {
+			return current
+		}
+		return NewOptional(inner)
+	case *Array:
+		b, ok := evidence.(*Array)
+		if !ok {
+			return current
+		}
+		elem := resolvePending(a.Element, b.Element, seen)
+		if elem == a.Element {
+			return current
+		}
+		return NewArray(elem)
+	case *Map:
+		b, ok := evidence.(*Map)
+		if !ok {
+			return current
+		}
+		key, value := resolvePending(a.Key, b.Key, seen), resolvePending(a.Value, b.Value, seen)
+		if key == a.Key && value == a.Value {
+			return current
+		}
+		return NewMap(key, value)
+	case *Tuple:
+		b, ok := evidence.(*Tuple)
+		if !ok {
+			return current
+		}
+		elems := append([]Type(nil), a.Elements...)
+		changed := false
+		for i := range elems {
+			if i < len(b.Elements) {
+				elems[i] = resolvePending(elems[i], b.Elements[i], seen)
+				changed = changed || elems[i] != a.Elements[i]
+			}
+		}
+		if !changed {
+			return current
+		}
+		return NewTuple(elems...)
+	case *Record:
+		b, ok := evidence.(*Record)
+		if !ok {
+			return current
+		}
+		fields := append([]Field(nil), a.Fields...)
+		changed := false
+		for i := range fields {
+			if bf := b.GetField(fields[i].Name); bf != nil {
+				fields[i].Type = resolvePending(fields[i].Type, bf.Type, seen)
+				changed = changed || fields[i].Type != a.Fields[i].Type
+			}
+		}
+		key, value := a.MapKey, a.MapValue
+		if a.HasMapComponent() && b.HasMapComponent() {
+			key, value = resolvePending(key, b.MapKey, seen), resolvePending(value, b.MapValue, seen)
+			changed = changed || key != a.MapKey || value != a.MapValue
+		}
+		if !changed {
+			return current
+		}
+		return buildRecordType(fields, a.Metatable, key, value, a.Open, true)
+	case *Union:
+		// Union members are separate paths. This API has no source identity
+		// with which to pair them to evidence, even when their kinds match.
+		return current
+	case *Function:
+		b, ok := evidence.(*Function)
+		if !ok {
+			return current
+		}
+		params := append([]Param(nil), a.Params...)
+		rets := append([]Type(nil), a.Returns...)
+		changed := false
+		for i := range params {
+			if i < len(b.Params) {
+				params[i].Type = resolvePending(params[i].Type, b.Params[i].Type, seen)
+				changed = changed || params[i].Type != a.Params[i].Type
+			}
+		}
+		for i := range rets {
+			if i < len(b.Returns) {
+				rets[i] = resolvePending(rets[i], b.Returns[i], seen)
+				changed = changed || rets[i] != a.Returns[i]
+			}
+		}
+		variadic := a.Variadic
+		if variadic != nil && b.Variadic != nil {
+			variadic = resolvePending(variadic, b.Variadic, seen)
+			changed = changed || variadic != a.Variadic
+		}
+		if !changed {
+			return current
+		}
+		return buildFunctionType(a.TypeParams, params, variadic, rets, a.Effects, a.Spec, a.Refinement)
+	}
+	return current
+}
+
+// Finalize converts remaining inference holes at a public boundary. The
+// checker retains its gradual behavior for unannotated values elsewhere.
+func Finalize(t Type) Type {
+	if t == nil {
+		return Unknown
+	}
+	if IsFinal(t) {
+		return t
+	}
+	return Rewrite(t, func(node Type) (Type, bool) {
+		if IsUnresolved(node) {
+			return Unknown, true
+		}
+		if recursive, ok := node.(*Recursive); ok && (recursive.Body == nil || !IsFinal(recursive)) {
+			return Unknown, true
+		}
+		if union, ok := node.(*Union); ok {
+			for _, member := range union.Members {
+				if IsUnresolved(member) {
+					return Unknown, true
+				}
+			}
+		}
+		if optional, ok := node.(*Optional); ok && IsUnresolved(optional.Inner) {
+			return Unknown, true
+		}
+		return nil, false
+	})
+}
