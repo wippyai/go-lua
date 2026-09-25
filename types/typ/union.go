@@ -44,6 +44,7 @@ func NewUnion(members ...Type) Type {
 	hasNil := false
 	hasAny := false
 	hasUnknown := false
+	hasUnresolved := false
 
 	var addMember func(Type)
 	addMember = func(m Type) {
@@ -65,6 +66,9 @@ func NewUnion(members ...Type) Type {
 			return // Unknown doesn't contribute information to union
 		case kind.Any:
 			hasAny = true
+		case kind.Unresolved:
+			hasUnresolved = true
+			flat = append(flat, m)
 		case kind.Nil:
 			hasNil = true
 		case kind.Union:
@@ -83,8 +87,14 @@ func NewUnion(members ...Type) Type {
 		addMember(m)
 	}
 
-	if hasAny {
+	if hasAny && !hasUnresolved {
 		return Any
+	}
+	if hasAny {
+		flat = append(flat, Any)
+	}
+	if hasUnknown && hasUnresolved {
+		flat = append(flat, Unknown)
 	}
 
 	// Deduplicate by hash + structural equality (collision-safe).

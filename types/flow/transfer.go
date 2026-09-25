@@ -1495,6 +1495,9 @@ func mergeMapValueDomain(existing, incoming typ.Type) typ.Type {
 	if incoming == nil {
 		return existing
 	}
+	if typ.IsAny(existing) || typ.IsAny(incoming) {
+		return typ.Any
+	}
 	// A dynamic index write may first see an unresolved field and then a
 	// concrete call result in a later flow pass. Replace only those provisional
 	// fields before deciding whether the existing value admits this write.
@@ -1525,12 +1528,16 @@ func mergeMapKeyDomain(existing, incoming typ.Type) typ.Type {
 	if incoming == nil {
 		return existing
 	}
-	// Placeholder evidence (any/unknown) is non-informative for key domains.
-	// Preserve an existing concrete domain instead of widening it.
-	if incoming.Kind().IsPlaceholder() && !existing.Kind().IsPlaceholder() {
+	// Any admits every runtime key and cannot be discarded by a narrower write.
+	if typ.IsAny(existing) || typ.IsAny(incoming) {
+		return typ.Any
+	}
+	// Unknown is still used for provisional key domains until Unresolved is
+	// introduced; retain the existing concrete domain in that case.
+	if typ.IsUnknown(incoming) && !existing.Kind().IsPlaceholder() {
 		return existing
 	}
-	if existing.Kind().IsPlaceholder() && !incoming.Kind().IsPlaceholder() {
+	if typ.IsUnknown(existing) && !incoming.Kind().IsPlaceholder() {
 		return incoming
 	}
 	return typ.JoinPreferNonSoft(existing, incoming)

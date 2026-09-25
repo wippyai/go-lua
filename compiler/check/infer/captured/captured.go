@@ -78,7 +78,7 @@ func HasUntypedSelf(bindings *bind.BindingTable, fn *ast.FunctionExpr, types map
 		return false
 	}
 	for _, sym := range bindings.CapturedSymbols(fn) {
-		if types[sym] != nil {
+		if types[sym] != nil && !typ.IsUnresolved(types[sym]) {
 			continue
 		}
 		if own, ok := bindings.FuncLitBySymbol(sym); ok && own == fn {
@@ -98,7 +98,7 @@ func HasUntypedAliasCall(graph *cfg.Graph, types map[cfg.SymbolID]typ.Type) bool
 	bindings := graph.Bindings()
 	captured := make(map[cfg.SymbolID]bool)
 	for _, sym := range bindings.CapturedSymbols(graph.Func()) {
-		if types[sym] != nil {
+		if types[sym] != nil && !typ.IsUnresolved(types[sym]) {
 			continue
 		}
 		if kind, ok := bindings.Kind(sym); ok && kind == cfg.SymbolGlobal {

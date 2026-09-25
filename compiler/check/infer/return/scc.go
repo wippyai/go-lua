@@ -18,7 +18,7 @@ func (i *Inferencer) iterateSCCFixpoint(
 	summaries map[cfg.SymbolID][]typ.Type,
 ) bool {
 	for _, sym := range scc {
-		if len(summaries[sym]) == 0 && i.recursive(sym) {
+		if (len(summaries[sym]) == 0 || len(summaries[sym]) == 1 && typ.IsUnresolved(summaries[sym][0])) && i.recursive(sym) {
 			summaries[sym] = returns.RecursionVariables(returnArity(localFuncs[sym]))
 		}
 	}
@@ -51,12 +51,12 @@ func seedSummariesFromSeed(
 	seed map[cfg.SymbolID][]typ.Type,
 ) map[cfg.SymbolID][]typ.Type {
 	summaries := make(map[cfg.SymbolID][]typ.Type, len(localFuncs))
-	if seed == nil {
-		return summaries
-	}
 	for _, sym := range cfg.SortedSymbolIDs(localFuncs) {
 		if seeded := seed[sym]; len(seeded) > 0 {
 			summaries[sym] = seeded
+		} else if info := localFuncs[sym]; info != nil && info.Fn != nil {
+			// Only this SCC's missing return slot is an inference hole.
+			summaries[sym] = []typ.Type{typ.Unresolved}
 		}
 	}
 	return summaries
@@ -78,6 +78,11 @@ func (i *Inferencer) processSCCSummaries(
 		}
 		if warn := i.widenSCCToUnknown(scc, localFuncs, summaries); warn != nil {
 			diags = append(diags, *warn)
+		}
+	}
+	for _, sym := range cfg.SortedSymbolIDs(summaries) {
+		for slot, t := range summaries[sym] {
+			summaries[sym][slot] = typ.Finalize(t)
 		}
 	}
 	return diags

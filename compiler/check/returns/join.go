@@ -650,6 +650,8 @@ func MergeReturnSummary(existing, candidate []typ.Type) []typ.Type {
 	if len(candidate) == 0 {
 		return existing
 	}
+	existing = fillPendingSlots(existing, candidate)
+	candidate = fillPendingSlots(candidate, existing)
 	existing = fillUnknownSlots(existing, candidate)
 	candidate = fillUnknownSlots(candidate, existing)
 	// Canonical promotion: open-top record placeholders should not dominate
@@ -692,6 +694,8 @@ func AdvanceReturnSummary(prev, next []typ.Type) []typ.Type {
 	if len(next) == 0 {
 		return prev
 	}
+	prev = fillPendingSlots(prev, next)
+	next = fillPendingSlots(next, prev)
 	prev = fillUnknownSlots(prev, next)
 	next = fillUnknownSlots(next, prev)
 	if replaced, ok := replaceOpenTopWithStructured(prev, next); ok {
@@ -731,6 +735,25 @@ func fillUnknownSlots(rets, other []typ.Type) []typ.Type {
 			out = append([]typ.Type(nil), rets...)
 		}
 		out[i] = other[i]
+	}
+	if out == nil {
+		return rets
+	}
+	return out
+}
+
+// fillPendingSlots uses a later estimate of the same function return slot.
+// A nil-only estimate does not close a return path whose value is still pending.
+func fillPendingSlots(rets, other []typ.Type) []typ.Type {
+	var out []typ.Type
+	for i, t := range rets {
+		if i >= len(other) || !typ.IsUnresolved(t) || other[i] == nil || typ.IsUnresolved(other[i]) || other[i].Kind() == kind.Nil {
+			continue
+		}
+		if out == nil {
+			out = append([]typ.Type(nil), rets...)
+		}
+		out[i] = typ.Resolve(t, other[i])
 	}
 	if out == nil {
 		return rets
