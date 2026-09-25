@@ -665,6 +665,15 @@ func MergeReturnSummary(existing, candidate []typ.Type) []typ.Type {
 	if ReturnTypesRepairNever(candidate, existing) {
 		return candidate
 	}
+	// A concrete record result can appear only after a forwarded callee is
+	// resolved. Keep that success branch alongside the earlier nil error arm;
+	// a nil subtype is not a reason to discard runtime value evidence.
+	if nilSlotGainsRecordEvidence(existing, candidate) {
+		return candidate
+	}
+	if nilSlotGainsRecordEvidence(candidate, existing) {
+		return existing
+	}
 
 	// Higher-order summaries are merged monotonically for fixpoint stability.
 	if shouldUseMonotoneReturnJoin(existing, candidate) {
@@ -676,6 +685,21 @@ func MergeReturnSummary(existing, candidate []typ.Type) []typ.Type {
 	}
 
 	return normalizeAndPruneReturnVector(typjoin.ReturnVectors(existing, candidate))
+}
+
+func nilSlotGainsRecordEvidence(old, next []typ.Type) bool {
+	if len(old) != len(next) {
+		return false
+	}
+	for i := range old {
+		if !unwrap.IsNilType(old[i]) || unwrap.IsNilType(next[i]) || !unwrap.IsOptionalLike(next[i]) {
+			continue
+		}
+		if record, ok := unwrap.Alias(narrow.RemoveNil(next[i])).(*typ.Record); ok && len(record.Fields) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // AdvanceReturnSummary merges the previous estimate of a function's returns
