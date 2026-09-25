@@ -14,12 +14,22 @@ func ExtendRecordWithField(base Type, field string, fieldType Type) Type {
 }
 
 func extendRecordWithField(base Type, field string, fieldType Type) Type {
+	valueType, optional := SplitNilableFieldType(fieldType)
+	addField := func(builder *RecordBuilder) {
+		if optional {
+			builder.OptField(field, valueType)
+		} else {
+			builder.Field(field, valueType)
+		}
+	}
 	unwrapped := base
 	for a, ok := unwrapped.(*Alias); ok; a, ok = unwrapped.(*Alias) {
 		unwrapped = a.Target
 	}
 	if unwrapped == nil || unwrapped.Kind() == Unknown.Kind() || unwrapped.Kind() == Nil.Kind() {
-		return NewRecord().SetOpen(true).Field(field, fieldType).Build()
+		builder := NewRecord().SetOpen(true)
+		addField(builder)
+		return builder.Build()
 	}
 
 	rec, ok := unwrapped.(*Record)
@@ -34,14 +44,14 @@ func extendRecordWithField(base Type, field string, fieldType Type) Type {
 	added := false
 	for _, f := range rec.Fields {
 		if f.Name == field {
-			builder.Field(f.Name, fieldType)
+			addField(builder)
 			added = true
 			continue
 		}
 		builder.AddField(f)
 	}
 	if !added {
-		builder.Field(field, fieldType)
+		addField(builder)
 	}
 	if rec.Metatable != nil {
 		builder.Metatable(rec.Metatable)
