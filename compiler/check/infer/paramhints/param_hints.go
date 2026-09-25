@@ -173,6 +173,9 @@ func MergeHintAt(hints []typ.Type, idx int, hint typ.Type, join HintJoinFn) ([]t
 		return hints, false
 	}
 	hint = NormalizeHintType(hint)
+	if hint != nil && !typ.IsFinal(hint) {
+		return hints, false
+	}
 	if !IsInformativeHintType(hint) {
 		return hints, false
 	}
@@ -207,6 +210,9 @@ func MergeCallArgHintAt(hints []typ.Type, idx int, argType typ.Type, join HintJo
 		return hints, false
 	}
 	argType = NormalizeHintType(argType)
+	if argType != nil && !typ.IsFinal(argType) {
+		return hints, false
+	}
 	if argType == nil {
 		if !unknownOnNil {
 			return hints, false
@@ -301,7 +307,7 @@ func isInformativeHintType(t typ.Type, guard internal.RecursionGuard) bool {
 	}
 
 	k := t.Kind()
-	if k.IsPlaceholder() || k == kind.Nil || k == kind.Never {
+	if k.IsPlaceholder() || k == kind.Unresolved || k == kind.Nil || k == kind.Never {
 		return false
 	}
 

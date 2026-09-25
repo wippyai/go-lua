@@ -50,15 +50,16 @@ type Type interface {
 //   - Unknown: missing or unresolved information. It should force narrowing/inference
 //     rather than silently permitting operations.
 var (
-	Nil     Type = nilType{}
-	Boolean Type = booleanType{}
-	Number  Type = numberType{}
-	Integer Type = integerType{}
-	String  Type = stringType{}
-	Any     Type = anyType{}
-	Unknown Type = unknownType{}
-	Never   Type = neverType{}
-	Self    Type = selfType{}
+	Nil        Type = nilType{}
+	Boolean    Type = booleanType{}
+	Number     Type = numberType{}
+	Integer    Type = integerType{}
+	String     Type = stringType{}
+	Any        Type = anyType{}
+	Unknown    Type = unknownType{}
+	Unresolved Type = unresolvedType{}
+	Never      Type = neverType{}
+	Self       Type = selfType{}
 )
 
 // Primitive type implementations
@@ -111,6 +112,13 @@ func (unknownType) Kind() kind.Kind    { return kind.Unknown }
 func (unknownType) String() string     { return "unknown" }
 func (unknownType) Hash() uint64       { return uint64(kind.Unknown) }
 func (unknownType) Equals(o Type) bool { return IsUnknown(o) }
+
+type unresolvedType struct{}
+
+func (unresolvedType) Kind() kind.Kind    { return kind.Unresolved }
+func (unresolvedType) String() string     { return "unresolved" }
+func (unresolvedType) Hash() uint64       { return uint64(kind.Unresolved) }
+func (unresolvedType) Equals(o Type) bool { return IsUnresolved(o) }
 
 type neverType struct{}
 

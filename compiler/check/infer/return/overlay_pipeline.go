@@ -299,6 +299,10 @@ func (i *Inferencer) enrichOverlayWithCaptured(
 		}
 		if tv := ctx.parentFacts.EffectiveTypeAt(defPoint, sym); tv.State == flow.StateResolved && tv.Type != nil {
 			overlay[sym] = tv.Type
+		} else if _, pendingLocalFunction := localBindings.FuncLitBySymbol(sym); pendingLocalFunction {
+			// A captured local function without parent facts is a fixpoint
+			// dependency. Other missing captures retain the legacy behavior.
+			overlay[sym] = typ.Unresolved
 		}
 	}
 }
@@ -321,7 +325,7 @@ func (i *Inferencer) inferLocalVariableTypes(
 			annotated[sym] = true
 			continue
 		}
-		if tp != nil && !typ.IsSoft(tp, typ.SoftAnnotationPolicy) {
+		if tp != nil && !typ.IsUnresolved(tp) && !typ.IsSoft(tp, typ.SoftAnnotationPolicy) {
 			annotated[sym] = true
 		}
 	}

@@ -148,6 +148,7 @@ func collectInferredTypes(
 	services fbcore.FlowServices,
 ) api.SpecTypes {
 	inferred := make(api.SpecTypes)
+	pendingKeySeeded := false
 	if graph == nil {
 		return inferred
 	}
@@ -802,7 +803,12 @@ func collectInferredTypes(
 					if baseSym != 0 && sccSet[baseSym] {
 						keyType := wrappedSynth(attr.Key, p)
 						keyType = resolve.Ref(keyType, sc)
-						keyType = canonicalDynamicKeyType(keyType)
+						if keyType == nil {
+							keyType = typ.Unresolved
+							pendingKeySeeded = true
+						} else {
+							keyType = canonicalDynamicKeyType(keyType)
+						}
 						old := inferred[baseSym]
 						newType := flow.WidenMapValueArray(old, keyType, valueType)
 						if newType != nil && !typ.TypeEquals(old, newType) {
@@ -866,6 +872,13 @@ func collectInferredTypes(
 		}
 	}
 
+	if pendingKeySeeded {
+		for sym, t := range inferred {
+			if !typ.IsFinal(t) {
+				inferred[sym] = typ.Finalize(t)
+			}
+		}
+	}
 	return inferred
 }
 
