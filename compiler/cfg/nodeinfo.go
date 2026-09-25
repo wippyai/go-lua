@@ -3,6 +3,7 @@ package cfg
 
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg/extraction"
 	"github.com/wippyai/go-lua/types/flow/pathkey"
 )
@@ -55,6 +56,16 @@ func BuildCallInfo(call *ast.FuncCallExpr, isStmt bool) *CallInfo {
 
 	ExtractTypeCheckPattern(info)
 
+	return info
+}
+
+// BuildCallInfoWithBindings resolves an expression call using the same symbol
+// identities as calls represented directly by CFG nodes.
+func BuildCallInfoWithBindings(call *ast.FuncCallExpr, bindings *bind.BindingTable) *CallInfo {
+	info := BuildCallInfo(call, false)
+	if info != nil && bindings != nil {
+		(&Builder{Bindings: bindings}).resolveCallInfoSymbols(info)
+	}
 	return info
 }
 

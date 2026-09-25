@@ -151,10 +151,23 @@ func (s *Solution) runPropagation() {
 	assigns := make([]propagate.Assignment, 0, len(s.inputs.Assignments))
 	for _, a := range s.inputs.Assignments {
 		if a.TargetPath.Symbol != 0 {
+			var sourceSym cfg.SymbolID
+			if a.SourcePath.Symbol != 0 && len(a.SourcePath.Segments) == 0 &&
+				(a.TargetPath.Symbol != a.SourcePath.Symbol || len(a.TargetPath.Segments) != 0) {
+				sourceSym = a.SourcePath.Symbol
+			}
 			assigns = append(assigns, propagate.Assignment{
 				Point:      a.Point,
 				TargetSym:  a.TargetPath.Symbol,
+				SourceSym:  sourceSym,
 				TargetSegs: a.TargetPath.Segments,
+			})
+		}
+	}
+	for p, symbols := range s.inputs.CallAliasRoots {
+		for _, sym := range symbols {
+			assigns = append(assigns, propagate.Assignment{
+				Point: p, TargetSym: sym, SourceSym: sym, AliasEscape: true,
 			})
 		}
 	}
@@ -990,7 +1003,7 @@ func (s *Solution) mergeFields(baseType typ.Type, baseKey string) typ.Type {
 		Map: func(m *typ.Map) typ.Type {
 			// Map base: create Record(open) with MapComponent + merged fields
 			builder := typ.NewRecord().SetOpen(true)
-			builder.MapComponent(m.Key, m.Value)
+			builder.MapComponentWithFlags(m.Key, m.Value, m.InferredPresence, m.ExplicitNilWrite)
 			for _, f := range fields {
 				if f.Optional {
 					builder.OptField(f.Name, f.Type)
@@ -1059,7 +1072,7 @@ func (s *Solution) mergeFields(baseType typ.Type, baseKey string) typ.Type {
 				builder.Metatable(r.Metatable)
 			}
 			if r.HasMapComponent() {
-				builder.MapComponent(r.MapKey, r.MapValue)
+				builder.MapComponentWithFlags(r.MapKey, r.MapValue, r.MapInferredPresence, r.MapExplicitNilWrite)
 			}
 			return builder.Build()
 		},

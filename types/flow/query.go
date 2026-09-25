@@ -370,6 +370,20 @@ func (s *Solution) ArrayLenBoundAt(p cfg.Point, varName string) (arrKey string, 
 	return string(pathKey), ok
 }
 
+// HasLengthAtLeast reports a lower bound on this versioned table's length.
+func (s *Solution) HasLengthAtLeast(p cfg.Point, tablePath constraint.Path, minimum int64) bool {
+	if s == nil || s.numericStates == nil || s.pkResolver == nil {
+		return false
+	}
+	state := s.numericStates[p]
+	if state == nil {
+		return false
+	}
+	key := s.pkResolver.KeyAt(p, s.operandPath(p, tablePath))
+	lower, ok := state.LengthLowerBoundFor(key)
+	return ok && lower >= minimum
+}
+
 // ArrayLenBoundWithOffsetAt returns the array key and offset for a symbolic length bound.
 func (s *Solution) ArrayLenBoundWithOffsetAt(p cfg.Point, varName string) (arrKey string, offset int64, ok bool) {
 	if s == nil || s.numericStates == nil {

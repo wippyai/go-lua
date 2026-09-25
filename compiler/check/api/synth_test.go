@@ -78,9 +78,10 @@ func (m *mockFlowQuery) ExcludesTypeAt(cfg.Point, constraint.Path, typ.Type) boo
 
 type mockFlowOps struct{}
 
-func (m *mockFlowOps) NarrowedTypeAt(cfg.Point, constraint.Path) typ.Type { return nil }
-func (m *mockFlowOps) BoundsAt(cfg.Point, string) (int64, int64, bool)    { return 0, 0, false }
-func (m *mockFlowOps) ArrayLenBoundAt(cfg.Point, string) (string, bool)   { return "", false }
+func (m *mockFlowOps) NarrowedTypeAt(cfg.Point, constraint.Path) typ.Type      { return nil }
+func (m *mockFlowOps) BoundsAt(cfg.Point, string) (int64, int64, bool)         { return 0, 0, false }
+func (m *mockFlowOps) HasLengthAtLeast(cfg.Point, constraint.Path, int64) bool { return false }
+func (m *mockFlowOps) ArrayLenBoundAt(cfg.Point, string) (string, bool)        { return "", false }
 func (m *mockFlowOps) ArrayLenBoundWithOffsetAt(cfg.Point, string) (string, int64, bool) {
 	return "", 0, false
 }

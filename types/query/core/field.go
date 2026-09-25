@@ -58,6 +58,9 @@ func fieldDepth(t typ.Type, name string, depth int) (typ.Type, bool) {
 				if m.Value == nil {
 					return fieldResult{t: typ.Nil, ok: true}
 				}
+				if m.InferredPresence && !m.ExplicitNilWrite {
+					return fieldResult{t: m.Value, ok: true}
+				}
 				// Map field access behaves like index with string key (missing keys return nil).
 				return fieldResult{t: typ.NewOptional(m.Value), ok: true}
 			}
@@ -146,6 +149,9 @@ func fieldInRecordDepth(r *typ.Record, name string, depth int) (typ.Type, bool) 
 	if r.HasMapComponent() {
 		key := typ.LiteralString(name)
 		if subtype.IsSubtype(key, r.MapKey) {
+			if r.MapInferredPresence && !r.MapExplicitNilWrite {
+				return r.MapValue, true
+			}
 			return typ.NewOptional(r.MapValue), true
 		}
 	}

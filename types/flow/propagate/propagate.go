@@ -84,6 +84,12 @@ type Assignment struct {
 	Point cfg.Point
 	// TargetSym is the symbol being assigned (provides unique identity).
 	TargetSym cfg.SymbolID
+	// SourceSym identifies a direct table alias created by this assignment.
+	// A KeyOf fact is dropped when its table is exposed through a new alias.
+	SourceSym cfg.SymbolID
+	// AliasEscape marks a call that can retain a source table without assigning
+	// to its original variable.
+	AliasEscape bool
 	// TargetSegs specifies field path for nested assignments (x.foo.bar = ...).
 	// Empty for simple variable assignments.
 	TargetSegs []constraint.Segment
@@ -412,11 +418,28 @@ func KillRedefinedConditions(cond constraint.Condition, p cfg.Point, assignments
 	}
 
 	var newDisjuncts [][]constraint.Constraint
+	actualWrites := make([]Assignment, 0, len(assignedPaths))
+	for _, assignment := range assignedPaths {
+		if !assignment.AliasEscape {
+			actualWrites = append(actualWrites, assignment)
+		}
+	}
 	for _, d := range cond.Disjuncts {
-		invalidAliases := aliasesInvalidatedByWrites(d, assignedPaths)
+		invalidAliases := aliasesInvalidatedByWrites(d, actualWrites)
 		var kept []constraint.Constraint
 		for _, c := range d {
 			shouldKeep := true
+			if keyOf, ok := c.(constraint.KeyOf); ok {
+				for _, ap := range assignedPaths {
+					if ap.SourceSym != 0 && ap.SourceSym == keyOf.Table.Symbol {
+						shouldKeep = false
+						break
+					}
+				}
+			}
+			if !shouldKeep {
+				continue
+			}
 			if eq, ok := c.(constraint.EqPath); ok &&
 				(invalidAliases[eq.Left.Key()].Symbol != 0 || invalidAliases[eq.Right.Key()].Symbol != 0) {
 				continue
@@ -433,6 +456,9 @@ func KillRedefinedConditions(cond constraint.Condition, p cfg.Point, assignments
 					}
 				}
 				for _, ap := range assignedPaths {
+					if ap.AliasEscape {
+						continue
+					}
 					if PathAffectedByAssignment(cpath, ap.TargetSym, ap.TargetSegs) &&
 						(!ap.ChildrenOnly || len(cpath.Segments) > len(ap.TargetSegs)) {
 						shouldKeep = false

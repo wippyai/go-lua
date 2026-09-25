@@ -157,6 +157,17 @@ skipNarrowedAttr:
 		keyType := recurse(ex.Key)
 		if it, ok := s.deps.Types.Index(s.deps.Ctx, objType, keyType); ok {
 			if narrower != nil {
+				// #t denotes a present last slot after a positive length
+				// assertion for the same version of t.
+				if length, ok := ex.Key.(*ast.UnaryLenOpExpr); ok && s.deps.Paths != nil {
+					tablePath := s.deps.Paths(p, ex.Object, sc, recurse)
+					lengthPath := s.deps.Paths(p, length.Expr, sc, recurse)
+					if !tablePath.IsEmpty() && tablePath.Equal(lengthPath) && narrower.HasLengthAtLeast(p, tablePath, 1) {
+						if present := narrow.RemoveNil(it); !typ.IsNever(present) {
+							return present
+						}
+					}
+				}
 				if varName, offset, ok := indexVarOffsetFromExpr(ex.Key); ok {
 					if narrowedResult := s.narrowArrayIndexByLenBound(it, ex.Object, varName, offset, p, sc, narrower); narrowedResult != nil {
 						return narrowedResult
@@ -381,6 +392,9 @@ func (a *assumingFlowOps) ArrayLenBoundAt(p cfg.Point, varName string) (string, 
 
 func (a *assumingFlowOps) ArrayLenBoundWithOffsetAt(p cfg.Point, varName string) (string, int64, bool) {
 	return a.inner.ArrayLenBoundWithOffsetAt(p, varName)
+}
+func (a *assumingFlowOps) HasLengthAtLeast(p cfg.Point, path constraint.Path, minimum int64) bool {
+	return a.inner.HasLengthAtLeast(p, path, minimum)
 }
 
 func (a *assumingFlowOps) IsPointDead(p cfg.Point) bool {

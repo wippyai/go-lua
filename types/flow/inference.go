@@ -189,7 +189,7 @@ func inferFunctionRefinementCore(
 		// Check for return expression constraints from predicate/assert calls
 		if src.returnConstraints != nil {
 			if rc, ok := src.returnConstraints[p]; ok {
-				isPredicate := rc.OnTrue.HasConstraints() && rc.OnFalse.HasConstraints()
+				isPredicate := rc.Predicate || (rc.OnTrue.HasConstraints() && rc.OnFalse.HasConstraints())
 				if returnsBool || isPredicate {
 					if rc.OnTrue.HasConstraints() {
 						cond := constraint.And(baseCond, rc.OnTrue)

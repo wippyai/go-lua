@@ -55,6 +55,9 @@ func indexDepth(t, keyType typ.Type, depth int) (typ.Type, bool) {
 				if a.Element == nil {
 					return indexResult{t: typ.Nil, ok: true}
 				}
+				if a.ExplicitNilWrite {
+					return indexResult{t: typ.NewOptional(a.Element), ok: true}
+				}
 				return indexResult{t: a.Element, ok: true}
 			}
 			return indexResult{}
@@ -68,6 +71,9 @@ func indexDepth(t, keyType typ.Type, depth int) (typ.Type, bool) {
 				if m.Value == nil {
 					return indexResult{}
 				}
+				if m.InferredPresence && !m.ExplicitNilWrite {
+					return indexResult{t: m.Value, ok: true}
+				}
 				return indexResult{t: typ.NewOptional(m.Value), ok: true}
 			}
 
@@ -77,6 +83,9 @@ func indexDepth(t, keyType typ.Type, depth int) (typ.Type, bool) {
 				}
 
 				// Map index returns optional because missing keys return nil in Lua
+				if m.InferredPresence && !m.ExplicitNilWrite {
+					return indexResult{t: m.Value, ok: true}
+				}
 				return indexResult{t: typ.NewOptional(m.Value), ok: true}
 			}
 
@@ -147,6 +156,9 @@ func indexDepth(t, keyType typ.Type, depth int) (typ.Type, bool) {
 			// Map component fallback for non-string-literal keys.
 			if r.HasMapComponent() && keyType != nil {
 				if keyType.Kind().IsPlaceholder() || mapKeyDomainsComparable(keyType, r.MapKey) {
+					if r.MapInferredPresence && !r.MapExplicitNilWrite {
+						return indexResult{t: r.MapValue, ok: true}
+					}
 					return indexResult{t: typ.NewOptional(r.MapValue), ok: true}
 				}
 			}

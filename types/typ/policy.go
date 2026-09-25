@@ -76,7 +76,8 @@ func JoinReturnSlot(a, b Type) Type {
 	}
 	if am, ok := a.(*Map); ok {
 		if bm, ok := b.(*Map); ok && TypeEquals(am.Key, bm.Key) {
-			return NewMap(am.Key, JoinReturnSlot(am.Value, bm.Value))
+			return newMapWithFlags(am.Key, JoinReturnSlot(am.Value, bm.Value),
+				am.InferredPresence && bm.InferredPresence, am.ExplicitNilWrite || bm.ExplicitNilWrite)
 		}
 	}
 	if merged, ok := JoinCompatibleRecords(a, b); ok {
@@ -166,9 +167,11 @@ func JoinCompatibleRecords(a, b Type) (Type, bool) {
 		builder.Metatable(ar.Metatable)
 	}
 	if ar.HasMapComponent() && br.HasMapComponent() {
-		builder.MapComponent(
+		builder.MapComponentWithFlags(
 			JoinPreferNonSoft(ar.MapKey, br.MapKey),
 			JoinPreferNonSoft(ar.MapValue, br.MapValue),
+			ar.MapInferredPresence && br.MapInferredPresence,
+			ar.MapExplicitNilWrite || br.MapExplicitNilWrite,
 		)
 	}
 

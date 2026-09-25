@@ -31,15 +31,17 @@ type Field struct {
 //
 // Fields are sorted by name for deterministic hashing and comparison.
 type Record struct {
-	Fields       []Field
-	Metatable    Type // Metatable type for metamethod lookup
-	MapKey       Type // Map component key type (nil if no map component)
-	MapValue     Type // Map component value type (nil if no map component)
-	Open         bool // Allow access to undefined fields
-	sorted       bool
-	hash         uint64
-	softPrunable bool
-	strCache     stringCache
+	Fields              []Field
+	Metatable           Type // Metatable type for metamethod lookup
+	MapKey              Type // Map component key type (nil if no map component)
+	MapValue            Type // Map component value type (nil if no map component)
+	MapInferredPresence bool
+	MapExplicitNilWrite bool
+	Open                bool // Allow access to undefined fields
+	sorted              bool
+	hash                uint64
+	softPrunable        bool
+	strCache            stringCache
 }
 
 // RecordBuilder provides a fluent API for constructing record types.
@@ -51,11 +53,13 @@ type Record struct {
 //	    OptField("age", typ.Integer).
 //	    Build()
 type RecordBuilder struct {
-	fields    []Field
-	metatable Type
-	mapKey    Type
-	mapValue  Type
-	open      bool
+	fields              []Field
+	metatable           Type
+	mapKey              Type
+	mapValue            Type
+	mapInferredPresence bool
+	mapExplicitNilWrite bool
+	open                bool
 }
 
 // NewRecord starts building a record type.
@@ -120,17 +124,25 @@ func (b *RecordBuilder) SetOpen(open bool) *RecordBuilder {
 func (b *RecordBuilder) MapComponent(key, value Type) *RecordBuilder {
 	b.mapKey = key
 	b.mapValue = value
+	b.mapInferredPresence = false
+	b.mapExplicitNilWrite = false
+	return b
+}
+
+func (b *RecordBuilder) MapComponentWithFlags(key, value Type, inferred, explicitNil bool) *RecordBuilder {
+	b.mapKey, b.mapValue = key, value
+	b.mapInferredPresence, b.mapExplicitNilWrite = inferred, explicitNil
 	return b
 }
 
 // Build creates the record type.
 func (b *RecordBuilder) Build() *Record {
-	return buildRecordType(b.fields, b.metatable, b.mapKey, b.mapValue, b.open, false)
+	return buildRecordTypeWithFlags(b.fields, b.metatable, b.mapKey, b.mapValue, b.open, false, b.mapInferredPresence, b.mapExplicitNilWrite)
 }
 
 // WithMetatable returns r with meta as its metatable and everything else kept.
 func (r *Record) WithMetatable(meta Type) *Record {
-	return buildRecordType(r.Fields, meta, r.MapKey, r.MapValue, r.Open, true)
+	return buildRecordTypeWithFlags(r.Fields, meta, r.MapKey, r.MapValue, r.Open, true, r.MapInferredPresence, r.MapExplicitNilWrite)
 }
 
 // WithField returns r with f replacing the field of the same name, or added
@@ -149,7 +161,7 @@ func (r *Record) WithField(f Field) *Record {
 	if !replaced {
 		fields = append(fields, f)
 	}
-	return buildRecordType(fields, r.Metatable, r.MapKey, r.MapValue, r.Open, replaced)
+	return buildRecordTypeWithFlags(fields, r.Metatable, r.MapKey, r.MapValue, r.Open, replaced, r.MapInferredPresence, r.MapExplicitNilWrite)
 }
 
 func (r *Record) Kind() kind.Kind { return kind.Record }
