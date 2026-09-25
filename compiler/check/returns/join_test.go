@@ -815,3 +815,45 @@ func TestReturnTypesRefine_OpenPartialRecordDoesNotBlockRefinement(t *testing.T)
 		t.Error("an open record states fields of a value, not a shape the refinement must keep")
 	}
 }
+
+// A later snapshot of a class identity that refines an earlier one replaces it
+// in a merged return slot, in either merge order, directly and as a member.
+func TestMergeReturnSummary_RefiningSnapshotReplacesEarlierOne(t *testing.T) {
+	identity := typ.NewRecursivePlaceholder("Class")
+	earlier := typ.BindRecursiveSnapshot(identity, typ.NewRecord().
+		Field("name", typ.Unknown).
+		Field("with", typ.Func().Returns(identity).Build()).
+		Build())
+	current := typ.BindRecursiveSnapshot(identity, typ.NewRecord().
+		Field("name", typ.String).
+		Field("with", typ.Func().Returns(identity).Build()).
+		Build())
+
+	for _, got := range [][]typ.Type{
+		MergeReturnSummary([]typ.Type{earlier}, []typ.Type{current}),
+		MergeReturnSummary([]typ.Type{current}, []typ.Type{earlier}),
+	} {
+		if !typ.TypeEquals(got[0], current) {
+			t.Fatalf("expected %s, got %s", typ.FormatShort(current), typ.FormatShort(got[0]))
+		}
+	}
+	record := typ.NewRecord().Field("id", typ.Integer).Build()
+	got := MergeReturnSummary([]typ.Type{typ.NewUnion(earlier, record)}, []typ.Type{typ.NewUnion(current, record, typ.Nil)})
+	if want := typ.NewUnion(current, record, typ.Nil); !typ.TypeEquals(got[0], want) {
+		t.Fatalf("expected %s, got %s", typ.FormatShort(want), typ.FormatShort(got[0]))
+	}
+}
+
+// Snapshots whose bodies neither refines describe different states of the
+// table, so a merged slot keeps both.
+func TestMergeReturnSummary_IncomparableSnapshotsStay(t *testing.T) {
+	identity := typ.NewRecursivePlaceholder("Class")
+	a := typ.BindRecursiveSnapshot(identity, typ.NewRecord().Field("left", typ.String).Build())
+	b := typ.BindRecursiveSnapshot(identity, typ.NewRecord().Field("right", typ.Integer).Build())
+
+	got := MergeReturnSummary([]typ.Type{a}, []typ.Type{b})
+	u, ok := got[0].(*typ.Union)
+	if !ok || len(u.Members) != 2 {
+		t.Fatalf("expected both snapshots, got %s", typ.FormatShort(got[0]))
+	}
+}

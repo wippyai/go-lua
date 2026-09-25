@@ -1190,7 +1190,7 @@ func mergeFunctionReturnsIfSameShape(prevFn, nextFn *typ.Function) (typ.Type, bo
 		normalizedNext[i] = normalizeReturn(nextFn.Returns[i])
 	}
 
-	mergedReturns := typjoin.ReturnVectors(normalizedPrev, normalizedNext)
+	mergedReturns := refineSnapshotMembersVector(typjoin.ReturnVectors(normalizedPrev, normalizedNext))
 	if ReturnTypesEqual(prevFn.Returns, mergedReturns) {
 		return prevFn, true
 	}
