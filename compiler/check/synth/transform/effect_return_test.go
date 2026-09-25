@@ -231,3 +231,28 @@ func TestApplyEffectTransform_StringUnpackValue_UnsupportedFormatFallsBack(t *te
 		t.Fatalf("expected unsupported string.unpack format to fall back to any, got %v", got)
 	}
 }
+
+func TestApplyEffectTransform_WithMetatableKeepsRecursiveMetatable(t *testing.T) {
+	class := typ.NewRecursive("Class", func(self typ.Type) typ.Type {
+		return typ.NewRecord().
+			Field("__index", self).
+			Field("name", typ.Func().Param("self", typ.Any).Returns(typ.String).Build()).
+			Build()
+	})
+	spec := contract.NewSpec().WithEffects(effect.Return{
+		ReturnIndex: 0,
+		Transform: effect.WithMetatable{
+			Table:     effect.ParamRef{Index: 0},
+			Metatable: effect.ParamRef{Index: 1},
+		},
+	})
+	fn := typ.Func().Param("table", typ.Any).Param("metatable", typ.Any).Returns(typ.Any).Spec(spec).Build()
+	table := typ.NewRecord().Build()
+
+	got := ApplyEffectTransform(fn, []typ.Type{table, class}, 0, table)
+
+	rec, ok := got.(*typ.Record)
+	if !ok || rec.Metatable != typ.Type(class) {
+		t.Fatalf("setmetatable with recursive class: got %v, want a record with metatable %v", got, class)
+	}
+}

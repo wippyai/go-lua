@@ -492,6 +492,9 @@ func joinIterationFactAt(a, b typ.Type, invariant bool) typ.Type {
 	if typ.TypeEquals(a, b) {
 		return a
 	}
+	if joined, ok := joinIterationSnapshots(a, b, invariant); ok {
+		return joined
+	}
 	if unwrap.IsNilType(a) && !unwrap.IsNilType(b) {
 		return b
 	}
@@ -558,6 +561,31 @@ func joinIterationFactAt(a, b typ.Type, invariant bool) typ.Type {
 		return b
 	}
 	return typ.JoinPreferNonSoft(a, b)
+}
+
+// joinIterationSnapshots joins two snapshots of one recursion identity. They
+// approximate the same table in successive iterations, so their join is a
+// snapshot of that identity over the join of their bodies. Both bodies refer
+// to the identity through one shared variable while they are joined.
+func joinIterationSnapshots(a, b typ.Type, invariant bool) (typ.Type, bool) {
+	ra, ok := a.(*typ.Recursive)
+	if !ok || ra.Body == nil {
+		return nil, false
+	}
+	rb, ok := b.(*typ.Recursive)
+	if !ok || rb.Body == nil || rb.ID != ra.ID {
+		return nil, false
+	}
+	variable := &typ.Recursive{ID: ra.ID, Name: ra.Name}
+	open := func(body typ.Type) typ.Type {
+		return typ.Rewrite(body, func(node typ.Type) (typ.Type, bool) {
+			if r, ok := node.(*typ.Recursive); ok && r.ID == variable.ID {
+				return variable, true
+			}
+			return nil, false
+		})
+	}
+	return typ.BindRecursiveSnapshot(variable, joinIterationFactAt(open(ra.Body), open(rb.Body), invariant)), true
 }
 
 // A map value can gain resolved fields in a later iteration, just like an

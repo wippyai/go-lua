@@ -100,7 +100,9 @@ func ApplyEffectTransform(fn *typ.Function, args []typ.Type, returnIdx int, base
 
 // tableWithMetatable attaches meta as the metatable of a record table. A nil
 // or absent metatable leaves the table as it is. Only records carry a
-// metatable; other table shapes are returned unchanged.
+// metatable; other table shapes are returned unchanged. A metatable whose
+// record is reached through an alias or a recursive type is attached as is,
+// keeping its recursion identity.
 func tableWithMetatable(table, meta typ.Type) typ.Type {
 	if table == nil {
 		return nil
@@ -115,7 +117,7 @@ func tableWithMetatable(table, meta typ.Type) typ.Type {
 	if inner := unwrap.Optional(meta); inner != nil {
 		meta = inner
 	}
-	if _, ok := unwrap.Alias(meta).(*typ.Record); !ok {
+	if unwrap.Record(meta) == nil {
 		return table
 	}
 	return rec.WithMetatable(meta)

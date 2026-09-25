@@ -210,6 +210,18 @@ func parseExpectations(filename, source string) []inlineExpectation {
 	return expectations
 }
 
+// checkConvergence fails the fixture for every fixpoint that did not converge
+// while checking a module.
+func checkConvergence(t *testing.T, diagnostics []diag.Diagnostic) {
+	t.Helper()
+	for _, d := range diagnostics {
+		if d.Severity == diag.SeverityWarning && (strings.Contains(d.Message, "fixpoint did not converge") ||
+			strings.Contains(d.Message, "type inference did not converge")) {
+			t.Errorf("non-convergence at %s:%d: %s", d.Position.File, d.Position.Line, d.Message)
+		}
+	}
+}
+
 // runCheckPhase type-checks the fixture under mode and verifies diagnostics.
 func runCheckPhase(t *testing.T, s namedSuite, mode string) {
 	t.Helper()
@@ -262,6 +274,7 @@ func runCheckPhase(t *testing.T, s namedSuite, mode string) {
 		mod := testutil.CheckAndExport(sources[f], name, modOpts...)
 		moduleOrder = append(moduleOrder, namedModule{name, mod})
 		allDiagnostics = append(allDiagnostics, mod.Errors...)
+		checkConvergence(t, mod.Session.Diagnostics)
 		var exportContains map[string]string
 		if s.Suite.Check != nil {
 			exportContains = s.Suite.Check.ExportContains
@@ -294,12 +307,7 @@ func runCheckPhase(t *testing.T, s namedSuite, mode string) {
 	entryFile := files[len(files)-1]
 	result := testutil.Check(sources[entryFile], entryOpts...)
 	allDiagnostics = append(allDiagnostics, result.Diagnostics...)
-	for _, d := range allDiagnostics {
-		if d.Severity == diag.SeverityWarning && (strings.Contains(d.Message, "fixpoint did not converge") ||
-			strings.Contains(d.Message, "type inference did not converge")) {
-			t.Errorf("non-convergence at %s:%d: %s", d.Position.File, d.Position.Line, d.Message)
-		}
-	}
+	checkConvergence(t, result.Diagnostics)
 
 	// Verify expectations
 	if len(allExpectations) > 0 {

@@ -96,7 +96,7 @@ func (p *Processor) ProcessNestedFunctions(graph *cfg.Graph, parentResult *api.F
 	if p.store != nil {
 		parentFunc = p.store.FuncForGraph(graph)
 	}
-	p.bindMethodClasses(graph, gathered, parentResult)
+	p.bindClassTables(graph, gathered, parentResult)
 
 	// Group by scope and build FuncInfo entries.
 	groups := p.groupNestedByScope(gathered)
@@ -107,38 +107,68 @@ func (p *Processor) ProcessNestedFunctions(graph *cfg.Graph, parentResult *api.F
 	}
 }
 
-// bindMethodClasses closes each class table once for this parent analysis.
-// The earliest definition supplies fields available to every method.
-func (p *Processor) bindMethodClasses(graph *cfg.Graph, children []nested.Child, parentResult *api.FuncResultView) {
-	if p.store == nil || graph == nil || graph.Bindings() == nil {
+// bindClassTables gives each class table of graph one recursion snapshot for
+// this parent analysis. A class table is a table that nested functions
+// are stored into; every nested function observes it through the snapshot,
+// both as self and as a captured upvalue, so method signatures and captured
+// views all refer to the table's stable recursion identity.
+func (p *Processor) bindClassTables(graph *cfg.Graph, children []nested.Child, parentResult *api.FuncResultView) {
+	p.classSelf = make(map[cfg.SymbolID]typ.Type)
+	if p.store == nil || graph == nil || graph.Bindings() == nil || parentResult == nil {
 		return
-	}
-	if p.classSelf == nil {
-		p.classSelf = make(map[cfg.SymbolID]typ.Type)
 	}
 	ordered := append([]nested.Child(nil), children...)
 	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].NF.Point < ordered[j].NF.Point })
 	for _, child := range ordered {
 		info := &nested.FuncInfo{Child: child}
-		if info.FuncDef == nil || !info.FuncDef.IsMethod {
+		sym := classTableOf(graph, info)
+		if sym == 0 || p.classSelf[sym] != nil || hasDeclaredMethodSelf(info) {
 			continue
 		}
-		receiver, ok := info.FuncDef.Receiver.(*ast.IdentExpr)
-		if !ok {
+		body := p.classTableType(graph, sym, parentResult)
+		if body == nil {
 			continue
 		}
-		sym, ok := graph.Bindings().SymbolOf(receiver)
-		if !ok || p.classSelf[sym] != nil {
-			continue
-		}
-		if hasDeclaredMethodSelf(info) {
-			continue
-		}
-		body := p.resolveSelfTypeForMethod(info, sym, graph, parentResult, p.rootResult)
-		if body != nil {
-			p.classSelf[sym] = p.store.BindClassSelf(graph, info.NF.Point, sym, info.FuncDef.ReceiverName, body)
-		}
+		p.classSelf[sym] = p.store.BindClassSelf(graph, info.NF.Point, sym, graph.NameOf(sym), body)
 	}
+}
+
+// classTableOf returns the table a nested function is stored into:
+// the receiver of `function T.f` or `function T:m`, or the owner of a
+// function with an unannotated self parameter stored in a table literal or
+// assigned to a table field.
+func classTableOf(graph *cfg.Graph, info *nested.FuncInfo) cfg.SymbolID {
+	bindings := graph.Bindings()
+	if def := info.FuncDef; def != nil && (def.TargetKind == cfg.FuncDefField || def.TargetKind == cfg.FuncDefMethod) {
+		if len(def.TargetPath.Segments) != 1 {
+			return 0
+		}
+		return def.TargetPath.Symbol
+	}
+	fn := info.NF.Func
+	if !phasecore.HasUnannotatedSelfParam(fn, bindings) {
+		return 0
+	}
+	if tbl, sym := nested.FindTableLiteralOwner(graph, fn); tbl != nil {
+		return sym
+	}
+	sym, _, _ := nested.FindFieldAssignmentBase(graph, fn, info.NF.Point)
+	return sym
+}
+
+// classTableType is the type of class table sym for its nested functions:
+// its solved type where the parent graph completes, after every field the
+// parent assigns to it. Nested functions run once the parent has populated
+// the table, so they observe that state.
+func (p *Processor) classTableType(graph *cfg.Graph, sym cfg.SymbolID, parentResult *api.FuncResultView) typ.Type {
+	if parentResult.FlowSolution == nil {
+		return nil
+	}
+	body := parentResult.FlowSolution.TypeAt(graph.Exit(), constraint.Path{Symbol: sym})
+	if body == nil || typ.IsAny(body) || typ.IsUnknown(body) {
+		return nil
+	}
+	return body
 }
 
 func hasDeclaredMethodSelf(info *nested.FuncInfo) bool {
@@ -147,21 +177,6 @@ func hasDeclaredMethodSelf(info *nested.FuncInfo) bool {
 	}
 	named, ok := info.DefScope.LookupValueType(info.FuncDef.ReceiverName)
 	return ok && named != nil
-}
-
-func (p *Processor) classSelfFor(graph *cfg.Graph, at cfg.Point, sym cfg.SymbolID, name string, body typ.Type) typ.Type {
-	if body == nil || sym == 0 || p.store == nil {
-		return body
-	}
-	if bound := p.classSelf[sym]; bound != nil {
-		return bound
-	}
-	if p.classSelf == nil {
-		p.classSelf = make(map[cfg.SymbolID]typ.Type)
-	}
-	bound := p.store.BindClassSelf(graph, at, sym, name, body)
-	p.classSelf[sym] = bound
-	return bound
 }
 
 // nestedGroup holds a group of functions sharing the same parent scope.
@@ -252,11 +267,6 @@ func (p *Processor) processNestedFunction(
 	var capturedTypes map[cfg.SymbolID]typ.Type
 	if nestedGraph != nil && parentResult != nil {
 		capturedTypes = captured.FromParentFacts(parentResult.Facts, nestedGraph, info.NF.Point, nestedGraph.Bindings())
-		for sym := range capturedTypes {
-			if bound := p.classSelf[sym]; bound != nil {
-				capturedTypes[sym] = bound
-			}
-		}
 	}
 	if nestedGraph != nil && parentResult != nil && parentResult.NarrowSynth != nil {
 		bindings := nestedGraph.Bindings()
@@ -265,7 +275,7 @@ func (p *Processor) processNestedFunction(
 			if len(capturedSyms) > 0 {
 				capturedSet := make(map[cfg.SymbolID]bool, len(capturedSyms))
 				for _, sym := range capturedSyms {
-					if sym != 0 {
+					if sym != 0 && p.classSelf[sym] == nil {
 						capturedSet[sym] = true
 					}
 				}
@@ -304,37 +314,19 @@ func (p *Processor) processNestedFunction(
 		}
 	}
 
-	// For method definitions, bind self to the receiver type.
-	if info.FuncDef != nil && info.FuncDef.IsMethod {
-		if recvIdent, ok := info.FuncDef.Receiver.(*ast.IdentExpr); ok {
-			if bindings := graph.Bindings(); bindings != nil {
-				if sym, ok := bindings.SymbolOf(recvIdent); ok {
-					selfType := p.resolveSelfTypeForMethod(info, sym, graph, parentResult, p.rootResult)
-					if selfType != nil {
-						if hasDeclaredMethodSelf(info) {
-							selfType = nested.NormalizeMethodSelfType(selfType)
-						} else {
-							selfType = p.classSelfFor(graph, info.NF.Point, sym, info.FuncDef.ReceiverName, selfType)
-						}
-						parentScope = parentScope.WithSelf(selfType).WithLocalName("self")
-					}
+	if nestedGraph != nil && nestedGraph.Bindings() != nil {
+		for _, sym := range nestedGraph.Bindings().CapturedSymbols(info.NF.Func) {
+			if bound := p.classSelf[sym]; bound != nil {
+				if capturedTypes == nil {
+					capturedTypes = make(map[cfg.SymbolID]typ.Type)
 				}
+				capturedTypes[sym] = bound
 			}
 		}
 	}
 
-	// For methods with self parameter, derive self-type from the owning object.
-	if info.FuncDef == nil || !info.FuncDef.IsMethod {
-		fn := info.NF.Func
-		if phasecore.HasUnannotatedSelfParam(fn, graph.Bindings()) {
-			selfType, tblSym := p.resolveSelfTypeForImplicitSelf(info, siblingTypes, graph, parentResult, capturedTypes)
-			if selfType != nil {
-				if tblSym != 0 {
-					selfType = p.classSelfFor(graph, info.NF.Point, tblSym, "self", selfType)
-				}
-				parentScope = parentScope.WithSelf(selfType).WithLocalName("self")
-			}
-		}
+	if selfType := p.methodSelfType(graph, info); selfType != nil {
+		parentScope = parentScope.WithSelf(selfType).WithLocalName("self")
 	}
 
 	if nestedGraph != nil && len(capturedTypes) > 0 && p.store != nil {
@@ -378,42 +370,23 @@ func (p *Processor) processNestedFunction(
 	}
 }
 
-// resolveSelfTypeForMethod resolves the self-type for a method definition (T:method).
-func (p *Processor) resolveSelfTypeForMethod(
-	info *nested.FuncInfo,
-	sym cfg.SymbolID,
-	graph *cfg.Graph,
-	parentResult *api.FuncResultView,
-	rootResult *api.FuncResultView,
-) typ.Type {
-	var selfType typ.Type
-
-	// Prefer the explicit type-space binding for `T` in `function T:m(...)`.
-	// The receiver value `T` is the class table; the instance/self contract
-	// lives in the type namespace binding with the same name.
-	if info != nil && info.FuncDef != nil && info.FuncDef.ReceiverName != "" && info.DefScope != nil {
+// methodSelfType is the type of self in a method: the declared type named
+// by the receiver of `function T:m`, or the snapshot of the class table the
+// method is stored into.
+func (p *Processor) methodSelfType(graph *cfg.Graph, info *nested.FuncInfo) typ.Type {
+	isMethod := info.FuncDef != nil && info.FuncDef.IsMethod
+	if !isMethod && !phasecore.HasUnannotatedSelfParam(info.NF.Func, graph.Bindings()) {
+		return nil
+	}
+	if isMethod && info.FuncDef.ReceiverName != "" && info.DefScope != nil {
 		if named, ok := info.DefScope.LookupValueType(info.FuncDef.ReceiverName); ok && named != nil {
-			selfType = named
+			return nested.NormalizeMethodSelfType(named)
 		}
 	}
-
-	// First try root result facts.
-	if selfType == nil && rootResult != nil && rootResult.Facts != nil {
-		tv := rootResult.Facts.EffectiveTypeAt(info.NF.Point, sym)
-		if tv.Type != nil && tv.State == flow.StateResolved {
-			selfType = tv.Type
-		}
+	if sym := classTableOf(graph, info); sym != 0 {
+		return p.classSelf[sym]
 	}
-
-	// Fall back to parent result facts.
-	if selfType == nil && parentResult != nil && parentResult.Facts != nil {
-		tv := parentResult.Facts.EffectiveTypeAt(info.NF.Point, sym)
-		if tv.Type != nil && tv.State == flow.StateResolved {
-			selfType = tv.Type
-		}
-	}
-
-	return selfType
+	return nil
 }
 
 func (p *Processor) persistCapturedTypesForNestedGraph(
@@ -449,80 +422,6 @@ func (p *Processor) persistCapturedTypesForNestedGraph(
 	p.store.UpdateInterprocFactsNext(key, func(facts *api.Facts) {
 		facts.CapturedTypes = returns.WidenCapturedTypes(facts.CapturedTypes, nextCaptured)
 	})
-}
-
-// resolveSelfTypeForImplicitSelf resolves the self-type for methods with implicit self parameter.
-func (p *Processor) resolveSelfTypeForImplicitSelf(
-	info *nested.FuncInfo,
-	siblingTypes map[cfg.SymbolID]typ.Type,
-	graph *cfg.Graph,
-	parentResult *api.FuncResultView,
-	capturedTypes map[cfg.SymbolID]typ.Type,
-) (typ.Type, cfg.SymbolID) {
-	fn := info.NF.Func
-	var selfType typ.Type
-	var tblSym cfg.SymbolID
-	var tbl *ast.TableExpr
-
-	// Pattern 1: Table literal methods {m = function(self)...}
-	if tbl, tblSym = nested.FindTableLiteralOwner(graph, fn); tbl != nil && tblSym != 0 {
-		selfType = siblingTypes[tblSym]
-		// Use table literal type when available.
-		if selfType == nil && parentResult != nil && parentResult.NarrowSynth != nil {
-			selfType = parentResult.NarrowSynth.TypeOf(tbl, info.NF.Point)
-		}
-		// Use FlowSolution.TypeAt to get field-merged type.
-		if selfType == nil && parentResult != nil && parentResult.FlowSolution != nil {
-			path := constraint.Path{Symbol: tblSym}
-			selfType = parentResult.FlowSolution.TypeAt(info.NF.Point, path)
-		}
-		// Fall back to Facts.EffectiveTypeAt.
-		if selfType == nil && parentResult != nil && parentResult.Facts != nil {
-			tv := parentResult.Facts.EffectiveTypeAt(info.NF.Point, tblSym)
-			if tv.Type != nil && tv.State == flow.StateResolved {
-				selfType = tv.Type
-			}
-		}
-		if rec, ok := selfType.(*typ.Record); ok {
-			selfType = nested.EnrichTableTypeWithFuncTypes(rec, tbl, graph, siblingTypes)
-		}
-	}
-
-	// Pattern 2: Field assignment methods obj.m = function(self)...
-	if selfType == nil {
-		baseSym, baseTbl, baseTblPoint := nested.FindFieldAssignmentBase(graph, fn, info.NF.Point)
-		if baseSym != 0 {
-			tblSym = baseSym
-			selfType = siblingTypes[baseSym]
-			// Use captured types from the parent scope (flow-derived).
-			if selfType == nil && len(capturedTypes) > 0 {
-				if t := capturedTypes[baseSym]; t != nil {
-					selfType = t
-				}
-			}
-			// Use table literal type when available.
-			if selfType == nil && baseTbl != nil && parentResult != nil && parentResult.NarrowSynth != nil && baseTblPoint != 0 {
-				selfType = parentResult.NarrowSynth.TypeOf(baseTbl, baseTblPoint)
-			}
-			// Use FlowSolution.TypeAt to get field-merged type.
-			if selfType == nil && parentResult != nil && parentResult.FlowSolution != nil {
-				path := constraint.Path{Symbol: baseSym}
-				selfType = parentResult.FlowSolution.TypeAt(info.NF.Point, path)
-			}
-			// Fall back to Facts.EffectiveTypeAt.
-			if selfType == nil && parentResult != nil && parentResult.Facts != nil {
-				tv := parentResult.Facts.EffectiveTypeAt(info.NF.Point, baseSym)
-				if tv.Type != nil && tv.State == flow.StateResolved {
-					selfType = tv.Type
-				}
-			}
-			if rec, ok := selfType.(*typ.Record); ok && baseTbl != nil {
-				selfType = nested.EnrichTableTypeWithFuncTypes(rec, baseTbl, graph, siblingTypes)
-			}
-		}
-	}
-
-	return selfType, tblSym
 }
 
 // buildSiblingTypesForGroup computes sibling function types for a scope group.

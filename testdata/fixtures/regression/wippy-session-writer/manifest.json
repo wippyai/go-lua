@@ -1,1 +1,1 @@
-{"files":["session_repo.lua","message_repo.lua","artifact_repo.lua","context_repo.lua","session_contexts_repo.lua","main.lua"]}
+{"description": "wippy.session.persist:writer with its repositories over typed sql, security, uuid and json stand-ins: the class table converges across fixpoint rounds.", "packages": ["time"], "files": ["sql.lua", "consts.lua", "security.lua", "uuid.lua", "json.lua", "session_repo.lua", "message_repo.lua", "artifact_repo.lua", "context_repo.lua", "session_contexts_repo.lua", "main.lua"]}

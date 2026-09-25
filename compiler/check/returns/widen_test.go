@@ -647,3 +647,26 @@ func TestJoinIterationFact_ArraysJoinByElement(t *testing.T) {
 		t.Fatalf("joinIterationFact(%v, %v) = %v, want %v", early, late, got, late)
 	}
 }
+
+// Two snapshots of one class identity are successive approximations of the
+// same table: their join is one snapshot of that identity over the join of
+// their bodies, never a union of both snapshots.
+func TestJoinIterationFact_SnapshotsOfOneIdentityJoinTheirBodies(t *testing.T) {
+	identity := typ.NewRecursivePlaceholder("Class")
+	earlier := typ.BindRecursiveSnapshot(identity, typ.NewRecord().
+		Field("open", typ.Func().Returns(typ.NewOptional(typ.NewRecord().Field("id", typ.Unknown).Build())).Build()).
+		Build())
+	current := typ.BindRecursiveSnapshot(identity, typ.NewRecord().
+		Field("open", typ.Func().Returns(typ.NewOptional(typ.NewRecord().Field("id", typ.String).Build())).Build()).
+		Field("close", typ.Func().Param("self", identity).Build()).
+		Build())
+
+	got := joinIterationFact(earlier, current)
+	rec, ok := got.(*typ.Recursive)
+	if !ok || rec.ID != identity.ID {
+		t.Fatalf("expected a snapshot of %s, got %s", identity.Name, got)
+	}
+	if !typ.TypeEquals(got, current) {
+		t.Fatalf("expected %s, got %s", typ.FormatShort(current.Body), typ.FormatShort(rec.Body))
+	}
+}
