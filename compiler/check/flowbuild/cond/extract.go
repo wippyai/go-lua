@@ -527,7 +527,7 @@ func ConstraintsFromCallOnReturn(
 	}
 	callArgs := runtimeCallArgs(info)
 	if len(callArgs) == 0 {
-		return constraint.Condition{}
+		return immediateReturnedClosureConstraints(info, p, synthFn, graph, moduleBindings)
 	}
 
 	bindings := resolve.GetBindings(inputs)

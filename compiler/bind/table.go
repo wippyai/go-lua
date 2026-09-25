@@ -85,6 +85,10 @@ type BindingTable struct {
 	// funcLitBySymbol maps symbols back to their function literals
 	funcLitBySymbol map[cfg.SymbolID]*ast.FunctionExpr
 
+	// reassigned records writes after a symbol's declaration. A function
+	// literal associated with such a symbol is not its guaranteed value.
+	reassigned map[cfg.SymbolID]bool
+
 	// capturedCache memoizes captured symbols per function for repeated queries.
 	capturedMu    sync.RWMutex
 	capturedCache map[*ast.FunctionExpr][]cfg.SymbolID
@@ -134,7 +138,20 @@ func NewBindingTableWithHint(symbolHint, stmtHint int) *BindingTable {
 		fieldSymbols:      make(map[fieldPathKey]cfg.SymbolID),
 		funcLitSymbols:    make(map[*ast.FunctionExpr]cfg.SymbolID),
 		funcLitBySymbol:   make(map[cfg.SymbolID]*ast.FunctionExpr),
+		reassigned:        make(map[cfg.SymbolID]bool),
 		capturedCache:     make(map[*ast.FunctionExpr][]cfg.SymbolID),
+	}
+}
+
+// IsReassigned reports whether a declaration's value can be replaced.
+func (t *BindingTable) IsReassigned(sym cfg.SymbolID) bool {
+	return t != nil && t.reassigned[sym]
+}
+
+// MarkReassigned records an assignment to an existing symbol.
+func (t *BindingTable) MarkReassigned(sym cfg.SymbolID) {
+	if t != nil && sym != 0 {
+		t.reassigned[sym] = true
 	}
 }
 

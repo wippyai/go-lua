@@ -488,6 +488,7 @@ func (b *Binder) bindAssignTarget(expr ast.Expr) {
 			sym = b.declareGlobal(e.Value)
 		}
 		b.table.Bind(e, sym)
+		b.table.MarkReassigned(sym)
 	case *ast.AttrGetExpr:
 		b.bindExpr(e.Object)
 		b.bindExpr(e.Key)
@@ -537,6 +538,8 @@ func (b *Binder) bindFuncDefStmt(s *ast.FuncDefStmt) {
 			sym, ok := b.lookup(ident.Value)
 			if !ok {
 				sym = b.declareGlobal(ident.Value)
+			} else {
+				b.table.MarkReassigned(sym)
 			}
 			b.table.Bind(ident, sym)
 		} else {
