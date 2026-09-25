@@ -343,15 +343,17 @@ func TestByFieldLiteral_DiscriminatedUnion(t *testing.T) {
 	}
 }
 
-func TestByFieldLiteral_MissingFieldDoesNotProveImpossible(t *testing.T) {
+// A closed record without the field reads nil there, so it cannot hold the
+// literal: only the members that can carry it remain.
+func TestByFieldLiteral_ClosedRecordWithoutFieldIsExcluded(t *testing.T) {
 	resolver := newMockResolver()
-	left := typ.NewRecord().Field("id", typ.String).Build()
-	right := typ.NewRecord().Field("error", typ.String).Build()
-	union := typ.NewUnion(left, right)
+	tagged := typ.NewRecord().Field("node_type", typ.String).Field("id", typ.String).Build()
+	untagged := typ.NewRecord().Field("error", typ.String).Build()
+	union := typ.NewUnion(tagged, untagged)
 
 	got := ByFieldLiteral(union, "node_type", typ.LiteralString("parallel"), resolver)
-	if !typ.TypeEquals(got, union) {
-		t.Fatalf("mutable records can gain the field at runtime, got %v", got)
+	if !typ.TypeEquals(got, tagged) {
+		t.Fatalf("expected %v, got %v", tagged, got)
 	}
 }
 

@@ -177,3 +177,16 @@ func TestJoinReturnSlot_CoalescesUnionRecordMember(t *testing.T) {
 		t.Fatalf("expected optional type:string after coalescing, got %v", typeField)
 	}
 }
+
+// Never holds no values: joining it with any type yields that type, including
+// soft placeholders such as an unannotated any.
+func TestJoinPreferNonSoft_NeverIsIdentity(t *testing.T) {
+	for _, other := range []Type{Any, Nil, String, NewRecord().Field("id", String).Build()} {
+		if got := JoinPreferNonSoft(other, Never); !TypeEquals(got, other) {
+			t.Fatalf("join(%s, never) = %s, want %s", other, got, other)
+		}
+		if got := JoinPreferNonSoft(Never, other); !TypeEquals(got, other) {
+			t.Fatalf("join(never, %s) = %s, want %s", other, got, other)
+		}
+	}
+}

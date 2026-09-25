@@ -15,6 +15,13 @@ func JoinPreferNonSoft(a, b Type) Type {
 	if b == nil {
 		return a
 	}
+	// Never holds no values, so it is the identity of the join.
+	if a.Kind() == kind.Never {
+		return b
+	}
+	if b.Kind() == kind.Never {
+		return a
+	}
 	if IsUnresolved(a) || IsUnresolved(b) {
 		return NewUnion(a, b)
 	}
