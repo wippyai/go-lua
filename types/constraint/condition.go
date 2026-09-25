@@ -226,11 +226,20 @@ func And(a, b Condition) Condition {
 	}
 
 	if len(a.Disjuncts)*len(b.Disjuncts) > DefaultMaxDisjuncts {
-		common := mergeConjunctions(a.MustConstraints(), b.MustConstraints())
-		if len(common) == 0 {
-			return TrueCondition()
+		// Either operand is a sound over-approximation of their conjunction.
+		// Keep the smaller disjunction, including its relationships between
+		// paths, and add facts that hold in every case of the other operand.
+		// Collapsing both sides to common facts loses a fresh return relation
+		// whenever an earlier path already has many alternatives.
+		keep, drop := b, a
+		if len(a.Disjuncts) < len(b.Disjuncts) {
+			keep, drop = a, b
 		}
-		return Condition{Disjuncts: [][]Constraint{common}}
+		must := drop.MustConstraints()
+		if len(must) == 0 {
+			return keep
+		}
+		return And(keep, FromConstraints(must...))
 	}
 
 	out := make([][]Constraint, 0, len(a.Disjuncts)*len(b.Disjuncts))

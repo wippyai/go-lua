@@ -4,7 +4,42 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/types/narrow"
+	"github.com/wippyai/go-lua/types/typ"
 )
+
+func TestCondition_AndCapRetainsFreshReturnRelation(t *testing.T) {
+	oldPath := Path{Root: "prior", Symbol: 1}
+	commonPath := Path{Root: "required", Symbol: 2}
+	errPath := Path{Root: "err", Symbol: 3}
+	valuePath := Path{Root: "value", Symbol: 4}
+
+	var previous [][]Constraint
+	for i := 0; i < 20; i++ {
+		previous = append(previous, []Constraint{
+			NotNil{Path: commonPath},
+			FieldEquals{Target: oldPath, Field: "case", Value: typ.LiteralInt(int64(i))},
+		})
+	}
+	prior := FromDisjuncts(previous)
+	relation := Or(
+		FromConstraints(Truthy{Path: errPath}, IsNil{Path: valuePath}),
+		FromConstraints(Falsy{Path: errPath}, NotNil{Path: valuePath}),
+	)
+
+	got := And(prior, relation)
+	if got.NumDisjuncts() != 2 {
+		t.Fatalf("expected both return cases after capping, got %v", got)
+	}
+	for _, disjunct := range got.Disjuncts {
+		if !ConjunctionContains(disjunct, NotNil{Path: commonPath}) {
+			t.Fatalf("lost a fact shared by every prior case: %v", got)
+		}
+	}
+	if !got.Subsumes(And(prior, FromConstraints(Truthy{Path: errPath}, IsNil{Path: valuePath}))) ||
+		!got.Subsumes(And(prior, FromConstraints(Falsy{Path: errPath}, NotNil{Path: valuePath}))) {
+		t.Fatalf("capped condition excluded a reachable return case: %v", got)
+	}
+}
 
 func TestCondition_TrueFalse(t *testing.T) {
 	trueCond := TrueCondition()
