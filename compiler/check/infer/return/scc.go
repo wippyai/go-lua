@@ -4,8 +4,10 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/types/diag"
+	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -102,6 +104,21 @@ func (i *Inferencer) runSCCIteration(
 			continue
 		}
 		newReturn := i.inferReturnWithSummary(run, info, summaries, localFuncs)
+		if binder, ok := i.store.(api.ClassSelfBinder); ok && info.Graph != nil && len(info.Fn.ReturnTypes) == 0 && len(newReturn) > 0 {
+			if tableSym, point := returns.ReturnedMethodTable(info.Graph); tableSym != 0 {
+				present := narrow.RemoveNil(newReturn[0])
+				switch present.(type) {
+				case *typ.Record, *typ.Recursive:
+					bound := binder.BindClassSelf(info.Graph, point, tableSym, info.Graph.NameOf(tableSym), present)
+					newReturn = append([]typ.Type(nil), newReturn...)
+					if typ.TypeEquals(present, newReturn[0]) {
+						newReturn[0] = bound
+					} else {
+						newReturn[0] = typ.NewOptional(bound)
+					}
+				}
+			}
+		}
 		oldReturn := summaries[sym]
 		merged := returns.MergeReturnSummary(oldReturn, newReturn)
 		if i.recursive(sym) {
