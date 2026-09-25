@@ -389,6 +389,11 @@ func JoinBranchOutcome(a, b Type) Type {
 	if b == nil {
 		return a
 	}
+	// Both outcomes can occur at runtime. A dynamic outcome must survive the
+	// soft-pruning policy used for unfinished inference elsewhere.
+	if IsAny(a) || IsAny(b) {
+		return Any
+	}
 
 	a = PruneSoftUnionMembers(a)
 	b = PruneSoftUnionMembers(b)
