@@ -50,6 +50,7 @@ import (
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/flow"
+	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/join"
 )
@@ -189,6 +190,15 @@ func (s *Synthesizer) synthFunctionTypeWithCapturePoint(
 	inferredErrorReturn := false
 	if len(fn.ReturnTypes) > 0 {
 		returns := s.ResolveReturnTypes(fn.ReturnTypes, resolveScope)
+		if hasBroadMapReturn(returns) {
+			if body, _ := s.inferReturnTypesFromBody(fn, resolveScope, expected, fnGraph, capturePoint, captureTypes); len(body) == len(returns) {
+				for i, declared := range returns {
+					if isBroadMapReturn(declared) && containsRecordReturn(body[i]) && subtype.IsSubtype(body[i], declared) {
+						returns[i] = body[i]
+					}
+				}
+			}
+		}
 		builder = builder.Returns(returns...)
 	} else {
 		if bodyReturns, hasErrorReturn := s.inferReturnTypesFromBody(fn, resolveScope, expected, fnGraph, capturePoint, captureTypes); len(bodyReturns) > 0 {
@@ -209,6 +219,44 @@ func (s *Synthesizer) synthFunctionTypeWithCapturePoint(
 		fnType = erreffect.AttachErrorReturnSpec(fnType, 0, 1)
 	}
 	return fnType
+}
+
+func hasBroadMapReturn(returns []typ.Type) bool {
+	for _, t := range returns {
+		if isBroadMapReturn(t) {
+			return true
+		}
+	}
+	return false
+}
+
+func isBroadMapReturn(t typ.Type) bool {
+	switch v := t.(type) {
+	case *typ.Alias:
+		return isBroadMapReturn(v.Target)
+	case *typ.Optional:
+		return isBroadMapReturn(v.Inner)
+	case *typ.Map:
+		return typ.IsAny(v.Value)
+	default:
+		return false
+	}
+}
+
+func containsRecordReturn(t typ.Type) bool {
+	switch v := t.(type) {
+	case *typ.Record:
+		return len(v.Fields) > 0
+	case *typ.Optional:
+		return containsRecordReturn(v.Inner)
+	case *typ.Union:
+		for _, member := range v.Members {
+			if containsRecordReturn(member) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // inferReturnTypesFromBody infers return types from the function body.
