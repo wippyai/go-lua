@@ -439,8 +439,9 @@ func (s *Solution) carryForwardStructuredVersionFacts(p cfg.Point, targetPath co
 		}
 	}
 
+	written := s.suffixesWrittenAt(p, targetPath.Symbol, currentBaseKeyStr)
 	for suffix, types := range suffixTypes {
-		if len(types) == 0 {
+		if len(types) == 0 || writtenBySuffix(written, suffix) {
 			continue
 		}
 		key := currentBaseKeyStr + suffix
@@ -467,6 +468,37 @@ func (s *Solution) carryForwardStructuredVersionFacts(p cfg.Point, targetPath co
 	}
 
 	return changedKeys
+}
+
+// suffixesWrittenAt returns the path suffixes below base that assignments at
+// p write for sym. Their values come from those writes, not from predecessor
+// versions.
+func (s *Solution) suffixesWrittenAt(p cfg.Point, sym cfg.SymbolID, base string) []string {
+	var written []string
+	for _, assign := range s.inputs.Assignments {
+		if assign.Point != p || assign.TargetPath.Symbol != sym || len(assign.TargetPath.Segments) == 0 {
+			continue
+		}
+		key := string(s.pkResolver.KeyAt(p, assign.TargetPath))
+		if len(key) > len(base) && key[:len(base)] == base {
+			written = append(written, key[len(base):])
+		}
+	}
+	return written
+}
+
+// writtenBySuffix reports whether suffix is one of written or lies below one:
+// a write replaces the value at its path together with everything under it.
+func writtenBySuffix(written []string, suffix string) bool {
+	for _, w := range written {
+		if suffix == w {
+			return true
+		}
+		if len(suffix) > len(w) && suffix[:len(w)] == w && (suffix[len(w)] == '.' || suffix[len(w)] == '[') {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Solution) normalizeNilFieldAssignmentType(p cfg.Point, targetPath constraint.Path, old typ.Type) typ.Type {
