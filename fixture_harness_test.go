@@ -36,6 +36,12 @@ type fixtureSuite struct {
 type fixtureCheck struct {
 	Errors *int   `json:"errors,omitempty"`
 	Skip   string `json:"skip,omitempty"`
+	// ExpectedErrors records known diagnostics in unmodified source fixtures.
+	ExpectedErrors []struct {
+		File     string `json:"file"`
+		Line     int    `json:"line"`
+		Contains string `json:"contains"`
+	} `json:"expected_errors,omitempty"`
 	// ExportContains checks inferred module field types at import boundaries.
 	ExportContains map[string]string `json:"export_contains,omitempty"`
 	// Modes lists the checking modes the fixture runs under; the default is
@@ -292,6 +298,13 @@ func runCheckPhase(t *testing.T, s namedSuite, mode string) {
 	// Verify expectations
 	if len(allExpectations) > 0 {
 		verifyInlineExpectations(t, allExpectations, allDiagnostics, entryFile)
+	} else if s.Suite.Check != nil && len(s.Suite.Check.ExpectedErrors) > 0 {
+		for _, expected := range s.Suite.Check.ExpectedErrors {
+			allExpectations = append(allExpectations, inlineExpectation{
+				File: expected.File, Line: expected.Line, Severity: "error", Contains: expected.Contains,
+			})
+		}
+		verifyInlineExpectations(t, allExpectations, allDiagnostics, entryFile)
 	} else if s.Suite.Check != nil && s.Suite.Check.Errors != nil {
 		verifyErrorCount(t, *s.Suite.Check.Errors, allDiagnostics)
 	} else {
@@ -341,7 +354,7 @@ func verifyInlineExpectations(t *testing.T, expectations []inlineExpectation, di
 func matchesExpectation(exp inlineExpectation, d diag.Diagnostic, entryFile string) bool {
 	expFile := exp.File
 	// Match diagnostic file: d.Position.File is set by the checker (e.g. "test.lua" or module name)
-	if !strings.HasSuffix(d.Position.File, strings.TrimSuffix(expFile, ".lua")) &&
+	if d.Position.File != expFile && !strings.HasSuffix(d.Position.File, strings.TrimSuffix(expFile, ".lua")) &&
 		(expFile != entryFile || d.Position.File != "test.lua") {
 		return false
 	}
@@ -481,11 +494,16 @@ func fixtureSQLManifest() *io.Manifest {
 	})
 	db := typ.NewInterface("sql.DB", []typ.Method{
 		{Name: "query", Type: typ.Func().Param("self", typ.Self).Param("sql", typ.String).Variadic(typ.Any).Returns(rows, typ.NewOptional(typ.LuaError)).Build()},
+		{Name: "execute", Type: typ.Func().Param("self", typ.Self).Param("sql", typ.String).Variadic(typ.Any).Returns(typ.Any, typ.NewOptional(typ.LuaError)).Build()},
 		{Name: "begin", Type: typ.Func().Param("self", typ.Self).OptParam("opts", typ.Any).Returns(tx, typ.NewOptional(typ.LuaError)).Build()},
 		{Name: "release", Type: typ.Func().Param("self", typ.Self).Returns(typ.Boolean, typ.NewOptional(typ.LuaError)).Build()},
 	})
 	m := io.NewManifest("sql")
-	m.SetExport(typ.NewInterface("sql", []typ.Method{{Name: "get", Type: typ.Func().Param("dsn", typ.String).Returns(db, typ.NewOptional(typ.LuaError)).Spec(contract.NewSpec().WithEffects(effect.ErrorReturn{ValueIndex: 0, ErrorIndex: 1})).Build()}}))
+	m.DefineType("DB", db)
+	m.DefineType("Transaction", tx)
+	m.SetExport(typ.NewRecord().
+		Field("get", typ.Func().Param("dsn", typ.String).Returns(db, typ.NewOptional(typ.LuaError)).Spec(contract.NewSpec().WithEffects(effect.ErrorReturn{ValueIndex: 0, ErrorIndex: 1})).Build()).
+		Field("type", typ.NewRecord().Field("POSTGRES", typ.String).Build()).Build())
 	return m
 }
 

@@ -16,7 +16,7 @@ import (
 // Manifest file format constants.
 const (
 	manifestMagic   = 0x4D414E49 // "MANI" - identifies valid manifest files
-	manifestVersion = 11         // v11: record callback fields invoked on truthy returns
+	manifestVersion = 12         // v12: possible imported-module writes through exported calls
 )
 
 // Manifest decoding errors.
@@ -61,6 +61,10 @@ type Manifest struct {
 	// CallWrites records writes an exported function makes to another imported
 	// module's table. The caller applies them only after that function executes.
 	CallWrites map[string][]ModuleWrite
+	// MayCallWrites records possible writes, including writes reached through
+	// local helpers and imported calls. They are applied only at a call site and
+	// never establish that a field was written on every return path.
+	MayCallWrites map[string][]ModuleWrite
 	// TruthyCallbackCalls records module fields invoked on every path that
 	// returns a truthy first result from an exported function.
 	TruthyCallbackCalls map[string][]CallbackCall
@@ -784,6 +788,18 @@ func (m *Manifest) Encode() ([]byte, error) {
 			w.writeType(write.Type)
 		}
 	}
+	w.writeUint32(uint32(len(m.MayCallWrites)))
+	for _, name := range sortedKeys(m.MayCallWrites) {
+		w.writeString(name)
+		writes := m.MayCallWrites[name]
+		w.writeUint32(uint32(len(writes)))
+		for _, write := range writes {
+			w.writeString(write.Module)
+			w.writeString(write.Path)
+			w.writeString(write.Field)
+			w.writeType(write.Type)
+		}
+	}
 	w.writeUint32(uint32(len(m.TruthyCallbackCalls)))
 	for _, name := range sortedKeys(m.TruthyCallbackCalls) {
 		w.writeString(name)
@@ -880,6 +896,25 @@ func DecodeManifest(data []byte) (*Manifest, error) {
 			writes[j] = ModuleWrite{Module: r.readString(), Path: r.readString(), Field: r.readString(), Type: r.readType()}
 		}
 		m.CallWrites[name] = writes
+	}
+	count = r.readUint32()
+	if !r.checkSliceLen(count) {
+		return nil, r.err
+	}
+	if count > 0 {
+		m.MayCallWrites = make(map[string][]ModuleWrite, count)
+	}
+	for i := uint32(0); i < count; i++ {
+		name := r.readString()
+		length := r.readUint32()
+		if !r.checkSliceLen(length) {
+			return nil, r.err
+		}
+		writes := make([]ModuleWrite, length)
+		for j := range writes {
+			writes[j] = ModuleWrite{Module: r.readString(), Path: r.readString(), Field: r.readString(), Type: r.readType()}
+		}
+		m.MayCallWrites[name] = writes
 	}
 	count = r.readUint32()
 	if !r.checkSliceLen(count) {

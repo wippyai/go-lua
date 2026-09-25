@@ -196,6 +196,9 @@ func TestSession_ExportManifest_OnlyGuaranteedImportedWrites(t *testing.T) {
 	if len(bridge.CallWrites["maybe"]) != 0 {
 		t.Fatalf("conditional append must not export a guaranteed write, got %v", bridge.CallWrites["maybe"])
 	}
+	if len(bridge.MayCallWrites["maybe"]) != 1 {
+		t.Fatalf("conditional append should export one possible write after execution, got %v", bridge.MayCallWrites["maybe"])
+	}
 }
 
 func TestSession_ExportManifest_TruthyCallbackRequiresEverySuccessfulPath(t *testing.T) {

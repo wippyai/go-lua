@@ -14,6 +14,37 @@ type fieldWriteSite struct {
 	Key    api.FieldWriteKey
 }
 
+// DirectFieldWriteKeys lists only assignments executed in this graph. A write
+// recorded solely because a closure was created must not be treated as a
+// synchronous effect of calling the enclosing function.
+func DirectFieldWriteKeys(graph *cfg.Graph) map[cfg.SymbolID]map[api.FieldWriteKey]bool {
+	if graph == nil {
+		return nil
+	}
+	result := make(map[cfg.SymbolID]map[api.FieldWriteKey]bool)
+	reachable := graph.CFG().Reachable()
+	graph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
+		if info == nil || !reachable[p] {
+			return
+		}
+		for i, target := range info.Targets {
+			var source ast.Expr
+			if i < len(info.Sources) {
+				source = info.Sources[i]
+			}
+			symbol, key, ok := fieldWriteKey(target, source, graph)
+			if !ok {
+				continue
+			}
+			if result[symbol] == nil {
+				result[symbol] = make(map[api.FieldWriteKey]bool)
+			}
+			result[symbol][key] = true
+		}
+	})
+	return result
+}
+
 // MustFieldWrites finds fields left present by direct assignments on every
 // path from the function entry to its exit. Several write sites can jointly
 // make a field definite; a later nil assignment removes it again.

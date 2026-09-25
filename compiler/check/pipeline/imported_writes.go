@@ -4,10 +4,12 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/modules"
 	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow"
+	"github.com/wippyai/go-lua/types/io"
 )
 
 // importedModuleCallWrites applies a function's exported writes to the
@@ -25,23 +27,6 @@ func (r *Runner) importedModuleCallWrites(store api.StoreView, graph *cfg.Graph,
 		return (bindings == nil || !bindings.IsReassigned(sym)) &&
 			(store.ModuleBindings() == nil || !store.ModuleBindings().IsReassigned(sym))
 	}
-	// A field replaced anywhere in this graph may no longer be the function
-	// described by the imported manifest.
-	replaced := make(map[cfg.SymbolID]map[string]bool)
-	graph.EachAssign(func(_ cfg.Point, assignment *cfg.AssignInfo) {
-		if assignment == nil {
-			return
-		}
-		for _, target := range assignment.Targets {
-			if target.Kind != cfg.TargetField || !stableAlias(target.BaseSymbol) || len(target.FieldPath) != 1 {
-				continue
-			}
-			if replaced[target.BaseSymbol] == nil {
-				replaced[target.BaseSymbol] = make(map[string]bool)
-			}
-			replaced[target.BaseSymbol][target.FieldPath[0]] = true
-		}
-	})
 	aliasTargets := make(map[string][]cfg.SymbolID)
 	for sym := range graph.AllSymbolIDs() {
 		if stableAlias(sym) {
@@ -50,23 +35,10 @@ func (r *Runner) importedModuleCallWrites(store api.StoreView, graph *cfg.Graph,
 	}
 	var effects []flow.FieldWriteEffect
 	graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
-		if info == nil || !returns.CallEvaluatedAtPoint(graph, p, info) || len(info.CalleePath.Segments) != 1 {
+		if info == nil || !returns.CallEvaluatedAtPoint(graph, p, info) {
 			return
 		}
-		segment := info.CalleePath.Segments[0]
-		if segment.Kind != constraint.SegmentField && segment.Kind != constraint.SegmentIndexString {
-			return
-		}
-		calleeSym := info.CalleePath.Symbol
-		if !stableAlias(calleeSym) || replaced[calleeSym][segment.Name] {
-			return
-		}
-		calleeModule := aliases[calleeSym]
-		manifest := r.manifests.Manifest(calleeModule)
-		if manifest == nil || !manifest.BodyBacked {
-			return
-		}
-		writes := manifest.CallWrites[segment.Name]
+		writes := r.importedWritesThroughCall(store, graph, bindings, info, make(map[cfg.SymbolID]bool))
 		if len(writes) == 0 {
 			return
 		}
@@ -86,4 +58,55 @@ func (r *Runner) importedModuleCallWrites(store api.StoreView, graph *cfg.Graph,
 		}
 	})
 	return effects
+}
+
+// importedWritesThroughCall follows a local wrapper to the body-backed module
+// calls it can execute. It describes possible writes only; the outer call must
+// still execute before any effect is applied to the caller.
+func (r *Runner) importedWritesThroughCall(store api.StoreView, graph *cfg.Graph, bindings *bind.BindingTable, info *cfg.CallInfo, seen map[cfg.SymbolID]bool) []io.ModuleWrite {
+	if info == nil || graph == nil {
+		return nil
+	}
+	aliases := modules.MergeAliases(store.ModuleAliases(), modules.CollectAliases(graph))
+	var writes []io.ModuleWrite
+	if len(info.CalleePath.Segments) == 1 {
+		segment := info.CalleePath.Segments[0]
+		calleeSym := info.CalleePath.Symbol
+		if segment.Kind == constraint.SegmentField || segment.Kind == constraint.SegmentIndexString {
+			stable := calleeSym != 0 && aliases[calleeSym] != "" &&
+				(bindings == nil || !bindings.IsReassigned(calleeSym)) &&
+				(store.ModuleBindings() == nil || !store.ModuleBindings().IsReassigned(calleeSym)) &&
+				!modules.AssignedModuleField(graph, calleeSym, segment.Name)
+			if stable {
+				manifest := r.manifests.Manifest(aliases[calleeSym])
+				if manifest != nil && manifest.BodyBacked {
+					writes = append(writes, manifest.CallWrites[segment.Name]...)
+					writes = append(writes, manifest.MayCallWrites[segment.Name]...)
+				}
+			}
+		}
+	}
+	callee := callsite.SelectPreferredSymbol(
+		callsite.CallableCalleeSymbolCandidates(info, graph, bindings, store.ModuleBindings()),
+		func(sym cfg.SymbolID) bool { return store.FunctionRefBySym(sym) != nil },
+	)
+	if callee == 0 || seen[callee] {
+		return writes
+	}
+	seen[callee] = true
+	ref := store.FunctionRefBySym(callee)
+	if ref == nil {
+		return writes
+	}
+	child := store.Graphs()[ref.GraphID]
+	if child == nil {
+		return writes
+	}
+	reachable := child.CFG().Reachable()
+	child.EachCallSite(func(p cfg.Point, nested *cfg.CallInfo) {
+		if reachable[p] {
+			writes = append(writes, r.importedWritesThroughCall(store, child, child.Bindings(), nested, seen)...)
+		}
+	})
+	return writes
 }

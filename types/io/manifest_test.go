@@ -32,6 +32,9 @@ func TestManifest_CallWritesRoundTrip(t *testing.T) {
 	m.CallWrites = map[string][]ModuleWrite{
 		"append": {{Module: "state", Path: ".state.witness", Field: "[]", Type: typ.NewMap(typ.Integer, typ.String)}},
 	}
+	m.MayCallWrites = map[string][]ModuleWrite{
+		"maybe": {{Module: "state", Path: ".state.witness", Field: "[]", Type: typ.NewMap(typ.Integer, typ.String)}},
+	}
 	data, err := m.Encode()
 	if err != nil {
 		t.Fatal(err)
@@ -43,6 +46,10 @@ func TestManifest_CallWritesRoundTrip(t *testing.T) {
 	writes := decoded.CallWrites["append"]
 	if len(writes) != 1 || writes[0].Module != "state" || writes[0].Path != ".state.witness" || writes[0].Field != "[]" || !typ.TypeEquals(writes[0].Type, m.CallWrites["append"][0].Type) {
 		t.Fatalf("call writes changed across manifest encoding: %v", writes)
+	}
+	possible := decoded.MayCallWrites["maybe"]
+	if len(possible) != 1 || possible[0].Module != "state" || possible[0].Path != ".state.witness" || possible[0].Field != "[]" || !typ.TypeEquals(possible[0].Type, m.MayCallWrites["maybe"][0].Type) {
+		t.Fatalf("possible call writes changed across manifest encoding: %v", possible)
 	}
 }
 

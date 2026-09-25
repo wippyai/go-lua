@@ -1,0 +1,26 @@
+{
+  "description": "Complete registry sources for app:bridge_turn_test",
+  "files": [
+    "attachment_ingest.lua",
+    "channel_consts.lua",
+    "test_state.lua",
+    "channel_thread_bridge.lua",
+    "component.lua",
+    "llm.lua",
+    "prompt.lua",
+    "reply_policy.lua",
+    "reply_sender.lua",
+    "session_consts.lua",
+    "session_service.lua",
+    "trace_context.lua",
+    "bridge.lua",
+    "main.lua"
+  ],
+  "packages": [
+    "channel",
+    "time"
+  ],
+  "check": {
+    "errors": 0
+  }
+}

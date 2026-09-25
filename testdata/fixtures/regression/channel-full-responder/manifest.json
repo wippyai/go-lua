@@ -1,0 +1,23 @@
+{
+  "description": "Complete registry sources for app:responder_test; one existing public_state field diagnostic remains in the source stub",
+  "files": [
+    "test_state.lua",
+    "automations_lib.lua",
+    "channel_consts.lua",
+    "component.lua",
+    "responder.lua",
+    "main.lua"
+  ],
+  "packages": [
+    "funcs"
+  ],
+  "check": {
+    "expected_errors": [
+      {
+        "file": "automations_lib.lua",
+        "line": 17,
+        "contains": "field 'public_state' does not exist"
+      }
+    ]
+  }
+}
