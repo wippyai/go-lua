@@ -915,8 +915,44 @@ func numericConstraintsFromExprInternal(expr ast.Expr, p cfg.Point, inputs *flow
 	case *ast.LogicalOpExpr:
 		return numericConstraintsFromLogicalExprInternal(e, p, inputs, bindings)
 	case *ast.RelationalOpExpr:
+		if nc := lengthLowerConstraintFromComparison(e, p, inputs); nc != nil {
+			return []constraint.NumericConstraint{nc}
+		}
 		if nc := numconst.NumericConstraintFromComparisonWithBindings(e.Operator, e.Lhs, e.Rhs, p, inputs, bindings); nc != nil {
 			return []constraint.NumericConstraint{nc}
+		}
+	}
+	return nil
+}
+
+// lengthLowerConstraintFromComparison recognizes a positive length bound on
+// the true path. The table path is SSA versioned at the comparison point.
+func lengthLowerConstraintFromComparison(e *ast.RelationalOpExpr, p cfg.Point, inputs *flow.Inputs) constraint.NumericConstraint {
+	if e == nil || inputs == nil || inputs.Graph == nil {
+		return nil
+	}
+	graph, ok := inputs.Graph.(*cfg.Graph)
+	if !ok {
+		return nil
+	}
+	if path := ExtractLenPath(e.Lhs, p, graph); !path.IsEmpty() {
+		if n, ok := numconst.IntConstFromExpr(e.Rhs); ok {
+			switch e.Operator {
+			case ">=":
+				return constraint.LenGeConst{Array: path, C: n}
+			case ">":
+				return constraint.LenGeConst{Array: path, C: n + 1}
+			}
+		}
+	}
+	if path := ExtractLenPath(e.Rhs, p, graph); !path.IsEmpty() {
+		if n, ok := numconst.IntConstFromExpr(e.Lhs); ok {
+			switch e.Operator {
+			case "<=":
+				return constraint.LenGeConst{Array: path, C: n}
+			case "<":
+				return constraint.LenGeConst{Array: path, C: n + 1}
+			}
 		}
 	}
 	return nil

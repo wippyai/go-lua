@@ -241,6 +241,35 @@ func ExtractNumericConstraints(fc *core.FlowContext, inputs *flow.Inputs) {
 			}
 		}
 	})
+	// A normal return from a throwing assertion establishes the truth of its
+	// argument. Carry numeric length facts along the same outgoing edges.
+	fc.Graph.EachStmtCall(func(p cfg.Point, info *cfg.CallInfo) {
+		args := runtimeCallArgs(info)
+		if len(args) == 0 {
+			return
+		}
+		eff := ExtractFunctionRefinement(info, p, fc.Derived.Synth, fc.Derived.RefinementBySym, fc.Derived.SymResolver, fc.Graph, fc.ModuleBindings)
+		if eff == nil {
+			return
+		}
+		for _, c := range eff.OnReturn.MustConstraints() {
+			truth, ok := c.(constraint.Truthy)
+			if !ok {
+				continue
+			}
+			idx, ok := constraint.PlaceholderArgIndex(truth.Path, len(args))
+			if !ok {
+				continue
+			}
+			numeric := NumericConstraintsFromExpr(args[idx], p, inputs)
+			if len(numeric) == 0 {
+				continue
+			}
+			for _, succ := range fc.Graph.Successors(p) {
+				inputs.EdgeNumericConstraints = append(inputs.EdgeNumericConstraints, flow.EdgeNumericConstraint{From: p, To: succ, Constraints: numeric})
+			}
+		}
+	})
 }
 
 // numericForConstraints extracts numeric constraints from a numeric for-loop.

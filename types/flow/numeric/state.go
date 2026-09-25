@@ -51,6 +51,8 @@ type State struct {
 	// lenRefs maps variable PathKey to array PathKey with offset.
 	// Entry x -> {arr, off} means x <= len(arr) + off.
 	lenRefs map[constraint.PathKey]lenRefBound
+	// lengthLower contains lower bounds for versioned table lengths.
+	lengthLower map[constraint.PathKey]int64
 
 	// unsat is true if the state is unsatisfiable.
 	unsat bool
@@ -84,10 +86,11 @@ var (
 // NewState creates an empty (top) numeric state.
 func NewState() *State {
 	return &State{
-		bounds:    make(map[constraint.PathKey]Interval),
-		modular:   make(map[constraint.PathKey]ModResidue),
-		relations: make(map[relationKey]int64),
-		lenRefs:   make(map[constraint.PathKey]lenRefBound),
+		bounds:      make(map[constraint.PathKey]Interval),
+		modular:     make(map[constraint.PathKey]ModResidue),
+		relations:   make(map[relationKey]int64),
+		lenRefs:     make(map[constraint.PathKey]lenRefBound),
+		lengthLower: make(map[constraint.PathKey]int64),
 	}
 }
 
@@ -123,10 +126,11 @@ func (s *State) Clone() *State {
 	}
 
 	c := &State{
-		bounds:    make(map[constraint.PathKey]Interval, len(s.bounds)),
-		modular:   make(map[constraint.PathKey]ModResidue, len(s.modular)),
-		relations: make(map[relationKey]int64, len(s.relations)),
-		lenRefs:   make(map[constraint.PathKey]lenRefBound, len(s.lenRefs)),
+		bounds:      make(map[constraint.PathKey]Interval, len(s.bounds)),
+		modular:     make(map[constraint.PathKey]ModResidue, len(s.modular)),
+		relations:   make(map[relationKey]int64, len(s.relations)),
+		lenRefs:     make(map[constraint.PathKey]lenRefBound, len(s.lenRefs)),
+		lengthLower: make(map[constraint.PathKey]int64, len(s.lengthLower)),
 	}
 	for _, k := range constraint.SortedPathKeys(s.bounds) {
 		c.bounds[k] = s.bounds[k]
@@ -142,6 +146,9 @@ func (s *State) Clone() *State {
 
 	for _, k := range constraint.SortedPathKeys(s.lenRefs) {
 		c.lenRefs[k] = s.lenRefs[k]
+	}
+	for k, v := range s.lengthLower {
+		c.lengthLower[k] = v
 	}
 
 	return c
@@ -219,6 +226,11 @@ func Join(a, b *State) *State {
 		ref := a.lenRefs[v]
 		if bref, ok := b.lenRefs[v]; ok && ref == bref {
 			result.lenRefs[v] = ref
+		}
+	}
+	for k, lower := range a.lengthLower {
+		if other, ok := b.lengthLower[k]; ok {
+			result.lengthLower[k] = min(lower, other)
 		}
 	}
 
@@ -339,6 +351,13 @@ func (s *State) ApplyConstraintWithResolver(c constraint.NumericConstraint, reso
 				return struct{}{}
 			}
 			s.applyLeLenOf(xKey, arrKey, nc.Offset)
+			return struct{}{}
+		},
+		LenGeConst: func(nc constraint.LenGeConst) struct{} {
+			key := resolve(nc.Array)
+			if key != "" && nc.C > s.lengthLower[key] {
+				s.lengthLower[key] = nc.C
+			}
 			return struct{}{}
 		},
 	})
@@ -498,6 +517,15 @@ func (s *State) BoundsFor(key constraint.PathKey) (lower, upper int64, ok bool) 
 	return interval.Lower, interval.Upper, true
 }
 
+// LengthLowerBoundFor returns a proven lower bound for a table version.
+func (s *State) LengthLowerBoundFor(key constraint.PathKey) (int64, bool) {
+	if s == nil {
+		return 0, false
+	}
+	v, ok := s.lengthLower[key]
+	return v, ok
+}
+
 // LenRefFor returns the array key if variable has a symbolic length bound.
 //
 // A length reference means "key <= #arrKey" (variable is bounded by array length).
@@ -651,6 +679,9 @@ func (s *State) Equals(other *State) bool {
 	if len(s.lenRefs) != len(other.lenRefs) {
 		return false
 	}
+	if len(s.lengthLower) != len(other.lengthLower) {
+		return false
+	}
 
 	for _, k := range constraint.SortedPathKeys(s.bounds) {
 		v := s.bounds[k]
@@ -679,6 +710,11 @@ func (s *State) Equals(other *State) bool {
 			return false
 		}
 	}
+	for k, v := range s.lengthLower {
+		if other.lengthLower[k] != v {
+			return false
+		}
+	}
 
 	return true
 }
@@ -701,7 +737,7 @@ func (s *State) isTop() bool {
 		return false
 	}
 
-	return len(s.bounds) == 0 && len(s.modular) == 0 && len(s.relations) == 0 && len(s.lenRefs) == 0
+	return len(s.bounds) == 0 && len(s.modular) == 0 && len(s.relations) == 0 && len(s.lenRefs) == 0 && len(s.lengthLower) == 0
 }
 
 func minInt64(a, b int64) int64 {
@@ -787,10 +823,11 @@ func (s *State) Rekey(remap map[constraint.PathKey]constraint.PathKey) *State {
 	}
 
 	result := &State{
-		bounds:    make(map[constraint.PathKey]Interval, len(s.bounds)),
-		modular:   make(map[constraint.PathKey]ModResidue, len(s.modular)),
-		relations: make(map[relationKey]int64, len(s.relations)),
-		lenRefs:   make(map[constraint.PathKey]lenRefBound, len(s.lenRefs)),
+		bounds:      make(map[constraint.PathKey]Interval, len(s.bounds)),
+		modular:     make(map[constraint.PathKey]ModResidue, len(s.modular)),
+		relations:   make(map[relationKey]int64, len(s.relations)),
+		lenRefs:     make(map[constraint.PathKey]lenRefBound, len(s.lenRefs)),
+		lengthLower: make(map[constraint.PathKey]int64, len(s.lengthLower)),
 	}
 
 	// Remap bounds
@@ -840,6 +877,12 @@ func (s *State) Rekey(remap map[constraint.PathKey]constraint.PathKey) *State {
 		}
 		ref.Array = newArr
 		result.lenRefs[newK] = ref
+	}
+	for k, lower := range s.lengthLower {
+		if mapped, ok := remap[k]; ok {
+			k = mapped
+		}
+		result.lengthLower[k] = lower
 	}
 
 	return result

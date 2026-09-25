@@ -82,6 +82,7 @@ func (m mockFlowOps) NarrowedTypeAt(p cfg.Point, path constraint.Path) typ.Type 
 func (m mockFlowOps) BoundsAt(p cfg.Point, name string) (lower, upper int64, ok bool) {
 	return 0, 0, false
 }
+func (m mockFlowOps) HasLengthAtLeast(cfg.Point, constraint.Path, int64) bool { return false }
 
 func (m mockFlowOps) ArrayLenBoundAt(p cfg.Point, varName string) (arrKey string, ok bool) {
 	return "", false

@@ -27,17 +27,18 @@ import "github.com/wippyai/go-lua/internal"
 type NumKind uint8
 
 const (
-	NumInvalid NumKind = iota
-	NumLe              // x - y <= c
-	NumLt              // x < y
-	NumGe              // x >= y
-	NumGt              // x > y
-	NumEq              // x == y
-	NumEqConst         // x == c
-	NumLeConst         // x <= c
-	NumGeConst         // x >= c
-	NumModEq           // x % m == r
-	NumLeLenOf         // x <= len(arr) + offset
+	NumInvalid    NumKind = iota
+	NumLe                 // x - y <= c
+	NumLt                 // x < y
+	NumGe                 // x >= y
+	NumGt                 // x > y
+	NumEq                 // x == y
+	NumEqConst            // x == c
+	NumLeConst            // x <= c
+	NumGeConst            // x >= c
+	NumModEq              // x % m == r
+	NumLeLenOf            // x <= len(arr) + offset
+	NumLenGeConst         // len(arr) >= c
 )
 
 // NumericConstraint is a marker interface for numeric constraints.
@@ -181,6 +182,20 @@ type LeLenOf struct {
 	X      Path  // variable being bounded
 	Array  Path  // array whose length is the upper bound
 	Offset int64 // additive offset (can be negative)
+}
+
+// LenGeConst records a lower bound on a table's current length.
+type LenGeConst struct {
+	Array Path
+	C     int64
+}
+
+func (c LenGeConst) NumKind() NumKind { return NumLenGeConst }
+func (c LenGeConst) Paths() []Path    { return []Path{c.Array} }
+func (c LenGeConst) Hash() uint64     { return hashNumConstraint(c.NumKind(), c.Array, Path{}, c.C) }
+func (c LenGeConst) Equals(o NumericConstraint) bool {
+	other, ok := o.(LenGeConst)
+	return ok && c.Array.Equal(other.Array) && c.C == other.C
 }
 
 func (c LeLenOf) NumKind() NumKind { return NumLeLenOf }
