@@ -90,7 +90,7 @@ func TieRecursiveReturns(self, next []typ.Type) []typ.Type {
 			}
 			continue
 		}
-		if i >= len(out) || out[i] == nil || typ.IsUnknown(s) {
+		if i >= len(out) || out[i] == nil || typ.IsUnknown(s) || typ.TypeEquals(s, out[i]) {
 			continue
 		}
 		folded := typ.FoldApproximations(recursionVariableName, out[i], func(node typ.Type) bool {
