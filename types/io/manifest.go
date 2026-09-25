@@ -16,7 +16,7 @@ import (
 // Manifest file format constants.
 const (
 	manifestMagic   = 0x4D414E49 // "MANI" - identifies valid manifest files
-	manifestVersion = 8          // v8: encode function type params + record open/map components
+	manifestVersion = 9          // v9: distinguish Lua-body exports from external declarations
 )
 
 // Manifest decoding errors.
@@ -46,6 +46,9 @@ type Manifest struct {
 	Path string
 	// Version is a monotonic counter for cache invalidation.
 	Version uint64
+	// BodyBacked means exported function relations must come from checked Lua
+	// return paths. External manifests contain declarations without Lua bodies.
+	BodyBacked bool
 
 	// Export is the type returned by require(). Usually a record of functions.
 	Export typ.Type
@@ -239,7 +242,7 @@ func (m *Manifest) LookupType(name string) (typ.Type, bool) {
 	if !ok {
 		return nil, false
 	}
-	return resolveManifestLocalRefs(t, m.Types), true
+	return m.withDeclaredReturnConventions(resolveManifestLocalRefs(t, m.Types)), true
 }
 
 // AllTypes returns a copy of all type definitions.
@@ -278,7 +281,7 @@ func (m *Manifest) AllGlobals() map[string]typ.Type {
 
 	result := make(map[string]typ.Type, len(m.Globals))
 	for k, v := range m.Globals {
-		result[k] = v
+		result[k] = m.withDeclaredReturnConventions(v)
 	}
 
 	return result
@@ -363,9 +366,9 @@ func (m *Manifest) EnrichedExport() typ.Type {
 	m.cacheMu.RUnlock()
 
 	resolvedExport := resolveManifestLocalRefs(m.Export, m.Types)
-	enriched := resolvedExport
+	enriched := m.withDeclaredReturnConventions(resolvedExport)
 	if resolvedExport != nil && len(m.Summaries) > 0 {
-		enriched = enrichTypeWithSummaries(resolvedExport, m.Summaries)
+		enriched = enrichTypeWithSummaries(enriched, m.Summaries)
 	}
 
 	m.cacheMu.Lock()
@@ -377,6 +380,29 @@ func (m *Manifest) EnrichedExport() typ.Type {
 	m.cacheMu.Unlock()
 
 	return cached
+}
+
+func (m *Manifest) withDeclaredReturnConventions(t typ.Type) typ.Type {
+	if m == nil || m.BodyBacked || t == nil {
+		return t
+	}
+	enriched := t
+	// Rewrite visits a replaced node before its children. Repeat until
+	// nested declared methods in return and parameter types are visited.
+	for i := 0; i < typ.DefaultRecursionDepth; i++ {
+		next := typ.Rewrite(enriched, func(t typ.Type) (typ.Type, bool) {
+			if fn, ok := t.(*typ.Function); ok {
+				declared := contract.WithDeclaredErrorReturnConvention(fn)
+				return declared, declared != fn
+			}
+			return nil, false
+		})
+		if next == enriched {
+			break
+		}
+		enriched = next
+	}
+	return enriched
 }
 
 // resolveManifestLocalRefs resolves local typ.Ref nodes against manifest type
@@ -695,6 +721,7 @@ func (m *Manifest) Encode() ([]byte, error) {
 	w.writeByte(manifestVersion)
 	w.writeUint64(m.Version)
 	w.writeString(m.Path)
+	w.writeBool(m.BodyBacked)
 
 	// Export
 	w.writeBool(m.Export != nil)
@@ -753,6 +780,7 @@ func DecodeManifest(data []byte) (*Manifest, error) {
 		Summaries: make(map[string]*FunctionSummary),
 		Globals:   make(map[string]typ.Type),
 	}
+	m.BodyBacked = r.readBool()
 
 	// Export
 	if r.readBool() {

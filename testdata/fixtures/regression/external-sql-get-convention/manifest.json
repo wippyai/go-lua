@@ -1,0 +1,1 @@
+{"description":"Real node_reader sql.get call and guarded DB use against a declared external sql API.","files":["sql.lua","main.lua"],"check":{"errors":0}}
