@@ -497,6 +497,15 @@ func (s *Solution) refineExactLengthIndex(p cfg.Point, path constraint.Path, t t
 	}
 	tablePath := path
 	tablePath.Segments = path.Segments[:n-1]
+	// An inferred open empty table says nothing about values added through
+	// another path. Once its length is positive, a nil-only projection for an
+	// indexed slot is stale. The slot may still be nil in a sparse table, so
+	// retain gradual uncertainty rather than treating it as present.
+	if t != nil && t.Kind() == kind.Nil && s.HasLengthAtLeast(p, tablePath, int64(last.Index)) {
+		if r, ok := s.baseTypeAt(p, tablePath).(*typ.Record); ok && r.Open && len(r.Fields) == 0 && !r.HasMapComponent() {
+			return typ.Unknown
+		}
+	}
 	length, ok := s.ExactLengthAt(p, tablePath)
 	if !ok || length != int64(last.Index) {
 		return t

@@ -1,0 +1,1 @@
+{"description":"Exact kickside.knowledge.api:list_embedding_models and wippy.llm.discovery:models registry sources with API stubs.","files":["registry.lua","http.lua","security.lua","models.lua","list_embedding_models.lua","main.lua"],"check":{"errors":0}}
