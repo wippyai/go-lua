@@ -409,7 +409,7 @@ func ExtractCallOnReturnConstraints(
 		constResolver := predicate.BuildConstResolver(inputs, p)
 
 		cond := ConstraintsFromCallOnReturn(info, p, sc, inputs, fc.Derived.Synth, fc.Derived.TypeKeyRes, fc.Derived.RefinementBySym, constResolver, fc.Derived.SymResolver, fc.Graph, fc.ModuleBindings)
-		cond = stableCallConstraints(cond, info, fc.Derived.CapturedReassignments, rebindingCallees)
+		cond = stableCallConstraints(cond, info, fc.Derived.CapturedReassignments, rebindingCallees, fc.Graph.Bindings())
 		if !cond.HasConstraints() {
 			return
 		}
@@ -428,7 +428,7 @@ func ExtractCallOnReturnConstraints(
 		constResolver := predicate.BuildConstResolver(inputs, p)
 		cond := ConstraintsFromAssignOnReturn(info, p, sc, inputs, fc.Derived.Synth, fc.Derived.TypeKeyRes, fc.Derived.RefinementBySym, constResolver, fc.Derived.SymResolver, fc.Graph, fc.ModuleBindings)
 		for _, call := range info.SourceCalls {
-			cond = stableCallConstraints(cond, call, fc.Derived.CapturedReassignments, rebindingCallees)
+			cond = stableCallConstraints(cond, call, fc.Derived.CapturedReassignments, rebindingCallees, fc.Graph.Bindings())
 		}
 		if !cond.HasConstraints() {
 			return
@@ -449,13 +449,21 @@ func ExtractCallOnReturnConstraints(
 // A nested callee can rebind a captured local during the same call whose
 // OnReturn fact mentions it. Such a fact describes the argument's old value,
 // not necessarily the local's value when the call returns.
-func stableCallConstraints(cond constraint.Condition, call *cfg.CallInfo, unstable map[cfg.SymbolID]bool, rebindingCallees *CapturedRebindingFacts) constraint.Condition {
+func stableCallConstraints(cond constraint.Condition, call *cfg.CallInfo, unstable map[cfg.SymbolID]bool, rebindingCallees *CapturedRebindingFacts, bindings *bind.BindingTable) constraint.Condition {
 	if !cond.HasConstraints() || len(unstable) == 0 || call == nil {
 		return cond
 	}
 	// Direct calls may be aliases of a local closure, so retain only facts
 	// about locals that no nested closure can rebind.
 	unsafe := unstable
+	// The standard assert builtin only checks its already evaluated argument.
+	// It cannot run a closure that rebinds a captured local between the check
+	// and normal return. A shadowing local called assert is not the builtin.
+	if call.CalleePath.Root == "assert" && len(call.CalleePath.Segments) == 0 && bindings != nil && call.CalleeSymbol != 0 {
+		if k, ok := bindings.Kind(call.CalleeSymbol); ok && k == cfg.SymbolGlobal {
+			unsafe = nil
+		}
+	}
 	if len(call.CalleePath.Segments) != 0 {
 		// A field call can reach a caller local through a locally stored closure
 		// or through a callback argument supplied to an imported function.
