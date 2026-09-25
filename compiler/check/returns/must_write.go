@@ -4,7 +4,9 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	flowpath "github.com/wippyai/go-lua/compiler/check/flowbuild/path"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/flow"
 )
 
 type fieldWriteSite struct {
@@ -26,17 +28,21 @@ func MustFieldWrites(graph *cfg.Graph) map[cfg.SymbolID]map[api.FieldWriteKey]bo
 			return
 		}
 		for i, target := range info.Targets {
-			key, ok := fieldWriteKey(target)
+			var source ast.Expr
+			if i < len(info.Sources) {
+				source = info.Sources[i]
+			}
+			symbol, key, ok := fieldWriteKey(target, source, graph)
 			if !ok {
 				continue
 			}
-			site := fieldWriteSite{Target: target.BaseSymbol, Key: key}
+			site := fieldWriteSite{Target: symbol, Key: key}
 			if sites[site] == nil {
 				sites[site] = make(map[cfg.Point]bool)
 			}
 			present := true
-			if i < len(info.Sources) {
-				_, removesField := info.Sources[i].(*ast.NilExpr)
+			if source != nil {
+				_, removesField := source.(*ast.NilExpr)
 				present = !removesField
 			}
 			sites[site][p] = present
@@ -58,29 +64,50 @@ func MustFieldWrites(graph *cfg.Graph) map[cfg.SymbolID]map[api.FieldWriteKey]bo
 	return must
 }
 
-func fieldWriteKey(target cfg.AssignTarget) (api.FieldWriteKey, bool) {
-	if target.BaseSymbol == 0 {
-		return api.FieldWriteKey{}, false
-	}
+func fieldWriteKey(target cfg.AssignTarget, source ast.Expr, graph *cfg.Graph) (cfg.SymbolID, api.FieldWriteKey, bool) {
 	switch target.Kind {
 	case cfg.TargetField:
-		if len(target.FieldPath) == 0 {
-			return api.FieldWriteKey{}, false
+		if target.BaseSymbol == 0 || len(target.FieldPath) == 0 {
+			return 0, api.FieldWriteKey{}, false
 		}
 		segments := make([]constraint.Segment, 0, len(target.FieldPath)-1)
 		for _, field := range target.FieldPath[:len(target.FieldPath)-1] {
 			segments = append(segments, constraint.Segment{Kind: constraint.SegmentField, Name: field})
 		}
-		return api.NewFieldWriteKey(segments, target.FieldPath[len(target.FieldPath)-1]), true
+		return target.BaseSymbol, api.NewFieldWriteKey(segments, target.FieldPath[len(target.FieldPath)-1]), true
 	case cfg.TargetIndex:
-		if _, direct := target.Base.(*ast.IdentExpr); !direct {
-			return api.FieldWriteKey{}, false
+		if graph == nil || target.Base == nil {
+			return 0, api.FieldWriteKey{}, false
+		}
+		base := flowpath.FromExprWithBindings(target.Base, nil, graph.Bindings())
+		if base.Symbol == 0 {
+			return 0, api.FieldWriteKey{}, false
 		}
 		if key, ok := target.Key.(*ast.StringExpr); ok && key.Value != "" {
-			return api.FieldWriteKey{Field: key.Value}, true
+			return base.Symbol, api.NewFieldWriteKey(base.Segments, key.Value), true
+		}
+		if _, nonnil := source.(*ast.TableExpr); nonnil && isAppendIndexOfBase(target.Key, base, graph) {
+			return base.Symbol, api.NewFieldWriteKey(base.Segments, flow.IndexerWriteField), true
 		}
 	}
-	return api.FieldWriteKey{}, false
+	return 0, api.FieldWriteKey{}, false
+}
+
+func isAppendIndexOfBase(key ast.Expr, base constraint.Path, graph *cfg.Graph) bool {
+	add, ok := key.(*ast.ArithmeticOpExpr)
+	if !ok || add.Operator != "+" || graph == nil {
+		return false
+	}
+	one, ok := add.Rhs.(*ast.NumberExpr)
+	if !ok || one.Value != "1" {
+		return false
+	}
+	length, ok := add.Lhs.(*ast.UnaryLenOpExpr)
+	if !ok {
+		return false
+	}
+	lengthPath := flowpath.FromExprWithBindings(length.Expr, nil, graph.Bindings())
+	return !lengthPath.IsEmpty() && lengthPath.Equal(base)
 }
 
 func mayExitWithoutField(graph *cfg.Graph, events map[cfg.Point]bool) bool {

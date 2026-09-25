@@ -27,6 +27,25 @@ func TestNewManifest(t *testing.T) {
 	}
 }
 
+func TestManifest_CallWritesRoundTrip(t *testing.T) {
+	m := NewManifest("bridge")
+	m.CallWrites = map[string][]ModuleWrite{
+		"append": {{Module: "state", Path: ".state.witness", Field: "[]", Type: typ.NewMap(typ.Integer, typ.String)}},
+	}
+	data, err := m.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := DecodeManifest(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writes := decoded.CallWrites["append"]
+	if len(writes) != 1 || writes[0].Module != "state" || writes[0].Path != ".state.witness" || writes[0].Field != "[]" || !typ.TypeEquals(writes[0].Type, m.CallWrites["append"][0].Type) {
+		t.Fatalf("call writes changed across manifest encoding: %v", writes)
+	}
+}
+
 func TestNewSummary(t *testing.T) {
 	params := []typ.Type{typ.String, typ.Number}
 	returns := []typ.Type{typ.Boolean}

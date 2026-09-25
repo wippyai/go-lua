@@ -43,12 +43,14 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/modules"
+	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/compiler/check/store"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/diag"
 	"github.com/wippyai/go-lua/types/io"
 	"github.com/wippyai/go-lua/types/typ"
+	"strings"
 )
 
 // Session holds all state and results for analyzing a single Lua module.
@@ -471,7 +473,62 @@ func (s *Session) ExportManifest(modulePath string) *io.Manifest {
 	}
 
 	modules.ExportFunctionSummaries(manifest, exportType, s.RootGraph(), s.RefinementsForExport())
+	s.exportModuleCallWrites(manifest)
 	return manifest
+}
+
+// exportModuleCallWrites preserves effects on another imported module's table
+// without applying them to the module's export before the function is called.
+func (s *Session) exportModuleCallWrites(manifest *io.Manifest) {
+	if s == nil || s.Store == nil || manifest == nil || s.RootGraph() == nil {
+		return
+	}
+	rec, ok := manifest.Export.(*typ.Record)
+	if !ok {
+		return
+	}
+	graph := s.RootGraph()
+	aliases := s.Store.ModuleAliases()
+	source := returns.StoreFieldWriteSource{Store: s.Store, Bindings: s.Store.ModuleBindings()}
+	for _, nested := range graph.NestedFunctions() {
+		name := graph.NameOf(nested.Symbol)
+		if _, field, hasRoot := strings.Cut(name, "."); hasRoot {
+			if strings.Contains(field, ".") {
+				continue
+			}
+			name = field
+		}
+		field := rec.GetField(name)
+		if field == nil {
+			continue
+		}
+		if _, ok := field.Type.(*typ.Function); !ok {
+			continue
+		}
+		writes := source.FieldWritesOf(nested.Symbol)
+		must := source.MustWritesOf(nested.Symbol)
+		for _, target := range cfg.SortedSymbolIDs(writes) {
+			module := aliases[target]
+			if module == "" {
+				continue
+			}
+			for _, key := range api.SortedFieldWriteKeys(writes[target]) {
+				if !must[target][key] {
+					continue
+				}
+				t := writes[target][key]
+				if t == nil {
+					continue
+				}
+				if manifest.CallWrites == nil {
+					manifest.CallWrites = make(map[string][]io.ModuleWrite)
+				}
+				manifest.CallWrites[name] = append(manifest.CallWrites[name], io.ModuleWrite{
+					Module: module, Path: key.Path, Field: key.Field, Type: t,
+				})
+			}
+		}
+	}
 }
 
 // RefinementsForExport extracts computed function refinements for manifest generation.

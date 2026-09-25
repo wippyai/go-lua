@@ -283,7 +283,7 @@ func eachCallFieldWrite(
 			}
 			set := writes[target]
 			for _, key := range api.SortedFieldWriteKeys(set) {
-				visit(p, callee, target, callEvaluatedAtPoint(graph, p, info), path, key, set[key], set)
+				visit(p, callee, target, CallEvaluatedAtPoint(graph, p, info), path, key, set[key], set)
 			}
 		}
 	})
@@ -291,7 +291,7 @@ func eachCallFieldWrite(
 
 // A nested call in a short-circuit expression may not execute when its CFG
 // point is reached. Direct statement, assignment and return calls do.
-func callEvaluatedAtPoint(graph *cfg.Graph, p cfg.Point, call *cfg.CallInfo) bool {
+func CallEvaluatedAtPoint(graph *cfg.Graph, p cfg.Point, call *cfg.CallInfo) bool {
 	if call == nil || call.Call == nil {
 		return false
 	}

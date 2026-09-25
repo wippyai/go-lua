@@ -580,6 +580,12 @@ func (s *Solution) baseTypeAt(p cfg.Point, path constraint.Path) typ.Type {
 	if derived.Kind() == kind.Nil || isFalseLiteral(derived) {
 		return explicit
 	}
+	// A write to a child table can turn an imported or captured empty table
+	// into an array or map. Its old parent projection is only the pre-write
+	// shape; the recorded child value describes the current table.
+	if origin == pathTypeRecorded && (derived.Kind() == kind.Never || isEmptyRecordNoMapType(derived)) {
+		return explicit
+	}
 
 	if origin == pathTypeProjected {
 		return derived
@@ -741,10 +747,16 @@ func (s *Solution) applyConstraints(p cfg.Point, baseType typ.Type, path constra
 	}
 
 	if narrowed, ok := s.deriveFromNarrowedAncestors(canonicalKey, dom); ok {
-		if current == nil {
-			current = narrowed
-		} else {
-			current = narrow.Intersect(current, narrowed)
+		_, origin := s.typeAtWithOrigin(p, path)
+		if origin == pathTypeRecorded && isEmptyRecordNoMapType(narrowed) && !isEmptyRecordNoMapType(current) {
+			ok = false
+		}
+		if ok {
+			if current == nil {
+				current = narrowed
+			} else {
+				current = narrow.Intersect(current, narrowed)
+			}
 		}
 	}
 

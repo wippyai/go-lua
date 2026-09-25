@@ -16,7 +16,7 @@ import (
 // Manifest file format constants.
 const (
 	manifestMagic   = 0x4D414E49 // "MANI" - identifies valid manifest files
-	manifestVersion = 9          // v9: distinguish Lua-body exports from external declarations
+	manifestVersion = 10         // v10: carry writes to imported module tables at call sites
 )
 
 // Manifest decoding errors.
@@ -58,6 +58,9 @@ type Manifest struct {
 	// Summaries maps function names to their behavioral specifications.
 	// Enables interprocedural analysis without source code.
 	Summaries map[string]*FunctionSummary
+	// CallWrites records writes an exported function makes to another imported
+	// module's table. The caller applies them only after that function executes.
+	CallWrites map[string][]ModuleWrite
 
 	// Globals records types assigned to _G for global namespace pollution tracking.
 	Globals map[string]typ.Type
@@ -66,6 +69,16 @@ type Manifest struct {
 	cachedEnriched      typ.Type
 	cachedEnrichedReady bool
 	cachedLookupValues  map[string]lookupValueResult
+}
+
+// ModuleWrite is a callee write to a table exported by another module.
+// Path identifies the table below that module's export; Field is its named
+// field or the dynamic index marker "[]".
+type ModuleWrite struct {
+	Module string
+	Path   string
+	Field  string
+	Type   typ.Type
 }
 
 type lookupValueResult struct {
@@ -745,6 +758,18 @@ func (m *Manifest) Encode() ([]byte, error) {
 		w.writeString(name)
 		w.writeSummary(m.Summaries[name])
 	}
+	w.writeUint32(uint32(len(m.CallWrites)))
+	for _, name := range sortedKeys(m.CallWrites) {
+		w.writeString(name)
+		writes := m.CallWrites[name]
+		w.writeUint32(uint32(len(writes)))
+		for _, write := range writes {
+			w.writeString(write.Module)
+			w.writeString(write.Path)
+			w.writeString(write.Field)
+			w.writeType(write.Type)
+		}
+	}
 
 	// Globals
 	w.writeUint32(uint32(len(m.Globals)))
@@ -805,6 +830,25 @@ func DecodeManifest(data []byte) (*Manifest, error) {
 	for i := uint32(0); i < count; i++ {
 		name := r.readString()
 		m.Summaries[name] = r.readSummary()
+	}
+	count = r.readUint32()
+	if !r.checkSliceLen(count) {
+		return nil, r.err
+	}
+	if count > 0 {
+		m.CallWrites = make(map[string][]ModuleWrite, count)
+	}
+	for i := uint32(0); i < count; i++ {
+		name := r.readString()
+		length := r.readUint32()
+		if !r.checkSliceLen(length) {
+			return nil, r.err
+		}
+		writes := make([]ModuleWrite, length)
+		for j := range writes {
+			writes[j] = ModuleWrite{Module: r.readString(), Path: r.readString(), Field: r.readString(), Type: r.readType()}
+		}
+		m.CallWrites[name] = writes
 	}
 
 	// Globals

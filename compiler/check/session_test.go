@@ -172,6 +172,32 @@ func TestSession_ExportManifest_IncludesFunctionSummaries(t *testing.T) {
 	}
 }
 
+func TestSession_ExportManifest_OnlyGuaranteedImportedWrites(t *testing.T) {
+	state := newSessionTestChecker(nil).Check(`
+		local M = { state = { witness = {} } }
+		return M
+	`, "state.lua").ExportManifest("state")
+	bridge := newSessionTestChecker(map[string]*io.Manifest{"state": state}).Check(`
+		local state = require("state")
+		local M = {}
+		function M.always()
+			state.state.witness[#state.state.witness + 1] = { kind = "always" }
+		end
+		function M.maybe(enabled)
+			if enabled then
+				state.state.witness[#state.state.witness + 1] = { kind = "maybe" }
+			end
+		end
+		return M
+	`, "bridge.lua").ExportManifest("bridge")
+	if len(bridge.CallWrites["always"]) != 1 {
+		t.Fatalf("unconditional append should export one write, got %v", bridge.CallWrites["always"])
+	}
+	if len(bridge.CallWrites["maybe"]) != 0 {
+		t.Fatalf("conditional append must not export a guaranteed write, got %v", bridge.CallWrites["maybe"])
+	}
+}
+
 func TestSession_ExportManifest_EnablesCrossModuleNarrowing(t *testing.T) {
 	producerChecker := newSessionTestChecker(nil)
 	producer := producerChecker.Check(`
