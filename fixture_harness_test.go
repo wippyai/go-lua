@@ -13,7 +13,9 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
+	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/diag"
+	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/io"
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
@@ -461,9 +463,30 @@ func resolvePackageManifest(name string) *io.Manifest {
 		return testutil.ProcessManifest()
 	case "time":
 		return testutil.TimeManifest()
+	case "sql":
+		return fixtureSQLManifest()
 	default:
 		return nil
 	}
+}
+
+func fixtureSQLManifest() *io.Manifest {
+	row := typ.NewMap(typ.String, typ.Any)
+	rows := typ.NewArray(row)
+	tx := typ.NewInterface("sql.Transaction", []typ.Method{
+		{Name: "query", Type: typ.Func().Param("self", typ.Self).Param("sql", typ.String).Variadic(typ.Any).Returns(rows, typ.NewOptional(typ.LuaError)).Build()},
+		{Name: "execute", Type: typ.Func().Param("self", typ.Self).Param("sql", typ.String).Variadic(typ.Any).Returns(typ.Any, typ.NewOptional(typ.LuaError)).Build()},
+		{Name: "commit", Type: typ.Func().Param("self", typ.Self).Returns(typ.Boolean, typ.NewOptional(typ.LuaError)).Build()},
+		{Name: "rollback", Type: typ.Func().Param("self", typ.Self).Returns(typ.Boolean, typ.NewOptional(typ.LuaError)).Build()},
+	})
+	db := typ.NewInterface("sql.DB", []typ.Method{
+		{Name: "query", Type: typ.Func().Param("self", typ.Self).Param("sql", typ.String).Variadic(typ.Any).Returns(rows, typ.NewOptional(typ.LuaError)).Build()},
+		{Name: "begin", Type: typ.Func().Param("self", typ.Self).OptParam("opts", typ.Any).Returns(tx, typ.NewOptional(typ.LuaError)).Build()},
+		{Name: "release", Type: typ.Func().Param("self", typ.Self).Returns(typ.Boolean, typ.NewOptional(typ.LuaError)).Build()},
+	})
+	m := io.NewManifest("sql")
+	m.SetExport(typ.NewInterface("sql", []typ.Method{{Name: "get", Type: typ.Func().Param("dsn", typ.String).Returns(db, typ.NewOptional(typ.LuaError)).Spec(contract.NewSpec().WithEffects(effect.ErrorReturn{ValueIndex: 0, ErrorIndex: 1})).Build()}}))
+	return m
 }
 
 // installRequire sets up a require() global that loads modules from the given source map.

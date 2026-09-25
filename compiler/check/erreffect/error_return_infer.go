@@ -172,6 +172,9 @@ func HasStrictSameDirectionReturnPattern(graph *cfg.Graph, solution *flow.Soluti
 		states := [2]nilState{}
 		for index, slot := range []int{first, second} {
 			state, ok := classifyNilState(values[slot])
+			if ok && state == nonNilOnly && returnExprMayBeAbsent(info.Exprs, slot, synth, p) {
+				ok = false
+			}
 			if !ok && provenPresent(graph, solution, info.Exprs, slot, p) {
 				state, ok = nonNilOnly, true
 			}
@@ -282,6 +285,12 @@ func HasStrictInverseReturnPattern(
 
 		valueState, okValue := classifyNilState(values[valueIdx])
 		errorState, okError := classifyNilState(values[errorIdx])
+		if okValue && valueState == nonNilOnly && returnExprMayBeAbsent(info.Exprs, valueIdx, synth, p) {
+			okValue = false
+		}
+		if okError && errorState == nonNilOnly && returnExprMayBeAbsent(info.Exprs, errorIdx, synth, p) {
+			okError = false
+		}
 		if !okValue && provenPresent(graph, solution, info.Exprs, valueIdx, p) {
 			valueState, okValue = nonNilOnly, true
 		}
@@ -343,6 +352,9 @@ func HasStrictTruthySuccessReturnPattern(graph *cfg.Graph, solution *flow.Soluti
 			return
 		}
 		errState, ok := classifyNilState(values[errorIdx])
+		if ok && errState == nonNilOnly && returnExprMayBeAbsent(info.Exprs, errorIdx, synth, p) {
+			ok = false
+		}
 		if !ok && provenPresent(graph, solution, info.Exprs, errorIdx, p) {
 			errState, ok = nonNilOnly, true
 		}
@@ -357,7 +369,8 @@ func HasStrictTruthySuccessReturnPattern(graph *cfg.Graph, solution *flow.Soluti
 			return
 		}
 		sawSuccess = true
-		if !typ.IsNever(narrow.ToFalsy(values[valueIdx])) && !provenTruthy(graph, solution, info.Exprs, valueIdx, p) {
+		if (returnExprMayBeAbsent(info.Exprs, valueIdx, synth, p) || !typ.IsNever(narrow.ToFalsy(values[valueIdx]))) &&
+			!provenTruthy(graph, solution, info.Exprs, valueIdx, p) {
 			valid = false
 		}
 	})
@@ -506,6 +519,31 @@ func classifyNilState(t typ.Type) (nilState, bool) {
 		return nilUnknown, false
 	}
 	return nonNilOnly, true
+}
+
+// A table lookup can return nil when its key is absent even if the table's
+// element type is nonnil. A required record field is the exception: its shape
+// guarantees presence. Return correlations need this stronger proof than the
+// element type alone supplies.
+func returnExprMayBeAbsent(exprs []ast.Expr, idx int, synth api.BaseSynth, p cfg.Point) bool {
+	if idx < 0 || idx >= len(exprs) {
+		return false
+	}
+	access, ok := exprs[idx].(*ast.AttrGetExpr)
+	if !ok {
+		return false
+	}
+	key, ok := access.Key.(*ast.StringExpr)
+	if !ok {
+		return true
+	}
+	object := unwrap.Alias(typ.UnwrapAnnotated(synth.TypeOf(access.Object, p)))
+	record, ok := object.(*typ.Record)
+	if !ok {
+		return true
+	}
+	field := record.GetField(key.Value)
+	return field == nil || field.Optional || field.InferredPresence || core.ContainsNil(field.Type)
 }
 
 func cloneContractSpec(fn *typ.Function) (*contract.Spec, bool) {
