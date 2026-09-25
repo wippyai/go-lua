@@ -97,6 +97,21 @@ skipNarrowedAttr:
 	case *ast.NumberExpr:
 		keyType := ops.ParseNumber(key.Value)
 		if it, ok := s.deps.Types.Index(s.deps.Ctx, objType, keyType); ok {
+			// Lua's positive length is a border: the slot at exactly that
+			// index exists, though earlier slots may still be holes.
+			if narrower != nil && s.deps.Paths != nil {
+				if index, valid := numparse.ParseIntegerLiteral(key.Value); valid && index > 0 {
+					tablePath := s.deps.Paths(p, ex.Object, sc, recurse)
+					if length, proved := narrower.ExactLengthAt(p, tablePath); proved && length == index {
+						if present := narrow.RemoveNil(it); !typ.IsNever(present) {
+							return present
+						}
+						// A stale empty-record projection contains no element type;
+						// the assertion proves presence but not the value's shape.
+						return typ.Unknown
+					}
+				}
+			}
 			if specialized := s.stableLocalFunctionValueType(ex, p, sc, it, nil); specialized != nil {
 				return specialized
 			}
@@ -398,6 +413,10 @@ func (a *assumingFlowOps) ArrayLenBoundWithOffsetAt(p cfg.Point, varName string)
 }
 func (a *assumingFlowOps) HasLengthAtLeast(p cfg.Point, path constraint.Path, minimum int64) bool {
 	return a.inner.HasLengthAtLeast(p, path, minimum)
+}
+
+func (a *assumingFlowOps) ExactLengthAt(p cfg.Point, path constraint.Path) (int64, bool) {
+	return a.inner.ExactLengthAt(p, path)
 }
 
 func (a *assumingFlowOps) IsPointDead(p cfg.Point) bool {

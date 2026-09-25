@@ -381,7 +381,24 @@ func (s *Solution) HasLengthAtLeast(p cfg.Point, tablePath constraint.Path, mini
 	}
 	key := s.pkResolver.KeyAt(p, s.operandPath(p, tablePath))
 	lower, ok := state.LengthLowerBoundFor(key)
-	return ok && lower >= minimum
+	if ok && lower >= minimum {
+		return true
+	}
+	exact, ok := state.LengthExactFor(key)
+	return ok && exact >= minimum
+}
+
+// ExactLengthAt returns a proved result of Lua's length operator for this table version.
+func (s *Solution) ExactLengthAt(p cfg.Point, tablePath constraint.Path) (int64, bool) {
+	if s == nil || s.numericStates == nil || s.pkResolver == nil {
+		return 0, false
+	}
+	state := s.numericStates[p]
+	if state == nil {
+		return 0, false
+	}
+	key := s.pkResolver.KeyAt(p, s.operandPath(p, tablePath))
+	return state.LengthExactFor(key)
 }
 
 // ArrayLenBoundWithOffsetAt returns the array key and offset for a symbolic length bound.
@@ -446,7 +463,7 @@ func (s *Solution) NarrowedTypeAt(p cfg.Point, path constraint.Path) typ.Type {
 func (s *Solution) narrowedTypeUnder(p cfg.Point, path constraint.Path, condition constraint.Condition) typ.Type {
 	baseType := s.baseTypeAt(p, path)
 	if baseType == nil {
-		return nil
+		return s.refineExactLengthIndex(p, path, nil)
 	}
 	// For annotated symbols, ensure base type does not drop required structure.
 	// If the base type is not a subtype of the declared type, fall back to declared.
@@ -463,10 +480,35 @@ func (s *Solution) narrowedTypeUnder(p cfg.Point, path constraint.Path, conditio
 		return typ.Never
 	}
 	if !condition.HasConstraints() {
-		return baseType
+		return s.refineExactLengthIndex(p, path, baseType)
 	}
 	baseType = s.narrowRecordFieldAliases(p, path, baseType, condition)
-	return s.applyCondition(p, baseType, path, condition)
+	return s.refineExactLengthIndex(p, path, s.applyCondition(p, baseType, path, condition))
+}
+
+func (s *Solution) refineExactLengthIndex(p cfg.Point, path constraint.Path, t typ.Type) typ.Type {
+	n := len(path.Segments)
+	if n == 0 {
+		return t
+	}
+	last := path.Segments[n-1]
+	if last.Kind != constraint.SegmentIndexInt || last.Index <= 0 {
+		return t
+	}
+	tablePath := path
+	tablePath.Segments = path.Segments[:n-1]
+	length, ok := s.ExactLengthAt(p, tablePath)
+	if !ok || length != int64(last.Index) {
+		return t
+	}
+	if t != nil {
+		if present := narrow.RemoveNil(t); !typ.IsNever(present) {
+			return present
+		}
+	}
+	// An exact positive Lua length proves the border slot exists, though its
+	// element type may be unknown when the prior projection was only nil.
+	return typ.Unknown
 }
 
 // narrowRecordFieldAliases carries a branch refinement through a field that

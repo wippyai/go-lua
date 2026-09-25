@@ -193,6 +193,7 @@ type NumericConstraintVisitor[R any] struct {
 	ModEq      func(ModEq) R
 	LeLenOf    func(LeLenOf) R
 	LenGeConst func(LenGeConst) R
+	LenEqConst func(LenEqConst) R
 	Default    func(NumericConstraint) R
 }
 
@@ -286,6 +287,14 @@ func VisitNumericConstraint[R any](c NumericConstraint, v NumericConstraintVisit
 	case *LenGeConst:
 		if v.LenGeConst != nil {
 			return v.LenGeConst(*cc)
+		}
+	case LenEqConst:
+		if v.LenEqConst != nil {
+			return v.LenEqConst(cc)
+		}
+	case *LenEqConst:
+		if v.LenEqConst != nil {
+			return v.LenEqConst(*cc)
 		}
 	}
 	if v.Default != nil {

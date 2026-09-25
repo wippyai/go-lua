@@ -39,6 +39,7 @@ const (
 	NumModEq              // x % m == r
 	NumLeLenOf            // x <= len(arr) + offset
 	NumLenGeConst         // len(arr) >= c
+	NumLenEqConst         // len(arr) == c
 )
 
 // NumericConstraint is a marker interface for numeric constraints.
@@ -188,6 +189,20 @@ type LeLenOf struct {
 type LenGeConst struct {
 	Array Path
 	C     int64
+}
+
+// LenEqConst records the exact border reported by Lua's length operator.
+type LenEqConst struct {
+	Array Path
+	C     int64
+}
+
+func (c LenEqConst) NumKind() NumKind { return NumLenEqConst }
+func (c LenEqConst) Paths() []Path    { return []Path{c.Array} }
+func (c LenEqConst) Hash() uint64     { return hashNumConstraint(c.NumKind(), c.Array, Path{}, c.C) }
+func (c LenEqConst) Equals(o NumericConstraint) bool {
+	other, ok := o.(LenEqConst)
+	return ok && c.Array.Equal(other.Array) && c.C == other.C
 }
 
 func (c LenGeConst) NumKind() NumKind { return NumLenGeConst }

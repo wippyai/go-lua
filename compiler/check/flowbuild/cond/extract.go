@@ -254,15 +254,19 @@ func ExtractNumericConstraints(fc *core.FlowContext, inputs *flow.Inputs) {
 			return
 		}
 		for _, c := range eff.OnReturn.MustConstraints() {
-			truth, ok := c.(constraint.Truthy)
-			if !ok {
-				continue
+			var numeric []constraint.NumericConstraint
+			switch fact := c.(type) {
+			case constraint.Truthy:
+				if idx, ok := constraint.PlaceholderArgIndex(fact.Path, len(args)); ok {
+					numeric = NumericConstraintsFromExpr(args[idx], p, inputs)
+				}
+			case constraint.EqPath:
+				left, leftOK := constraint.PlaceholderArgIndex(fact.Left, len(args))
+				right, rightOK := constraint.PlaceholderArgIndex(fact.Right, len(args))
+				if leftOK && rightOK {
+					numeric = NumericConstraintsFromExpr(&ast.RelationalOpExpr{Lhs: args[left], Rhs: args[right], Operator: "=="}, p, inputs)
+				}
 			}
-			idx, ok := constraint.PlaceholderArgIndex(truth.Path, len(args))
-			if !ok {
-				continue
-			}
-			numeric := NumericConstraintsFromExpr(args[idx], p, inputs)
 			if len(numeric) == 0 {
 				continue
 			}
@@ -320,31 +324,10 @@ func NumericForConstraints(graph *cfg.Graph, branchPoint cfg.Point, varName stri
 
 func ExtractLenPath(expr ast.Expr, p cfg.Point, graph *cfg.Graph) constraint.Path {
 	lenOp, ok := expr.(*ast.UnaryLenOpExpr)
-	if !ok {
+	if !ok || graph == nil {
 		return constraint.Path{}
 	}
-
-	ident, ok := lenOp.Expr.(*ast.IdentExpr)
-	if !ok || ident.Value == "" {
-		return constraint.Path{}
-	}
-
-	bindings := graph.Bindings()
-	if bindings == nil {
-		return constraint.Path{Root: ident.Value}
-	}
-
-	sym, found := bindings.SymbolOf(ident)
-	if !found || sym == 0 {
-		return constraint.Path{Root: ident.Value}
-	}
-
-	name := ident.Value
-	if n := bindings.Name(sym); n != "" {
-		name = n
-	}
-	lenPath := constraint.Path{Root: name, Symbol: sym}
-	return path.WithVersion(lenPath, graph, p)
+	return path.FromExprWithBindingsAt(lenOp.Expr, nil, graph.Bindings(), graph, p)
 }
 
 // ExtractLenBound extracts symbolic len-path bound with an optional constant offset.

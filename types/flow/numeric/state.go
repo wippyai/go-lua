@@ -53,6 +53,7 @@ type State struct {
 	lenRefs map[constraint.PathKey]lenRefBound
 	// lengthLower contains lower bounds for versioned table lengths.
 	lengthLower map[constraint.PathKey]int64
+	lengthExact map[constraint.PathKey]int64
 
 	// unsat is true if the state is unsatisfiable.
 	unsat bool
@@ -91,6 +92,7 @@ func NewState() *State {
 		relations:   make(map[relationKey]int64),
 		lenRefs:     make(map[constraint.PathKey]lenRefBound),
 		lengthLower: make(map[constraint.PathKey]int64),
+		lengthExact: make(map[constraint.PathKey]int64),
 	}
 }
 
@@ -131,6 +133,7 @@ func (s *State) Clone() *State {
 		relations:   make(map[relationKey]int64, len(s.relations)),
 		lenRefs:     make(map[constraint.PathKey]lenRefBound, len(s.lenRefs)),
 		lengthLower: make(map[constraint.PathKey]int64, len(s.lengthLower)),
+		lengthExact: make(map[constraint.PathKey]int64, len(s.lengthExact)),
 	}
 	for _, k := range constraint.SortedPathKeys(s.bounds) {
 		c.bounds[k] = s.bounds[k]
@@ -149,6 +152,9 @@ func (s *State) Clone() *State {
 	}
 	for k, v := range s.lengthLower {
 		c.lengthLower[k] = v
+	}
+	for k, v := range s.lengthExact {
+		c.lengthExact[k] = v
 	}
 
 	return c
@@ -231,6 +237,11 @@ func Join(a, b *State) *State {
 	for k, lower := range a.lengthLower {
 		if other, ok := b.lengthLower[k]; ok {
 			result.lengthLower[k] = min(lower, other)
+		}
+	}
+	for k, exact := range a.lengthExact {
+		if other, ok := b.lengthExact[k]; ok && other == exact {
+			result.lengthExact[k] = exact
 		}
 	}
 
@@ -357,6 +368,13 @@ func (s *State) ApplyConstraintWithResolver(c constraint.NumericConstraint, reso
 			key := resolve(nc.Array)
 			if key != "" && nc.C > s.lengthLower[key] {
 				s.lengthLower[key] = nc.C
+			}
+			return struct{}{}
+		},
+		LenEqConst: func(nc constraint.LenEqConst) struct{} {
+			key := resolve(nc.Array)
+			if key != "" {
+				s.lengthExact[key] = nc.C
 			}
 			return struct{}{}
 		},
@@ -526,6 +544,22 @@ func (s *State) LengthLowerBoundFor(key constraint.PathKey) (int64, bool) {
 	return v, ok
 }
 
+// LengthExactFor returns an asserted exact Lua length for this table version.
+func (s *State) LengthExactFor(key constraint.PathKey) (int64, bool) {
+	if s == nil {
+		return 0, false
+	}
+	v, ok := s.lengthExact[key]
+	return v, ok
+}
+
+// ClearExactLengths drops exact facts at a join with an unproved predecessor.
+func (s *State) ClearExactLengths() {
+	if s != nil {
+		clear(s.lengthExact)
+	}
+}
+
 // LenRefFor returns the array key if variable has a symbolic length bound.
 //
 // A length reference means "key <= #arrKey" (variable is bounded by array length).
@@ -682,6 +716,9 @@ func (s *State) Equals(other *State) bool {
 	if len(s.lengthLower) != len(other.lengthLower) {
 		return false
 	}
+	if len(s.lengthExact) != len(other.lengthExact) {
+		return false
+	}
 
 	for _, k := range constraint.SortedPathKeys(s.bounds) {
 		v := s.bounds[k]
@@ -715,6 +752,11 @@ func (s *State) Equals(other *State) bool {
 			return false
 		}
 	}
+	for k, v := range s.lengthExact {
+		if otherValue, ok := other.lengthExact[k]; !ok || otherValue != v {
+			return false
+		}
+	}
 
 	return true
 }
@@ -737,7 +779,7 @@ func (s *State) isTop() bool {
 		return false
 	}
 
-	return len(s.bounds) == 0 && len(s.modular) == 0 && len(s.relations) == 0 && len(s.lenRefs) == 0 && len(s.lengthLower) == 0
+	return len(s.bounds) == 0 && len(s.modular) == 0 && len(s.relations) == 0 && len(s.lenRefs) == 0 && len(s.lengthLower) == 0 && len(s.lengthExact) == 0
 }
 
 func minInt64(a, b int64) int64 {
@@ -828,6 +870,7 @@ func (s *State) Rekey(remap map[constraint.PathKey]constraint.PathKey) *State {
 		relations:   make(map[relationKey]int64, len(s.relations)),
 		lenRefs:     make(map[constraint.PathKey]lenRefBound, len(s.lenRefs)),
 		lengthLower: make(map[constraint.PathKey]int64, len(s.lengthLower)),
+		lengthExact: make(map[constraint.PathKey]int64, len(s.lengthExact)),
 	}
 
 	// Remap bounds
@@ -883,6 +926,12 @@ func (s *State) Rekey(remap map[constraint.PathKey]constraint.PathKey) *State {
 			k = mapped
 		}
 		result.lengthLower[k] = lower
+	}
+	for k, exact := range s.lengthExact {
+		if mapped, ok := remap[k]; ok {
+			k = mapped
+		}
+		result.lengthExact[k] = exact
 	}
 
 	return result

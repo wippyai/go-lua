@@ -179,6 +179,7 @@ type FlowOps interface {
 	// varName <= len(array) + offset.
 	ArrayLenBoundWithOffsetAt(p cfg.Point, varName string) (arrKey string, offset int64, ok bool)
 	HasLengthAtLeast(p cfg.Point, tablePath constraint.Path, minimum int64) bool
+	ExactLengthAt(p cfg.Point, tablePath constraint.Path) (int64, bool)
 
 	// IsPointDead returns whether a CFG point is unreachable.
 	IsPointDead(p cfg.Point) bool

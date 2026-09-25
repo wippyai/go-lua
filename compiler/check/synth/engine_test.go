@@ -83,6 +83,7 @@ func (m mockFlowOps) BoundsAt(p cfg.Point, name string) (lower, upper int64, ok 
 	return 0, 0, false
 }
 func (m mockFlowOps) HasLengthAtLeast(cfg.Point, constraint.Path, int64) bool { return false }
+func (m mockFlowOps) ExactLengthAt(cfg.Point, constraint.Path) (int64, bool)  { return 0, false }
 
 func (m mockFlowOps) ArrayLenBoundAt(p cfg.Point, varName string) (arrKey string, ok bool) {
 	return "", false

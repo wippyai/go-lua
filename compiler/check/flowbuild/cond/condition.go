@@ -962,6 +962,8 @@ func lengthLowerConstraintFromComparison(e *ast.RelationalOpExpr, p cfg.Point, i
 	if path := ExtractLenPath(e.Lhs, p, graph); !path.IsEmpty() {
 		if n, ok := numconst.IntConstFromExpr(e.Rhs); ok {
 			switch e.Operator {
+			case "==":
+				return constraint.LenEqConst{Array: path, C: n}
 			case ">=":
 				return constraint.LenGeConst{Array: path, C: n}
 			case ">":
@@ -972,6 +974,8 @@ func lengthLowerConstraintFromComparison(e *ast.RelationalOpExpr, p cfg.Point, i
 	if path := ExtractLenPath(e.Rhs, p, graph); !path.IsEmpty() {
 		if n, ok := numconst.IntConstFromExpr(e.Lhs); ok {
 			switch e.Operator {
+			case "==":
+				return constraint.LenEqConst{Array: path, C: n}
 			case "<=":
 				return constraint.LenGeConst{Array: path, C: n}
 			case "<":
