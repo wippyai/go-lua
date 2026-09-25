@@ -107,6 +107,15 @@ func ExtractDeclaredTypes(fc *core.FlowContext, inputs *flow.Inputs) {
 		}
 		inputs.DeclaredTypes[sym] = resolve.Ref(t, fc.Base)
 	}
+	for _, slot := range fc.Graph.ParamSlotsReadOnly() {
+		if slot.Symbol == 0 || slot.TypeAnnotation == nil {
+			continue
+		}
+		if inputs.AnnotatedVars == nil {
+			inputs.AnnotatedVars = make(map[cfg.SymbolID]bool)
+		}
+		inputs.AnnotatedVars[slot.Symbol] = true
+	}
 
 	if fc.Services != nil {
 		fc.Graph.EachFuncDef(func(p cfg.Point, info *cfg.FuncDefInfo) {
