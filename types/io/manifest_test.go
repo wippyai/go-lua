@@ -360,6 +360,7 @@ func TestDecodeManifest_RejectsCollectionLengthBeyondInput(t *testing.T) {
 	w.writeByte(manifestVersion)
 	w.writeUint64(0)
 	w.writeString("test")
+	w.writeBool(false) // Lua body provenance
 	w.writeBool(false)
 	w.writeUint32(1024)
 

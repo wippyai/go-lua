@@ -462,6 +462,7 @@ func (s *Session) ExportManifest(modulePath string) *io.Manifest {
 	}
 
 	manifest := io.NewManifest(modulePath)
+	manifest.BodyBacked = true
 	exportType := s.ExportType()
 	manifest.SetExport(exportType)
 

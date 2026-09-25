@@ -1,0 +1,1 @@
+{"description":"Real node_reader get_db forwarding and guarded DB use with an external sql declaration.","files":["sql.lua","main.lua"],"check":{"errors":0}}
