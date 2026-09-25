@@ -639,6 +639,19 @@ func checkAttrGet(e *ast.AttrGetExpr, p cfg.Point, narrowView api.BaseSynth, res
 	}
 
 	if !result.Found {
+		// A table may acquire a field through an alias even when its inferred
+		// record shape does not list it. A live non-nil guard proves that this
+		// particular read succeeds; the flow path version invalidates the proof
+		// after a write.
+		if resolver.bindings != nil && resolver.solution != nil {
+			if guarded, ok := resolver.solution.(interface {
+				IsNonNilAt(cfg.Point, constraint.Path) bool
+			}); ok {
+				if fieldPath := path.FromExprWithBindings(e, nil, resolver.bindings); !fieldPath.IsEmpty() && guarded.IsNonNilAt(p, fieldPath) {
+					return diags
+				}
+			}
+		}
 		pos := diag.Position{File: sourceName, Line: e.Line(), Column: e.Column()}
 		span := ast.SpanOf(e)
 		if e.Key != nil && e.Key.Line() > 0 {
