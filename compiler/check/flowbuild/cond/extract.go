@@ -387,6 +387,25 @@ func ExtractCallOnReturnConstraints(
 	if len(fc.Derived.CapturedReassignments) != 0 {
 		rebindingCallees = CapturedRebindingsByCallee(fc.Graph)
 	}
+	nestedAt := func(p cfg.Point, exprs []ast.Expr, assigned map[cfg.SymbolID]bool) constraint.Condition {
+		sc := fc.Scopes[p]
+		constResolver := predicate.BuildConstResolver(inputs, p)
+		var combined constraint.Condition
+		for _, expr := range exprs {
+			for _, call := range evaluatedNestedCalls(expr, fc.Graph) {
+				fact := ConstraintsFromCallOnReturn(call, p, sc, inputs, fc.Derived.Synth, fc.Derived.TypeKeyRes, fc.Derived.RefinementBySym, constResolver, fc.Derived.SymResolver, fc.Graph, fc.ModuleBindings)
+				fact = stableNestedFacts(fact, fc.Graph, fc.Derived.CapturedReassignments, assigned)
+				if fact.HasConstraints() {
+					if combined.HasConstraints() {
+						combined = constraint.And(combined, fact)
+					} else {
+						combined = fact
+					}
+				}
+			}
+		}
+		return combined
+	}
 
 	for _, p := range fc.Graph.RPO() {
 		if !PointHasTerminatingCallSite(fc.Graph, p, fc.Derived.Synth, fc.Derived.SymResolver, fc.Derived.RefinementBySym, fc.ModuleBindings) {
@@ -410,6 +429,18 @@ func ExtractCallOnReturnConstraints(
 
 		cond := ConstraintsFromCallOnReturn(info, p, sc, inputs, fc.Derived.Synth, fc.Derived.TypeKeyRes, fc.Derived.RefinementBySym, constResolver, fc.Derived.SymResolver, fc.Graph, fc.ModuleBindings)
 		cond = stableCallConstraints(cond, info, fc.Derived.CapturedReassignments, rebindingCallees, fc.Graph.Bindings())
+		if info != nil && info.Call != nil {
+			// A normal return from the statement means its evaluated arguments
+			// returned too. Their local-value facts survive the enclosing call.
+			nested := nestedAt(p, []ast.Expr{info.Call}, nil)
+			if nested.HasConstraints() {
+				if cond.HasConstraints() {
+					cond = constraint.And(cond, nested)
+				} else {
+					cond = nested
+				}
+			}
+		}
 		if !cond.HasConstraints() {
 			return
 		}
@@ -429,6 +460,19 @@ func ExtractCallOnReturnConstraints(
 		cond := ConstraintsFromAssignOnReturn(info, p, sc, inputs, fc.Derived.Synth, fc.Derived.TypeKeyRes, fc.Derived.RefinementBySym, constResolver, fc.Derived.SymResolver, fc.Graph, fc.ModuleBindings)
 		for _, call := range info.SourceCalls {
 			cond = stableCallConstraints(cond, call, fc.Derived.CapturedReassignments, rebindingCallees, fc.Graph.Bindings())
+		}
+		assigned := make(map[cfg.SymbolID]bool)
+		for _, target := range info.Targets {
+			if target.Kind == cfg.TargetIdent && target.Symbol != 0 {
+				assigned[target.Symbol] = true
+			}
+		}
+		if nested := nestedAt(p, info.Sources, assigned); nested.HasConstraints() {
+			if cond.HasConstraints() {
+				cond = constraint.And(cond, nested)
+			} else {
+				cond = nested
+			}
 		}
 		if !cond.HasConstraints() {
 			return
