@@ -35,6 +35,9 @@ type SessionStore struct {
 	// GraphParentHash records the parent scope hash for each graph ID.
 	GraphParentHash     map[uint64]uint64
 	classSelfIdentities map[classSelfKey]*typ.Recursive
+	// classSnapshots holds the snapshot each class identity is bound to in
+	// the current fixpoint round.
+	classSnapshots map[uint64]*typ.Recursive
 
 	// lastSwapDiffs records which channels changed during the most recent FixpointSwap.
 	// Stored per-session to avoid cross-session contamination.
@@ -49,7 +52,9 @@ type classSelfKey struct {
 }
 
 // BindClassSelf gives a class table one recursion identity across fixpoint
-// rounds. Its body is a fresh, complete snapshot on every call.
+// rounds. Within a round every binding joins its body with the round's
+// snapshot of the class, so each snapshot the round hands out is refined by
+// the later ones; the next round starts from a fresh snapshot.
 func (s *SessionStore) BindClassSelf(graph *cfg.Graph, at cfg.Point, sym cfg.SymbolID, name string, body typ.Type) typ.Type {
 	if s == nil || graph == nil || sym == 0 || body == nil {
 		return body
@@ -68,7 +73,20 @@ func (s *SessionStore) BindClassSelf(graph *cfg.Graph, at cfg.Point, sym cfg.Sym
 		identity = typ.NewRecursivePlaceholder(name)
 		s.classSelfIdentities[key] = identity
 	}
-	return typ.BindRecursiveSnapshotWithFields(identity, body, directSelfFields(graph, at, sym))
+	snapshot := typ.BindRecursiveSnapshotWithFields(identity, body, directSelfFields(graph, at, sym))
+	if round := s.classSnapshots[identity.ID]; round != nil {
+		if typ.TypeEquals(round, snapshot) {
+			return round
+		}
+		if joined := typ.JoinRecursiveSnapshots(round, snapshot); joined != nil {
+			snapshot = joined
+		}
+	}
+	if s.classSnapshots == nil {
+		s.classSnapshots = make(map[uint64]*typ.Recursive)
+	}
+	s.classSnapshots[identity.ID] = snapshot
+	return snapshot
 }
 
 // directSelfFields finds fields definitely assigned the table itself before
@@ -326,6 +344,7 @@ func (s *SessionStore) resetScratch() {
 	if s == nil {
 		return
 	}
+	s.classSnapshots = nil
 	if s.Scratch == nil {
 		s.Scratch = NewIterationScratch()
 		return

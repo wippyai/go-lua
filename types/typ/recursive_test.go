@@ -840,3 +840,26 @@ func TestRecursiveHash_SharedSubstructureHashesOnce(t *testing.T) {
 		t.Fatal("hashing a shared recursive body did not finish")
 	}
 }
+
+func TestJoinRecursiveSnapshots_JoinsRecordBodies(t *testing.T) {
+	identity := NewRecursivePlaceholder("Class")
+	a := BindRecursiveSnapshot(identity, NewRecord().Field("name", String).Field("next", identity).Build())
+	b := BindRecursiveSnapshot(identity, NewRecord().Field("id", Integer).Field("next", identity).Build())
+
+	got := JoinRecursiveSnapshots(a, b)
+	if got == nil || got.ID != identity.ID {
+		t.Fatalf("expected a snapshot of %s, got %v", identity.Name, got)
+	}
+	body, ok := got.Body.(*Record)
+	if !ok || body.GetField("name") == nil || body.GetField("id") == nil {
+		t.Fatalf("expected both fields, got %s", got.Body)
+	}
+	next := body.GetField("next")
+	if r, ok := next.Type.(*Recursive); !ok || r != got {
+		t.Fatalf("expected next to refer to the joined snapshot, got %s", next.Type)
+	}
+	other := NewRecursivePlaceholder("Other")
+	if JoinRecursiveSnapshots(a, BindRecursiveSnapshot(other, NewRecord().Build())) != nil {
+		t.Fatalf("snapshots of different identities must not join")
+	}
+}
