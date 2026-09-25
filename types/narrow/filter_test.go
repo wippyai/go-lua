@@ -343,6 +343,18 @@ func TestByFieldLiteral_DiscriminatedUnion(t *testing.T) {
 	}
 }
 
+func TestByFieldLiteral_MissingFieldDoesNotProveImpossible(t *testing.T) {
+	resolver := newMockResolver()
+	left := typ.NewRecord().Field("id", typ.String).Build()
+	right := typ.NewRecord().Field("error", typ.String).Build()
+	union := typ.NewUnion(left, right)
+
+	got := ByFieldLiteral(union, "node_type", typ.LiteralString("parallel"), resolver)
+	if !typ.TypeEquals(got, union) {
+		t.Fatalf("mutable records can gain the field at runtime, got %v", got)
+	}
+}
+
 func TestByFieldLiteral_BuiltinTableTopMaterializesRecord(t *testing.T) {
 	resolver := newMockResolver()
 	tableTop := typ.NewInterface("table", nil)

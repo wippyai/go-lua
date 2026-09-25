@@ -345,6 +345,11 @@ func ByFieldLiteral(t typ.Type, field string, lit *typ.Literal, resolver Resolve
 	}
 
 	return FilterByMatch(t, func(m typ.Type) bool {
+		if rec, ok := unwrap.Alias(m).(*typ.Record); ok && rec.GetField(field) == nil {
+			// Lua tables can acquire fields after their shape was inferred.
+			// A missing field in that shape cannot rule out this branch.
+			return true
+		}
 		return FieldMatchesLiteral(m, field, lit, resolver)
 	}, false)
 }
