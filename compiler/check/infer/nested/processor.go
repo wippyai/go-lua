@@ -227,6 +227,9 @@ func (p *Processor) processNestedFunction(
 									if t := parentResult.FlowSolution.TypeAt(info.NF.Point, path); t != nil && !typ.IsAny(t) && !typ.IsUnknown(t) {
 										captured = typ.ExtendRecordWithField(captured, name, t)
 									}
+									if t := initializedCapturedField(parentResult.Graph, info.NF.Point, sym, name, parentResult.NarrowSynth.TypeOf); t != nil {
+										captured = typ.ExtendRecordWithField(captured, name, t)
+									}
 								}
 							}
 							capturedTypes[sym] = captured
