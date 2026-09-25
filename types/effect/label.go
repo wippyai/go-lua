@@ -234,16 +234,22 @@ func (r Return) Equals(other Label) bool {
 type ErrorReturn struct {
 	ValueIndex int // Value return position (0-based)
 	ErrorIndex int // Error return position (0-based)
+	// ValueTruthy is proved by the body when success returns are truthy.
+	// It lets a falsy guard on the value prove that the error is present.
+	ValueTruthy bool
 }
 
 func (ErrorReturn) label() {}
 func (e ErrorReturn) String() string {
+	if e.ValueTruthy {
+		return fmt.Sprintf("truthy_errret(val[%d], err[%d])", e.ValueIndex, e.ErrorIndex)
+	}
 	return fmt.Sprintf("errret(val[%d], err[%d])", e.ValueIndex, e.ErrorIndex)
 }
 func (e ErrorReturn) Equals(other Label) bool {
 	if o, ok := other.(ErrorReturn); ok {
 		return e.ValueIndex == o.ValueIndex &&
-			e.ErrorIndex == o.ErrorIndex
+			e.ErrorIndex == o.ErrorIndex && e.ValueTruthy == o.ValueTruthy
 	}
 
 	return false

@@ -34,6 +34,7 @@ func init() {
 	Register(mutateCodec{})
 	Register(returnCodec{})
 	Register(errorReturnCodec{})
+	Register(truthyErrorReturnCodec{})
 	Register(returnLengthCodec{})
 	Register(iteratorCodec{})
 	Register(tableMutatorCodec{})
@@ -184,6 +185,22 @@ func (errorReturnCodec) Decode(r Reader) (Label, error) {
 		return nil, err
 	}
 	return ErrorReturn{ValueIndex: int(valIdx), ErrorIndex: int(errIdx)}, nil
+}
+
+// truthyErrorReturnCodec uses a separate key so old error-return payloads
+// remain readable without changing their binary layout.
+type truthyErrorReturnCodec struct{ errorReturnCodec }
+
+func (truthyErrorReturnCodec) Key() string { return KeyTruthyErrorReturn }
+
+func (truthyErrorReturnCodec) Decode(r Reader) (Label, error) {
+	label, err := (errorReturnCodec{}).Decode(r)
+	if err != nil {
+		return nil, err
+	}
+	relation := label.(ErrorReturn)
+	relation.ValueTruthy = true
+	return relation, nil
 }
 
 // returnLengthCodec handles ReturnLength effect serialization.

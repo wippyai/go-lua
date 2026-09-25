@@ -6,7 +6,10 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-type ReturnCorrelation struct{ ValueIndex, ErrorIndex int }
+type ReturnCorrelation struct {
+	ValueIndex, ErrorIndex int
+	ValueTruthy            bool
+}
 
 type GuardedTypeCorrelation struct {
 	GuardIndex, TargetIndex int
@@ -84,6 +87,15 @@ func returnRelation(paths []constraint.Path, inverse, together []ReturnCorrelati
 			}
 		}
 		result = constraint.And(result, constraint.Or(constraint.FromConstraints(present...), constraint.FromConstraints(absent...)))
+	}
+	for _, pair := range inverse {
+		if !pair.ValueTruthy || pair.ValueIndex < 0 || pair.ErrorIndex < 0 || pair.ValueIndex >= len(paths) || pair.ErrorIndex >= len(paths) || paths[pair.ValueIndex].IsEmpty() || paths[pair.ErrorIndex].IsEmpty() {
+			continue
+		}
+		result = constraint.And(result, constraint.Or(
+			constraint.FromConstraints(constraint.Truthy{Path: paths[pair.ValueIndex]}, constraint.IsNil{Path: paths[pair.ErrorIndex]}),
+			constraint.FromConstraints(constraint.Falsy{Path: paths[pair.ValueIndex]}, constraint.Truthy{Path: paths[pair.ErrorIndex]}),
+		))
 	}
 	for _, relation := range guarded {
 		if relation.GuardIndex < 0 || relation.TargetIndex < 0 || relation.GuardIndex >= len(paths) || relation.TargetIndex >= len(paths) || paths[relation.GuardIndex].IsEmpty() || paths[relation.TargetIndex].IsEmpty() || relation.TargetType == nil {

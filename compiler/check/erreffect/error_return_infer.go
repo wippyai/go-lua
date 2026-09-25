@@ -36,6 +36,12 @@ func AttachInferredErrorReturnSpec(
 		HasStrictInverseReturnPattern(graph, solution, base, 0, 1) {
 		fn = AttachErrorReturnSpec(fn, 0, 1)
 	}
+	if len(fn.Returns) == 2 && solution != nil &&
+		(unwrap.IsOptionalLike(fn.Returns[0]) || unwrap.IsNilType(fn.Returns[0])) &&
+		HasStrictInverseReturnPattern(graph, solution, base, 0, 1) &&
+		HasStrictTruthySuccessReturnPattern(graph, solution, base, 0, 1) {
+		fn = attachErrorReturnSpec(fn, 0, 1, true)
+	}
 	if solution != nil && len(fn.Returns) > 2 {
 		for first := 0; first < len(fn.Returns); first++ {
 			for second := first + 1; second < len(fn.Returns); second++ {
@@ -235,6 +241,88 @@ func HasStrictInverseReturnPattern(
 	return classified && !incompatible && (solution != nil || forwarded || sawSuccess && sawFailure)
 }
 
+// HasStrictTruthySuccessReturnPattern proves that every success return has a
+// truthy value. It is used only together with the inverse nil-state proof.
+func HasStrictTruthySuccessReturnPattern(graph *cfg.Graph, solution *flow.Solution,
+	synth api.BaseSynth, valueIdx, errorIdx int) bool {
+	if graph == nil || solution == nil || synth == nil {
+		return false
+	}
+	valid, sawSuccess := true, false
+	graph.EachReturn(func(p cfg.Point, info *cfg.ReturnInfo) {
+		if !valid || info == nil || solution.IsPointDead(p) || len(info.Exprs) == 0 && info.Stmt == nil {
+			return
+		}
+		if len(info.Exprs) == 1 {
+			if call, ok := info.Exprs[0].(*ast.FuncCallExpr); ok && !call.AdjustRet {
+				if allCallableAlternativesHaveTruthyErrorReturn(synth.TypeOf(call.Func, p), valueIdx, errorIdx) {
+					sawSuccess = true
+					return
+				}
+			}
+		}
+		values := synth.ExpandValues(info.Exprs, errorIdx+1, p)
+		if len(values) <= errorIdx || len(values) <= valueIdx {
+			valid = false
+			return
+		}
+		errState, ok := classifyNilState(values[errorIdx])
+		if !ok && provenPresent(graph, solution, info.Exprs, errorIdx, p) {
+			errState, ok = nonNilOnly, true
+		}
+		if !ok && implicitReturnSlotIsNil(info.Exprs, errorIdx) {
+			errState, ok = nilOnly, true
+		}
+		if !ok {
+			valid = false
+			return
+		}
+		if errState != nilOnly {
+			return
+		}
+		sawSuccess = true
+		if !typ.IsNever(narrow.ToFalsy(values[valueIdx])) && !provenTruthy(graph, solution, info.Exprs, valueIdx, p) {
+			valid = false
+		}
+	})
+	return valid && sawSuccess
+}
+
+func provenTruthy(graph *cfg.Graph, solution *flow.Solution, exprs []ast.Expr, idx int, p cfg.Point) bool {
+	if solution == nil || graph == nil || idx < 0 || idx >= len(exprs) {
+		return false
+	}
+	path := flowpath.FromExprWithBindingsAt(exprs[idx], nil, graph.Bindings(), graph, p)
+	return !path.IsEmpty() && solution.IsTruthyAt(p, path)
+}
+
+func allCallableAlternativesHaveTruthyErrorReturn(t typ.Type, valueIdx, errorIdx int) bool {
+	if t == nil {
+		return false
+	}
+	if union, ok := typ.UnwrapAnnotated(t).(*typ.Union); ok {
+		if len(union.Members) == 0 {
+			return false
+		}
+		for _, member := range union.Members {
+			if !allCallableAlternativesHaveTruthyErrorReturn(member, valueIdx, errorIdx) {
+				return false
+			}
+		}
+		return true
+	}
+	spec := contract.ExtractSpec(t)
+	if spec == nil {
+		return false
+	}
+	for _, label := range spec.Effects.Labels {
+		if relation, ok := label.(effect.ErrorReturn); ok && relation.ValueIndex == valueIdx && relation.ErrorIndex == errorIdx && relation.ValueTruthy {
+			return true
+		}
+	}
+	return false
+}
+
 // A direct multi-result return preserves every relation guaranteed by its
 // callee. It needs no independent success and failure witnesses in this body.
 func forwardsErrorReturn(exprs []ast.Expr, synth api.BaseSynth, p cfg.Point, valueIdx, errorIdx int) bool {
@@ -293,13 +381,17 @@ func provenPresent(graph *cfg.Graph, solution *flow.Solution, exprs []ast.Expr, 
 }
 
 func AttachErrorReturnSpec(fn *typ.Function, valueIndex, errorIndex int) *typ.Function {
+	return attachErrorReturnSpec(fn, valueIndex, errorIndex, false)
+}
+
+func attachErrorReturnSpec(fn *typ.Function, valueIndex, errorIndex int, valueTruthy bool) *typ.Function {
 	if fn == nil {
 		return fn
 	}
 	if spec := contract.ExtractSpec(fn); spec != nil {
 		for _, label := range spec.Effects.Labels {
 			if existing, ok := label.(effect.ErrorReturn); ok &&
-				existing.ValueIndex == valueIndex && existing.ErrorIndex == errorIndex {
+				existing.ValueIndex == valueIndex && existing.ErrorIndex == errorIndex && existing.ValueTruthy == valueTruthy {
 				return fn
 			}
 		}
@@ -308,7 +400,7 @@ func AttachErrorReturnSpec(fn *typ.Function, valueIndex, errorIndex int) *typ.Fu
 	if !ok {
 		return fn
 	}
-	spec.Effects = spec.Effects.With(effect.ErrorReturn{ValueIndex: valueIndex, ErrorIndex: errorIndex})
+	spec.Effects = spec.Effects.With(effect.ErrorReturn{ValueIndex: valueIndex, ErrorIndex: errorIndex, ValueTruthy: valueTruthy})
 	return cloneFunctionWithSpec(fn, spec)
 }
 

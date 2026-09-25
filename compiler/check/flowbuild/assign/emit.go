@@ -1206,8 +1206,9 @@ func correlationsFromFunctionType(fnType typ.Type) ([]ReturnCorrelation, []Retur
 		for _, label := range spec.Effects.Labels {
 			if er, ok := label.(effect.ErrorReturn); ok {
 				inverse = append(inverse, ReturnCorrelation{
-					ValueIndex: er.ValueIndex,
-					ErrorIndex: er.ErrorIndex,
+					ValueIndex:  er.ValueIndex,
+					ErrorIndex:  er.ErrorIndex,
+					ValueTruthy: er.ValueTruthy,
 				})
 			}
 			if cr, ok := label.(effect.CorrelatedReturn); ok {

@@ -157,6 +157,15 @@ func (s *Solution) conditionAtFallback(p cfg.Point, depth int) constraint.Condit
 // presence where the type cannot express it, as for a value typed any that a
 // guard proved truthy.
 func (s *Solution) IsNonNilAt(p cfg.Point, path constraint.Path) bool {
+	return s.hasPresenceFactAt(p, path, false)
+}
+
+// IsTruthyAt reports whether every reachable path to p proves a value truthy.
+func (s *Solution) IsTruthyAt(p cfg.Point, path constraint.Path) bool {
+	return s.hasPresenceFactAt(p, path, true)
+}
+
+func (s *Solution) hasPresenceFactAt(p cfg.Point, path constraint.Path, truthyOnly bool) bool {
 	if s == nil || s.pkResolver == nil || path.IsEmpty() {
 		return false
 	}
@@ -201,6 +210,9 @@ func (s *Solution) IsNonNilAt(p cfg.Point, path constraint.Path) bool {
 			case constraint.Truthy:
 				factPath = v.Path
 			case constraint.NotNil:
+				if truthyOnly {
+					continue
+				}
 				factPath = v.Path
 			default:
 				continue
