@@ -249,6 +249,15 @@ func inferFunctionRefinementCore(
 	if !onReturnCond.IsFalse() {
 		onReturnCond = substituteToPlaceholdersCondition(filterParamCondition(onReturnCond, paramIndex, paramNameIndex), paramIndex, paramNameIndex)
 	}
+	// The accumulator starts at False to mean "no evidence yet". Once
+	// inference is complete, an unobserved truthy or falsy return has no
+	// implication; it must not make that caller branch unreachable.
+	if onTrueCond.IsFalse() {
+		onTrueCond = constraint.TrueCondition()
+	}
+	if onFalseCond.IsFalse() {
+		onFalseCond = constraint.TrueCondition()
+	}
 
 	exitHasPredecessors := len(graphPredecessors(g, g.Exit())) > 0
 	terminates := !hasReturnNode && !exitHasPredecessors
