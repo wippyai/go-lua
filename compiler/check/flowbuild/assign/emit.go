@@ -1309,6 +1309,18 @@ func guardedTypeCorrelationsFromCall(
 
 	var out []GuardedTypeCorrelation
 	for _, label := range spec.Effects.Labels {
+		if relation, ok := label.(effect.GuardedReturnType); ok {
+			if relation.GuardIndex < 0 || relation.TargetIndex < 0 || relation.GuardIndex >= len(fn.Returns) || relation.TargetIndex >= len(fn.Returns) {
+				continue
+			}
+			if targetType, ok := relation.TargetType.(typ.Type); ok && targetType.Hash() == relation.TargetHash {
+				out = append(out, GuardedTypeCorrelation{
+					GuardIndex: relation.GuardIndex, TargetIndex: relation.TargetIndex,
+					GuardOnTruthy: true, TargetType: targetType,
+				})
+			}
+			continue
+		}
 		ret, ok := label.(effect.Return)
 		if !ok || ret.Transform == nil || ret.ReturnIndex < 0 {
 			continue

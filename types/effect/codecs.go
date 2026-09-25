@@ -35,6 +35,7 @@ func init() {
 	Register(returnCodec{})
 	Register(errorReturnCodec{})
 	Register(truthyErrorReturnCodec{})
+	Register(guardedReturnTypeCodec{})
 	Register(returnLengthCodec{})
 	Register(iteratorCodec{})
 	Register(tableMutatorCodec{})
@@ -201,6 +202,40 @@ func (truthyErrorReturnCodec) Decode(r Reader) (Label, error) {
 	relation := label.(ErrorReturn)
 	relation.ValueTruthy = true
 	return relation, nil
+}
+
+type guardedReturnTypeCodec struct{}
+
+func (guardedReturnTypeCodec) Key() string { return KeyGuardedReturnType }
+
+func (guardedReturnTypeCodec) Encode(l Label, w Writer) error {
+	g := l.(GuardedReturnType)
+	for _, part := range []int32{int32(g.GuardIndex), int32(g.TargetIndex), int32(g.TargetHash >> 32), int32(g.TargetHash)} {
+		if err := w.WriteInt32(part); err != nil {
+			return err
+		}
+	}
+	return w.WriteType(g.TargetType)
+}
+
+func (guardedReturnTypeCodec) Decode(r Reader) (Label, error) {
+	parts := [4]int32{}
+	for i := range parts {
+		part, err := r.ReadInt32()
+		if err != nil {
+			return nil, err
+		}
+		parts[i] = part
+	}
+	targetType, err := r.ReadType()
+	if err != nil {
+		return nil, err
+	}
+	return GuardedReturnType{
+		GuardIndex: int(parts[0]), TargetIndex: int(parts[1]),
+		TargetHash: uint64(uint32(parts[2]))<<32 | uint64(uint32(parts[3])),
+		TargetType: targetType,
+	}, nil
 }
 
 // returnLengthCodec handles ReturnLength effect serialization.

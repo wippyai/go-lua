@@ -6,6 +6,7 @@ type LabelVisitor[R any] struct {
 	Mutate            func(Mutate) R
 	Return            func(Return) R
 	ErrorReturn       func(ErrorReturn) R
+	GuardedReturnType func(GuardedReturnType) R
 	ReturnLength      func(ReturnLength) R
 	Throw             func(Throw) R
 	Diverge           func(Diverge) R
@@ -55,6 +56,14 @@ func VisitLabel[R any](l Label, v LabelVisitor[R]) R {
 	case *ErrorReturn:
 		if v.ErrorReturn != nil {
 			return v.ErrorReturn(*ll)
+		}
+	case GuardedReturnType:
+		if v.GuardedReturnType != nil {
+			return v.GuardedReturnType(ll)
+		}
+	case *GuardedReturnType:
+		if v.GuardedReturnType != nil {
+			return v.GuardedReturnType(*ll)
 		}
 	case ReturnLength:
 		if v.ReturnLength != nil {

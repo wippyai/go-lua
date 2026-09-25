@@ -239,6 +239,25 @@ type ErrorReturn struct {
 	ValueTruthy bool
 }
 
+// GuardedReturnType means a truthy result at GuardIndex always accompanies
+// the return type identified by TargetHash at TargetIndex. The hash must name
+// a member of the function's declared return type at the call site.
+type GuardedReturnType struct {
+	GuardIndex  int
+	TargetIndex int
+	TargetHash  uint64
+	TargetType  any
+}
+
+func (GuardedReturnType) label() {}
+func (g GuardedReturnType) String() string {
+	return fmt.Sprintf("guarded_return_type(%d, %d, %d)", g.GuardIndex, g.TargetIndex, g.TargetHash)
+}
+func (g GuardedReturnType) Equals(other Label) bool {
+	o, ok := other.(GuardedReturnType)
+	return ok && g.GuardIndex == o.GuardIndex && g.TargetIndex == o.TargetIndex && g.TargetHash == o.TargetHash
+}
+
 func (ErrorReturn) label() {}
 func (e ErrorReturn) String() string {
 	if e.ValueTruthy {

@@ -69,7 +69,83 @@ func AttachInferredErrorReturnSpec(
 			}
 		}
 	}
+	if solution != nil && len(fn.Returns) >= 2 {
+		if targetType, ok := StrictTruthyReturnTargetType(graph, solution, base, 0, 1); ok {
+			fn = AttachGuardedReturnTypeSpec(fn, 0, 1, targetType)
+		}
+	}
 	return fn
+}
+
+// StrictTruthyReturnTargetType proves that every truthy guard return has the
+// same concrete target type. A broad or unknown guard branch blocks the proof.
+func StrictTruthyReturnTargetType(graph *cfg.Graph, solution *flow.Solution,
+	synth api.BaseSynth, guardIdx, targetIdx int) (typ.Type, bool) {
+	if graph == nil || solution == nil || synth == nil {
+		return nil, false
+	}
+	var target typ.Type
+	valid, sawTruthy := true, false
+	graph.EachReturn(func(p cfg.Point, info *cfg.ReturnInfo) {
+		if !valid || info == nil || solution.IsPointDead(p) {
+			return
+		}
+		if len(info.Exprs) == 0 {
+			return
+		}
+		values := synth.ExpandValues(info.Exprs, targetIdx+1, p)
+		if len(values) <= guardIdx || len(values) <= targetIdx {
+			valid = false
+			return
+		}
+		guard := values[guardIdx]
+		if guard == nil || typ.IsAny(guard) || typ.IsUnknown(guard) {
+			valid = false
+			return
+		}
+		if typ.IsNever(narrow.ToTruthy(guard)) {
+			return
+		}
+		if !typ.IsNever(narrow.ToFalsy(guard)) {
+			valid = false
+			return
+		}
+		candidate := values[targetIdx]
+		if candidate == nil || typ.IsAny(candidate) || typ.IsUnknown(candidate) || unwrap.IsOptionalLike(candidate) {
+			valid = false
+			return
+		}
+		if target != nil && !typ.TypeEquals(target, candidate) {
+			valid = false
+			return
+		}
+		target = candidate
+		sawTruthy = true
+	})
+	if !valid || !sawTruthy || target == nil {
+		return nil, false
+	}
+	return target, true
+}
+
+func AttachGuardedReturnTypeSpec(fn *typ.Function, guardIdx, targetIdx int, targetType typ.Type) *typ.Function {
+	if fn == nil || targetType == nil {
+		return fn
+	}
+	label := effect.GuardedReturnType{GuardIndex: guardIdx, TargetIndex: targetIdx, TargetHash: targetType.Hash(), TargetType: targetType}
+	if spec := contract.ExtractSpec(fn); spec != nil {
+		for _, existing := range spec.Effects.Labels {
+			if existing.Equals(label) {
+				return fn
+			}
+		}
+	}
+	spec, ok := cloneContractSpec(fn)
+	if !ok {
+		return fn
+	}
+	spec.Effects = spec.Effects.With(label)
+	return cloneFunctionWithSpec(fn, spec)
 }
 
 // HasStrictSameDirectionReturnPattern proves that both result slots have the
@@ -149,7 +225,7 @@ func HasReturnRelationLabel(fn *typ.Function) bool {
 	}
 	for _, label := range spec.Effects.Labels {
 		switch label.(type) {
-		case effect.ErrorReturn, effect.CorrelatedReturn:
+		case effect.ErrorReturn, effect.CorrelatedReturn, effect.GuardedReturnType:
 			return true
 		}
 	}

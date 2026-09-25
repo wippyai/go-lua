@@ -934,7 +934,7 @@ func JoinProvedEffects(base, proved *typ.Function) *typ.Function {
 	var relations effect.Row
 	for _, label := range provedSpec.Effects.Labels {
 		switch label.(type) {
-		case effect.ErrorReturn, effect.CorrelatedReturn:
+		case effect.ErrorReturn, effect.CorrelatedReturn, effect.GuardedReturnType:
 			relations = relations.With(label)
 		}
 	}
