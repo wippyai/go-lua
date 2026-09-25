@@ -231,6 +231,28 @@ func TestKillRedefinedConditions_MutableAliasWrite(t *testing.T) {
 	}
 }
 
+func TestKillRedefinedConditions_EscapedIndexedChild(t *testing.T) {
+	table := constraint.Path{Root: "table", Symbol: 1, Version: 1}
+	other := constraint.Path{Root: "other", Symbol: 2, Version: 1}
+	indexed := table.Field("lists").IndexInt(2)
+	cond := constraint.FromConstraints(
+		constraint.IsNil{Path: indexed},
+		constraint.HasField{Path: table, Field: "ok"},
+		constraint.NewEqPath(table, other),
+	)
+	write := Assignment{Point: 10, TargetSym: table.Symbol, ChildrenOnly: true, IndexedChildrenOnly: true}
+	want := constraint.FromConstraints(
+		constraint.HasField{Path: table, Field: "ok"},
+		constraint.NewEqPath(table, other),
+	)
+	if got := KillRedefinedConditions(cond, 10, []Assignment{write}); !got.Equals(want) {
+		t.Fatalf("call kept an indexed nil fact or lost a static fact: got %v, want %v", got, want)
+	}
+	if got := KillRedefinedConditions(cond, 9, []Assignment{write}); !got.Equals(cond) {
+		t.Fatalf("call invalidated a fact before it ran: got %v, want %v", got, cond)
+	}
+}
+
 func TestPropagate_FactHoldsAfterPointAndThroughPhi(t *testing.T) {
 	// entry -> branch -> {write A, write B} -> join
 	// Each write establishes KeyOf on the table version it defines; the join

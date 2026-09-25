@@ -169,6 +169,11 @@ func (s *Solution) runPropagation() {
 			assigns = append(assigns, propagate.Assignment{
 				Point: p, TargetSym: sym, SourceSym: sym, AliasEscape: true,
 			})
+			// The call may mutate the table through this alias. Facts about its
+			// children describe the pre-call value and cannot cross the call.
+			assigns = append(assigns, propagate.Assignment{
+				Point: p, TargetSym: sym, ChildrenOnly: true, IndexedChildrenOnly: true,
+			})
 		}
 	}
 	for _, write := range s.inputs.IndexerAssignments {

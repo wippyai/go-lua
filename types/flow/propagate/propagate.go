@@ -96,6 +96,10 @@ type Assignment struct {
 	// ChildrenOnly marks a dynamic index write: it can change any child of
 	// TargetSegs, while the table at TargetSegs keeps its identity.
 	ChildrenOnly bool
+	// IndexedChildrenOnly invalidates facts below an indexed child of the
+	// target. Passing an alias to a call can change indexed entries without
+	// changing the value or known static fields of the alias itself.
+	IndexedChildrenOnly bool
 }
 
 // Inputs provides all data needed for constraint propagation.
@@ -459,6 +463,9 @@ func KillRedefinedConditions(cond constraint.Condition, p cfg.Point, assignments
 					if ap.AliasEscape {
 						continue
 					}
+					if ap.IndexedChildrenOnly && !hasIndexedChild(cpath, ap.TargetSegs) {
+						continue
+					}
 					if PathAffectedByAssignment(cpath, ap.TargetSym, ap.TargetSegs) &&
 						(!ap.ChildrenOnly || len(cpath.Segments) > len(ap.TargetSegs)) {
 						shouldKeep = false
@@ -536,12 +543,27 @@ func aliasesInvalidatedByWrites(disjunct []constraint.Constraint, writes []Assig
 }
 
 func mutableWriteTouchesAlias(write Assignment, alias constraint.Path) bool {
+	if write.IndexedChildrenOnly && !hasIndexedChild(alias, write.TargetSegs) {
+		return false
+	}
 	if alias.Symbol == 0 || (!write.ChildrenOnly && len(write.TargetSegs) == 0) {
 		return false
 	}
 	writePath := constraint.Path{Symbol: write.TargetSym, Segments: write.TargetSegs}
 	return PathAffectedByAssignment(writePath, alias.Symbol, alias.Segments) ||
 		write.ChildrenOnly && PathAffectedByAssignment(alias, write.TargetSym, write.TargetSegs)
+}
+
+func hasIndexedChild(path constraint.Path, prefix []constraint.Segment) bool {
+	if len(path.Segments) <= len(prefix) {
+		return false
+	}
+	for _, segment := range path.Segments[len(prefix):] {
+		if segment.Kind == constraint.SegmentIndexInt {
+			return true
+		}
+	}
+	return false
 }
 
 // PathAffectedByAssignment checks if a constraint path is invalidated by an assignment.
