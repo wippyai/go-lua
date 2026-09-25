@@ -433,6 +433,9 @@ func (s *Solution) narrowedTypeUnder(p cfg.Point, path constraint.Path, conditio
 			}
 		}
 	}
+	if condition.IsFalse() {
+		return typ.Never
+	}
 	if !condition.HasConstraints() {
 		return baseType
 	}
@@ -621,14 +624,14 @@ func isFalseLiteral(t typ.Type) bool {
 
 // applyCondition narrows baseType using a DNF condition.
 func (s *Solution) applyCondition(p cfg.Point, baseType typ.Type, path constraint.Path, cond constraint.Condition) typ.Type {
-	if baseType == nil || !cond.HasConstraints() {
-		return baseType
-	}
-	if cond.IsTrue() {
+	if baseType == nil {
 		return baseType
 	}
 	if cond.IsFalse() {
 		return typ.Never
+	}
+	if !cond.HasConstraints() || cond.IsTrue() {
+		return baseType
 	}
 
 	var narrowedTypes []typ.Type
