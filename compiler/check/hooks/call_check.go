@@ -42,6 +42,17 @@ func CheckCalls(
 	narrowView api.BaseSynth,
 	sourceName string,
 ) []diag.Diagnostic {
+	return checkCalls(graph, scopes, narrowSynth, narrowView, sourceName, false)
+}
+
+func checkCalls(
+	graph *cfg.Graph,
+	scopes map[cfg.Point]*scope.State,
+	narrowSynth api.Synth,
+	narrowView api.BaseSynth,
+	sourceName string,
+	protected bool,
+) []diag.Diagnostic {
 	if graph == nil || narrowSynth == nil || narrowView == nil {
 		return nil
 	}
@@ -55,7 +66,15 @@ func CheckCalls(
 			return
 		}
 		callDiags := checkSingleCall(p, info, scopes, narrowView, narrowSynth, query, sourceName, graph, bindings)
-		diags = append(diags, callDiags...)
+		for _, diagnostic := range callDiags {
+			// A protected callback converts a failed call into pcall's false
+			// result. Its optional receiver can fail at runtime without an
+			// uncaught error; other call contract errors remain diagnostic.
+			if protected && diagnostic.Code == diag.ErrOptionalCall {
+				continue
+			}
+			diags = append(diags, diagnostic)
+		}
 	})
 
 	return diags
