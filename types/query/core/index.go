@@ -71,7 +71,7 @@ func indexDepth(t, keyType typ.Type, depth int) (typ.Type, bool) {
 				return indexResult{t: typ.NewOptional(m.Value), ok: true}
 			}
 
-			if subtype.IsSubtype(keyType, m.Key) {
+			if mapKeyDomainsComparable(keyType, m.Key) {
 				if m.Value == nil {
 					return indexResult{}
 				}
@@ -146,7 +146,7 @@ func indexDepth(t, keyType typ.Type, depth int) (typ.Type, bool) {
 
 			// Map component fallback for non-string-literal keys.
 			if r.HasMapComponent() && keyType != nil {
-				if keyType.Kind().IsPlaceholder() || subtype.IsSubtype(keyType, r.MapKey) {
+				if keyType.Kind().IsPlaceholder() || mapKeyDomainsComparable(keyType, r.MapKey) {
 					return indexResult{t: typ.NewOptional(r.MapValue), ok: true}
 				}
 			}
@@ -226,6 +226,13 @@ func indexDepth(t, keyType typ.Type, depth int) (typ.Type, bool) {
 		},
 	})
 	return res.t, res.ok
+}
+
+// mapKeyDomainsComparable accepts a key that may address a stored entry.
+// When the queried domain is broader than the map's key domain, the index
+// remains optional because other queried keys have no entry.
+func mapKeyDomainsComparable(query, stored typ.Type) bool {
+	return subtype.IsSubtype(query, stored) || subtype.IsSubtype(stored, query)
 }
 
 // containsNilOrOptional returns true if the type already contains nil or Optional.

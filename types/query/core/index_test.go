@@ -78,6 +78,17 @@ func TestIndex(t *testing.T) {
 	}
 }
 
+func TestIndex_FiniteNumericMapWithGeneralNumber(t *testing.T) {
+	budget := typ.NewMap(typ.NewUnion(typ.LiteralInt(1), typ.LiteralInt(2)), typ.String)
+	result, ok := Index(budget, typ.Number)
+	if !ok || !typ.TypeEquals(result, typ.NewOptional(typ.String)) {
+		t.Fatalf("general number may miss a finite numeric key: %v, %v", result, ok)
+	}
+	if _, ok := Index(budget, typ.String); ok {
+		t.Fatal("string key cannot address a numeric map")
+	}
+}
+
 func TestIndex_RecordWithMapComponent_LiteralFieldPrecedence(t *testing.T) {
 	rec := typ.NewRecord().
 		Field("name", typ.String).
