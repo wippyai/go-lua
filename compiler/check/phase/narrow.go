@@ -103,6 +103,6 @@ func newPathFromExprFunc(solution *flow.Solution, bindings *bind.BindingTable) a
 			}
 			return solution.ConstValueAt(p, name)
 		}
-		return path.FromExprWithKeyTypes(expr, constResolver, bindings, keyType)
+		return path.FromExprWithKeyTypesThroughCasts(expr, constResolver, bindings, keyType)
 	}
 }

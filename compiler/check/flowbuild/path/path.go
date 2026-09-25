@@ -106,6 +106,34 @@ func FromExprWithKeyTypes(
 	return constraint.Path{}
 }
 
+// FromExprWithKeyTypesThroughCasts extracts the identity of a value used by a
+// guard or a narrowed read. Casts do not change the Lua value they contain.
+// Assignment and mutation tracking use FromExprWithKeyTypes instead, since a
+// cast's declared type must remain authoritative for those operations.
+func FromExprWithKeyTypesThroughCasts(
+	expr ast.Expr,
+	constResolver func(string) *flow.ConstValue,
+	bindings *bind.BindingTable,
+	keyType func(ast.Expr) typ.Type,
+) constraint.Path {
+	switch e := expr.(type) {
+	case *ast.CastExpr:
+		return FromExprWithKeyTypesThroughCasts(e.Expr, constResolver, bindings, keyType)
+	case *ast.AttrGetExpr:
+		base := FromExprWithKeyTypesThroughCasts(e.Object, constResolver, bindings, keyType)
+		if base.IsEmpty() {
+			return constraint.Path{}
+		}
+		seg, ok := IndexKeySegment(e.Key, constResolver, keyType)
+		if !ok {
+			return constraint.Path{}
+		}
+		return base.Append(seg)
+	default:
+		return FromExprWithKeyTypes(expr, constResolver, bindings, keyType)
+	}
+}
+
 // IndexKeySegment classifies the key of an index expression t[key] as a static
 // path segment. A key is static when it is a string or integer literal, an
 // identifier bound to a string or integral constant, or, given keyType, an

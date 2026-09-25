@@ -173,7 +173,7 @@ func (ce *ConditionExtractor) pathFromExpr(expr ast.Expr) constraint.Path {
 	if ce.Synth != nil {
 		keyType = func(key ast.Expr) typ.Type { return ce.Synth(key, ce.P) }
 	}
-	return flowpath.FromExprWithKeyTypesAt(expr, ce.ConstResolver, ce.bindings(), keyType, ce.graph(), ce.P)
+	return flowpath.WithVersion(flowpath.FromExprWithKeyTypesThroughCasts(expr, ce.ConstResolver, ce.bindings(), keyType), ce.graph(), ce.P)
 }
 
 // constraintsFromConditionExpr extracts predicate conditions from a full condition expression.
