@@ -400,8 +400,9 @@ func (s *Solution) carryForwardStructuredVersionFacts(p cfg.Point, targetPath co
 	var changedKeys []string
 	currentBaseKeyStr := string(currentBaseKey)
 
-	// Seed root/base value if missing on current version.
-	if s.values[currentBaseKeyStr] == nil {
+	// Keep inherited facts in step with predecessor refinement during the
+	// worklist solve. A first-pass estimate must not freeze a sibling field.
+	{
 		baseTypes := make([]typ.Type, 0, len(predBaseKeys))
 		for _, predBaseKey := range predBaseKeys {
 			if t := s.values[predBaseKey]; t != nil {
@@ -417,7 +418,7 @@ func (s *Solution) carryForwardStructuredVersionFacts(p cfg.Point, targetPath co
 		}
 	}
 
-	// Seed suffix values from predecessor versions when missing on current version.
+	// Recompute suffix values from predecessor versions as they converge.
 	suffixTypes := make(map[string][]typ.Type)
 	for _, predBaseKey := range predBaseKeys {
 		prefixLen := len(predBaseKey)
@@ -452,9 +453,6 @@ func (s *Solution) carryForwardStructuredVersionFacts(p cfg.Point, targetPath co
 		}
 		if alias != "" {
 			s.pathAliases[key] = alias
-		}
-		if s.values[key] != nil {
-			continue
 		}
 		joined := join.Types(types...)
 		if !typ.TypeEquals(s.values[key], joined) {
