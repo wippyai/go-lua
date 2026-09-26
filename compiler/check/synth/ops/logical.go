@@ -38,6 +38,13 @@ func LogicalAndTyped(left, right typ.Type) typ.Type {
 		return typ.Never
 	}
 
+	// An any-valued left operand can itself be the result of `and` on the
+	// falsy path. Keep that gradual uncertainty instead of materializing its
+	// possible nil/false values as a concrete optional return type.
+	if typ.IsAny(left) {
+		return typ.Any
+	}
+
 	// If left is definitely truthy (cannot be nil or false), result is right
 	if !CanBeFalsy(left) {
 		return right
