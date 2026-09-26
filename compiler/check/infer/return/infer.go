@@ -314,7 +314,9 @@ func collectReturnTypes(
 		if retInfo == nil {
 			return
 		}
-		_ = deadPoints
+		if deadPoints != nil && deadPoints[p] {
+			return
+		}
 
 		types := synthesizeReturnExprs(synthEngine, retInfo, p)
 		if !seenReturn {
@@ -434,7 +436,7 @@ func (i *Inferencer) inferReturnTypesFromBody(
 		uniformFunctionScopes(fnGraph, ctx.resolveScope),
 		declCheckCtx,
 	)
-	declared := collectReturnTypes(fnGraph, declSynth, nil)
+	declared := collectReturnTypes(fnGraph, declSynth, state.deadPoints)
 
 	return returns.MergeReturnSummary(declared, narrowed)
 }

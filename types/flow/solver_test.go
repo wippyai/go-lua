@@ -91,6 +91,7 @@ type mockSSAGraph struct {
 	scope    *symbolScope
 	phis     []cfg.PhiNode
 	nextSym  cfg.SymbolID
+	params   []cfg.SymbolID
 }
 
 func newMockSSAGraph(c *cfg.CFG) *mockSSAGraph {
@@ -133,7 +134,7 @@ func (m *mockSSAGraph) ParamNames() []string {
 }
 
 func (m *mockSSAGraph) ParamSymbols() []cfg.SymbolID {
-	return nil
+	return m.params
 }
 
 func (m *mockSSAGraph) ParamDeclPoints() []cfg.Point {

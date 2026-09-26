@@ -532,11 +532,18 @@ func (ce *ConditionExtractor) ConditionFromEquality(lhs, rhs ast.Expr) constrain
 	}
 
 	// x == literal (including const-resolved identifiers and literal-typed variables)
+	// Either side can resolve to a literal while the other side is the path.
+	// When the literal side's counterpart is not a path, fall through to the
+	// other direction instead of dropping the constraint.
 	if lit, ok := ce.literalFromExpr(lhs); ok && lit != nil {
-		return constraint.FromConstraints(ce.constraintsFromPathLiteral(rhs, lit)...)
+		if out := ce.constraintsFromPathLiteral(rhs, lit); len(out) > 0 {
+			return constraint.FromConstraints(out...)
+		}
 	}
 	if lit, ok := ce.literalFromExpr(rhs); ok && lit != nil {
-		return constraint.FromConstraints(ce.constraintsFromPathLiteral(lhs, lit)...)
+		if out := ce.constraintsFromPathLiteral(lhs, lit); len(out) > 0 {
+			return constraint.FromConstraints(out...)
+		}
 	}
 
 	// x == nil

@@ -33,6 +33,8 @@ type Solution struct {
 
 	edgeNumericConstraints map[edgeKey][]constraint.NumericConstraint
 	unsatEdges             map[edgeKey]bool // edges proven unreachable by constraints
+	typeUnsatEdges         map[edgeKey]bool // type-theory unsat edges driving dead closure
+	typeDeadPoints         map[cfg.Point]bool
 	pointConditions        map[cfg.Point]constraint.Condition
 	numericStates          map[cfg.Point]*numeric.State
 	iterations             int
@@ -123,6 +125,8 @@ func Solve(inputs *Inputs, resolver narrow.Resolver) *Solution {
 	s.buildEdgeConditions()
 	s.buildEdgeNumericConstraints()
 	s.checkNumericConstraints()
+	s.checkTypeConstraints()
+	s.computeTypeDeadPoints()
 
 	// Propagate conditions using standalone propagate package
 	s.runPropagation()
@@ -225,7 +229,7 @@ func (s *Solution) runPropagation() {
 	propInputs := &propagate.Inputs{
 		Graph:          s.inputs.Graph,
 		EdgeConditions: edgeConds,
-		DeadPoints:     s.inputs.DeadPoints,
+		DeadPoints:     s.propagationDeadPoints(),
 		Assignments:    assigns,
 		Facts:          s.statementFacts(),
 		PhiRenames:     phiRenames(s.inputs.Graph.PhiNodes()),

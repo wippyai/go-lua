@@ -967,12 +967,16 @@ func (s *Solution) filterByChildNarrowings(baseType typ.Type, parentPath constra
 	return typ.NewUnion(kept...)
 }
 
-// IsPointDead returns true if the given CFG point is unreachable due to divergence.
+// IsPointDead returns true if the given CFG point is unreachable due to divergence
+// or because every incoming edge is unsatisfiable.
 func (s *Solution) IsPointDead(p cfg.Point) bool {
-	if s == nil || s.inputs == nil || s.inputs.DeadPoints == nil {
+	if s == nil || s.inputs == nil {
 		return false
 	}
-	return s.inputs.DeadPoints[p]
+	if s.inputs.DeadPoints != nil && s.inputs.DeadPoints[p] {
+		return true
+	}
+	return s.pointDeadByUnsat(p)
 }
 
 // HasKeyOf checks if a KeyOf constraint exists at point p for the given table
