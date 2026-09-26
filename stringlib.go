@@ -201,21 +201,19 @@ func capturedString(L *LState, m *pm.MatchData, str string, idx int) string {
 }
 
 func strGsubDoReplace(str string, info []replaceInfo) string {
-	offset := 0
-	buf := []byte(str)
-	for _, replace := range info {
-		oldlen := len(buf)
-		b1 := append([]byte(""), buf[0:offset+replace.Indicies[0]]...)
-		b2 := []byte("")
-		index2 := offset + replace.Indicies[1]
-		if index2 <= len(buf) {
-			b2 = append(b2, buf[index2:]...)
-		}
-		buf = append(b1, replace.String...)
-		buf = append(buf, b2...)
-		offset += len(buf) - oldlen
+	if len(info) == 0 {
+		return str
 	}
-	return string(buf)
+	var buf strings.Builder
+	buf.Grow(len(str))
+	offset := 0
+	for _, replace := range info {
+		buf.WriteString(str[offset:replace.Indicies[0]])
+		buf.WriteString(replace.String)
+		offset = replace.Indicies[1]
+	}
+	buf.WriteString(str[offset:])
+	return buf.String()
 }
 
 func strGsubStr(L *LState, str string, repl string, matches []*pm.MatchData) string {
