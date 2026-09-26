@@ -166,7 +166,9 @@ func methodTypeHasSelfRecursiveReturn(t typ.Type, owner *typ.Record) bool {
 			return false, true
 		}
 		for _, ret := range fn.Returns {
-			if ret == nil {
+			// A return every value inhabits admits the owner without
+			// relating to it.
+			if ret == nil || subtype.AdmitsEveryValue(ret) {
 				continue
 			}
 			if subtype.IsSubtype(ret, owner) || subtype.IsSubtype(owner, ret) ||

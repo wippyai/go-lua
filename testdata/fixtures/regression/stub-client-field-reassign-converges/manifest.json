@@ -1,0 +1,1 @@
+{"description": "a declared module function field reassigned in nested test callbacks to stub clients of different shapes: the stubs whose methods return any keep their record summaries and the field converges.", "files": ["runs.lua", "main.lua"]}

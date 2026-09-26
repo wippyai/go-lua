@@ -1265,6 +1265,12 @@ func needsCycleGuard(k kind.Kind) bool {
 	}
 }
 
+// AdmitsEveryValue reports whether every value inhabits t: t is unknown or
+// any, or an optional or union with such a member.
+func AdmitsEveryValue(t typ.Type) bool {
+	return typ.IsUnknown(t) || typ.IsAny(t) || hasTopMember(t)
+}
+
 // hasTopMember reports whether t is an optional or union with an unknown or
 // any member, which every value inhabits.
 func hasTopMember(t typ.Type) bool {
