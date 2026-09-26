@@ -260,10 +260,6 @@ func opCreateASbx(op int, a int, sbx int) uint32 {
 const opBitRk = 1 << (opSizeB - 1)
 const opMaxIndexRk = opBitRk - 1
 
-func opIsK(value int) bool {
-	return (value & opBitRk) != 0
-}
-
 func opRkAsk(value int) int {
 	return value | opBitRk
 }

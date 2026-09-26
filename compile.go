@@ -58,11 +58,10 @@ type expcontext struct {
 }
 
 type assigncontext struct {
-	ec       *expcontext
-	keyrk    int
-	valuerk  int
-	keyks    bool
-	needmove bool
+	ec      *expcontext
+	keyrk   int
+	valuerk int
+	keyks   bool
 }
 
 type lblabels struct {
@@ -790,7 +789,7 @@ func compileStmt(context *funcContext, stmt ast.Stmt, isLastStmt bool) { // {{{
 func compileAssignStmtLeft(context *funcContext, stmt *ast.AssignStmt) (int, []*assigncontext) { // {{{
 	reg := context.RegTop()
 	acs := make([]*assigncontext, 0, len(stmt.Lhs))
-	for _, lhs := range stmt.Lhs {
+	for i, lhs := range stmt.Lhs {
 		switch st := lhs.(type) {
 		case *ast.IdentExpr:
 			identtype := getIdentRefType(context, context, st)
@@ -804,10 +803,27 @@ func compileAssignStmtLeft(context *funcContext, stmt *ast.AssignStmt) (int, []*
 				ec.reg = context.FindLocalVar(st.Value)
 			default:
 			}
-			acs = append(acs, &assigncontext{ec, 0, 0, false, false})
+			acs = append(acs, &assigncontext{ec: ec})
 		case *ast.AttrGetExpr:
-			ac := &assigncontext{&expcontext{ecTable, regNotDefined, 0}, 0, 0, false, false}
-			compileExprWithKMVPropagation(context, st.Object, &reg, &ac.ec.reg)
+			ac := &assigncontext{ec: &expcontext{ecTable, regNotDefined, 0}}
+			// Stores run right to left. Save a direct local table reference only
+			// when a later target will overwrite it before this table store.
+			// Otherwise RHS calls may still change the local being referenced.
+			snapshotObject := false
+			if object, ok := st.Object.(*ast.IdentExpr); ok && getIdentRefType(context, context, object) == ecLocal {
+				for _, target := range stmt.Lhs[i+1:] {
+					if ident, ok := target.(*ast.IdentExpr); ok && ident.Value == object.Value {
+						snapshotObject = true
+						break
+					}
+				}
+			}
+			if snapshotObject {
+				ac.ec.reg = reg
+				reg += compileExpr(context, reg, st.Object, ecnone(0))
+			} else {
+				compileExprWithKMVPropagation(context, st.Object, &reg, &ac.ec.reg)
+			}
 			ac.keyrk = reg
 			reg += compileExpr(context, reg, st.Key, ecnone(0))
 			if _, ok := st.Key.(*ast.StringExpr); ok {
@@ -822,14 +838,19 @@ func compileAssignStmtLeft(context *funcContext, stmt *ast.AssignStmt) (int, []*
 	return reg, acs
 } // }}}
 
-func compileAssignStmtRight(context *funcContext, stmt *ast.AssignStmt, reg int, acs []*assigncontext) (int, []*assigncontext) { // {{{
+func compileAssignStmtRight(context *funcContext, stmt *ast.AssignStmt, reg int, acs []*assigncontext) { // {{{
 	lennames := len(stmt.Lhs)
 	lenexprs := len(stmt.Rhs)
+	if lennames == 1 && lenexprs == 1 && acs[0].ec.ctype == ecLocal {
+		// There is no later RHS to observe this write. Keep direct local writes,
+		// including adjacent LOADNIL instructions that the emitter can merge.
+		acs[0].valuerk = acs[0].ec.reg
+		compileExpr(context, reg, stmt.Rhs[0], acs[0].ec)
+		return
+	}
 	namesassigned := 0
 
 	for namesassigned < lennames {
-		ac := acs[namesassigned]
-		ec := ac.ec
 		var expr ast.Expr = nil
 		if namesassigned >= lenexprs {
 			expr = &ast.NilExpr{}
@@ -841,10 +862,7 @@ func compileAssignStmtRight(context *funcContext, stmt *ast.AssignStmt, reg int,
 			reginc := compileExpr(context, reg, stmt.Rhs[namesassigned], ecnone(varargopt))
 			reg += reginc
 			for i := namesassigned; i < namesassigned+reginc; i++ {
-				acs[i].needmove = true
-				if acs[i].ec.ctype == ecTable {
-					acs[i].valuerk = regstart + (i - namesassigned)
-				}
+				acs[i].valuerk = regstart + (i - namesassigned)
 			}
 			namesassigned = lennames
 			continue
@@ -853,17 +871,11 @@ func compileAssignStmtRight(context *funcContext, stmt *ast.AssignStmt, reg int,
 		if expr == nil {
 			expr = stmt.Rhs[namesassigned]
 		}
-		reginc := compileExpr(context, reg, expr, ec)
-		if ec.ctype == ecTable {
-			context.Code.PropagateKMV(context.RegTop(), &ac.valuerk, &reg, reginc)
-		} else {
-			ac.needmove = reginc != 0
-			reg += reginc
-		}
+		// RHS values must live outside all target registers until every RHS has run.
+		acs[namesassigned].valuerk = reg
+		reg += compileExpr(context, reg, expr, ecnone(0))
 		namesassigned += 1
 	}
-
-	rightreg := reg - 1
 
 	// extra right exprs
 	for i := namesassigned; i < lenexprs; i++ {
@@ -873,38 +885,32 @@ func compileAssignStmtRight(context *funcContext, stmt *ast.AssignStmt, reg int,
 		}
 		reg += compileExpr(context, reg, stmt.Rhs[i], ecnone(varargopt))
 	}
-	return rightreg, acs
 } // }}}
 
 func compileAssignStmt(context *funcContext, stmt *ast.AssignStmt) { // {{{
 	code := context.Code
 	lennames := len(stmt.Lhs)
 	reg, acs := compileAssignStmtLeft(context, stmt)
-	reg, acs = compileAssignStmtRight(context, stmt, reg, acs)
+	compileAssignStmtRight(context, stmt, reg, acs)
 
 	for i := lennames - 1; i >= 0; i-- {
 		ex := stmt.Lhs[i]
 		switch acs[i].ec.ctype {
 		case ecLocal:
-			if acs[i].needmove {
-				code.AddABC(OP_MOVE, context.FindLocalVar(ex.(*ast.IdentExpr).Value), reg, 0, sline(ex))
-				reg -= 1
+			local := context.FindLocalVar(ex.(*ast.IdentExpr).Value)
+			if local != acs[i].valuerk {
+				code.AddABC(OP_MOVE, local, acs[i].valuerk, 0, sline(ex))
 			}
 		case ecGlobal:
-			code.AddABx(OP_SETGLOBAL, reg, context.ConstIndex(LString(ex.(*ast.IdentExpr).Value)), sline(ex))
-			reg -= 1
+			code.AddABx(OP_SETGLOBAL, acs[i].valuerk, context.ConstIndex(LString(ex.(*ast.IdentExpr).Value)), sline(ex))
 		case ecUpvalue:
-			code.AddABC(OP_SETUPVAL, reg, context.Upvalues.RegisterUnique(ex.(*ast.IdentExpr).Value), 0, sline(ex))
-			reg -= 1
+			code.AddABC(OP_SETUPVAL, acs[i].valuerk, context.Upvalues.RegisterUnique(ex.(*ast.IdentExpr).Value), 0, sline(ex))
 		case ecTable:
 			opcode := OP_SETTABLE
 			if acs[i].keyks {
 				opcode = OP_SETTABLEKS
 			}
 			code.AddABC(opcode, acs[i].ec.reg, acs[i].keyrk, acs[i].valuerk, sline(ex))
-			if !opIsK(acs[i].valuerk) {
-				reg -= 1
-			}
 		default:
 		}
 	}
@@ -1801,11 +1807,9 @@ func compileLogicalOpExprAux(context *funcContext, reg int, expr ast.Expr, ec *e
 } // }}}
 
 func compileFuncCallExpr(context *funcContext, reg int, expr *ast.FuncCallExpr, ec *expcontext) int { // {{{
+	// The call frame starts above every live register: the callee, receiver and
+	// arguments may read the local that receives the result.
 	funcreg := reg
-	if ec.ctype == ecLocal && ec.reg == (int(context.Proto.NumParameters)-1) {
-		funcreg = ec.reg
-		reg = ec.reg
-	}
 	argc := len(expr.Args)
 	islastvararg := false
 	var name string
