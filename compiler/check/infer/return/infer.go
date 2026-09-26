@@ -48,7 +48,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth"
-	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/diag"
@@ -352,12 +351,7 @@ func synthesizeReturnExprs(
 	var types []typ.Type
 	for i, expr := range retInfo.Exprs {
 		if i == len(retInfo.Exprs)-1 {
-			var multi []typ.Type
-			if dynamic := dynamicReturnOrType(synthEngine, expr, p); dynamic != nil {
-				multi = []typ.Type{dynamic}
-			} else {
-				multi = synthEngine.MultiTypeOf(expr, p)
-			}
+			multi := synthEngine.MultiTypeOf(expr, p)
 			if len(multi) == 0 {
 				multi = []typ.Type{typ.Unknown}
 			} else {
@@ -369,10 +363,7 @@ func synthesizeReturnExprs(
 			}
 			types = append(types, multi...)
 		} else {
-			t := dynamicReturnOrType(synthEngine, expr, p)
-			if t == nil {
-				t = synthEngine.TypeOf(expr, p)
-			}
+			t := synthEngine.TypeOf(expr, p)
 			if t == nil {
 				t = typ.Unknown
 			}
@@ -380,24 +371,6 @@ func synthesizeReturnExprs(
 		}
 	}
 	return types
-}
-
-// A truthy dynamic operand of `or` is a possible return value even when its
-// fallback has a concrete type.
-func dynamicReturnOrType(synthEngine api.Synth, expr ast.Expr, p cfg.Point) typ.Type {
-	op, ok := expr.(*ast.LogicalOpExpr)
-	if !ok || op.Operator != "or" {
-		return nil
-	}
-	left := synthEngine.TypeOf(op.Lhs, p)
-	if !typ.IsAny(left) && !typ.IsUnknown(left) {
-		return nil
-	}
-	right := synthEngine.TypeOf(op.Rhs, p)
-	if right == nil || ops.CanBeFalsy(right) {
-		return nil
-	}
-	return left
 }
 
 // joinReturnTypes merges two return type vectors using union semantics.

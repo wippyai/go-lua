@@ -461,13 +461,6 @@ func (i *Inferencer) enrichOverlayWithLocalDeclarations(
 				}
 				return
 			}
-			if idx < len(info.Sources) {
-				if _, ok := info.Sources[idx].(*ast.TableExpr); ok {
-					if seeded := ctx.engine.TypeOf(info.Sources[idx], p); seeded != nil {
-						overlay[target.Symbol] = seeded
-					}
-				}
-			}
 		})
 	})
 

@@ -44,7 +44,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/infer/captured"
 	"github.com/wippyai/go-lua/compiler/check/overlaymut"
 	"github.com/wippyai/go-lua/compiler/check/scope"
-	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	"github.com/wippyai/go-lua/compiler/check/synth/phase/core"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/contract"
@@ -785,12 +784,7 @@ func (s *Synthesizer) inferReturnExprTypes(exprs []ast.Expr, p cfg.Point) []typ.
 	var result []typ.Type
 	for i, expr := range exprs {
 		if i == len(exprs)-1 {
-			var multi []typ.Type
-			if dynamic := s.dynamicReturnOrType(expr, p, narrower); dynamic != nil {
-				multi = []typ.Type{dynamic}
-			} else {
-				multi = s.multiTypeOf(expr, p, narrower)
-			}
+			multi := s.multiTypeOf(expr, p, narrower)
 			if len(multi) == 0 {
 				multi = []typ.Type{typ.Unknown}
 			} else {
@@ -802,10 +796,7 @@ func (s *Synthesizer) inferReturnExprTypes(exprs []ast.Expr, p cfg.Point) []typ.
 			}
 			result = append(result, multi...)
 		} else {
-			t := s.dynamicReturnOrType(expr, p, narrower)
-			if t == nil {
-				t = s.SynthExpr(expr, p, narrower)
-			}
+			t := s.SynthExpr(expr, p, narrower)
 			if t == nil {
 				t = typ.Unknown
 			}
@@ -813,24 +804,6 @@ func (s *Synthesizer) inferReturnExprTypes(exprs []ast.Expr, p cfg.Point) []typ.
 		}
 	}
 	return result
-}
-
-// A return expression's contract must include a truthy dynamic operand of
-// `or`. Its concrete fallback only runs when that operand is falsy.
-func (s *Synthesizer) dynamicReturnOrType(expr ast.Expr, p cfg.Point, narrower api.FlowOps) typ.Type {
-	op, ok := expr.(*ast.LogicalOpExpr)
-	if !ok || op.Operator != "or" {
-		return nil
-	}
-	left := s.SynthExpr(op.Lhs, p, narrower)
-	if !typ.IsAny(left) && !typ.IsUnknown(left) {
-		return nil
-	}
-	right := s.SynthExpr(op.Rhs, p, narrower)
-	if right == nil || ops.CanBeFalsy(right) {
-		return nil
-	}
-	return left
 }
 
 // buildFunctionTypeWithSummary builds a function type using annotations for parameters
