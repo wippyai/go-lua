@@ -232,6 +232,22 @@ func (ce *ConditionExtractor) ConstraintsFromConditionExpr(expr ast.Expr) Branch
 			OnFalse: constraint.TrueCondition(),
 		}
 	}
+	if rel, ok := expr.(*ast.RelationalOpExpr); ok && (rel.Operator == "==" || rel.Operator == "~=") && ce.Synth != nil {
+		var compared ast.Expr
+		if literal.IsNilExpr(rel.Lhs) {
+			compared = rel.Rhs
+		} else if literal.IsNilExpr(rel.Rhs) {
+			compared = rel.Lhs
+		}
+		if compared != nil {
+			if t := ce.Synth(compared, ce.P); t != nil && t.Kind() == kind.Nil {
+				if rel.Operator == "==" {
+					return BranchConditions{OnTrue: constraint.TrueCondition(), OnFalse: constraint.FalseCondition()}
+				}
+				return BranchConditions{OnTrue: constraint.FalseCondition(), OnFalse: constraint.TrueCondition()}
+			}
+		}
+	}
 
 	if composed, ok := ce.composedBranchConditions(expr); ok {
 		return composed

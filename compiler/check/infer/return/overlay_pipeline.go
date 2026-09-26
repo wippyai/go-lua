@@ -255,9 +255,6 @@ func (i *Inferencer) enrichOverlayWithCaptured(
 			}
 		}
 	}
-	if ctx.parentFacts == nil {
-		return
-	}
 	resolveCapturedAnnotation := func(sym cfg.SymbolID) typ.Type {
 		parentGraph := ctx.info.ParentGraph
 		if parentGraph == nil || sym == 0 {
@@ -296,8 +293,14 @@ func (i *Inferencer) enrichOverlayWithCaptured(
 			overlay[sym] = annType
 			continue
 		}
-		if tv := ctx.parentFacts.EffectiveTypeAt(defPoint, sym); tv.State == flow.StateResolved && tv.Type != nil {
-			overlay[sym] = tv.Type
+		if ctx.parentFacts != nil {
+			if tv := ctx.parentFacts.EffectiveTypeAt(defPoint, sym); tv.State == flow.StateResolved && tv.Type != nil {
+				overlay[sym] = tv.Type
+				continue
+			}
+		}
+		if declared := i.parentDeclared[sym]; declared != nil {
+			overlay[sym] = declared
 		} else if _, pendingLocalFunction := localBindings.FuncLitBySymbol(sym); pendingLocalFunction {
 			// A captured local function without parent facts is a fixpoint
 			// dependency. Other missing captures retain the legacy behavior.

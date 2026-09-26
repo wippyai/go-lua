@@ -73,15 +73,16 @@ type Config struct {
 
 // Inferencer computes pre-flow return summaries for local functions.
 type Inferencer struct {
-	specMemo      map[specMemoKey][]typ.Type
-	types         core.TypeOps
-	globalTypes   map[string]typ.Type
-	manifests     io.ManifestQuerier
-	stdlib        *scope.State
-	store         api.StoreView
-	graphs        api.GraphProvider
-	sourceName    string
-	maxIterations int
+	specMemo       map[specMemoKey][]typ.Type
+	parentDeclared flow.DeclaredTypes
+	types          core.TypeOps
+	globalTypes    map[string]typ.Type
+	manifests      io.ManifestQuerier
+	stdlib         *scope.State
+	store          api.StoreView
+	graphs         api.GraphProvider
+	sourceName     string
+	maxIterations  int
 }
 
 // New creates a configured return inferencer.
@@ -170,6 +171,7 @@ func (i *Inferencer) ComputeForGraph(
 	if i == nil || i.store == nil || graph == nil || parent == nil {
 		return nil, nil, nil
 	}
+	i.specMemo = nil
 
 	parentScope := api.ParentScopeForGraph(i.store, graph.ID(), parent)
 
@@ -182,6 +184,25 @@ func (i *Inferencer) ComputeForGraph(
 		return nil, nil, nil
 	}
 
+	// Captures can use parent declarations before the parent's flow is solved.
+	localAliases := modules.CollectAliases(graph)
+	parentEnv := run.Env
+	parentEnv.Graph = graph
+	parentEnv.Fn = graph.Func()
+	parentEnv.Scopes = pointScopes
+	parentEnv.ModuleAliases = modules.MergeAliases(run.Env.ModuleAliases, localAliases)
+	parentEnv.Env = phase.NewContextBuilder(parentEnv).WithBaseScope(parentScope).BuildDeclared()
+	parentEnv.Phase = api.PhaseScopeCompute
+	parentEngine := synth.New(parentEnv)
+	i.parentDeclared = synth.FunctionLiteralTypes(graph, parentEngine.TypeOf)
+	for sym, path := range localAliases {
+		if export := io.LookupEnrichedExport(run.Env.Manifests, path); export != nil {
+			if i.parentDeclared == nil {
+				i.parentDeclared = make(flow.DeclaredTypes)
+			}
+			i.parentDeclared[sym] = export
+		}
+	}
 	// Apply param hints from the stable snapshot (deterministic order).
 	if hints := i.store.GetParamHintsSnapshot(graph, parentScope); len(hints) > 0 {
 		for _, sym := range cfg.SortedSymbolIDs(localFuncs) {
