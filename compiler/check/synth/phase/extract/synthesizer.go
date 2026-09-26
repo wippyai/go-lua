@@ -493,11 +493,31 @@ fallback:
 	}
 
 	// Scope computation sees declarations only: a bound symbol whose value
-	// comes from flow has no evidence yet.
-	if s.phase == api.PhaseScopeCompute {
+	// comes from flow has no evidence yet. A local of an enclosing function
+	// has no evidence until that function's solved flow is published.
+	if s.phase == api.PhaseScopeCompute || enclosingLocal(ctx, sym) {
 		return typ.Unresolved
 	}
 	return typ.Unknown
+}
+
+// enclosingLocal reports whether sym is a local or parameter of an enclosing
+// function that the analyzed function captures.
+func enclosingLocal(ctx api.BaseEnv, sym cfg.SymbolID) bool {
+	graph, ok := ctx.Graph().(interface{ Func() *ast.FunctionExpr })
+	bindings := ctx.Bindings()
+	if !ok || bindings == nil || graph.Func() == nil {
+		return false
+	}
+	if k, known := bindings.Kind(sym); !known || (k != cfg.SymbolLocal && k != cfg.SymbolParam) {
+		return false
+	}
+	for _, captured := range bindings.CapturedSymbols(graph.Func()) {
+		if captured == sym {
+			return true
+		}
+	}
+	return false
 }
 
 // synthComma3 synthesizes type for varargs (...).
