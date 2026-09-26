@@ -435,12 +435,24 @@ func ExcludeKind(t typ.Type, target kind.Kind) typ.Type {
 			}
 			return typ.NewOptional(inner)
 		},
-		handleUnion: func(u *typ.Union, _ func(typ.Type) typ.Type) typ.Type {
+		handleUnion: func(u *typ.Union, recurse func(typ.Type) typ.Type) typ.Type {
 			var kept []typ.Type
+			changed := false
 			for _, m := range u.Members {
-				if !KindMatches(m, target) {
-					kept = append(kept, m)
+				if KindMatches(m, target) {
+					changed = true
+					continue
 				}
+				nm := recurse(m)
+				if nm == nil || nm.Kind().IsNever() {
+					changed = true
+					continue
+				}
+				changed = changed || nm != m
+				kept = append(kept, nm)
+			}
+			if !changed {
+				return u
 			}
 			if len(kept) == 0 {
 				return typ.Never
