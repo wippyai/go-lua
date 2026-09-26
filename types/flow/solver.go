@@ -52,6 +52,7 @@ type Solution struct {
 	fieldOverlayCache      map[string][]mergedField
 	pathAliases            map[string]string // canonical target path key -> canonical source path key
 	narrowedTypeCache      map[narrowedTypeCacheKey]narrowedTypeCacheValue
+	rebinds                map[cfg.Point]map[cfg.SymbolID]bool
 	queryCacheEnabled      bool
 
 	// Worklist/dependency scratch to reduce per-iteration allocations.

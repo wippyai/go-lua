@@ -432,9 +432,17 @@ func (s *Solution) ArrayLenBoundWithOffsetAt(p cfg.Point, varName string) (arrKe
 
 // NarrowedTypeAt returns the type at point p for path, narrowed by the DNF condition.
 // This is a pure query that composes: baseTypeAt + ConditionAt + applyCondition.
+//
+// A read at an assignment evaluates before the assignment writes its targets,
+// so a variable the assignment at p rebinds reads its value on entry to p.
 func (s *Solution) NarrowedTypeAt(p cfg.Point, path constraint.Path) typ.Type {
 	if s == nil {
 		return nil
+	}
+	if path.Version == 0 && s.rebindsAt(p, path.Symbol) {
+		if pre := s.preAssignmentNarrowedTypeAt(p, path); pre != nil {
+			return pre
+		}
 	}
 	cacheKey, cacheable := s.narrowedTypeCacheKey(p, path)
 	if !s.queryCacheEnabled {
@@ -457,6 +465,28 @@ func (s *Solution) NarrowedTypeAt(p cfg.Point, path constraint.Path) typ.Type {
 		s.narrowedTypeCache[cacheKey] = narrowedTypeCacheValue{t: result, ok: result != nil}
 	}
 	return result
+}
+
+// rebindsAt reports whether an assignment at p gives sym a new value.
+func (s *Solution) rebindsAt(p cfg.Point, sym cfg.SymbolID) bool {
+	if sym == 0 || s.inputs == nil {
+		return false
+	}
+	if s.rebinds == nil {
+		s.rebinds = make(map[cfg.Point]map[cfg.SymbolID]bool)
+		for _, assign := range s.inputs.Assignments {
+			if assign.TargetPath.Symbol == 0 || len(assign.TargetPath.Segments) != 0 {
+				continue
+			}
+			syms := s.rebinds[assign.Point]
+			if syms == nil {
+				syms = make(map[cfg.SymbolID]bool)
+				s.rebinds[assign.Point] = syms
+			}
+			syms[assign.TargetPath.Symbol] = true
+		}
+	}
+	return s.rebinds[p][sym]
 }
 
 // narrowedTypeUnder returns the type at point p for path, narrowed by
