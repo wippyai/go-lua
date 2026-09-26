@@ -55,6 +55,15 @@ func (e *ApiError) String() string {
 	return e.Object.String()
 }
 
+// Unwrap returns the raised *Error, or the Go error behind a file or syntax
+// error.
+func (e *ApiError) Unwrap() error {
+	if raised, ok := e.Object.(*Error); ok {
+		return raised
+	}
+	return e.Cause
+}
+
 type ApiErrorType int
 
 const (
