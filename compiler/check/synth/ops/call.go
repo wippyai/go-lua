@@ -88,6 +88,9 @@ const (
 	ErrTypeMismatch
 	ErrOptionalCall
 	ErrTypeInference
+	// HintImplicitUnknown reports an argument known only as unknown accepted
+	// by gradual assignability; it is advisory, never a hard error.
+	HintImplicitUnknown
 )
 
 // CallDef describes a function call for type synthesis.
@@ -972,6 +975,12 @@ func callFunction(ctx *db.QueryContext, query core.TypeOps, fn *typ.Function, ar
 				errors = append(errors, CallError{
 					Kind:    ErrTypeMismatch,
 					Message: fmt.Sprintf("argument %d: expected %s, got %s", i+1, typ.FormatShort(expectedType), typ.FormatShort(arg)),
+					ArgIdx:  i + 1,
+				})
+			} else if subtype.ImplicitUnknownFlow(arg, expectedType) {
+				errors = append(errors, CallError{
+					Kind:    HintImplicitUnknown,
+					Message: fmt.Sprintf("argument %d: implicit unknown flows into declared %s", i+1, typ.FormatShort(expectedType)),
 					ArgIdx:  i + 1,
 				})
 			}

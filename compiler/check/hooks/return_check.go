@@ -155,7 +155,12 @@ func CheckReturns(
 				actual = typ.Unknown
 			}
 
-			if !core.AssignabilityOf(declared.Context()).Assignable(actual, declaredType) {
+			if core.AssignabilityOf(declared.Context()).Assignable(actual, declaredType) {
+				if subtype.ImplicitUnknownFlow(actual, declaredType) {
+					pos := diag.Position{File: sourceName, Line: expr.Line(), Column: expr.Column()}
+					diags = append(diags, implicitUnknownHint(pos, ast.SpanOf(expr), "", declaredType))
+				}
+			} else {
 				pos := diag.Position{File: sourceName, Line: expr.Line(), Column: expr.Column()}
 				span := ast.SpanOf(expr)
 				msg := formatReturnMismatch(actual, declaredType, i)

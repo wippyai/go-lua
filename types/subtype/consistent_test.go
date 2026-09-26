@@ -36,7 +36,6 @@ func TestIsConsistentSubtype_KeepsStructureOutsideAny(t *testing.T) {
 		name       string
 		sub, super typ.Type
 	}{
-		{"unknown to string", typ.Unknown, typ.String},
 		{"string to number", typ.String, typ.Number},
 		{"optional string to string", typ.NewOptional(typ.String), typ.String},
 		{"record missing a field", typ.NewRecord().Field("id", typ.Any).Build(), typ.NewRecord().Field("id", typ.String).Field("name", typ.String).Build()},
@@ -53,8 +52,11 @@ func TestAssignability_StrictAnyTreatsAnyAsUnknown(t *testing.T) {
 	if StrictAny.Assignable(typ.Any, typ.String) {
 		t.Error("strict any must not be assignable to string")
 	}
-	if StrictAny.Assignable(typ.Unknown, typ.String) != Gradual.Assignable(typ.Unknown, typ.String) {
-		t.Error("unknown must behave the same under both modes")
+	if StrictAny.Assignable(typ.Unknown, typ.String) {
+		t.Error("strict unknown must not be assignable to string")
+	}
+	if !Gradual.Assignable(typ.Unknown, typ.String) {
+		t.Error("gradual unknown must be assignable to string, as gradual any is")
 	}
 	if !Gradual.Assignable(typ.Any, typ.String) {
 		t.Error("gradual any must be assignable to string")

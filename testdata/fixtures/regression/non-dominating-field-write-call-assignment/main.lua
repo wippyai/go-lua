@@ -16,7 +16,7 @@ local function run(flag: boolean)
 	end
 
 	local res = M.dep.get()
-	local answer: string = res.answer
+	local answer: string = res.answer -- expect-error: cannot index type nil -- expect-hint: implicit unknown flows into declared string
 	return answer
 end
 

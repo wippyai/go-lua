@@ -6,5 +6,5 @@ if r.channel == timeout then
     return nil
 end
 local msg = r.value
-local t: time.Time = r.value -- expect-error: cannot assign unknown
+local t: time.Time = r.value -- expect-hint: implicit unknown flows into declared time.Time
 return msg.field

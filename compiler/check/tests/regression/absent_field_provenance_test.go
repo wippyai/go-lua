@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
+	"github.com/wippyai/go-lua/types/diag"
 )
 
 // A module table built from an empty literal sees every write, so a field it
@@ -58,8 +59,9 @@ end
 }
 
 // A parameter typed from call-site hints is known only partially: a field the
-// hint lacks stays unknown.
-func TestAbsentFieldOfHintedParamStaysUnknown(t *testing.T) {
+// hint lacks stays unknown, and flowing it into a declared type is reported as
+// an implicit unknown, not an error.
+func TestAbsentFieldOfHintedParamIsImplicitUnknown(t *testing.T) {
 	result := testutil.Check(`
 local function read(o)
 	local missing: number = o.missing
@@ -67,16 +69,18 @@ local function read(o)
 end
 read({ present = 1 })
 `, testutil.WithStdlib())
-	msgs := testutil.ErrorMessages(result.Errors)
-	if len(msgs) != 1 || !strings.Contains(msgs[0], "cannot assign unknown to number") {
-		t.Fatalf("expected the absent hinted field to read unknown, got: %v", msgs)
+	if result.HasError() {
+		t.Fatalf("expected no errors, got: %v", testutil.ErrorMessages(result.Errors))
+	}
+	if !hasDiagnostic(result.Diagnostics, diag.SeverityHint, "implicit unknown flows into declared number") {
+		t.Fatalf("expected an implicit unknown hint, got: %v", testutil.ErrorMessages(result.Diagnostics))
 	}
 }
 
-// A method receiver is any table that uses the method table, such as an
-// instance holding its own fields, so a field the method table lacks is
-// unknown on self rather than nil.
-func TestAbsentFieldOfMethodReceiverIsUnknown(t *testing.T) {
+// When every table the module sets a class's metatable on is a literal with
+// no dynamic-key writes, the class's instances hold only the fields the class
+// and its constructor give them, so a field neither writes reads nil on self.
+func TestAbsentFieldOfCompleteReceiverIsNil(t *testing.T) {
 	result := testutil.Check(`
 local session_writer = {}
 session_writer.__index = session_writer
@@ -92,7 +96,41 @@ function session_writer:get_user_id(): string
 end
 `, testutil.WithStdlib())
 	msgs := testutil.ErrorMessages(result.Errors)
-	if len(msgs) != 1 || !strings.Contains(msgs[0], "cannot return unknown") {
-		t.Fatalf("expected the receiver's absent field to read unknown, got: %v", msgs)
+	if len(msgs) != 1 || !strings.Contains(msgs[0], "cannot return nil") {
+		t.Fatalf("expected the receiver's absent field to read nil, got: %v", msgs)
 	}
+}
+
+// A receiver whose instances are copied through dynamic keys may hold fields
+// the class never names, so an absent field stays unknown on self.
+func TestAbsentFieldOfCopiedReceiverStaysUnknown(t *testing.T) {
+	result := testutil.Check(`
+local methods = {}
+local mt = { __index = methods }
+function methods:copy()
+    local new = {}
+    for k, v in pairs(self) do new[k] = v end
+    return setmetatable(new, mt)
+end
+function methods:label(): string
+    local n: number = self.count
+    return "x"
+end
+return methods
+`, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("expected no errors, got: %v", testutil.ErrorMessages(result.Errors))
+	}
+	if !hasDiagnostic(result.Diagnostics, diag.SeverityHint, "implicit unknown flows into declared number") {
+		t.Fatalf("expected an implicit unknown hint, got: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
+func hasDiagnostic(diags []diag.Diagnostic, severity diag.Severity, contains string) bool {
+	for _, d := range diags {
+		if d.Severity == severity && strings.Contains(d.Message, contains) {
+			return true
+		}
+	}
+	return false
 }

@@ -129,8 +129,32 @@ func (p *Processor) bindClassTables(graph *cfg.Graph, children []nested.Child, p
 			continue
 		}
 		p.classSelf[sym] = p.store.BindClassSelf(graph, info.NF.Point, sym, graph.NameOf(sym), body)
-		p.classReceiver[sym] = p.store.BindClassReceiver(graph, info.NF.Point, sym, graph.NameOf(sym), body)
+		if nested.ReceiverComplete(p.moduleGraphs(), sym) {
+			p.classReceiver[sym] = p.classSelf[sym]
+		} else {
+			p.classReceiver[sym] = p.store.BindClassReceiver(graph, info.NF.Point, sym, graph.NameOf(sym), body)
+		}
 	}
+}
+
+// moduleGraphs lists the graphs of the analyzed module in a stable order.
+func (p *Processor) moduleGraphs() []*cfg.Graph {
+	if p.store == nil {
+		return nil
+	}
+	graphs := p.store.Graphs()
+	ids := make([]uint64, 0, len(graphs))
+	for id := range graphs {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	out := make([]*cfg.Graph, 0, len(ids))
+	for _, id := range ids {
+		if g := graphs[id]; g != nil {
+			out = append(out, g)
+		}
+	}
+	return out
 }
 
 // classTableOf returns the table a nested function is stored into:
