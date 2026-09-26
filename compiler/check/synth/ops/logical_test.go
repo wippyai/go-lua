@@ -208,3 +208,10 @@ func TestLogicalOrTyped_TupleOperandsKeepTableShape(t *testing.T) {
 		t.Fatalf("true and tuple should keep the tuple table value, got %T (%v)", andResult, andResult)
 	}
 }
+
+func TestLogicalAndTyped_AnyLeftRemainsGradual(t *testing.T) {
+	result := LogicalAndTyped(typ.Any, typ.Boolean)
+	if !typ.IsAny(result) {
+		t.Fatalf("any and boolean must remain gradual, got %v", result)
+	}
+}
