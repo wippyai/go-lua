@@ -1003,12 +1003,16 @@ func (c *checker) checkMap(sub, super *typ.Map, depth int) bool {
 
 // checkInvariantSlot checks a mutable slot, such as a map key or value, that
 // must hold the same types on both sides. A slot typed any accepts any value
-// type, as a mutable record field typed any does (canWidenTo).
+// type, as a mutable record field typed any does (canWidenTo). A slot typed
+// unknown accepts any value type the same way: returning a concrete-valued
+// map where an unknown-valued map is expected cannot fail at runtime, since
+// Lua tables are dynamic, and reads through the unknown view stay gradual.
 func (c *checker) checkInvariantSlot(sub, super typ.Type, depth int) bool {
 	if !c.check(sub, super, depth) {
 		return false
 	}
-	return c.check(super, sub, depth) || typ.IsAny(unwrap.Alias(super))
+	unwrapped := unwrap.Alias(super)
+	return c.check(super, sub, depth) || typ.IsAny(unwrapped) || typ.IsUnknown(unwrapped)
 }
 
 // checkTuple implements tuple subtyping with covariant elements.

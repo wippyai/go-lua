@@ -2301,6 +2301,19 @@ func TestMapValueWidensIntoAny(t *testing.T) {
 	}
 }
 
+// A map's value slot accepts unknown the way it accepts any: returning a
+// concrete-valued map where an unknown-valued map is expected cannot fail at
+// runtime, since Lua tables are dynamic. The reverse stays rejected, so an
+// unknown-valued map still cannot flow where a concrete value is required.
+func TestMapValueWidensIntoUnknown(t *testing.T) {
+	if !IsSubtype(typ.NewMap(typ.String, typ.Integer), typ.NewMap(typ.String, typ.Unknown)) {
+		t.Fatal("{[string]: integer} must subtype {[string]: unknown}")
+	}
+	if IsSubtype(typ.NewMap(typ.String, typ.Unknown), typ.NewMap(typ.String, typ.Integer)) {
+		t.Fatal("{[string]: unknown} must not subtype {[string]: integer}")
+	}
+}
+
 // A value known only to be some table is a dynamic table: it may be used as
 // any table shape, and as nothing else.
 func TestBuiltinTableTopFlowsIntoTableShapes(t *testing.T) {
