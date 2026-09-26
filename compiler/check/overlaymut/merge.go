@@ -301,7 +301,7 @@ func ApplyFieldWritesToOverlay(overlay map[cfg.SymbolID]typ.Type, writes map[cfg
 		t := overlay[sym]
 		for _, path := range paths {
 			fields := byPath[path]
-			t = mergeAtPath(t, api.FieldWriteKey{Path: path}.Segments(), func(table typ.Type) typ.Type {
+			t = MergeAtPath(t, api.FieldWriteKey{Path: path}.Segments(), func(table typ.Type) typ.Type {
 				return mergeWrittenFields(table, fields)
 			})
 		}
@@ -326,15 +326,16 @@ func mergeWrittenFields(table typ.Type, fields map[string]typ.Type) typ.Type {
 	return table
 }
 
-// mergeAtPath rebuilds t with apply run on the type of the record field at
-// segments below it.
-func mergeAtPath(t typ.Type, segments []constraint.Segment, apply func(typ.Type) typ.Type) typ.Type {
+// MergeAtPath rebuilds t with apply run on the type of the record field at
+// segments below it. A path t does not describe as record fields leaves t as
+// is.
+func MergeAtPath(t typ.Type, segments []constraint.Segment, apply func(typ.Type) typ.Type) typ.Type {
 	if len(segments) == 0 {
 		return apply(t)
 	}
 	switch v := t.(type) {
 	case *typ.Optional:
-		inner := mergeAtPath(v.Inner, segments, apply)
+		inner := MergeAtPath(v.Inner, segments, apply)
 		if inner == v.Inner {
 			return t
 		}
@@ -348,7 +349,7 @@ func mergeAtPath(t typ.Type, segments []constraint.Segment, apply func(typ.Type)
 		if field == nil {
 			return t
 		}
-		merged := mergeAtPath(field.Type, segments[1:], apply)
+		merged := MergeAtPath(field.Type, segments[1:], apply)
 		if merged == nil || typ.TypeEquals(merged, field.Type) {
 			return t
 		}

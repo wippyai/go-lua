@@ -57,6 +57,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/path"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/predicate"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/resolve"
+	"github.com/wippyai/go-lua/compiler/check/overlaymut"
 	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
@@ -810,7 +811,29 @@ func collectInferredTypes(
 					continue
 				}
 
-				// Handle indexed targets (t[k]) even when key is non-const.
+				// A statically located target (t, t.k) appends to the list at
+				// that path, as the flow extractor records it.
+				if !targetPath.IsEmpty() && targetPath.Symbol != 0 {
+					if !sccSet[targetPath.Symbol] {
+						continue
+					}
+					old := inferred[targetPath.Symbol]
+					var newType typ.Type
+					if len(targetPath.Segments) == 0 {
+						newType = flow.WidenArrayElementType(old, valueType, typ.JoinPreferNonSoft)
+					} else if old != nil {
+						newType = overlaymut.MergeAtPath(old, targetPath.Segments, func(list typ.Type) typ.Type {
+							return flow.WidenArrayElementType(list, valueType, typ.JoinPreferNonSoft)
+						})
+					}
+					if newType != nil && !typ.TypeEquals(old, newType) {
+						inferred[targetPath.Symbol] = newType
+						changed = true
+					}
+					continue
+				}
+
+				// A target indexed by a dynamic key (t[k]) widens t's map.
 				if attr, ok := targetExpr.(*ast.AttrGetExpr); ok {
 					baseSym := callsite.SymbolOrCreateFieldFromExpr(attr.Object, bindings)
 					if baseSym != 0 && sccSet[baseSym] {
@@ -830,20 +853,6 @@ func collectInferredTypes(
 						continue
 					}
 				}
-
-				if targetPath.IsEmpty() || targetPath.Symbol == 0 {
-					continue
-				}
-				if !sccSet[targetPath.Symbol] {
-					continue
-				}
-				old := inferred[targetPath.Symbol]
-				newType := flow.WidenArrayElementType(old, valueType, typ.JoinPreferNonSoft)
-				if newType == nil || typ.TypeEquals(old, newType) {
-					continue
-				}
-				inferred[targetPath.Symbol] = newType
-				changed = true
 			}
 
 			// Replaying assignments and mutators can change intermediate types
