@@ -497,7 +497,7 @@ func collectInferredTypes(
 			overlayScratch = mergeSpecTypesSoftInto(overlayScratch, inferred, specTypes)
 			overlay := overlayScratch
 
-			wrappedSynth := synthWithInferenceOverlay(graph, overlay, funcSigTypes, paramSet, annotated, bindings, inputs, callCtx, typeOps, preflowBranchSolution, synth)
+			wrappedSynth := synthWithInferenceOverlay(synthAPI, overlay, funcSigTypes, paramSet, annotated, bindings, inputs, callCtx, typeOps, preflowBranchSolution, synth)
 			callSynthFor := func(p cfg.Point, info *cfg.CallInfo) func(ast.Expr, cfg.Point) typ.Type {
 				if info == nil {
 					return wrappedSynth
@@ -525,7 +525,7 @@ func collectInferredTypes(
 				}, preflowBranchSolution)
 				callOverlay = enrichStructuredOverlayAtPoint(graph, idom, structuredWrites, p, callOverlay, rhsResolver, wrappedSynth)
 
-				return synthWithInferenceOverlay(graph, callOverlay, funcSigTypes, paramSet, annotated, bindings, inputs, callCtx, typeOps, preflowBranchSolution, synth)
+				return synthWithInferenceOverlay(synthAPI, callOverlay, funcSigTypes, paramSet, annotated, bindings, inputs, callCtx, typeOps, preflowBranchSolution, synth)
 			}
 
 			// Infer expected argument types for a call using the call inference pipeline.
@@ -997,7 +997,7 @@ func dedupeSymbolIDs(refs []cfg.SymbolID) []cfg.SymbolID {
 }
 
 func synthWithInferenceOverlay(
-	graph *cfg.Graph,
+	synthAPI api.SynthAPI,
 	overlay map[cfg.SymbolID]typ.Type,
 	funcSigTypes map[cfg.SymbolID]typ.Type,
 	paramSet map[cfg.SymbolID]bool,
@@ -1009,7 +1009,6 @@ func synthWithInferenceOverlay(
 	preflow *preflowFacts,
 	base func(ast.Expr, cfg.Point) typ.Type,
 ) func(ast.Expr, cfg.Point) typ.Type {
-	_ = graph
 	mergedOverlay := make(map[cfg.SymbolID]typ.Type, len(overlay)+len(funcSigTypes))
 	for sym, t := range funcSigTypes {
 		if t != nil {
@@ -1020,6 +1019,9 @@ func synthWithInferenceOverlay(
 		mergedOverlay[sym] = t
 	}
 
+	if base != nil {
+		base = overlaySynth(synthAPI, mergedOverlay, base)
+	}
 	wrappedBase := func(expr ast.Expr, p cfg.Point) typ.Type {
 		if ident, ok := expr.(*ast.IdentExpr); ok && bindings != nil {
 			if sym, ok := bindings.SymbolOf(ident); ok && sym != 0 {
