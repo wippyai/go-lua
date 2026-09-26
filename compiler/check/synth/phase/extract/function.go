@@ -194,7 +194,7 @@ func (s *Synthesizer) synthFunctionTypeWithCapturePoint(
 			if body, _ := s.inferReturnTypesFromBody(fn, resolveScope, expected, fnGraph, capturePoint, captureTypes); len(body) == len(returns) {
 				for i, declared := range returns {
 					if isBroadMapReturn(declared) && containsRecordReturn(body[i]) && subtype.IsSubtype(body[i], declared) {
-						returns[i] = body[i]
+						returns[i] = keepDeclaredAnyFields(body[i])
 					}
 				}
 			}
@@ -241,6 +241,41 @@ func isBroadMapReturn(t typ.Type) bool {
 	default:
 		return false
 	}
+}
+
+// keepDeclaredAnyFields refines a declared {[string]: any} return with the
+// field names of body record t. A field the body only knows as unknown carries
+// no evidence beyond the declaration, so it keeps the declared any.
+func keepDeclaredAnyFields(t typ.Type) typ.Type {
+	switch v := t.(type) {
+	case *typ.Record:
+		out := v
+		for _, f := range v.Fields {
+			if typ.IsUnknown(f.Type) {
+				f.Type = typ.Any
+				out = out.WithField(f)
+			}
+		}
+		return out
+	case *typ.Optional:
+		inner := keepDeclaredAnyFields(v.Inner)
+		if inner == v.Inner {
+			return t
+		}
+		return typ.NewOptional(inner)
+	case *typ.Union:
+		members := make([]typ.Type, len(v.Members))
+		changed := false
+		for i, m := range v.Members {
+			members[i] = keepDeclaredAnyFields(m)
+			changed = changed || members[i] != m
+		}
+		if !changed {
+			return t
+		}
+		return typ.NewUnion(members...)
+	}
+	return t
 }
 
 func containsRecordReturn(t typ.Type) bool {
