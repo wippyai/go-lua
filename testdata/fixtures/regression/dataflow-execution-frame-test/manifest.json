@@ -1,0 +1,1 @@
+{"description": "userspace.dataflow:execution_frame_test over wippy.test and execution_frame with typed security and json stand-ins: facts crossing nested test closures and call chains converge.", "packages": ["funcs", "time", "process"], "files": ["test.lua", "json.lua", "security.lua", "execution_frame.lua", "main.lua"]}

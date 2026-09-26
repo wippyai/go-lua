@@ -26,7 +26,7 @@ type fixtureSuite struct {
 	Description string        `json:"description,omitempty"`
 	Files       []string      `json:"files,omitempty"`
 	Stdlib      *bool         `json:"stdlib,omitempty"`
-	Packages    []string      `json:"packages,omitempty"` // predefined system packages: "channel", "funcs", "process", "time"
+	Packages    []string      `json:"packages,omitempty"` // predefined system packages: "channel", "funcs", "process", "time", "sql", "fs"
 	Check       *fixtureCheck `json:"check,omitempty"`
 	Run         *fixtureRun   `json:"run,omitempty"`
 	Bench       *fixtureBench `json:"bench,omitempty"`
@@ -492,6 +492,8 @@ func resolvePackageManifest(name string) *io.Manifest {
 		return testutil.TimeManifest()
 	case "sql":
 		return fixtureSQLManifest()
+	case "fs":
+		return fixtureFSManifest()
 	default:
 		return nil
 	}
@@ -507,6 +509,7 @@ func fixtureSQLManifest() *io.Manifest {
 		{Name: "rollback", Type: typ.Func().Param("self", typ.Self).Returns(typ.Boolean, typ.NewOptional(typ.LuaError)).Build()},
 	})
 	db := typ.NewInterface("sql.DB", []typ.Method{
+		{Name: "type", Type: typ.Func().Param("self", typ.Self).Returns(typ.String, typ.NewOptional(typ.LuaError)).Build()},
 		{Name: "query", Type: typ.Func().Param("self", typ.Self).Param("sql", typ.String).Variadic(typ.Any).Returns(rows, typ.NewOptional(typ.LuaError)).Build()},
 		{Name: "execute", Type: typ.Func().Param("self", typ.Self).Param("sql", typ.String).Variadic(typ.Any).Returns(typ.Any, typ.NewOptional(typ.LuaError)).Build()},
 		{Name: "begin", Type: typ.Func().Param("self", typ.Self).OptParam("opts", typ.Any).Returns(tx, typ.NewOptional(typ.LuaError)).Build()},
@@ -517,7 +520,26 @@ func fixtureSQLManifest() *io.Manifest {
 	m.DefineType("Transaction", tx)
 	m.SetExport(typ.NewRecord().
 		Field("get", typ.Func().Param("dsn", typ.String).Returns(db, typ.NewOptional(typ.LuaError)).Spec(contract.NewSpec().WithEffects(effect.ErrorReturn{ValueIndex: 0, ErrorIndex: 1})).Build()).
-		Field("type", typ.NewRecord().Field("POSTGRES", typ.String).Build()).Build())
+		Field("type", typ.NewRecord().
+			Field("POSTGRES", typ.String).
+			Field("MYSQL", typ.String).
+			Field("SQLITE", typ.String).
+			Field("UNKNOWN", typ.String).Build()).Build())
+	return m
+}
+
+func fixtureFSManifest() *io.Manifest {
+	volume := typ.NewInterface("fs.FS", []typ.Method{
+		{Name: "mkdir", Type: typ.Func().Param("self", typ.Self).Param("path", typ.String).Returns(typ.Boolean, typ.NewOptional(typ.LuaError)).Build()},
+		{Name: "exists", Type: typ.Func().Param("self", typ.Self).Param("path", typ.String).Returns(typ.Boolean, typ.NewOptional(typ.LuaError)).Build()},
+		{Name: "readfile", Type: typ.Func().Param("self", typ.Self).Param("path", typ.String).Returns(typ.String, typ.NewOptional(typ.LuaError)).Build()},
+		{Name: "writefile", Type: typ.Func().Param("self", typ.Self).Param("path", typ.String).Param("data", typ.String).OptParam("options", typ.String).Returns(typ.Boolean, typ.NewOptional(typ.LuaError)).Build()},
+	})
+	m := io.NewManifest("fs")
+	m.DefineType("FS", volume)
+	m.SetExport(typ.NewInterface("fs", []typ.Method{
+		{Name: "get", Type: typ.Func().Param("name", typ.String).Returns(volume, typ.NewOptional(typ.LuaError)).Build()},
+	}))
 	return m
 }
 
