@@ -116,6 +116,7 @@ type InterprocFactSink interface {
 // ClassSelfBinder binds a table symbol to an immutable recursive body snapshot.
 type ClassSelfBinder interface {
 	BindClassSelf(graph *cfg.Graph, at cfg.Point, sym cfg.SymbolID, name string, body typ.Type) typ.Type
+	BindClassReceiver(graph *cfg.Graph, at cfg.Point, sym cfg.SymbolID, name string, body typ.Type) typ.Type
 }
 
 // NestedStore is the store interface required by nested processing.

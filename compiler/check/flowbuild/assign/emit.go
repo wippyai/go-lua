@@ -153,7 +153,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 	overlayTypes = mergeSpecTypesInto(overlayTypes, specNarrowed)
 	overlayTypes = mergeSpecTypesInto(overlayTypes, loopVarTypes)
 
-	baseSynth := synthWithOverlayAndPreflow(overlayTypes, bindings, inputs, fc.CallCtx, fc.TypeOps, preflowBranchSolution, synth)
+	baseSynth := synthWithOverlayAndPreflow(overlayTypes, bindings, inputs, fc.CallCtx, fc.TypeOps, preflowBranchSolution, overlaySynth(fc.API, overlayTypes, synth))
 	idom, _ := cfganalysis.ComputeDominators(fc.Graph.CFG())
 	structuredWrites := indexStructuredWrites(fc.Graph)
 	var wrappedSynth func(ast.Expr, cfg.Point) typ.Type
@@ -266,31 +266,38 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 
 				// Determine assigned type using identity-based resolver.
 				// For annotated locals, keep the declared type (RHS should not override).
+				rhsType := func() typ.Type {
+					ensureValues()
+					if value := assignValueAt(values, i); value != nil {
+						return preferPreciseDirectSourceType(value, source, p, sc, wrappedSynth, len(info.Targets) == 1)
+					}
+					if wrappedSynth != nil && source != nil {
+						return wrappedSynth(source, p)
+					}
+					return nil
+				}
 				assignedType := typ.Unknown
 				if info.IsLocal {
 					if inputs != nil && inputs.AnnotatedVars != nil && inputs.AnnotatedVars[sym] {
 						if dt, ok := inputs.DeclaredTypes[sym]; ok && dt != nil {
 							assignedType = dt
 						}
-					} else {
-						if t, ok := resolverWithSpec(p, sym); ok && t != nil {
-							// Keep previously resolved assignment types only when
-							// they carry concrete information. Top-like placeholders
-							// (any/unknown/soft) must not block RHS-derived types.
-							if !isTopLikeResolvedAssignType(t) {
-								assignedType = t
-							}
+					} else if t, ok := resolverWithSpec(p, sym); ok && t != nil {
+						// A final resolved type is authoritative when it carries
+						// concrete information; top-like placeholders
+						// (any/unknown/soft) yield to RHS-derived types. A
+						// pending estimate is filled by RHS evidence.
+						if !typ.IsFinal(t) {
+							assignedType = typ.Resolve(t, rhsType())
+						} else if !isTopLikeResolvedAssignType(t) {
+							assignedType = t
 						}
 					}
 				}
 				// Fall back to expression synthesis if no declared/known type
 				if typ.IsAbsentOrUnknown(assignedType) {
-					ensureValues()
-					if value := assignValueAt(values, i); value != nil {
-						assignedType = value
-						assignedType = preferPreciseDirectSourceType(assignedType, source, p, sc, wrappedSynth, len(info.Targets) == 1)
-					} else if wrappedSynth != nil && source != nil {
-						assignedType = wrappedSynth(source, p)
+					if rhs := rhsType(); rhs != nil {
+						assignedType = rhs
 					}
 				}
 				// Override with expanded values if source call has a spec-narrowed receiver.
@@ -328,6 +335,14 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 				// Use pre-collected spec-narrowed type if available (via SymbolID)
 				if narrowed, ok := specNarrowed[sym]; ok {
 					assignedType = narrowed
+				}
+				// The assignment type is published into the flow: pending
+				// positions do not cross that boundary.
+				assignedType = typ.Finalize(assignedType)
+				// A value refining a soft annotation is one value the annotation
+				// admits; the annotation's other keys stay possible.
+				if inputs != nil && inputs.RefinableAnnotatedVars[sym] {
+					assignedType = typ.PartialViewDeep(assignedType)
 				}
 
 				// Build source path with const resolution and bindings.

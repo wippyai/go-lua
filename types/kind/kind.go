@@ -134,10 +134,10 @@ func (k Kind) IsDeferred() bool {
 	return false
 }
 
-// IsPlaceholder returns true for Any or Unknown kinds.
-// These represent unresolved or open type positions.
+// IsPlaceholder returns true for Any, Unknown, or Unresolved kinds.
+// These represent pending or open type positions.
 func (k Kind) IsPlaceholder() bool {
-	return k == Any || k == Unknown
+	return k == Any || k == Unknown || k == Unresolved
 }
 
 // IsConcrete returns true for types that are fully resolved (not Any, Unknown, or Never).

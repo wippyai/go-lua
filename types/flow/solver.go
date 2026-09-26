@@ -12,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 // Solution holds flow-narrowed types for all paths after solving.
@@ -50,8 +51,10 @@ type Solution struct {
 	scratchResolvedPathMap map[constraint.PathKey]constraint.PathKey
 	scratchParsedSuffixes  map[string][]constraint.Segment
 	fieldOverlayCache      map[string][]mergedField
+	childFieldCache        map[string]map[string]bool
 	pathAliases            map[string]string // canonical target path key -> canonical source path key
 	narrowedTypeCache      map[narrowedTypeCacheKey]narrowedTypeCacheValue
+	rebinds                map[cfg.Point]map[cfg.SymbolID]bool
 	queryCacheEnabled      bool
 
 	// Worklist/dependency scratch to reduce per-iteration allocations.
@@ -794,6 +797,9 @@ func (s *Solution) addDependentPointsBatch(
 			addByKey(assignDeps, symKey)
 			addByKey(edgeDeps, symKey)
 		}
+		if base := versionBaseOfKey(key); base != "" {
+			addByKey(phiDeps, versionDependencyKey(base))
+		}
 	}
 
 	slices.Sort(pendingPts)
@@ -975,26 +981,41 @@ func (s *Solution) mergeFields(baseType typ.Type, baseKey string) typ.Type {
 	if !ok {
 		return baseType
 	}
-	fields := s.fieldAssignmentsForRoot(pathkey.SymbolVersionRoot(baseSym, baseVersion))
-	if len(fields) == 0 {
+	return s.mergeFieldsAt(baseType, pathkey.SymbolVersionRoot(baseSym, baseVersion), 0)
+}
+
+// mergeFieldsAt composes the child-path facts stored below prefix into
+// baseType, the value at prefix: a direct field fact replaces the field, and
+// a field with facts deeper below composes them into its own value.
+func (s *Solution) mergeFieldsAt(baseType typ.Type, prefix string, depth int) typ.Type {
+	if typ.DepthExceeded(depth) {
 		return baseType
+	}
+	fields := s.fieldAssignmentsForRoot(prefix)
+	deeper := s.childFieldsWithDeeperFacts(prefix)
+	if len(fields) == 0 && len(deeper) == 0 {
+		return baseType
+	}
+	if len(fields) == 0 {
+		return s.mergeDeeperFieldFacts(baseType, prefix, deeper, depth)
 	}
 
 	if baseType == nil {
 		baseType = typ.NewRecord().SetOpen(true).Build()
 	}
+	baseType = unwrap.TableTopAsMap(baseType)
 
 	// Merge fields into base type
 	return typ.Visit(baseType, typ.Visitor[typ.Type]{
 		Alias: func(a *typ.Alias) typ.Type {
-			merged := s.mergeFieldAssignments(a.Target, baseKey)
+			merged := typ.WriteInto(a.Target, func(t typ.Type) typ.Type { return s.mergeFieldsAt(t, prefix, depth+1) })
 			if merged == nil || typ.TypeEquals(merged, a.Target) {
 				return baseType
 			}
 			return typ.NewAlias(a.Name, merged)
 		},
 		Recursive: func(r *typ.Recursive) typ.Type {
-			mergedBody := s.mergeFieldAssignments(r.Body, baseKey)
+			mergedBody := typ.WriteInto(r.Body, func(t typ.Type) typ.Type { return s.mergeFieldsAt(t, prefix, depth+1) })
 			if mergedBody == nil || typ.TypeEquals(mergedBody, r.Body) {
 				return baseType
 			}
@@ -1024,7 +1045,7 @@ func (s *Solution) mergeFields(baseType typ.Type, baseKey string) typ.Type {
 		},
 		Record: func(r *typ.Record) typ.Type {
 			// Build merged record: existing fields + new fields
-			builder := typ.NewRecord().SetDeclared(r.Declared)
+			builder := typ.NewRecord().SetDeclared(r.Declared).SetComplete(r.Complete)
 			if r.Open {
 				builder.SetOpen(true)
 			}
@@ -1065,6 +1086,9 @@ func (s *Solution) mergeFields(baseType typ.Type, baseKey string) typ.Type {
 					}
 					delete(assignedByName, f.Name)
 				}
+				if deeper[f.Name] && !r.Declared {
+					fieldType = s.mergeChildFieldFacts(fieldType, prefix, f.Name, depth)
+				}
 				f.Type = fieldType
 				f.Optional = optional
 				f.InferredPresence = inferredPresence && optional
@@ -1098,6 +1122,80 @@ func (s *Solution) mergeFields(baseType typ.Type, baseKey string) typ.Type {
 			return builder.Build()
 		},
 	})
+}
+
+// childFieldsWithDeeperFacts lists the direct fields below prefix that have
+// facts stored deeper than one segment.
+func (s *Solution) childFieldsWithDeeperFacts(prefix string) map[string]bool {
+	if s == nil || len(s.values) == 0 || prefix == "" {
+		return nil
+	}
+	if s.childFieldCache == nil {
+		s.childFieldCache = make(map[string]map[string]bool)
+	}
+	if names, ok := s.childFieldCache[prefix]; ok {
+		return names
+	}
+	var names map[string]bool
+	for key := range s.values {
+		if len(key) <= len(prefix) || key[:len(prefix)] != prefix {
+			continue
+		}
+		segs := pathkey.ParseSuffix(key[len(prefix):])
+		if len(segs) < 2 || segs[0].Kind != constraint.SegmentField {
+			continue
+		}
+		if names == nil {
+			names = make(map[string]bool)
+		}
+		names[segs[0].Name] = true
+	}
+	s.childFieldCache[prefix] = names
+	return names
+}
+
+// mergeChildFieldFacts composes the facts stored below field name of prefix
+// into fieldType, that field's value, when the value is a complete record: a
+// table literal of this module, whose fields the module's own flow writes. A
+// declared shape, a map, or a partial view is not rebuilt from them.
+func (s *Solution) mergeChildFieldFacts(fieldType typ.Type, prefix, name string, depth int) typ.Type {
+	if rec, ok := unwrap.Alias(fieldType).(*typ.Record); !ok || rec.Declared || !rec.Complete {
+		return fieldType
+	}
+	child := prefix + pathkey.SegmentsSuffix([]constraint.Segment{{Kind: constraint.SegmentField, Name: name}})
+	out := typ.WriteInto(fieldType, func(t typ.Type) typ.Type { return s.mergeFieldsAt(t, child, depth+1) })
+	return out
+}
+
+// mergeDeeperFieldFacts composes deeper child facts into the fields of a
+// record base that has no direct field facts below prefix.
+func (s *Solution) mergeDeeperFieldFacts(baseType typ.Type, prefix string, deeper map[string]bool, depth int) typ.Type {
+	switch v := baseType.(type) {
+	case *typ.Alias:
+		target := s.mergeDeeperFieldFacts(v.Target, prefix, deeper, depth)
+		if target == v.Target {
+			return baseType
+		}
+		return typ.NewAlias(v.Name, target)
+	case *typ.Record:
+		if v.Declared {
+			return baseType
+		}
+		out := v
+		for _, f := range v.Fields {
+			if !deeper[f.Name] {
+				continue
+			}
+			merged := s.mergeChildFieldFacts(f.Type, prefix, f.Name, depth)
+			if merged == nil || typ.TypeEquals(merged, f.Type) {
+				continue
+			}
+			f.Type = merged
+			out = out.WithField(f)
+		}
+		return out
+	}
+	return baseType
 }
 
 func (s *Solution) fieldAssignmentsForRoot(baseRoot string) []mergedField {

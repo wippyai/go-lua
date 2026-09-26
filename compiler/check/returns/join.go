@@ -576,9 +576,9 @@ func recordSuperset(newRec, oldRec *typ.Record) bool {
 				return false
 			}
 			if of.Type != nil {
-				if isOpenTopRecordType(nf.Type) && isStructuredTableShape(of.Type) {
-					// Open-top table placeholders must not dominate structured
-					// collection/record fields when selecting preferred summaries.
+				if isOpenTopRecordType(nf.Type) && (isStructuredTableShape(of.Type) || typ.IsAny(of.Type)) {
+					// An open-top placeholder is not evidence that narrows a
+					// structured or dynamic value from another summary.
 					return false
 				}
 				if nf.Type == nil || !subtype.IsSubtype(nf.Type, of.Type) {
@@ -772,7 +772,7 @@ func fillUnknownSlots(rets, other []typ.Type) []typ.Type {
 func fillPendingSlots(rets, other []typ.Type) []typ.Type {
 	var out []typ.Type
 	for i, t := range rets {
-		if i >= len(other) || !typ.IsUnresolved(t) || other[i] == nil || typ.IsUnresolved(other[i]) || other[i].Kind() == kind.Nil {
+		if i >= len(other) || typ.IsFinal(t) || other[i] == nil || typ.IsUnresolved(other[i]) || other[i].Kind() == kind.Nil {
 			continue
 		}
 		if out == nil {

@@ -58,6 +58,7 @@ type Processor struct {
 	check         CheckFunc
 	resultForFunc ResultFunc
 	classSelf     map[cfg.SymbolID]typ.Type
+	classReceiver map[cfg.SymbolID]typ.Type
 }
 
 // New creates a nested processor.
@@ -111,6 +112,7 @@ func (p *Processor) ProcessNestedFunctions(graph *cfg.Graph, parentResult *api.F
 // views all refer to the table's stable recursion identity.
 func (p *Processor) bindClassTables(graph *cfg.Graph, children []nested.Child, parentResult *api.FuncResultView) {
 	p.classSelf = make(map[cfg.SymbolID]typ.Type)
+	p.classReceiver = make(map[cfg.SymbolID]typ.Type)
 	if p.store == nil || graph == nil || graph.Bindings() == nil || parentResult == nil {
 		return
 	}
@@ -127,7 +129,32 @@ func (p *Processor) bindClassTables(graph *cfg.Graph, children []nested.Child, p
 			continue
 		}
 		p.classSelf[sym] = p.store.BindClassSelf(graph, info.NF.Point, sym, graph.NameOf(sym), body)
+		if nested.ReceiverComplete(p.moduleGraphs(), sym) {
+			p.classReceiver[sym] = p.classSelf[sym]
+		} else {
+			p.classReceiver[sym] = p.store.BindClassReceiver(graph, info.NF.Point, sym, graph.NameOf(sym), body)
+		}
 	}
+}
+
+// moduleGraphs lists the graphs of the analyzed module in a stable order.
+func (p *Processor) moduleGraphs() []*cfg.Graph {
+	if p.store == nil {
+		return nil
+	}
+	graphs := p.store.Graphs()
+	ids := make([]uint64, 0, len(graphs))
+	for id := range graphs {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	out := make([]*cfg.Graph, 0, len(ids))
+	for _, id := range ids {
+		if g := graphs[id]; g != nil {
+			out = append(out, g)
+		}
+	}
+	return out
 }
 
 // classTableOf returns the table a nested function is stored into:
@@ -375,13 +402,15 @@ func (p *Processor) methodSelfType(graph *cfg.Graph, info *nested.FuncInfo) typ.
 	if !isMethod && !phasecore.HasUnannotatedSelfParam(info.NF.Func, graph.Bindings()) {
 		return nil
 	}
+	// The receiver is any table that uses the method table, so the method
+	// table's own fields describe it partially.
 	if isMethod && info.FuncDef.ReceiverName != "" && info.DefScope != nil {
 		if named, ok := info.DefScope.LookupValueType(info.FuncDef.ReceiverName); ok && named != nil {
-			return nested.NormalizeMethodSelfType(named)
+			return typ.PartialView(nested.NormalizeMethodSelfType(named))
 		}
 	}
 	if sym := classTableOf(graph, info); sym != 0 {
-		return p.classSelf[sym]
+		return p.classReceiver[sym]
 	}
 	return nil
 }

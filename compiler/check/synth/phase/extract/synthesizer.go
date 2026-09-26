@@ -162,6 +162,15 @@ func (s *Synthesizer) ExpandValuesWithSpecTypes(exprs []ast.Expr, needed int, p 
 	return s.expandValuesWithSpec(exprs, needed, p, specTypes)
 }
 
+// TypeOfWithSpecTypes synthesizes an expression with spec-narrowed type lookup
+// for every symbol it reads.
+func (s *Synthesizer) TypeOfWithSpecTypes(expr ast.Expr, p cfg.Point, specTypes api.SpecTypes) typ.Type {
+	if len(specTypes) == 0 {
+		return s.TypeOf(expr, p)
+	}
+	return s.synthExprWithSpec(expr, p, specTypes)
+}
+
 // InferIterVars infers iterator variable types (no narrowing).
 func (s *Synthesizer) InferIterVars(exprs []ast.Expr, count int, p cfg.Point) []typ.Type {
 	return s.inferIterVars(exprs, count, p, nil)
@@ -483,7 +492,32 @@ fallback:
 		}
 	}
 
+	// Scope computation sees declarations only: a bound symbol whose value
+	// comes from flow has no evidence yet. A local of an enclosing function
+	// has no evidence until that function's solved flow is published.
+	if s.phase == api.PhaseScopeCompute || enclosingLocal(ctx, sym) {
+		return typ.Unresolved
+	}
 	return typ.Unknown
+}
+
+// enclosingLocal reports whether sym is a local or parameter of an enclosing
+// function that the analyzed function captures.
+func enclosingLocal(ctx api.BaseEnv, sym cfg.SymbolID) bool {
+	graph, ok := ctx.Graph().(interface{ Func() *ast.FunctionExpr })
+	bindings := ctx.Bindings()
+	if !ok || bindings == nil || graph.Func() == nil {
+		return false
+	}
+	if k, known := bindings.Kind(sym); !known || (k != cfg.SymbolLocal && k != cfg.SymbolParam) {
+		return false
+	}
+	for _, captured := range bindings.CapturedSymbols(graph.Func()) {
+		if captured == sym {
+			return true
+		}
+	}
+	return false
 }
 
 // synthComma3 synthesizes type for varargs (...).

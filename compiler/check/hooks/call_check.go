@@ -227,6 +227,9 @@ func callErrorsToDiags(errors []ops.CallError, info *cfg.CallInfo, sourceName st
 			}
 		case ops.ErrOptionalCall:
 			code = diag.ErrOptionalCall
+		case ops.HintImplicitUnknown:
+			diags = append(diags, implicitUnknownCallHint(pos, span, err.Message))
+			continue
 		}
 
 		_, help := diag.ContextualHelp(code, err.Message, "")

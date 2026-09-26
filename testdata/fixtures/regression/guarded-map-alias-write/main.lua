@@ -7,6 +7,6 @@ local key: string = "other"
 local want = expected[key]
 if want ~= nil then
     local function get(_id: string): unknown return {} end
-    return get(want.view)
+    return get(want.view) -- expect-hint: argument 1: implicit unknown flows into declared string
 end
 return nil

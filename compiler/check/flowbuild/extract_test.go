@@ -1370,3 +1370,7 @@ local msg = ch:receive()
 		t.Error("ch should be in Assignments")
 	}
 }
+
+func (s *testSynthAPI) TypeOfWithSpecTypes(expr ast.Expr, p cfg.Point, _ api.SpecTypes) typ.Type {
+	return s.TypeOf(expr, p)
+}

@@ -57,13 +57,14 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/path"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/predicate"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/resolve"
+	"github.com/wippyai/go-lua/compiler/check/overlaymut"
 	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/compiler/check/scope"
-	synthpkg "github.com/wippyai/go-lua/compiler/check/synth"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	"github.com/wippyai/go-lua/internal"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/flow"
+	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
@@ -84,9 +85,10 @@ func mergeSpecTypesSoftInto(out, base, override api.SpecTypes) api.SpecTypes {
 		out[k] = v
 	}
 	for k, v := range override {
-		// Unknown/nil overlays are uninformative and can poison downstream
+		// Pending and nil overlays are uninformative and can poison downstream
 		// inference (for example, trailing nil padding from unresolved calls).
-		if typ.IsUnknownOrNil(v) {
+		// A declared unknown is a final dynamic type and overrides.
+		if v == nil || typ.IsUnresolved(v) || v.Kind() == kind.Nil {
 			continue
 		}
 		if v != nil && typ.IsSoft(v, typ.SoftAnnotationPolicy) {
@@ -148,7 +150,6 @@ func collectInferredTypes(
 	services fbcore.FlowServices,
 ) api.SpecTypes {
 	inferred := make(api.SpecTypes)
-	pendingKeySeeded := false
 	if graph == nil {
 		return inferred
 	}
@@ -167,7 +168,7 @@ func collectInferredTypes(
 		}
 	}
 	funcSigTypes := make(map[cfg.SymbolID]typ.Type)
-	seedEngine, _ := synthAPI.(*synthpkg.Engine)
+	seedResolver, _ := synthAPI.(returns.TypeExprResolver)
 	if services != nil {
 		graph.EachFuncDef(func(p cfg.Point, info *cfg.FuncDefInfo) {
 			if info == nil || info.Symbol == 0 {
@@ -190,7 +191,7 @@ func collectInferredTypes(
 				funcSigTypes[info.Symbol] = sig
 				return
 			}
-			if seed, ok := returns.BuildSeedFunctionTypeWithBindings(info.FuncExpr, seedEngine, sc, bindings).(*typ.Function); ok && seed != nil {
+			if seed, ok := returns.BuildSeedFunctionTypeWithBindings(info.FuncExpr, seedResolver, sc, bindings).(*typ.Function); ok && seed != nil {
 				funcSigTypes[info.Symbol] = seed
 			}
 		})
@@ -222,7 +223,7 @@ func collectInferredTypes(
 						funcSigTypes[target.Symbol] = sig
 						continue
 					}
-					if seed, ok := returns.BuildSeedFunctionTypeWithBindings(fnExpr, seedEngine, sc, bindings).(*typ.Function); ok && seed != nil {
+					if seed, ok := returns.BuildSeedFunctionTypeWithBindings(fnExpr, seedResolver, sc, bindings).(*typ.Function); ok && seed != nil {
 						funcSigTypes[target.Symbol] = seed
 					}
 				}
@@ -483,11 +484,20 @@ func collectInferredTypes(
 			previous := make(api.SpecTypes, len(sccSyms))
 			for _, sym := range sccSyms {
 				previous[sym] = inferred[sym]
+				// This round re-reads every value the previous round read
+				// while pending, so its result supersedes those alternatives.
+				if t, ok := inferred[sym]; ok && !typ.IsFinal(t) {
+					if evidence := typ.DropPendingAlternatives(t); evidence != nil {
+						inferred[sym] = evidence
+					} else {
+						delete(inferred, sym)
+					}
+				}
 			}
 			overlayScratch = mergeSpecTypesSoftInto(overlayScratch, inferred, specTypes)
 			overlay := overlayScratch
 
-			wrappedSynth := synthWithInferenceOverlay(graph, overlay, funcSigTypes, paramSet, annotated, bindings, inputs, callCtx, typeOps, preflowBranchSolution, synth)
+			wrappedSynth := synthWithInferenceOverlay(synthAPI, overlay, funcSigTypes, paramSet, annotated, bindings, inputs, callCtx, typeOps, preflowBranchSolution, synth)
 			callSynthFor := func(p cfg.Point, info *cfg.CallInfo) func(ast.Expr, cfg.Point) typ.Type {
 				if info == nil {
 					return wrappedSynth
@@ -515,7 +525,7 @@ func collectInferredTypes(
 				}, preflowBranchSolution)
 				callOverlay = enrichStructuredOverlayAtPoint(graph, idom, structuredWrites, p, callOverlay, rhsResolver, wrappedSynth)
 
-				return synthWithInferenceOverlay(graph, callOverlay, funcSigTypes, paramSet, annotated, bindings, inputs, callCtx, typeOps, preflowBranchSolution, synth)
+				return synthWithInferenceOverlay(synthAPI, callOverlay, funcSigTypes, paramSet, annotated, bindings, inputs, callCtx, typeOps, preflowBranchSolution, synth)
 			}
 
 			// Infer expected argument types for a call using the call inference pipeline.
@@ -801,7 +811,29 @@ func collectInferredTypes(
 					continue
 				}
 
-				// Handle indexed targets (t[k]) even when key is non-const.
+				// A statically located target (t, t.k) appends to the list at
+				// that path, as the flow extractor records it.
+				if !targetPath.IsEmpty() && targetPath.Symbol != 0 {
+					if !sccSet[targetPath.Symbol] {
+						continue
+					}
+					old := inferred[targetPath.Symbol]
+					var newType typ.Type
+					if len(targetPath.Segments) == 0 {
+						newType = flow.WidenArrayElementType(old, valueType, typ.JoinPreferNonSoft)
+					} else if old != nil {
+						newType = overlaymut.MergeAtPath(old, targetPath.Segments, func(list typ.Type) typ.Type {
+							return flow.WidenArrayElementType(list, valueType, typ.JoinPreferNonSoft)
+						})
+					}
+					if newType != nil && !typ.TypeEquals(old, newType) {
+						inferred[targetPath.Symbol] = newType
+						changed = true
+					}
+					continue
+				}
+
+				// A target indexed by a dynamic key (t[k]) widens t's map.
 				if attr, ok := targetExpr.(*ast.AttrGetExpr); ok {
 					baseSym := callsite.SymbolOrCreateFieldFromExpr(attr.Object, bindings)
 					if baseSym != 0 && sccSet[baseSym] {
@@ -809,7 +841,6 @@ func collectInferredTypes(
 						keyType = resolve.Ref(keyType, sc)
 						if keyType == nil {
 							keyType = typ.Unresolved
-							pendingKeySeeded = true
 						} else {
 							keyType = canonicalDynamicKeyType(keyType)
 						}
@@ -822,20 +853,6 @@ func collectInferredTypes(
 						continue
 					}
 				}
-
-				if targetPath.IsEmpty() || targetPath.Symbol == 0 {
-					continue
-				}
-				if !sccSet[targetPath.Symbol] {
-					continue
-				}
-				old := inferred[targetPath.Symbol]
-				newType := flow.WidenArrayElementType(old, valueType, typ.JoinPreferNonSoft)
-				if newType == nil || typ.TypeEquals(old, newType) {
-					continue
-				}
-				inferred[targetPath.Symbol] = newType
-				changed = true
 			}
 
 			// Replaying assignments and mutators can change intermediate types
@@ -887,11 +904,11 @@ func collectInferredTypes(
 		}
 	}
 
-	if pendingKeySeeded {
-		for sym, t := range inferred {
-			if !typ.IsFinal(t) {
-				inferred[sym] = typ.Finalize(t)
-			}
+	// Inferred types are published into the flow overlay: pending positions
+	// do not cross that boundary.
+	for sym, t := range inferred {
+		if !typ.IsFinal(t) {
+			inferred[sym] = typ.Finalize(t)
 		}
 	}
 	return inferred
@@ -980,7 +997,7 @@ func dedupeSymbolIDs(refs []cfg.SymbolID) []cfg.SymbolID {
 }
 
 func synthWithInferenceOverlay(
-	graph *cfg.Graph,
+	synthAPI api.SynthAPI,
 	overlay map[cfg.SymbolID]typ.Type,
 	funcSigTypes map[cfg.SymbolID]typ.Type,
 	paramSet map[cfg.SymbolID]bool,
@@ -992,7 +1009,6 @@ func synthWithInferenceOverlay(
 	preflow *preflowFacts,
 	base func(ast.Expr, cfg.Point) typ.Type,
 ) func(ast.Expr, cfg.Point) typ.Type {
-	_ = graph
 	mergedOverlay := make(map[cfg.SymbolID]typ.Type, len(overlay)+len(funcSigTypes))
 	for sym, t := range funcSigTypes {
 		if t != nil {
@@ -1003,6 +1019,9 @@ func synthWithInferenceOverlay(
 		mergedOverlay[sym] = t
 	}
 
+	if base != nil {
+		base = overlaySynth(synthAPI, mergedOverlay, base)
+	}
 	wrappedBase := func(expr ast.Expr, p cfg.Point) typ.Type {
 		if ident, ok := expr.(*ast.IdentExpr); ok && bindings != nil {
 			if sym, ok := bindings.SymbolOf(ident); ok && sym != 0 {

@@ -79,6 +79,15 @@ func TestTypJoinReturnSlot_PreservesUnknownOverNil(t *testing.T) {
 	}
 }
 
+func TestMergeReturnSummaryResolvesPendingUnionFromCompleteLaterEvidence(t *testing.T) {
+	pending := []typ.Type{typ.NewUnion(typ.Unresolved, typ.LiteralString("application/octet-stream"))}
+	resolved := []typ.Type{typ.String}
+	got := MergeReturnSummary(pending, resolved)
+	if len(got) != 1 || !typ.TypeEquals(got[0], typ.String) {
+		t.Fatalf("pending return union retained after complete evidence: %v", got)
+	}
+}
+
 func TestReturnTypesAllNil(t *testing.T) {
 	if !ReturnTypesAllNil([]typ.Type{typ.Nil}) {
 		t.Fatal("expected [nil] to be nil-only")
@@ -759,6 +768,22 @@ func TestMergeReturnSummary_PrefersStructuredCollectionOverOpenTopRecordField(t 
 	}
 	if _, ok := msgField.Type.(*typ.Array); !ok {
 		t.Fatalf("expected messages field to remain array-like, got %T (%v)", msgField.Type, msgField.Type)
+	}
+}
+
+func TestMergeReturnSummary_DoesNotRefineRuntimeAnyToEmptyRecord(t *testing.T) {
+	empty := typ.NewRecord().SetOpen(true).Build()
+	weak := []typ.Type{typ.NewRecord().Field("messages", empty).Build()}
+	dynamic := []typ.Type{typ.NewRecord().Field("messages", typ.Any).Build()}
+	for _, pair := range [][2][]typ.Type{{weak, dynamic}, {dynamic, weak}} {
+		merged := MergeReturnSummary(pair[0], pair[1])
+		if len(merged) != 1 {
+			t.Fatalf("merged return slots = %d, want 1", len(merged))
+		}
+		record, ok := merged[0].(*typ.Record)
+		if !ok || record.GetField("messages") == nil || !typ.TypeEquals(record.GetField("messages").Type, typ.Any) {
+			t.Fatalf("merge(%v, %v) = %v, want messages: any", pair[0], pair[1], merged)
+		}
 	}
 }
 

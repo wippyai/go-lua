@@ -620,3 +620,45 @@ func TestJoinInferredType_OrdinaryTypeInsideNextIsNotSelfEmbedding(t *testing.T)
 		t.Fatalf("must not fold an ordinary occurrence of the old type, got %s", got)
 	}
 }
+
+// overlayReadingSynth types an expression as integer only when it is
+// synthesized with the overlay that binds sym.
+type overlayReadingSynth struct {
+	synthAPIStub
+	sym cfg.SymbolID
+}
+
+func (s *overlayReadingSynth) TypeOfWithSpecTypes(_ ast.Expr, _ cfg.Point, specTypes api.SpecTypes) typ.Type {
+	if _, ok := specTypes[s.sym]; ok {
+		return typ.Integer
+	}
+	return typ.Unresolved
+}
+
+// A sub-expression that reads an inferred local is synthesized with the
+// inference overlay, not only a bare identifier.
+func TestSynthWithInferenceOverlay_SubExpressionReadsOverlay(t *testing.T) {
+	bindings := bind.NewBindingTable()
+	ident := &ast.IdentExpr{Value: "a"}
+	aSym := cfg.SymbolID(301)
+	bindings.Bind(ident, aSym)
+	expr := &ast.ArithmeticOpExpr{Operator: "+", Lhs: ident, Rhs: &ast.NumberExpr{Value: "1"}}
+
+	base := func(ast.Expr, cfg.Point) typ.Type { return typ.Unresolved }
+	synth := synthWithInferenceOverlay(
+		&overlayReadingSynth{sym: aSym},
+		map[cfg.SymbolID]typ.Type{aSym: typ.Integer},
+		nil,
+		nil,
+		nil,
+		bindings,
+		nil,
+		nil,
+		nil,
+		nil,
+		base,
+	)
+	if got := synth(expr, 0); !typ.TypeEquals(got, typ.Integer) {
+		t.Fatalf("a + 1 with a inferred = %v, want integer", got)
+	}
+}

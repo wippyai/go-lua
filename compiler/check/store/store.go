@@ -47,8 +47,9 @@ type SessionStore struct {
 }
 
 type classSelfKey struct {
-	graphID uint64
-	symbol  cfg.SymbolID
+	graphID  uint64
+	symbol   cfg.SymbolID
+	receiver bool
 }
 
 // BindClassSelf gives a class table one recursion identity across fixpoint
@@ -56,18 +57,33 @@ type classSelfKey struct {
 // snapshot of the class, so each snapshot the round hands out is refined by
 // the later ones; the next round starts from a fresh snapshot.
 func (s *SessionStore) BindClassSelf(graph *cfg.Graph, at cfg.Point, sym cfg.SymbolID, name string, body typ.Type) typ.Type {
+	return s.bindClass(graph, at, sym, name, body, false)
+}
+
+// BindClassReceiver gives the receiver of a class table's methods one
+// recursion identity across fixpoint rounds, as BindClassSelf does for the
+// table. The receiver is any table that uses the class table, so the class
+// table's fields describe it partially.
+func (s *SessionStore) BindClassReceiver(graph *cfg.Graph, at cfg.Point, sym cfg.SymbolID, name string, body typ.Type) typ.Type {
+	return s.bindClass(graph, at, sym, name, body, true)
+}
+
+func (s *SessionStore) bindClass(graph *cfg.Graph, at cfg.Point, sym cfg.SymbolID, name string, body typ.Type, receiver bool) typ.Type {
 	if s == nil || graph == nil || sym == 0 || body == nil {
 		return body
 	}
 	body = nested.EnrichSelfTypeWithConstructorFields(body, sym, s)
 	body = nested.NormalizeMethodSelfType(body)
+	if receiver {
+		body = typ.PartialView(body)
+	}
 	if typ.IsAny(body) || typ.IsUnknown(body) {
 		return body
 	}
 	if s.classSelfIdentities == nil {
 		s.classSelfIdentities = make(map[classSelfKey]*typ.Recursive)
 	}
-	key := classSelfKey{graphID: graph.ID(), symbol: sym}
+	key := classSelfKey{graphID: graph.ID(), symbol: sym, receiver: receiver}
 	identity := s.classSelfIdentities[key]
 	if identity == nil {
 		identity = typ.NewRecursivePlaceholder(name)

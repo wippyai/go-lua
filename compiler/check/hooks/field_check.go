@@ -644,7 +644,7 @@ func checkAttrGet(e *ast.AttrGetExpr, p cfg.Point, narrowView api.BaseSynth, res
 		// came from a declaration. On an inferred record the field may be added
 		// later through an alias or a write, so the read stays gradual: the
 		// value type is unknown and no diagnostic is produced.
-		if !missingFieldIsClosed(objType) {
+		if !missingFieldIsClosedFor(objType, fieldName) {
 			return diags
 		}
 		// A table may acquire a field through an alias even when its inferred
@@ -680,6 +680,37 @@ func checkAttrGet(e *ast.AttrGetExpr, p cfg.Point, narrowView api.BaseSynth, res
 	}
 
 	return diags
+}
+
+// missingFieldIsClosedFor reports whether a read of field is an error on t.
+// The record members of a union form one join that is closed only when every
+// record member is declared; a primitive member carries no table shape, so
+// its lack of the field is closed regardless of provenance.
+func missingFieldIsClosedFor(t typ.Type, field string) bool {
+	if missingFieldIsClosed(t) {
+		return true
+	}
+	u, ok := unwrap.Optional(unwrap.Alias(t)).(*typ.Union)
+	if !ok {
+		return false
+	}
+	for _, m := range u.Members {
+		if isPrimitiveValue(m) && !hasField(m, field) {
+			return true
+		}
+	}
+	return false
+}
+
+func isPrimitiveValue(t typ.Type) bool {
+	if t == nil {
+		return false
+	}
+	if lit, ok := t.(*typ.Literal); ok {
+		return lit.Base != kind.Nil
+	}
+	k := t.Kind()
+	return k.IsPrimitive() && k != kind.Nil
 }
 
 // missingFieldIsClosed reports whether an absent field read on t must be

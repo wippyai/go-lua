@@ -248,6 +248,9 @@ func CheckAssignments(graph *cfg.Graph, scopes map[cfg.Point]*scope.State, narro
 					Message:  msg,
 					Help:     help,
 				})
+			} else if subtype.ImplicitUnknownFlow(valueType, declaredType) {
+				pos := diag.Position{File: sourceName, Line: source.Line(), Column: source.Column()}
+				diags = append(diags, implicitUnknownHint(pos, ast.SpanOf(source), "", declaredType))
 			}
 		})
 	})

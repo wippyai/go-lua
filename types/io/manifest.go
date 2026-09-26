@@ -246,9 +246,10 @@ func (m *Manifest) DefineSummary(name string, s *FunctionSummary) {
 	m.invalidateCaches()
 }
 
-// SetExport sets the module's export type.
+// SetExport sets the module's export type. Importers write the exported
+// tables too, so none of them is seen complete from outside the module.
 func (m *Manifest) SetExport(t typ.Type) {
-	m.Export = t
+	m.Export = typ.PartialViewDeep(t)
 	m.invalidateCaches()
 }
 

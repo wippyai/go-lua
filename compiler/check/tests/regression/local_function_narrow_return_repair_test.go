@@ -73,6 +73,8 @@ return { f = f }
 	if mod.HasError() {
 		t.Fatalf("expected clean export check, got: %v", mod.Errors)
 	}
+	// ipairs over a dynamic list yields any values, so the stored block and
+	// its input field are any, as the function body's flow types them.
 	wantExport := typ.NewRecord().
 		Field("f", typ.Func().
 			OptParam("blocks", typ.Unknown).
@@ -80,7 +82,7 @@ return { f = f }
 				typ.NewUnion(
 					typ.NewRecord().
 						Field("success", typ.True).
-						Field("result", typ.NewRecord().Field("data", typ.Unknown).Build()).
+						Field("result", typ.NewRecord().Field("data", typ.Any).Build()).
 						Build(),
 					typ.NewRecord().
 						Field("success", typ.False).

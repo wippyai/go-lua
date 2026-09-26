@@ -597,6 +597,10 @@ func unaryOpAny(op string) typ.Type {
 
 // binaryOpTopTypes resolves any/unknown combinations before regular operator flow.
 func binaryOpTopTypes(left typ.Type, op string, right typ.Type) (typ.Type, bool) {
+	// An operand still pending inference leaves the result pending.
+	if typ.IsUnresolved(left) || typ.IsUnresolved(right) {
+		return typ.Unresolved, true
+	}
 	leftUnknown := typ.IsUnknown(left)
 	rightUnknown := typ.IsUnknown(right)
 
@@ -623,6 +627,10 @@ func binaryOpTopTypes(left typ.Type, op string, right typ.Type) (typ.Type, bool)
 
 // unaryOpTopType resolves any/unknown for unary operators.
 func unaryOpTopType(op string, operand typ.Type) (typ.Type, bool) {
+	// An operand still pending inference leaves the result pending.
+	if typ.IsUnresolved(operand) {
+		return typ.Unresolved, true
+	}
 	if typ.IsUnknown(operand) {
 		if op == "#" {
 			return typ.Integer, true

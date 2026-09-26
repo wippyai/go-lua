@@ -258,10 +258,15 @@ func resolvePendingNode(current, evidence Type, seen map[resolvePair]Type) Type 
 		if !changed {
 			return current
 		}
-		return buildRecordTypeDeclared(fields, a.Metatable, key, value, a.Open, a.Declared, true)
+		return buildRecordTypeDeclared(fields, a.Metatable, key, value, a.Open, a.Declared, a.Complete, true)
 	case *Union:
 		// Union members are separate paths. This API has no source identity
 		// with which to pair them to evidence, even when their kinds match.
+		// Final evidence for the whole position supersedes a union that is
+		// still pending on one of its paths.
+		if a.Contains(Unresolved) && IsFinal(evidence) {
+			return evidence
+		}
 		return current
 	case *Function:
 		b, ok := evidence.(*Function)
@@ -294,6 +299,32 @@ func resolvePendingNode(current, evidence Type, seen map[resolvePair]Type) Type 
 		return buildFunctionType(a.TypeParams, params, variadic, rets, a.Effects, a.Spec, a.Refinement)
 	}
 	return current
+}
+
+// DropPendingAlternatives removes the pending alternatives of every union in t,
+// keeping the alternatives that carry evidence. An iterative inference round
+// recomputes every pending read of the previous round, so its result
+// supersedes those alternatives. Returns nil when t is wholly pending.
+func DropPendingAlternatives(t Type) Type {
+	if t == nil || IsUnresolved(t) {
+		return nil
+	}
+	if IsFinal(t) {
+		return t
+	}
+	return Rewrite(t, func(node Type) (Type, bool) {
+		union, ok := node.(*Union)
+		if !ok || !union.Contains(Unresolved) {
+			return nil, false
+		}
+		members := make([]Type, 0, len(union.Members))
+		for _, member := range union.Members {
+			if !IsUnresolved(member) {
+				members = append(members, DropPendingAlternatives(member))
+			}
+		}
+		return NewUnion(members...), true
+	})
 }
 
 // Finalize converts remaining inference holes at a public boundary. The

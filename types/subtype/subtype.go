@@ -108,13 +108,25 @@ func (s *Session) IsSubtype(sub, super typ.Type) bool {
 // IsConsistentSubtype reports whether a value of type sub may be used where
 // super is expected under gradual typing: the consistent-subtyping relation of
 // Siek and Taha, in which any is consistent with every type in both
-// directions, at the top level and inside structured types. It decides
-// use-site assignability only; joins, narrowing and normalization use
-// IsSubtype, because consistency is not containment. unknown is not
-// consistent with specific types: an unknown value must be narrowed first.
+// directions, at the top level and inside structured types. A converged
+// unknown value is consistent with every type as any is: both are the top of
+// the gradual lattice. It decides use-site assignability only; joins,
+// narrowing and normalization use IsSubtype, because consistency is not
+// containment.
 func IsConsistentSubtype(sub, super typ.Type) bool {
-	c := &checker{gradual: true}
+	c := &checker{gradual: true, unknownConsistent: true}
 	return c.check(sub, super, 0)
+}
+
+// ImplicitUnknownFlow reports whether a value of type sub is usable where
+// super is expected only because an unknown in sub is consistent with the
+// type expected there.
+func ImplicitUnknownFlow(sub, super typ.Type) bool {
+	if !IsConsistentSubtype(sub, super) {
+		return false
+	}
+	c := &checker{gradual: true}
+	return !c.check(sub, super, 0)
 }
 
 // Assignability selects the relation that decides whether a value may be used
@@ -147,6 +159,9 @@ type checker struct {
 	// plain subtyping. Derivations of the two relations never share
 	// assumptions or refutations.
 	gradual bool
+	// unknownConsistent makes a converged unknown consistent with every type
+	// in a gradual derivation, as any is.
+	unknownConsistent bool
 	// plain derives the plain relation inside a gradual derivation, for rules
 	// that must not treat any as consistent, such as literal widening.
 	plain *checker
@@ -223,8 +238,9 @@ func (c *checker) derive(sub, super typ.Type, depth int) bool {
 		return false
 	}
 
-	// any is consistent with every type in both directions.
-	if c.gradual && (typ.IsAny(sub) || typ.IsAny(super)) {
+	// any is consistent with every type in both directions, and so is a
+	// converged unknown value.
+	if c.gradual && (typ.IsAny(sub) || typ.IsAny(super) || (c.unknownConsistent && typ.IsUnknown(sub))) {
 		return true
 	}
 

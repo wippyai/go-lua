@@ -40,11 +40,11 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/erreffect"
+	"github.com/wippyai/go-lua/compiler/check/flowbuild/assign"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/mutator"
 	"github.com/wippyai/go-lua/compiler/check/infer/captured"
 	"github.com/wippyai/go-lua/compiler/check/overlaymut"
 	"github.com/wippyai/go-lua/compiler/check/scope"
-	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	"github.com/wippyai/go-lua/compiler/check/synth/phase/core"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/contract"
@@ -194,7 +194,7 @@ func (s *Synthesizer) synthFunctionTypeWithCapturePoint(
 			if body, _ := s.inferReturnTypesFromBody(fn, resolveScope, expected, fnGraph, capturePoint, captureTypes); len(body) == len(returns) {
 				for i, declared := range returns {
 					if isBroadMapReturn(declared) && containsRecordReturn(body[i]) && subtype.IsSubtype(body[i], declared) {
-						returns[i] = body[i]
+						returns[i] = keepDeclaredAnyFields(body[i])
 					}
 				}
 			}
@@ -241,6 +241,41 @@ func isBroadMapReturn(t typ.Type) bool {
 	default:
 		return false
 	}
+}
+
+// keepDeclaredAnyFields refines a declared {[string]: any} return with the
+// field names of body record t. A field the body only knows as unknown carries
+// no evidence beyond the declaration, so it keeps the declared any.
+func keepDeclaredAnyFields(t typ.Type) typ.Type {
+	switch v := t.(type) {
+	case *typ.Record:
+		out := v
+		for _, f := range v.Fields {
+			if typ.IsUnknown(f.Type) {
+				f.Type = typ.Any
+				out = out.WithField(f)
+			}
+		}
+		return out
+	case *typ.Optional:
+		inner := keepDeclaredAnyFields(v.Inner)
+		if inner == v.Inner {
+			return t
+		}
+		return typ.NewOptional(inner)
+	case *typ.Union:
+		members := make([]typ.Type, len(v.Members))
+		changed := false
+		for i, m := range v.Members {
+			members[i] = keepDeclaredAnyFields(m)
+			changed = changed || members[i] != m
+		}
+		if !changed {
+			return t
+		}
+		return typ.NewUnion(members...)
+	}
+	return t
 }
 
 func containsRecordReturn(t typ.Type) bool {
@@ -460,11 +495,12 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 	// Phase 1: infer local assignment types using a preliminary context.
 	// Build the preliminary synthesizer lazily; many functions never need it.
 	var prelimSynth *Synthesizer
+	var prelimCtx *api.DeclaredEnvImpl
 	ensurePrelimSynth := func() *Synthesizer {
 		if prelimSynth != nil {
 			return prelimSynth
 		}
-		prelimCtx := api.NewReturnInferenceEnv(api.ReturnInferenceEnvConfig{
+		prelimCtx = api.NewReturnInferenceEnv(api.ReturnInferenceEnvConfig{
 			Graph:         fnGraph,
 			Bindings:      fnGraph.Bindings(),
 			BaseScope:     resolveScope,
@@ -492,84 +528,20 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 		return prelimSynth
 	}
 
-	// Single-pass local inference from assignments (best-effort).
-	var localInferred map[cfg.SymbolID]typ.Type
-	fnGraph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
-		if info == nil || !info.IsLocal || len(info.Targets) == 0 {
-			return
+	if hasUntypedLocal(fnGraph, overlay) {
+		engine := ensurePrelimSynth()
+		var env api.BaseEnv
+		if prelimCtx != nil {
+			env = prelimCtx
 		}
-		needsInference := false
-		for _, target := range info.Targets {
-			if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
-				continue
-			}
-			if _, exists := overlay[target.Symbol]; !exists {
-				needsInference = true
-				break
-			}
-		}
-		if !needsInference {
-			return
-		}
-		if len(info.Targets) == 1 && len(info.Sources) == 1 {
-			target := info.Targets[0]
-			if target.Kind == cfg.TargetIdent && target.Symbol != 0 {
-				if _, exists := overlay[target.Symbol]; !exists {
-					src := info.Sources[0]
-					switch src.(type) {
-					case *ast.FuncCallExpr, *ast.Comma3Expr:
-					default:
-						var t typ.Type
-						switch lit := src.(type) {
-						case *ast.NilExpr:
-							t = typ.Nil
-						case *ast.TrueExpr:
-							t = typ.True
-						case *ast.FalseExpr:
-							t = typ.False
-						case *ast.StringExpr:
-							t = typ.LiteralString(lit.Value)
-						}
-						if t == nil && len(info.SourceSymbols) > 0 {
-							if sym := info.SourceSymbols[0]; sym != 0 {
-								if inferred, ok := overlay[sym]; ok && inferred != nil {
-									t = inferred
-								}
-							}
-						}
-						if t == nil {
-							t = ensurePrelimSynth().SynthExpr(src, p, nil)
-						}
-						if t != nil {
-							if localInferred == nil {
-								localInferred = make(map[cfg.SymbolID]typ.Type)
-							}
-							localInferred[target.Symbol] = t
-						}
-						return
-					}
-				}
-			}
-		}
-		values := ensurePrelimSynth().ExpandValues(info.Sources, len(info.Targets), p)
-		info.EachTargetSource(func(i int, target cfg.AssignTarget, _ ast.Expr) {
-			if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
-				return
-			}
-			if _, exists := overlay[target.Symbol]; exists {
-				return
-			}
-			if i < len(values) && values[i] != nil {
-				if localInferred == nil {
-					localInferred = make(map[cfg.SymbolID]typ.Type)
-				}
-				localInferred[target.Symbol] = values[i]
-			}
+		annotated := assign.AnnotatedSymbols(fnGraph, overlay, func(expr ast.TypeExpr) typ.Type {
+			return s.ResolveType(expr, resolveScope)
 		})
-	})
-	for sym, t := range localInferred {
-		if _, exists := overlay[sym]; !exists {
-			overlay[sym] = t
+		inferred := assign.FunctionLocals(fnGraph, assign.UniformScopes(fnGraph, resolveScope), engine, env, s.deps.Ctx, s.deps.Types, overlay, annotated)
+		for sym, t := range inferred {
+			if _, exists := overlay[sym]; !exists {
+				overlay[sym] = t
+			}
 		}
 	}
 
@@ -689,6 +661,25 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 	return returnTypes, erreffect.HasStrictInverseReturnPattern(fnGraph, nil, tempSynth, 0, 1)
 }
 
+// hasUntypedLocal reports whether a local assigned in graph has no overlay type.
+func hasUntypedLocal(graph *cfg.Graph, overlay map[cfg.SymbolID]typ.Type) bool {
+	found := false
+	graph.EachAssign(func(_ cfg.Point, info *cfg.AssignInfo) {
+		if found || info == nil || !info.IsLocal {
+			return
+		}
+		for _, target := range info.Targets {
+			if target.Kind == cfg.TargetIdent && target.Symbol != 0 {
+				if _, exists := overlay[target.Symbol]; !exists {
+					found = true
+					return
+				}
+			}
+		}
+	})
+	return found
+}
+
 func enrichOverlayWithOrderedComparisonHints(fnGraph *cfg.Graph, overlay map[cfg.SymbolID]typ.Type) {
 	if fnGraph == nil || len(overlay) == 0 {
 		return
@@ -785,12 +776,7 @@ func (s *Synthesizer) inferReturnExprTypes(exprs []ast.Expr, p cfg.Point) []typ.
 	var result []typ.Type
 	for i, expr := range exprs {
 		if i == len(exprs)-1 {
-			var multi []typ.Type
-			if dynamic := s.dynamicReturnOrType(expr, p, narrower); dynamic != nil {
-				multi = []typ.Type{dynamic}
-			} else {
-				multi = s.multiTypeOf(expr, p, narrower)
-			}
+			multi := s.multiTypeOf(expr, p, narrower)
 			if len(multi) == 0 {
 				multi = []typ.Type{typ.Unknown}
 			} else {
@@ -802,10 +788,7 @@ func (s *Synthesizer) inferReturnExprTypes(exprs []ast.Expr, p cfg.Point) []typ.
 			}
 			result = append(result, multi...)
 		} else {
-			t := s.dynamicReturnOrType(expr, p, narrower)
-			if t == nil {
-				t = s.SynthExpr(expr, p, narrower)
-			}
+			t := s.SynthExpr(expr, p, narrower)
 			if t == nil {
 				t = typ.Unknown
 			}
@@ -813,24 +796,6 @@ func (s *Synthesizer) inferReturnExprTypes(exprs []ast.Expr, p cfg.Point) []typ.
 		}
 	}
 	return result
-}
-
-// A return expression's contract must include a truthy dynamic operand of
-// `or`. Its concrete fallback only runs when that operand is falsy.
-func (s *Synthesizer) dynamicReturnOrType(expr ast.Expr, p cfg.Point, narrower api.FlowOps) typ.Type {
-	op, ok := expr.(*ast.LogicalOpExpr)
-	if !ok || op.Operator != "or" {
-		return nil
-	}
-	left := s.SynthExpr(op.Lhs, p, narrower)
-	if !typ.IsAny(left) && !typ.IsUnknown(left) {
-		return nil
-	}
-	right := s.SynthExpr(op.Rhs, p, narrower)
-	if right == nil || ops.CanBeFalsy(right) {
-		return nil
-	}
-	return left
 }
 
 // buildFunctionTypeWithSummary builds a function type using annotations for parameters

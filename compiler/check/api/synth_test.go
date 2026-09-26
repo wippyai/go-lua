@@ -115,3 +115,7 @@ func (m *mockSynthAPI) ExpandValuesWithSpecTypes([]ast.Expr, int, cfg.Point, Spe
 func (m *mockSynthAPI) InferIterVarsWithSpecTypes([]ast.Expr, int, cfg.Point, SpecTypes) []typ.Type {
 	return nil
 }
+
+func (s *mockSynthAPI) TypeOfWithSpecTypes(expr ast.Expr, p cfg.Point, _ SpecTypes) typ.Type {
+	return s.TypeOf(expr, p)
+}

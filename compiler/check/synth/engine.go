@@ -151,11 +151,20 @@ func (e *Engine) TypeOf(expr ast.Expr, p cfg.Point) typ.Type {
 		if cached, ok := e.deps.NarrowCache.Get(expr, p); ok {
 			return cached
 		}
-		t := e.SynthExpr(expr, p, e.deps.Flow)
+		t := finalizeNarrowed(e.SynthExpr(expr, p, e.deps.Flow))
 		e.deps.NarrowCache.Put(expr, p, t)
 		return t
 	}
 	return e.Synthesizer.TypeOf(expr, p)
+}
+
+// finalizeNarrowed converts the pending positions of a narrowing-phase
+// result: narrowing is the final phase, so no inference remains to fill them.
+func finalizeNarrowed(t typ.Type) typ.Type {
+	if t == nil {
+		return nil
+	}
+	return typ.Finalize(t)
 }
 
 // TypeOfWithExpected synthesizes an expression type with an expected type hint.
@@ -180,7 +189,15 @@ func (e *Engine) TypeOfWithExpected(expr ast.Expr, p cfg.Point, expected typ.Typ
 // Returns nil for non-multi-valued expressions.
 func (e *Engine) MultiTypeOf(expr ast.Expr, p cfg.Point) []typ.Type {
 	if e.IsNarrowing() {
-		return e.SynthMulti(expr, p, e.deps.Flow)
+		multi := e.SynthMulti(expr, p, e.deps.Flow)
+		if len(multi) == 0 {
+			return multi
+		}
+		out := make([]typ.Type, len(multi))
+		for i, t := range multi {
+			out[i] = finalizeNarrowed(t)
+		}
+		return out
 	}
 	return e.Synthesizer.MultiTypeOf(expr, p)
 }

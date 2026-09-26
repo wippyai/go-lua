@@ -97,6 +97,7 @@ const (
 	ErrUnsatConstraint
 	ErrOptionalCall
 	ErrNoMethod
+	HintImplicitUnknown
 )
 
 // Name returns the formatted code identifier (e.g., E0001).
@@ -127,6 +128,7 @@ var codeInfos = map[Code]CodeInfo{
 	ErrUnsatConstraint:      {"unsatisfiable constraint", "Numeric constraints on this path form a contradiction."},
 	ErrOptionalCall:         {"optional call", "Attempted to call a method on an optional value without a nil check."},
 	ErrNoMethod:             {"method not found", "The method does not exist on the type."},
+	HintImplicitUnknown:     {"implicit unknown", "A value the checker knows only as unknown flows into a declared type."},
 }
 
 // Info returns metadata for this code.

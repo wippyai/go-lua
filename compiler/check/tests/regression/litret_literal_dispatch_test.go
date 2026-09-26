@@ -67,3 +67,34 @@ end
 		t.Fatal("expected error for mod(x: string).response() via default optional return")
 	}
 }
+
+// A literal dispatch may capture both a local table and a require alias. The
+// table's empty registry makes its guarded return dead for the "http" case.
+func TestLitretLiteralDispatchWithCapturedModuleRegistry(t *testing.T) {
+	http := testutil.CheckAndExport(`
+local http = {}
+function http.response(): string return "ok" end
+return http
+`, "http", testutil.WithStdlib())
+	if http.HasError() {
+		t.Fatalf("http module errors: %v", testutil.ErrorMessages(http.Errors))
+	}
+	source := `
+local http = require("http")
+local M = { _modules = {} }
+local function mod(name)
+    if type(M._modules) == "table" and M._modules[name] ~= nil then
+        return M._modules[name]
+    end
+    if name == "http" then return http end
+    return nil
+end
+local h = mod("http")
+local response: string = h.response()
+return response
+`
+	result := testutil.Check(source, testutil.WithStdlib(), testutil.WithModule("http", http))
+	if result.HasError() {
+		t.Fatalf("captured literal dispatch errors: %v", testutil.ErrorMessages(result.Errors))
+	}
+}

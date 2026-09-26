@@ -128,7 +128,8 @@ func fieldInRecord(r *typ.Record, name string) (typ.Type, bool) {
 //     literal key is a subtype of MapKey, returns Optional(MapValue)
 //  3. Metatable __index lookup: if record has a metatable with __index,
 //     recursively searches there (table) or returns return type (function)
-//  4. Open record fallback: returns Unknown for open records (allows any field)
+//  4. Open record fallback: nil for a complete record, unknown for any other
+//     open record
 //
 // Returns (nil, false) for closed records without the field.
 func fieldInRecordDepth(r *typ.Record, name string, depth int) (typ.Type, bool) {
@@ -159,7 +160,7 @@ func fieldInRecordDepth(r *typ.Record, name string, depth int) (typ.Type, bool) 
 	// Check __index metamethod fallback
 	if r.Metatable == nil {
 		if r.Open {
-			return typ.Unknown, true
+			return openRecordAbsentField(r), true
 		}
 		return nil, false
 	}
@@ -167,7 +168,7 @@ func fieldInRecordDepth(r *typ.Record, name string, depth int) (typ.Type, bool) 
 	indexMeta, ok := fieldDepth(r.Metatable, "__index", depth+1)
 	if !ok {
 		if r.Open {
-			return typ.Unknown, true
+			return openRecordAbsentField(r), true
 		}
 		return nil, false
 	}
@@ -194,6 +195,16 @@ func fieldInRecordDepth(r *typ.Record, name string, depth int) (typ.Type, bool) 
 		},
 	})
 	return res.t, res.ok
+}
+
+// openRecordAbsentField is the value of a field an open record lacks. A
+// complete record lists every field its table holds, so the field is nil; any
+// other open record describes its value partially, so the field is unknown.
+func openRecordAbsentField(r *typ.Record) typ.Type {
+	if r.Complete {
+		return typ.Nil
+	}
+	return typ.Unknown
 }
 
 // fieldInInterface looks up a method name in an interface type.

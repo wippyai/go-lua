@@ -9,8 +9,8 @@ import (
 	checkcallsite "github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/infer/paramhints"
 	"github.com/wippyai/go-lua/compiler/check/modules"
-	"github.com/wippyai/go-lua/compiler/check/synth"
 	synthresolve "github.com/wippyai/go-lua/compiler/check/synth/phase/resolve"
+	"github.com/wippyai/go-lua/types/io"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
@@ -56,7 +56,13 @@ func canonicalLocalCalleeSymbol(
 	return selected
 }
 
-func buildLocalSignatureResolver(localFuncs map[cfg.SymbolID]*LocalFuncInfo, env synth.Config) func(cfg.SymbolID) *typ.Function {
+// SignatureEnv is what resolving a local function's declared signature reads.
+type SignatureEnv struct {
+	Manifests     io.ManifestQuerier
+	ModuleAliases map[cfg.SymbolID]string
+}
+
+func buildLocalSignatureResolver(localFuncs map[cfg.SymbolID]*LocalFuncInfo, env SignatureEnv) func(cfg.SymbolID) *typ.Function {
 	sigCache := make(map[cfg.SymbolID]*typ.Function, len(localFuncs))
 	return func(sym cfg.SymbolID) *typ.Function {
 		if sym == 0 {
@@ -104,7 +110,7 @@ func buildLocalSignatureResolver(localFuncs map[cfg.SymbolID]*LocalFuncInfo, env
 //
 // Hints are accumulated using typ.JoinPreferNonSoft, producing union types when a parameter
 // is called with multiple different types across call sites.
-func PropagateParamHintsFromCallGraph(localFuncs map[cfg.SymbolID]*LocalFuncInfo, env synth.Config) {
+func PropagateParamHintsFromCallGraph(localFuncs map[cfg.SymbolID]*LocalFuncInfo, env SignatureEnv) {
 	if len(localFuncs) == 0 {
 		return
 	}
@@ -263,7 +269,7 @@ func mergeFunctionParamHints(target *LocalFuncInfo, expectedFn *typ.Function) bo
 func BuildLocalCallGraph(
 	localFuncs map[cfg.SymbolID]*LocalFuncInfo,
 	moduleBindings *bind.BindingTable,
-	env synth.Config,
+	env SignatureEnv,
 ) map[cfg.SymbolID][]cfg.SymbolID {
 	adj := make(map[cfg.SymbolID][]cfg.SymbolID, len(localFuncs))
 

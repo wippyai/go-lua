@@ -18,6 +18,10 @@ func specialAccessType(t typ.Type) (typ.Type, bool) {
 	if typ.IsUnknown(t) {
 		return typ.Unknown, true
 	}
+	// A pending value has no fields yet; an access on it stays pending.
+	if typ.IsUnresolved(t) {
+		return typ.Unresolved, true
+	}
 	if typ.IsNever(t) {
 		return typ.Never, true
 	}

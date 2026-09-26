@@ -85,7 +85,7 @@ func BindRecursiveSnapshotWithFields(identity *Recursive, body Type, selfFields 
 		body = old.Body
 	}
 	if record, ok := body.(*Record); ok && len(selfFields) > 0 {
-		builder := NewRecord().SetOpen(record.Open).SetDeclared(record.Declared)
+		builder := NewRecord().SetOpen(record.Open).SetComplete(record.Complete).SetDeclared(record.Declared)
 		for _, field := range record.Fields {
 			if selfFields[field.Name] {
 				field.Type = self

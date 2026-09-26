@@ -43,8 +43,9 @@ func (i *Inferencer) planLocalFunctionSCCs(run RunContext, localFuncs map[cfg.Sy
 			moduleBindings = i.store.ModuleBindings()
 		}
 	}
-	returns.PropagateParamHintsFromCallGraph(localFuncs, run.Env)
-	adj := returns.BuildLocalCallGraph(localFuncs, moduleBindings, run.Env)
+	env := returns.SignatureEnv{Manifests: run.Env.Manifests, ModuleAliases: run.Env.ModuleAliases}
+	returns.PropagateParamHintsFromCallGraph(localFuncs, env)
+	adj := returns.BuildLocalCallGraph(localFuncs, moduleBindings, env)
 	return returns.ComputeSymbolSCCs(adj)
 }
 

@@ -96,12 +96,12 @@ type namedSuite struct {
 type inlineExpectation struct {
 	File     string
 	Line     int
-	Severity string // "error" or "warning"
+	Severity string // "error", "warning" or "hint"
 	Mode     string // checking mode the expectation holds in; empty for every mode
 	Contains string
 }
 
-var expectRe = regexp.MustCompile(`--\s*expect-(error|warning)(?:\[([a-z-]+)\])?(?::\s*(.+?))?\s*$`)
+var expectRe = regexp.MustCompile(`^\s*expect-(error|warning|hint)(?:\[([a-z-]+)\])?(?::\s*(.+?))?\s*$`)
 
 // discoverFixtures recursively walks root and finds directories containing .lua files.
 func discoverFixtures(root string) ([]namedSuite, error) {
@@ -191,21 +191,25 @@ func readFixtureFile(dir, name string) string {
 	return string(data)
 }
 
-// parseExpectations scans source lines for expect-error/expect-warning comments.
+// parseExpectations scans source lines for expect-error, expect-warning and
+// expect-hint comments. A line may carry several, each after its own "--".
 func parseExpectations(filename, source string) []inlineExpectation {
 	var expectations []inlineExpectation
 	for i, line := range strings.Split(source, "\n") {
-		m := expectRe.FindStringSubmatch(line)
-		if m == nil {
-			continue
+		parts := strings.Split(line, "--")
+		for _, part := range parts[1:] {
+			m := expectRe.FindStringSubmatch(part)
+			if m == nil {
+				continue
+			}
+			expectations = append(expectations, inlineExpectation{
+				File:     filename,
+				Line:     i + 1,
+				Severity: m[1],
+				Mode:     m[2],
+				Contains: strings.TrimSpace(m[3]),
+			})
 		}
-		expectations = append(expectations, inlineExpectation{
-			File:     filename,
-			Line:     i + 1,
-			Severity: m[1],
-			Mode:     m[2],
-			Contains: strings.TrimSpace(m[3]),
-		})
 	}
 	return expectations
 }
@@ -376,8 +380,11 @@ func matchesExpectation(exp inlineExpectation, d diag.Diagnostic, entryFile stri
 		return false
 	}
 	wantSeverity := diag.SeverityError
-	if exp.Severity == "warning" {
+	switch exp.Severity {
+	case "warning":
 		wantSeverity = diag.SeverityWarning
+	case "hint":
+		wantSeverity = diag.SeverityHint
 	}
 	if d.Severity != wantSeverity {
 		return false

@@ -190,3 +190,24 @@ func TestJoinPreferNonSoft_NeverIsIdentity(t *testing.T) {
 		}
 	}
 }
+
+func TestJoinBranchOutcome_UnknownOperandDominates(t *testing.T) {
+	empty := NewRecord().Build()
+	rec := NewRecord().Field("id", String).Build()
+	for _, other := range []Type{empty, rec, String} {
+		if got := JoinBranchOutcome(Unknown, other); !TypeEquals(got, Unknown) {
+			t.Fatalf("JoinBranchOutcome(unknown, %v) = %v, want unknown", other, got)
+		}
+		if got := JoinBranchOutcome(other, Unknown); !TypeEquals(got, Unknown) {
+			t.Fatalf("JoinBranchOutcome(%v, unknown) = %v, want unknown", other, got)
+		}
+	}
+}
+
+func TestJoinBranchOutcome_UnresolvedOperandStaysPending(t *testing.T) {
+	got := JoinBranchOutcome(Unresolved, String)
+	u, ok := got.(*Union)
+	if !ok || !u.Contains(Unresolved) {
+		t.Fatalf("JoinBranchOutcome(unresolved, string) = %v, want union keeping unresolved", got)
+	}
+}

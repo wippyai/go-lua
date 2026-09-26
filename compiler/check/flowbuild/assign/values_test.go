@@ -92,3 +92,7 @@ func TestAssignValueAt_Bounds(t *testing.T) {
 		t.Fatalf("index 0 should be string, got %v", got)
 	}
 }
+
+func (s *synthAPIStub) TypeOfWithSpecTypes(expr ast.Expr, p cfg.Point, _ api.SpecTypes) typ.Type {
+	return s.TypeOf(expr, p)
+}

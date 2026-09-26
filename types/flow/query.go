@@ -3,6 +3,7 @@ package flow
 import (
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/flow/join"
 	"github.com/wippyai/go-lua/types/flow/pathkey"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/narrow"
@@ -431,9 +432,17 @@ func (s *Solution) ArrayLenBoundWithOffsetAt(p cfg.Point, varName string) (arrKe
 
 // NarrowedTypeAt returns the type at point p for path, narrowed by the DNF condition.
 // This is a pure query that composes: baseTypeAt + ConditionAt + applyCondition.
+//
+// A read at an assignment evaluates before the assignment writes its targets,
+// so a variable the assignment at p rebinds reads its value on entry to p.
 func (s *Solution) NarrowedTypeAt(p cfg.Point, path constraint.Path) typ.Type {
 	if s == nil {
 		return nil
+	}
+	if path.Version == 0 && s.rebindsAt(p, path.Symbol) {
+		if pre := s.preAssignmentNarrowedTypeAt(p, path); pre != nil {
+			return pre
+		}
 	}
 	cacheKey, cacheable := s.narrowedTypeCacheKey(p, path)
 	if !s.queryCacheEnabled {
@@ -456,6 +465,28 @@ func (s *Solution) NarrowedTypeAt(p cfg.Point, path constraint.Path) typ.Type {
 		s.narrowedTypeCache[cacheKey] = narrowedTypeCacheValue{t: result, ok: result != nil}
 	}
 	return result
+}
+
+// rebindsAt reports whether an assignment at p gives sym a new value.
+func (s *Solution) rebindsAt(p cfg.Point, sym cfg.SymbolID) bool {
+	if sym == 0 || s.inputs == nil {
+		return false
+	}
+	if s.rebinds == nil {
+		s.rebinds = make(map[cfg.Point]map[cfg.SymbolID]bool)
+		for _, assign := range s.inputs.Assignments {
+			if assign.TargetPath.Symbol == 0 || len(assign.TargetPath.Segments) != 0 {
+				continue
+			}
+			syms := s.rebinds[assign.Point]
+			if syms == nil {
+				syms = make(map[cfg.SymbolID]bool)
+				s.rebinds[assign.Point] = syms
+			}
+			syms[assign.TargetPath.Symbol] = true
+		}
+	}
+	return s.rebinds[p][sym]
 }
 
 // narrowedTypeUnder returns the type at point p for path, narrowed by
@@ -571,6 +602,36 @@ func (s *Solution) NarrowTypeAssuming(p cfg.Point, path constraint.Path, t typ.T
 		return t
 	}
 	return s.applyCondition(p, t, path, constraint.And(s.ConditionAt(p), extra))
+}
+
+// NarrowTypeBeforeAssuming narrows t, a type the caller holds for path on
+// entry to p, by the facts entering p along each incoming edge conjoined with
+// extra. A read evaluated by an assignment at p that writes path observes the
+// value before that write: the facts of a predecessor and of its edge to p,
+// over the versions visible at that predecessor.
+func (s *Solution) NarrowTypeBeforeAssuming(p cfg.Point, path constraint.Path, t typ.Type, extra constraint.Condition) typ.Type {
+	if s == nil || t == nil || path.IsEmpty() || s.inputs == nil || s.inputs.Graph == nil {
+		return t
+	}
+	preds := graphPredecessors(s.inputs.Graph, p)
+	if len(preds) == 0 {
+		return t
+	}
+	narrowed := make([]typ.Type, 0, len(preds))
+	for _, pred := range preds {
+		entering := s.ConditionAt(pred)
+		if edge, ok := s.edgeConditions[edgeKey{from: pred, to: p}]; ok {
+			entering = constraint.And(entering, edge)
+		}
+		n := s.applyCondition(pred, t, path, constraint.And(entering, extra))
+		if n != nil && !typ.IsNever(n) {
+			narrowed = append(narrowed, n)
+		}
+	}
+	if len(narrowed) == 0 {
+		return typ.Never
+	}
+	return join.Types(narrowed...)
 }
 
 // NarrowedTypeAssuming returns the type at p for path narrowed by the

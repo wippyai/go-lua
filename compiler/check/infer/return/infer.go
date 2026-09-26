@@ -42,13 +42,13 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/flowbuild/assign"
 	"github.com/wippyai/go-lua/compiler/check/infer/captured"
 	"github.com/wippyai/go-lua/compiler/check/modules"
 	"github.com/wippyai/go-lua/compiler/check/phase"
 	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth"
-	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/diag"
@@ -73,15 +73,16 @@ type Config struct {
 
 // Inferencer computes pre-flow return summaries for local functions.
 type Inferencer struct {
-	specMemo      map[specMemoKey][]typ.Type
-	types         core.TypeOps
-	globalTypes   map[string]typ.Type
-	manifests     io.ManifestQuerier
-	stdlib        *scope.State
-	store         api.StoreView
-	graphs        api.GraphProvider
-	sourceName    string
-	maxIterations int
+	specMemo       map[specMemoKey][]typ.Type
+	parentDeclared flow.DeclaredTypes
+	types          core.TypeOps
+	globalTypes    map[string]typ.Type
+	manifests      io.ManifestQuerier
+	stdlib         *scope.State
+	store          api.StoreView
+	graphs         api.GraphProvider
+	sourceName     string
+	maxIterations  int
 }
 
 // New creates a configured return inferencer.
@@ -170,6 +171,7 @@ func (i *Inferencer) ComputeForGraph(
 	if i == nil || i.store == nil || graph == nil || parent == nil {
 		return nil, nil, nil
 	}
+	i.specMemo = nil
 
 	parentScope := api.ParentScopeForGraph(i.store, graph.ID(), parent)
 
@@ -182,6 +184,25 @@ func (i *Inferencer) ComputeForGraph(
 		return nil, nil, nil
 	}
 
+	// Captures can use parent declarations before the parent's flow is solved.
+	localAliases := modules.CollectAliases(graph)
+	parentEnv := run.Env
+	parentEnv.Graph = graph
+	parentEnv.Fn = graph.Func()
+	parentEnv.Scopes = pointScopes
+	parentEnv.ModuleAliases = modules.MergeAliases(run.Env.ModuleAliases, localAliases)
+	parentEnv.Env = phase.NewContextBuilder(parentEnv).WithBaseScope(parentScope).BuildDeclared()
+	parentEnv.Phase = api.PhaseScopeCompute
+	parentEngine := synth.New(parentEnv)
+	i.parentDeclared = synth.FunctionLiteralTypes(graph, parentEngine.TypeOf)
+	for sym, path := range localAliases {
+		if export := io.LookupEnrichedExport(run.Env.Manifests, path); export != nil {
+			if i.parentDeclared == nil {
+				i.parentDeclared = make(flow.DeclaredTypes)
+			}
+			i.parentDeclared[sym] = export
+		}
+	}
 	// Apply param hints from the stable snapshot (deterministic order).
 	if hints := i.store.GetParamHintsSnapshot(graph, parentScope); len(hints) > 0 {
 		for _, sym := range cfg.SortedSymbolIDs(localFuncs) {
@@ -352,12 +373,7 @@ func synthesizeReturnExprs(
 	var types []typ.Type
 	for i, expr := range retInfo.Exprs {
 		if i == len(retInfo.Exprs)-1 {
-			var multi []typ.Type
-			if dynamic := dynamicReturnOrType(synthEngine, expr, p); dynamic != nil {
-				multi = []typ.Type{dynamic}
-			} else {
-				multi = synthEngine.MultiTypeOf(expr, p)
-			}
+			multi := synthEngine.MultiTypeOf(expr, p)
 			if len(multi) == 0 {
 				multi = []typ.Type{typ.Unknown}
 			} else {
@@ -369,10 +385,7 @@ func synthesizeReturnExprs(
 			}
 			types = append(types, multi...)
 		} else {
-			t := dynamicReturnOrType(synthEngine, expr, p)
-			if t == nil {
-				t = synthEngine.TypeOf(expr, p)
-			}
+			t := synthEngine.TypeOf(expr, p)
 			if t == nil {
 				t = typ.Unknown
 			}
@@ -380,24 +393,6 @@ func synthesizeReturnExprs(
 		}
 	}
 	return types
-}
-
-// A truthy dynamic operand of `or` is a possible return value even when its
-// fallback has a concrete type.
-func dynamicReturnOrType(synthEngine api.Synth, expr ast.Expr, p cfg.Point) typ.Type {
-	op, ok := expr.(*ast.LogicalOpExpr)
-	if !ok || op.Operator != "or" {
-		return nil
-	}
-	left := synthEngine.TypeOf(op.Lhs, p)
-	if !typ.IsAny(left) && !typ.IsUnknown(left) {
-		return nil
-	}
-	right := synthEngine.TypeOf(op.Rhs, p)
-	if right == nil || ops.CanBeFalsy(right) {
-		return nil
-	}
-	return left
 }
 
 // joinReturnTypes merges two return type vectors using union semantics.
@@ -441,12 +436,34 @@ func (i *Inferencer) inferReturnTypesFromBody(
 	})
 	declSynth := i.newReturnInferenceEngine(
 		ctx.run,
-		uniformFunctionScopes(fnGraph, ctx.resolveScope),
+		assign.UniformScopes(fnGraph, ctx.resolveScope),
 		declCheckCtx,
 	)
 	declared := collectReturnTypes(fnGraph, declSynth, state.deadPoints)
 
-	return returns.MergeReturnSummary(declared, narrowed)
+	// The solved flow at each return point is the evidence; the pre-solve
+	// estimate fills only positions the flow leaves pending.
+	return resolveReturnVector(narrowed, declared)
+}
+
+// resolveReturnVector fills the pending slots and positions of evidence from
+// estimate. A slot the evidence lacks takes the estimate's.
+func resolveReturnVector(evidence, estimate []typ.Type) []typ.Type {
+	if len(evidence) == 0 {
+		return estimate
+	}
+	out := append([]typ.Type(nil), evidence...)
+	for i := range out {
+		if i >= len(estimate) || estimate[i] == nil {
+			continue
+		}
+		if out[i] == nil {
+			out[i] = estimate[i]
+			continue
+		}
+		out[i] = typ.Resolve(out[i], estimate[i])
+	}
+	return out
 }
 
 // inferReturnWithSummary infers return types for a single function using available summaries.

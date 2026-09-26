@@ -657,9 +657,8 @@ func (f *unifiedTypeFacts) IsAnnotated(sym cfg.SymbolID) bool {
 	return f.annotatedVars[sym]
 }
 
+// toTypedValue wraps a declared type. A declared unknown is a final dynamic
+// type; only an absent declaration leaves the state unresolved.
 func (f *unifiedTypeFacts) toTypedValue(t typ.Type) flow.TypedValue {
-	if typ.IsUnknown(t) {
-		return flow.TypedValue{Type: t, State: flow.StateUnknown}
-	}
 	return flow.TypedValue{Type: t, State: flow.StateResolved}
 }

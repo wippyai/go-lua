@@ -299,6 +299,9 @@ func ToFalsy(t typ.Type) typ.Type {
 				},
 				Default: func(t typ.Type) typ.Type {
 					k := t.Kind()
+					if k == kind.Unresolved {
+						return t
+					}
 					if k.IsPlaceholder() {
 						return typ.NewUnion(typ.Nil, typ.LiteralBool(false))
 					}
@@ -435,12 +438,24 @@ func ExcludeKind(t typ.Type, target kind.Kind) typ.Type {
 			}
 			return typ.NewOptional(inner)
 		},
-		handleUnion: func(u *typ.Union, _ func(typ.Type) typ.Type) typ.Type {
+		handleUnion: func(u *typ.Union, recurse func(typ.Type) typ.Type) typ.Type {
 			var kept []typ.Type
+			changed := false
 			for _, m := range u.Members {
-				if !KindMatches(m, target) {
-					kept = append(kept, m)
+				if KindMatches(m, target) {
+					changed = true
+					continue
 				}
+				nm := recurse(m)
+				if nm == nil || nm.Kind().IsNever() {
+					changed = true
+					continue
+				}
+				changed = changed || nm != m
+				kept = append(kept, nm)
+			}
+			if !changed {
+				return u
 			}
 			if len(kept) == 0 {
 				return typ.Never
@@ -656,6 +671,10 @@ func FilterByKind(t typ.Type, target kind.Kind) typ.Type {
 	if t == nil {
 		return nil
 	}
+	// A pending value has no evidence a kind test can filter yet.
+	if typ.IsUnresolved(t) {
+		return t
+	}
 	if t.Kind().IsPlaceholder() {
 		return TypeForKind(target)
 	}
@@ -687,6 +706,9 @@ func FilterByKind(t typ.Type, target kind.Kind) typ.Type {
 			return typ.NewUnion(kept...)
 		},
 		handleLeaf: func(t typ.Type) typ.Type {
+			if typ.IsUnresolved(t) {
+				return t
+			}
 			if t.Kind().IsPlaceholder() {
 				return TypeForKind(target)
 			}

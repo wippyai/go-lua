@@ -126,7 +126,7 @@ func typeEqualsGuard(a, b Type, guard internal.RecursionGuard, seen map[typePair
 			typeEqualsGuard(va.Value, vb.Value, next, seen)
 	case *Record:
 		vb, ok := b.(*Record)
-		if !ok || va.Open != vb.Open || va.Declared != vb.Declared || va.MapInferredPresence != vb.MapInferredPresence || va.MapExplicitNilWrite != vb.MapExplicitNilWrite || len(va.Fields) != len(vb.Fields) {
+		if !ok || va.Open != vb.Open || va.Complete != vb.Complete || va.Declared != vb.Declared || va.MapInferredPresence != vb.MapInferredPresence || va.MapExplicitNilWrite != vb.MapExplicitNilWrite || len(va.Fields) != len(vb.Fields) {
 			return false
 		}
 		for i, f := range va.Fields {

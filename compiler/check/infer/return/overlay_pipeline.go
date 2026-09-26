@@ -5,7 +5,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/assign"
-	fbcore "github.com/wippyai/go-lua/compiler/check/flowbuild/core"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/mutator"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/resolve"
 	"github.com/wippyai/go-lua/compiler/check/infer/paramhints"
@@ -256,9 +255,6 @@ func (i *Inferencer) enrichOverlayWithCaptured(
 			}
 		}
 	}
-	if ctx.parentFacts == nil {
-		return
-	}
 	resolveCapturedAnnotation := func(sym cfg.SymbolID) typ.Type {
 		parentGraph := ctx.info.ParentGraph
 		if parentGraph == nil || sym == 0 {
@@ -297,8 +293,14 @@ func (i *Inferencer) enrichOverlayWithCaptured(
 			overlay[sym] = annType
 			continue
 		}
-		if tv := ctx.parentFacts.EffectiveTypeAt(defPoint, sym); tv.State == flow.StateResolved && tv.Type != nil {
-			overlay[sym] = tv.Type
+		if ctx.parentFacts != nil {
+			if tv := ctx.parentFacts.EffectiveTypeAt(defPoint, sym); tv.State == flow.StateResolved && tv.Type != nil {
+				overlay[sym] = tv.Type
+				continue
+			}
+		}
+		if declared := i.parentDeclared[sym]; declared != nil {
+			overlay[sym] = declared
 		} else if _, pendingLocalFunction := localBindings.FuncLitBySymbol(sym); pendingLocalFunction {
 			// A captured local function without parent facts is a fixpoint
 			// dependency. Other missing captures retain the legacy behavior.
@@ -313,49 +315,33 @@ func (i *Inferencer) inferLocalVariableTypes(
 	overlay map[cfg.SymbolID]typ.Type,
 ) (map[cfg.SymbolID]typ.Type, *synth.Engine, func(ast.Expr, cfg.Point) typ.Type) {
 	fnGraph := ctx.info.Graph
-	annotated := make(map[cfg.SymbolID]bool, len(overlay))
-	paramSet := make(map[cfg.SymbolID]bool)
-	for _, sym := range fnGraph.ParamSymbols() {
-		if sym != 0 {
-			paramSet[sym] = true
-		}
-	}
-	for sym, tp := range overlay {
-		if paramSet[sym] {
-			annotated[sym] = true
-			continue
-		}
-		if tp != nil && !typ.IsUnresolved(tp) && !typ.IsSoft(tp, typ.SoftAnnotationPolicy) {
-			annotated[sym] = true
-		}
-	}
-
-	fnGraph.EachAssign(func(_ cfg.Point, assignInfo *cfg.AssignInfo) {
-		if assignInfo == nil || len(assignInfo.TypeAnnotations) == 0 {
-			return
-		}
-		for idx, target := range assignInfo.Targets {
-			if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
-				continue
-			}
-			if idx < len(assignInfo.TypeAnnotations) && assignInfo.TypeAnnotations[idx] != nil {
-				if tp, ok := overlay[target.Symbol]; ok && tp != nil {
-					if !typ.IsSoft(tp, typ.SoftAnnotationPolicy) {
-						annotated[target.Symbol] = true
-					}
-				} else if resolved := ctx.engine.ResolveType(assignInfo.TypeAnnotations[idx], ctx.resolveScope); resolved != nil {
-					if !typ.IsSoft(resolved, typ.SoftAnnotationPolicy) {
-						annotated[target.Symbol] = true
-					}
-				}
-			}
-		}
+	annotated := assign.AnnotatedSymbols(fnGraph, overlay, func(expr ast.TypeExpr) typ.Type {
+		return ctx.engine.ResolveType(expr, ctx.resolveScope)
 	})
+	fnScopes := assign.UniformScopes(fnGraph, ctx.resolveScope)
+	prelimCtx, prelimEngine := i.newOverlayEngine(ctx, fnScopes, overlay)
 
-	fnScopes := uniformFunctionScopes(fnGraph, ctx.resolveScope)
+	synthAdapter := func(expr ast.Expr, p cfg.Point) typ.Type {
+		return prelimEngine.TypeOf(expr, p)
+	}
+	var env api.BaseEnv
+	if prelimCtx != nil {
+		env = prelimCtx
+	}
+	inferred := assign.FunctionLocals(fnGraph, fnScopes, prelimEngine, env, ctx.run.Env.Ctx, i.types, overlay, annotated)
 
-	prelimCtx := api.NewReturnInferenceEnv(api.ReturnInferenceEnvConfig{
-		Graph:           fnGraph,
+	return inferred, prelimEngine, synthAdapter
+}
+
+// newOverlayEngine builds a return-inference engine whose declared types are
+// overlay.
+func (i *Inferencer) newOverlayEngine(
+	ctx *returnInferenceContext,
+	fnScopes map[cfg.Point]*scope.State,
+	overlay map[cfg.SymbolID]typ.Type,
+) (*api.DeclaredEnvImpl, *synth.Engine) {
+	env := api.NewReturnInferenceEnv(api.ReturnInferenceEnvConfig{
+		Graph:           ctx.info.Graph,
 		Bindings:        ctx.bindings,
 		BaseScope:       ctx.resolveScope,
 		DeclaredTypes:   overlay,
@@ -363,38 +349,7 @@ func (i *Inferencer) inferLocalVariableTypes(
 		ModuleAliases:   ctx.moduleAliases,
 		ReturnSummaries: ctx.summaries,
 	})
-
-	prelimEngine := i.newReturnInferenceEngine(ctx.run, fnScopes, prelimCtx)
-
-	synthAdapter := func(expr ast.Expr, p cfg.Point) typ.Type {
-		return prelimEngine.TypeOf(expr, p)
-	}
-	symResolver := func(p cfg.Point, sym cfg.SymbolID) (typ.Type, bool) {
-		if prelimCtx == nil || prelimCtx.Types() == nil {
-			return nil, false
-		}
-		tv := prelimCtx.Types().EffectiveTypeAt(p, sym)
-		if tv.State == flow.StateResolved && tv.Type != nil {
-			return tv.Type, true
-		}
-		if t, ok := prelimCtx.GlobalType(sym); ok && t != nil {
-			return t, true
-		}
-		return nil, false
-	}
-
-	inferred := assign.CollectInferredTypes(&fbcore.FlowContext{
-		Graph:   fnGraph,
-		Scopes:  fnScopes,
-		API:     prelimEngine,
-		CallCtx: ctx.run.Env.Ctx,
-		TypeOps: i.types,
-		Derived: &fbcore.Derived{
-			SymResolver: symResolver,
-		},
-	}, overlay, annotated, nil)
-
-	return inferred, prelimEngine, synthAdapter
+	return env, i.newReturnInferenceEngine(ctx.run, fnScopes, env)
 }
 
 func (i *Inferencer) enrichOverlayWithLocalDeclarations(
@@ -453,13 +408,6 @@ func (i *Inferencer) enrichOverlayWithLocalDeclarations(
 				}
 				return
 			}
-			if idx < len(info.Sources) {
-				if _, ok := info.Sources[idx].(*ast.TableExpr); ok {
-					if seeded := ctx.engine.TypeOf(info.Sources[idx], p); seeded != nil {
-						overlay[target.Symbol] = seeded
-					}
-				}
-			}
 		})
 	})
 
@@ -487,6 +435,14 @@ func (i *Inferencer) collectAndApplyMutations(
 ) map[cfg.SymbolID]typ.Type {
 	stage := newOverlayMutationStage(ctx, overlay, inferred, synthAdapter)
 	mergeInferredIntoOverlay(stage.finalOverlay, stage.inferred, stage.paramSyms)
+	// Mutations are read with the local types phase 1 published: a key or
+	// value expression such as `#t + 1` reads its locals through them.
+	if stage.fnGraph != nil {
+		_, published := i.newOverlayEngine(ctx, assign.UniformScopes(stage.fnGraph, ctx.resolveScope), cloneOverlay(stage.finalOverlay, 0))
+		stage.synthAdapter = func(expr ast.Expr, p cfg.Point) typ.Type {
+			return published.TypeOf(expr, p)
+		}
+	}
 	stage.enrichedSynthAdapter = buildEnrichedSynthAdapter(stage.fnGraph.Bindings(), stage.inferred, stage.finalOverlay, stage.synthAdapter)
 
 	i.applyFieldMutations(ctx, &stage)
@@ -603,7 +559,7 @@ func buildRecordWithMap(template *typ.Record, mapKey, mapValue typ.Type) *typ.Re
 	if template == nil {
 		return nil
 	}
-	builder := typ.NewRecord()
+	builder := typ.NewRecord().SetComplete(template.Complete)
 	if template.Open {
 		builder.SetOpen(true)
 	}
@@ -759,7 +715,7 @@ func (i *Inferencer) extractForReturn(
 	finalOverlay map[cfg.SymbolID]typ.Type,
 ) (phase.PhaseEnv, phase.ScopeOutput, phase.FlowExtractOutput) {
 	fnGraph := ctx.info.Graph
-	fnScopes := uniformFunctionScopes(fnGraph, ctx.resolveScope)
+	fnScopes := assign.UniformScopes(fnGraph, ctx.resolveScope)
 
 	phaseEnv := phase.PhaseEnv{
 		Ctx:            ctx.run.Env.Ctx,
@@ -852,16 +808,4 @@ func (i *Inferencer) runPhase2FlowNarrowing(
 		synth:      i.newReturnInferenceEngine(ctx.run, phaseEnv.Scopes, fnCheckCtx),
 		deadPoints: deadPoints,
 	}
-}
-
-func uniformFunctionScopes(graph *cfg.Graph, base *scope.State) map[cfg.Point]*scope.State {
-	if graph == nil {
-		return nil
-	}
-	scopes := make(map[cfg.Point]*scope.State)
-	graph.EachNode(func(p cfg.Point, _ cfg.NodeInfo) {
-		scopes[p] = base
-	})
-	scopes[graph.Entry()] = base
-	return scopes
 }

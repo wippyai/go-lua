@@ -32,7 +32,7 @@ func SynthTableLiteralWithWrapper(ex *ast.TableExpr, p cfg.Point, recurse func(a
 		return typ.NewRecord().Build()
 	}
 
-	builder := typ.NewRecord()
+	builder := typ.NewRecord().SetComplete(true)
 	var arrayElements []typ.Type
 	hasVararg := false
 	fieldCount := 0

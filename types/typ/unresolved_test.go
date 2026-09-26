@@ -47,3 +47,49 @@ func TestFinalizeMissingRecursiveBody(t *testing.T) {
 		t.Fatalf("unfinished recursive return escaped finalization: %v", got)
 	}
 }
+
+func TestResolveSupersedesPendingUnionWithWholeEvidence(t *testing.T) {
+	current := NewUnion(Unresolved, NewOptional(Number))
+	if got := Resolve(current, Number); !TypeEquals(got, Number) {
+		t.Fatalf("pending union position kept against final evidence: %v", got)
+	}
+	record := NewRecord().Field("timeout", current).Build()
+	evidence := NewRecord().Field("timeout", Number).Build()
+	if got := Resolve(record, evidence); !TypeEquals(got, evidence) {
+		t.Fatalf("pending record field kept against final evidence: %v", got)
+	}
+	if got := Resolve(NewRecord().Field("timeout", String).Field("x", Unresolved).Build(), evidence); !TypeEquals(got.(*Record).GetField("timeout").Type, String) {
+		t.Fatalf("final leaf replaced by evidence: %v", got)
+	}
+}
+
+func TestDropPendingAlternatives(t *testing.T) {
+	if got := DropPendingAlternatives(NewUnion(Unresolved, String)); !TypeEquals(got, String) {
+		t.Fatalf("pending alternative kept: %v", got)
+	}
+	nested := NewRecord().Field("k", NewUnion(Unresolved, Number)).Build()
+	want := NewRecord().Field("k", Number).Build()
+	if got := DropPendingAlternatives(nested); !TypeEquals(got, want) {
+		t.Fatalf("nested pending alternative kept: %v", got)
+	}
+	if got := DropPendingAlternatives(Unresolved); got != nil {
+		t.Fatalf("wholly pending type has no evidence to keep: %v", got)
+	}
+	hole := NewRecord().Field("k", Unresolved).Build()
+	if got := DropPendingAlternatives(hole); !TypeEquals(got, hole) {
+		t.Fatalf("pending position without alternatives changed: %v", got)
+	}
+}
+
+func TestPartialViewForgetsComplete(t *testing.T) {
+	inner := NewRecord().SetOpen(true).SetComplete(true).Build()
+	outer := NewRecord().Field("config", inner).SetOpen(true).SetComplete(true).Build()
+	shallow := PartialView(outer).(*Record)
+	if shallow.Complete || !shallow.GetField("config").Type.(*Record).Complete {
+		t.Fatalf("shallow partial view = %v", shallow)
+	}
+	deep := PartialViewDeep(outer).(*Record)
+	if deep.Complete || deep.GetField("config").Type.(*Record).Complete {
+		t.Fatalf("deep partial view kept a complete record: %v", deep)
+	}
+}

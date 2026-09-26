@@ -144,7 +144,7 @@ func widenForInferenceDepth(t typ.Type, depth int) typ.Type {
 			return typ.NewMap(key, val)
 		},
 		Record: func(r *typ.Record) typ.Type {
-			builder := typ.NewRecord().SetDeclared(r.Declared)
+			builder := typ.NewRecord().SetDeclared(r.Declared).SetComplete(r.Complete)
 			if r.Open {
 				builder.SetOpen(true)
 			}

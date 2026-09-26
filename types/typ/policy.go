@@ -166,7 +166,7 @@ func JoinCompatibleRecords(a, b Type) (Type, bool) {
 		return nil, false
 	}
 
-	builder := NewRecord().SetDeclared(ar.Declared && br.Declared)
+	builder := NewRecord().SetDeclared(ar.Declared && br.Declared).SetComplete(joinedComplete(ar, br))
 	if ar.Open || br.Open {
 		builder.SetOpen(true)
 	}
@@ -392,9 +392,9 @@ func literalType(t Type) (*Literal, bool) {
 // JoinBranchOutcome merges mutually-exclusive expression outcomes (for example,
 // `a and b` / `a or b`) while preserving uncertainty.
 //
-// Unlike JoinPreferNonSoft, this must not treat unknown as absent information:
-// expression typing needs to preserve runtime uncertainty when one branch may
-// still produce unknown-like values.
+// Unlike JoinPreferNonSoft, this treats a converged unknown as top, never as
+// absent information: pending inference is Unresolved, so an Unknown operand
+// is a value that may be anything at runtime.
 func JoinBranchOutcome(a, b Type) Type {
 	if a == nil {
 		return b
@@ -418,6 +418,11 @@ func JoinBranchOutcome(a, b Type) Type {
 	// unknown and nil means "value may be unknown or absent".
 	if (IsUnknown(a) && b.Kind() == kind.Nil) || (IsUnknown(b) && a.Kind() == kind.Nil) {
 		return NewOptional(Unknown)
+	}
+	// A converged unknown outcome is top: the other outcome adds nothing the
+	// unknown one does not already admit.
+	if IsUnknown(a) || IsUnknown(b) {
+		return Unknown
 	}
 
 	if IsSoft(a, SoftPlaceholderPolicy) && !IsSoft(b, SoftPlaceholderPolicy) && b.Kind() != kind.Nil {

@@ -805,3 +805,7 @@ func TestGuardedTypeCorrelationsFromCall_CallbackReturnOnTruthy(t *testing.T) {
 		t.Fatalf("expected guarded target type string, got %v", got[0].TargetType)
 	}
 }
+
+func (s *preciseSourceSynthStub) TypeOfWithSpecTypes(expr ast.Expr, p cfg.Point, _ api.SpecTypes) typ.Type {
+	return s.TypeOf(expr, p)
+}

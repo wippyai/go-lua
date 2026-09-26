@@ -43,14 +43,15 @@ local function label(v: any): string
     return take_name(text)
 end
 
--- unknown is not consistent with specific types in either mode: a type
--- argument nothing determines stays unknown and must be narrowed.
+-- A type argument nothing determines stays unknown. Gradual assignability
+-- accepts it as it accepts any and reports the implicit unknown; strict-any
+-- requires it narrowed.
 local function decode<T>(raw: string): T
     return raw :: T
 end
 
 local function first_key(raw: string): string
-    return take_name(decode(raw)) -- expect-error: argument 1: expected string, got unknown
+    return take_name(decode(raw)) -- expect-hint[gradual]: argument 1: implicit unknown flows into declared string -- expect-error[strict-any]: argument 1: expected string, got unknown
 end
 
 return {

@@ -1,6 +1,7 @@
 package flow
 
 import (
+	"strings"
 	"slices"
 	"sort"
 	"strconv"
@@ -102,14 +103,21 @@ func (s *Solution) setValue(key string, t typ.Type) {
 		return
 	}
 	s.values[key] = t
-	if s.fieldOverlayCache == nil {
+	if s.fieldOverlayCache == nil && s.childFieldCache == nil {
 		return
 	}
 	_, _, suffix, ok := pathkey.ParseKeyUnchecked(constraint.PathKey(key))
 	if !ok || suffix == "" {
 		return
 	}
-	delete(s.fieldOverlayCache, key[:len(key)-len(suffix)])
+	// Every ancestor prefix composes this child fact into its fields.
+	root := key[:len(key)-len(suffix)]
+	segs := pathkey.ParseSuffix(suffix)
+	for i := 0; i < len(segs); i++ {
+		prefix := root + pathkey.SegmentsSuffix(segs[:i])
+		delete(s.fieldOverlayCache, prefix)
+		delete(s.childFieldCache, prefix)
+	}
 }
 
 // dependencyMap tracks which CFG points depend on a given canonical key.
@@ -138,6 +146,28 @@ func symbolDependencyKey(sym cfg.SymbolID) string {
 func (dm dependencyMap) register(key constraint.PathKey, point cfg.Point) {
 	if key != "" {
 		dm[string(key)] = append(dm[string(key)], point)
+	}
+}
+
+// versionDependencyKey keys the points that read every fact stored below a
+// symbol version: a phi joins its operands' field suffix facts as well as
+// their base values.
+func versionDependencyKey(base string) string {
+	return "$ver:" + base
+}
+
+// versionBaseOfKey returns the symbol-version prefix of a canonical key, or
+// "" when the key is a base key itself.
+func versionBaseOfKey(key string) string {
+	if i := strings.IndexAny(key, ".["); i > 0 {
+		return key[:i]
+	}
+	return ""
+}
+
+func (dm dependencyMap) registerVersion(key constraint.PathKey, point cfg.Point) {
+	if key != "" {
+		dm[versionDependencyKey(string(key))] = append(dm[versionDependencyKey(string(key))], point)
 	}
 }
 
@@ -171,6 +201,7 @@ func (s *Solution) buildPhiDependencies() dependencyMap {
 		for _, op := range phi.Operands {
 			opKey := s.pkResolver.KeyAtVersion(op.Version.Symbol, op.Version.ID, nil)
 			deps.register(opKey, phi.Point)
+			deps.registerVersion(opKey, phi.Point)
 		}
 	}
 	return deps
@@ -304,6 +335,15 @@ func addDependentPoints(deps dependencyMap, changedKeys []string, worklist []cfg
 		}
 		if sym := pathkey.KeySymbolUnchecked(constraint.PathKey(key)); sym != 0 {
 			for _, point := range deps[symbolDependencyKey(sym)] {
+				if inQueue[point] || pending[point] {
+					continue
+				}
+				pending[point] = true
+				points = append(points, point)
+			}
+		}
+		if base := versionBaseOfKey(key); base != "" {
+			for _, point := range deps[versionDependencyKey(base)] {
 				if inQueue[point] || pending[point] {
 					continue
 				}

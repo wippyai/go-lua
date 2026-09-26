@@ -7,13 +7,13 @@ local function wait(events: Channel<Event>)
     if r.channel == timeout then
         return nil
     end
-    local either: Event = r.value -- expect-error: cannot assign unknown
+    local either: Event = r.value -- expect-hint: implicit unknown flows into declared Event
     if r.channel == events then
         local k: string = r.value.kind
         return k
     end
     local msg = r.value
-    local ev: Event = r.value -- expect-error: cannot assign unknown
+    local ev: Event = r.value -- expect-hint: implicit unknown flows into declared Event
     return msg.field
 end
 
