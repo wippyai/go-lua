@@ -3,6 +3,7 @@ package flow
 import (
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/flow/join"
 	"github.com/wippyai/go-lua/types/flow/pathkey"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/narrow"
@@ -571,6 +572,36 @@ func (s *Solution) NarrowTypeAssuming(p cfg.Point, path constraint.Path, t typ.T
 		return t
 	}
 	return s.applyCondition(p, t, path, constraint.And(s.ConditionAt(p), extra))
+}
+
+// NarrowTypeBeforeAssuming narrows t, a type the caller holds for path on
+// entry to p, by the facts entering p along each incoming edge conjoined with
+// extra. A read evaluated by an assignment at p that writes path observes the
+// value before that write: the facts of a predecessor and of its edge to p,
+// over the versions visible at that predecessor.
+func (s *Solution) NarrowTypeBeforeAssuming(p cfg.Point, path constraint.Path, t typ.Type, extra constraint.Condition) typ.Type {
+	if s == nil || t == nil || path.IsEmpty() || s.inputs == nil || s.inputs.Graph == nil {
+		return t
+	}
+	preds := graphPredecessors(s.inputs.Graph, p)
+	if len(preds) == 0 {
+		return t
+	}
+	narrowed := make([]typ.Type, 0, len(preds))
+	for _, pred := range preds {
+		entering := s.ConditionAt(pred)
+		if edge, ok := s.edgeConditions[edgeKey{from: pred, to: p}]; ok {
+			entering = constraint.And(entering, edge)
+		}
+		n := s.applyCondition(pred, t, path, constraint.And(entering, extra))
+		if n != nil && !typ.IsNever(n) {
+			narrowed = append(narrowed, n)
+		}
+	}
+	if len(narrowed) == 0 {
+		return typ.Never
+	}
+	return join.Types(narrowed...)
 }
 
 // NarrowedTypeAssuming returns the type at p for path narrowed by the

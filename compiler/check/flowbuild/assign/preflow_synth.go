@@ -43,6 +43,7 @@ func (r narrowResolverAdapter) Index(t typ.Type, key typ.Type) (typ.Type, bool) 
 // the full solve: the branch facts reaching each point, and the conditions an
 // expression establishes, extracted as for branch edges.
 type preflowFacts struct {
+	graph      *cfg.Graph
 	solution   *flow.Solution
 	conditions api.ConditionFromExprFunc
 }
@@ -60,18 +61,41 @@ func buildPreflowFacts(fc *fbcore.FlowContext, inputs *flow.Inputs) *preflowFact
 		return nil
 	}
 	return &preflowFacts{
+		graph:      fc.Graph,
 		solution:   buildPreflowBranchSolution(fc, inputs),
 		conditions: cond.ConditionsFunc(fc, inputs),
 	}
 }
 
-// narrowTypeAssuming narrows t, the type of path at p, by the branch facts
-// reaching p conjoined with extra.
+// narrowTypeAssuming narrows t, the type of path read by an expression
+// evaluated at p, by the branch facts reaching p conjoined with extra. An
+// assignment at p evaluates its sources before it writes its targets, so a
+// read of a target observes the facts on entry to p.
 func (f *preflowFacts) narrowTypeAssuming(p cfg.Point, path constraint.Path, t typ.Type, extra constraint.Condition) typ.Type {
 	if f == nil || f.solution == nil {
 		return t
 	}
+	if f.writesAt(p, path.Symbol) {
+		return f.solution.NarrowTypeBeforeAssuming(p, path, t, extra)
+	}
 	return f.solution.NarrowTypeAssuming(p, path, t, extra)
+}
+
+// writesAt reports whether the assignment at p writes the variable sym.
+func (f *preflowFacts) writesAt(p cfg.Point, sym cfg.SymbolID) bool {
+	if f.graph == nil || sym == 0 {
+		return false
+	}
+	info := f.graph.Assign(p)
+	if info == nil {
+		return false
+	}
+	for _, target := range info.Targets {
+		if target.Kind == cfg.TargetIdent && target.Symbol == sym {
+			return true
+		}
+	}
+	return false
 }
 
 // narrowedTypeAt returns the type of path at p the branch facts give.
