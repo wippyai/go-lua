@@ -650,6 +650,7 @@ func MergeReturnSummary(existing, candidate []typ.Type) []typ.Type {
 	if len(candidate) == 0 {
 		return existing
 	}
+	existing, candidate = refineSnapshotSlots(existing, candidate)
 	existing = fillPendingSlots(existing, candidate)
 	candidate = fillPendingSlots(candidate, existing)
 	existing = fillUnknownSlots(existing, candidate)
@@ -684,7 +685,7 @@ func MergeReturnSummary(existing, candidate []typ.Type) []typ.Type {
 		return normalizeAndPruneReturnVector(preferred)
 	}
 
-	return normalizeAndPruneReturnVector(typjoin.ReturnVectors(existing, candidate))
+	return normalizeAndPruneReturnVector(refineSnapshotMembersVector(typjoin.ReturnVectors(existing, candidate)))
 }
 
 func nilSlotGainsRecordEvidence(old, next []typ.Type) bool {
@@ -1013,13 +1014,16 @@ func mergeFunctionParamFactType(existing, candidate typ.Type) typ.Type {
 	if typ.TypeEquals(existing, candidate) {
 		return existing
 	}
+	if joined, ok := refineSnapshotTypes(existing, candidate); ok {
+		return joined
+	}
 	if subtype.IsSubtype(existing, candidate) && !subtype.IsSubtype(candidate, existing) {
 		return candidate
 	}
 	if subtype.IsSubtype(candidate, existing) && !subtype.IsSubtype(existing, candidate) {
 		return existing
 	}
-	return typ.JoinPreferNonSoft(existing, candidate)
+	return refineSnapshotMembers(typ.JoinPreferNonSoft(existing, candidate))
 }
 
 func preferStructuredRecordParam(existing, candidate typ.Type) (typ.Type, bool) {
@@ -1144,4 +1148,149 @@ func isStructuredTableShape(t typ.Type) bool {
 	default:
 		return false
 	}
+}
+
+// refineSnapshotSlots resolves the slots where both vectors hold snapshots of
+// one recursion identity and one refines the other: both vectors take the
+// refining snapshot in that slot.
+func refineSnapshotSlots(existing, candidate []typ.Type) ([]typ.Type, []typ.Type) {
+	var outE, outC []typ.Type
+	for i := 0; i < len(existing) && i < len(candidate); i++ {
+		refined, ok := refineSnapshotTypes(existing[i], candidate[i])
+		if !ok {
+			continue
+		}
+		if outE == nil {
+			outE = append([]typ.Type(nil), existing...)
+			outC = append([]typ.Type(nil), candidate...)
+		}
+		outE[i], outC[i] = refined, refined
+	}
+	if outE == nil {
+		return existing, candidate
+	}
+	return outE, outC
+}
+
+// refineSnapshotTypes returns the refining one of a and b when both are
+// snapshots of one recursion identity, directly or as the present value of an
+// optional.
+func refineSnapshotTypes(a, b typ.Type) (typ.Type, bool) {
+	if a == nil || b == nil {
+		return nil, false
+	}
+	ai, aOpt := splitOptionalSnapshot(a)
+	bi, bOpt := splitOptionalSnapshot(b)
+	if ai == nil || bi == nil || ai.ID != bi.ID || typ.TypeEquals(ai, bi) {
+		return nil, false
+	}
+	refined, ok := refinedSnapshot(ai, bi)
+	if !ok {
+		return nil, false
+	}
+	if aOpt || bOpt {
+		return typ.NewOptional(refined), true
+	}
+	return refined, true
+}
+
+// splitOptionalSnapshot returns the recursive snapshot t holds, directly or
+// as the present value of an optional, and whether t is optional.
+func splitOptionalSnapshot(t typ.Type) (*typ.Recursive, bool) {
+	if opt, ok := t.(*typ.Optional); ok {
+		r, _ := opt.Inner.(*typ.Recursive)
+		return r, true
+	}
+	r, _ := t.(*typ.Recursive)
+	return r, false
+}
+
+// refineSnapshotMembersVector refines, in every slot, the union members that
+// are snapshots of one recursion identity.
+func refineSnapshotMembersVector(ts []typ.Type) []typ.Type {
+	var out []typ.Type
+	for i, t := range ts {
+		refined := refineSnapshotMembers(t)
+		if refined != t && out == nil {
+			out = append([]typ.Type(nil), ts...)
+		}
+		if out != nil {
+			out[i] = refined
+		}
+	}
+	if out == nil {
+		return ts
+	}
+	return out
+}
+
+// refineSnapshotMembers keeps, among the members of union t that are
+// snapshots of one recursion identity, only those no other member refines. A
+// join of two estimates of a slot otherwise holds an earlier snapshot of a
+// table beside the one that refines it.
+func refineSnapshotMembers(t typ.Type) typ.Type {
+	u, ok := t.(*typ.Union)
+	if !ok {
+		if opt, ok := t.(*typ.Optional); ok {
+			if inner := refineSnapshotMembers(opt.Inner); inner != opt.Inner {
+				return typ.NewOptional(inner)
+			}
+		}
+		return t
+	}
+	byID := make(map[uint64]*typ.Recursive)
+	refinedAny := false
+	members := make([]typ.Type, 0, len(u.Members))
+	for _, m := range u.Members {
+		r, ok := m.(*typ.Recursive)
+		if !ok || r.Body == nil {
+			members = append(members, m)
+			continue
+		}
+		if existing, seen := byID[r.ID]; seen {
+			if refined, ok := refinedSnapshot(existing, r); ok {
+				byID[r.ID] = refined
+				refinedAny = true
+				continue
+			}
+			members = append(members, r)
+			continue
+		}
+		byID[r.ID] = r
+	}
+	if !refinedAny {
+		return t
+	}
+	for _, r := range byID {
+		members = append(members, r)
+	}
+	return typ.NewUnion(members...)
+}
+
+// refinedSnapshot returns the more informed of two snapshots of one recursion
+// identity: the one that absorbs the other under the iteration join, which
+// orders successive estimates of a table. Snapshots neither absorbs describe
+// different states of the table and are not merged.
+func refinedSnapshot(a, b *typ.Recursive) (*typ.Recursive, bool) {
+	if a == nil || b == nil || a.ID != b.ID || a.Body == nil || b.Body == nil {
+		return nil, false
+	}
+	variable := &typ.Recursive{ID: a.ID, Name: a.Name}
+	open := func(body typ.Type) typ.Type {
+		return typ.Rewrite(body, func(node typ.Type) (typ.Type, bool) {
+			if r, ok := node.(*typ.Recursive); ok && r.ID == variable.ID {
+				return variable, true
+			}
+			return nil, false
+		})
+	}
+	bodyA, bodyB := open(a.Body), open(b.Body)
+	joined := joinIterationFact(bodyA, bodyB)
+	if typ.TypeEquals(joined, bodyB) {
+		return b, true
+	}
+	if typ.TypeEquals(joined, bodyA) {
+		return a, true
+	}
+	return nil, false
 }

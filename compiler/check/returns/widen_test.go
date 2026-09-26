@@ -401,6 +401,42 @@ func TestMethodTypeHasSelfRecursiveReturn_IgnoresInterfaceMethods(t *testing.T) 
 	}
 }
 
+func TestMethodTypeHasSelfRecursiveReturn_IgnoresReturnsAdmittingEveryValue(t *testing.T) {
+	owner := typ.NewRecord().
+		Field("start", typ.Func().Param("self", typ.Any).Returns(typ.Any, typ.NewOptional(typ.String)).Build()).
+		Build()
+	for _, ret := range []typ.Type{typ.Any, typ.Unknown, typ.NewOptional(typ.Any), typ.NewUnion(typ.String, typ.Unknown)} {
+		method := typ.Func().Param("self", typ.Any).Returns(ret).Build()
+		if methodTypeHasSelfRecursiveReturn(method, owner) {
+			t.Errorf("method returning %s must not count as returning its owner", typ.FormatShort(ret))
+		}
+	}
+	if recordHasSelfRecursiveMethod(owner) {
+		t.Fatalf("a record whose method returns any must not count as self-recursive")
+	}
+	selfReturning := typ.Func().Param("self", typ.Any).Returns(typ.NewOptional(owner)).Build()
+	if !methodTypeHasSelfRecursiveReturn(selfReturning, owner) {
+		t.Fatalf("a method returning its owner must count as self-recursive")
+	}
+}
+
+func TestMergeReturnSummary_RecordWithAnyReturningMethodsRefinesAnyVector(t *testing.T) {
+	create := typ.Func().Param("self", typ.Any).Param("options", typ.NewMap(typ.String, typ.Any)).Returns(typ.String, typ.Nil).Build()
+	start := typ.Func().Param("self", typ.Any).Returns(typ.Any, typ.NewOptional(typ.String)).Build()
+	client := typ.NewRecord().Field("create", create).OptField("start", start).Build()
+	clientVector := []typ.Type{client, typ.Nil}
+	anyVector := []typ.Type{typ.Any, typ.NewOptional(typ.String)}
+
+	for _, merged := range [][]typ.Type{
+		MergeReturnSummary(clientVector, anyVector),
+		MergeReturnSummary(anyVector, clientVector),
+	} {
+		if !ReturnTypesEqual(merged, clientVector) {
+			t.Fatalf("merge must keep the client record over the any vector in either order, got %v", merged)
+		}
+	}
+}
+
 // methodTableApproximation returns the method table after n fixpoint steps
 // of `function t:command() return self end`: step n types command against the
 // table of step n-1, starting from a command that returns nil.

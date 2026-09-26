@@ -109,6 +109,31 @@ func BindRecursiveSnapshotWithFields(identity *Recursive, body Type, selfFields 
 	return self
 }
 
+// JoinRecursiveSnapshots returns a snapshot of the identity a and b share
+// whose body joins their record bodies: every field of either, with the join
+// of its types. Both bodies refer to the identity through one variable while
+// they are joined. It returns nil when a and b are not snapshots of one
+// identity or their bodies are not compatible records.
+func JoinRecursiveSnapshots(a, b *Recursive) *Recursive {
+	if a == nil || b == nil || a.ID != b.ID || a.Body == nil || b.Body == nil {
+		return nil
+	}
+	variable := &Recursive{ID: a.ID, Name: a.Name}
+	open := func(body Type) Type {
+		return Rewrite(body, func(node Type) (Type, bool) {
+			if r, ok := node.(*Recursive); ok && r.ID == variable.ID {
+				return variable, true
+			}
+			return nil, false
+		})
+	}
+	joined, ok := JoinCompatibleRecords(open(a.Body), open(b.Body))
+	if !ok {
+		return nil
+	}
+	return BindRecursiveSnapshot(variable, joined)
+}
+
 // SetBody assigns the body to a placeholder recursive type.
 func (r *Recursive) SetBody(body Type) {
 	r.Body = body

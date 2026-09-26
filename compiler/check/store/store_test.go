@@ -1,6 +1,7 @@
 package store
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -8,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/compiler/check/scope"
+	"github.com/wippyai/go-lua/compiler/parse"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -343,5 +345,43 @@ func TestClearIterationChannels_ResetsRevision(t *testing.T) {
 	s.ClearIterationChannels()
 	if got := s.Revision(); got != 0 {
 		t.Fatalf("expected revision reset to 0, got %d", got)
+	}
+}
+
+// Bindings of a class table within a round join their bodies, so a later
+// snapshot refines the earlier ones; the next round binds a fresh snapshot of
+// the same identity.
+func TestBindClassSelf_JoinsBindingsWithinRound(t *testing.T) {
+	chunk, err := parse.Parse(strings.NewReader("local C = {}\nreturn C"), "test.lua")
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	graph := cfg.Build(&ast.FunctionExpr{Stmts: chunk})
+	var sym cfg.SymbolID
+	graph.EachAssign(func(_ cfg.Point, info *cfg.AssignInfo) {
+		if target, ok := info.FirstTarget(); ok && target.Symbol != 0 {
+			sym = target.Symbol
+		}
+	})
+	s := NewSessionStore()
+	first := s.BindClassSelf(graph, 0, sym, "C", typ.NewRecord().Field("name", typ.String).Build())
+	again := s.BindClassSelf(graph, 0, sym, "C", typ.NewRecord().Field("id", typ.Integer).Build())
+	joined, ok := again.(*typ.Recursive)
+	if !ok {
+		t.Fatalf("expected a snapshot, got %s", again)
+	}
+	if body, ok := joined.Body.(*typ.Record); !ok || body.GetField("name") == nil || body.GetField("id") == nil {
+		t.Fatalf("expected the round's bindings joined, got %s", typ.FormatShort(joined.Body))
+	}
+
+	s.FixpointSwap()
+	next := s.BindClassSelf(graph, 0, sym, "C", typ.NewRecord().Field("id", typ.Integer).Build())
+	a, _ := first.(*typ.Recursive)
+	b, ok := next.(*typ.Recursive)
+	if !ok || a == nil || b.ID != a.ID || b == a {
+		t.Fatalf("expected a fresh snapshot of the same identity, got %s", next)
+	}
+	if body, ok := b.Body.(*typ.Record); !ok || body.GetField("id") == nil || body.GetField("name") != nil {
+		t.Fatalf("expected the next round's body alone, got %s", typ.FormatShort(b.Body))
 	}
 }

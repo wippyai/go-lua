@@ -14,3 +14,28 @@ func TestOptionalUnknownAcceptsEveryValue(t *testing.T) {
 		}
 	}
 }
+
+func TestAdmitsEveryValue(t *testing.T) {
+	admitting := []typ.Type{
+		typ.Any,
+		typ.Unknown,
+		typ.NewOptional(typ.Unknown),
+		typ.NewUnion(typ.String, typ.Any),
+	}
+	for _, tp := range admitting {
+		if !AdmitsEveryValue(tp) {
+			t.Errorf("%s admits every value", typ.FormatShort(tp))
+		}
+	}
+	restricting := []typ.Type{
+		typ.String,
+		typ.NewOptional(typ.String),
+		typ.NewRecord().Field("id", typ.String).Build(),
+		typ.NewUnion(typ.String, typ.Number),
+	}
+	for _, tp := range restricting {
+		if AdmitsEveryValue(tp) {
+			t.Errorf("%s does not admit every value", typ.FormatShort(tp))
+		}
+	}
+}

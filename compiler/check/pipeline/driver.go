@@ -7,7 +7,8 @@
 //  3. Execute the memoized function analysis pipeline
 //  4. Propagate effects and interprocedural facts
 //  5. Process nested functions recursively
-//  6. Repeat until fixpoint (no channel changes) or max iterations
+//  6. Repeat until fixpoint (no channel changes) or the round budget, which
+//     extends MaxIterations to the chunk's closure-nesting and call-chain depth
 //
 // The driver coordinates several inference subsystems:
 //   - Return inference: Computes return types for local functions
@@ -41,10 +42,12 @@ import (
 
 // Config supplies dependencies for the fixpoint driver.
 type Config struct {
-	Types         core.TypeOps
-	GlobalTypes   map[string]typ.Type
-	Stdlib        *scope.State
-	Manifests     *db.DB
+	Types       core.TypeOps
+	GlobalTypes map[string]typ.Type
+	Stdlib      *scope.State
+	Manifests   *db.DB
+	// MaxIterations is the minimum round budget of a chunk; chunks whose
+	// structure needs more rounds get more (see roundBudget).
 	MaxIterations int
 	MaxScopeDepth int
 	EmitScopeDiag bool
@@ -98,13 +101,10 @@ func (d *Driver) Run(sess api.AnalysisSession, chunk []ast.Stmt) {
 }
 
 func (d *Driver) runFixpoint(sess api.AnalysisSession, fn *ast.FunctionExpr, parent *scope.State) {
-	maxIterations := d.cfg.MaxIterations
-	if maxIterations < 1 {
-		maxIterations = 1
-	}
+	rounds := d.roundBudget(sess.StoreHandle())
 
 	converged := false
-	for iter := 0; iter < maxIterations; iter++ {
+	for iter := 0; iter < rounds; iter++ {
 		d.prepareIterationState(sess)
 		d.checkFunctionFixpoint(sess, fn, parent)
 		if d.advanceFixpoint(sess.StoreHandle()) {

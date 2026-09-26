@@ -239,8 +239,10 @@ func (c *Checker) newQueryContext() *db.QueryContext {
 	return ctx
 }
 
-// WithMaxIterations configures the maximum number of fixpoint iterations.
-// Values less than 1 are clamped to 1.
+// WithMaxIterations configures the minimum round budget of the inter-function
+// fixpoint. A chunk whose closure nesting and local call chains need more
+// rounds to propagate facts gets a larger budget. Values less than 1 are
+// clamped to 1.
 func WithMaxIterations(n int) Option {
 	return func(c *Checker) {
 		if n < 1 {
