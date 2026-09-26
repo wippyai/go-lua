@@ -1000,6 +1000,7 @@ func (s *Solution) mergeFieldsAt(baseType typ.Type, prefix string, depth int) ty
 	if baseType == nil {
 		baseType = typ.NewRecord().SetOpen(true).Build()
 	}
+	baseType = unwrap.TableTopAsMap(baseType)
 
 	// Merge fields into base type
 	return typ.Visit(baseType, typ.Visitor[typ.Type]{

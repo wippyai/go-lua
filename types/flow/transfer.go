@@ -381,6 +381,8 @@ func (s *Solution) carryForwardStructuredVersionFacts(p cfg.Point, targetPath co
 	}
 
 	predBaseKeys := make([]string, 0, len(preds))
+	predBasePoints := make([]cfg.Point, 0, len(preds))
+	predBaseVersions := make([]int, 0, len(preds))
 	seenPredBase := make(map[string]struct{}, len(preds))
 	for _, pred := range preds {
 		ver := s.inputs.Graph.VisibleVersion(pred, targetPath.Symbol)
@@ -397,6 +399,8 @@ func (s *Solution) carryForwardStructuredVersionFacts(p cfg.Point, targetPath co
 		}
 		seenPredBase[key] = struct{}{}
 		predBaseKeys = append(predBaseKeys, key)
+		predBasePoints = append(predBasePoints, pred)
+		predBaseVersions = append(predBaseVersions, ver.ID)
 	}
 	if len(predBaseKeys) == 0 {
 		return nil
@@ -407,12 +411,18 @@ func (s *Solution) carryForwardStructuredVersionFacts(p cfg.Point, targetPath co
 
 	// Keep inherited facts in step with predecessor refinement during the
 	// worklist solve. A first-pass estimate must not freeze a sibling field.
+	// The write extends the table as refined on entry to p, so a guard that
+	// narrowed the old version also describes the table the write extends.
 	{
 		baseTypes := make([]typ.Type, 0, len(predBaseKeys))
-		for _, predBaseKey := range predBaseKeys {
-			if t := s.values[predBaseKey]; t != nil {
-				baseTypes = append(baseTypes, t)
+		for i, predBaseKey := range predBaseKeys {
+			t := s.values[predBaseKey]
+			if t == nil {
+				continue
 			}
+			pred := predBasePoints[i]
+			predPath := constraint.Path{Root: targetPath.Root, Symbol: targetPath.Symbol, Version: predBaseVersions[i]}
+			baseTypes = append(baseTypes, s.applyCondition(pred, t, predPath, s.ConditionAt(pred)))
 		}
 		if len(baseTypes) > 0 {
 			joinedBase := join.Types(baseTypes...)

@@ -163,6 +163,16 @@ func IsBuiltinTableTop(t typ.Type) bool {
 	return ok && ref.Module == "" && ref.Name == "table"
 }
 
+// TableTopAsMap returns the builtin table top as the map it describes, every
+// key holding any; other types are returned unchanged. A structural write into
+// the top extends this map rather than replacing it.
+func TableTopAsMap(t typ.Type) typ.Type {
+	if IsBuiltinTableTop(t) {
+		return typ.NewMap(typ.Any, typ.Any)
+	}
+	return t
+}
+
 // Function extracts a Function type, unwrapping Alias and Optional.
 func Function(t typ.Type) *typ.Function {
 	return unwrapFunctionDepth(t, typ.NewGuard())
