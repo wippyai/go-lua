@@ -1,6 +1,7 @@
 package infer
 
 import (
+	"github.com/wippyai/go-lua/compiler/check/flowbuild/assign"
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -67,7 +68,7 @@ func TestUniformFunctionScopes_UsesBaseForAllPoints(t *testing.T) {
 	graph := cfg.Build(fn)
 	base := scope.New()
 
-	scopes := uniformFunctionScopes(graph, base)
+	scopes := assign.UniformScopes(graph, base)
 	if scopes == nil {
 		t.Fatal("expected non-nil scopes")
 	}

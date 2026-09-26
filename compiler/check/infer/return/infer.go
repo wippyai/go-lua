@@ -42,6 +42,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/flowbuild/assign"
 	"github.com/wippyai/go-lua/compiler/check/infer/captured"
 	"github.com/wippyai/go-lua/compiler/check/modules"
 	"github.com/wippyai/go-lua/compiler/check/phase"
@@ -414,7 +415,7 @@ func (i *Inferencer) inferReturnTypesFromBody(
 	})
 	declSynth := i.newReturnInferenceEngine(
 		ctx.run,
-		uniformFunctionScopes(fnGraph, ctx.resolveScope),
+		assign.UniformScopes(fnGraph, ctx.resolveScope),
 		declCheckCtx,
 	)
 	declared := collectReturnTypes(fnGraph, declSynth, state.deadPoints)

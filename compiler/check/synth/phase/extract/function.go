@@ -40,6 +40,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/erreffect"
+	"github.com/wippyai/go-lua/compiler/check/flowbuild/assign"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/mutator"
 	"github.com/wippyai/go-lua/compiler/check/infer/captured"
 	"github.com/wippyai/go-lua/compiler/check/overlaymut"
@@ -459,11 +460,12 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 	// Phase 1: infer local assignment types using a preliminary context.
 	// Build the preliminary synthesizer lazily; many functions never need it.
 	var prelimSynth *Synthesizer
+	var prelimCtx *api.DeclaredEnvImpl
 	ensurePrelimSynth := func() *Synthesizer {
 		if prelimSynth != nil {
 			return prelimSynth
 		}
-		prelimCtx := api.NewReturnInferenceEnv(api.ReturnInferenceEnvConfig{
+		prelimCtx = api.NewReturnInferenceEnv(api.ReturnInferenceEnvConfig{
 			Graph:         fnGraph,
 			Bindings:      fnGraph.Bindings(),
 			BaseScope:     resolveScope,
@@ -491,84 +493,20 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 		return prelimSynth
 	}
 
-	// Single-pass local inference from assignments (best-effort).
-	var localInferred map[cfg.SymbolID]typ.Type
-	fnGraph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
-		if info == nil || !info.IsLocal || len(info.Targets) == 0 {
-			return
+	if hasUntypedLocal(fnGraph, overlay) {
+		engine := ensurePrelimSynth()
+		var env api.BaseEnv
+		if prelimCtx != nil {
+			env = prelimCtx
 		}
-		needsInference := false
-		for _, target := range info.Targets {
-			if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
-				continue
-			}
-			if _, exists := overlay[target.Symbol]; !exists {
-				needsInference = true
-				break
-			}
-		}
-		if !needsInference {
-			return
-		}
-		if len(info.Targets) == 1 && len(info.Sources) == 1 {
-			target := info.Targets[0]
-			if target.Kind == cfg.TargetIdent && target.Symbol != 0 {
-				if _, exists := overlay[target.Symbol]; !exists {
-					src := info.Sources[0]
-					switch src.(type) {
-					case *ast.FuncCallExpr, *ast.Comma3Expr:
-					default:
-						var t typ.Type
-						switch lit := src.(type) {
-						case *ast.NilExpr:
-							t = typ.Nil
-						case *ast.TrueExpr:
-							t = typ.True
-						case *ast.FalseExpr:
-							t = typ.False
-						case *ast.StringExpr:
-							t = typ.LiteralString(lit.Value)
-						}
-						if t == nil && len(info.SourceSymbols) > 0 {
-							if sym := info.SourceSymbols[0]; sym != 0 {
-								if inferred, ok := overlay[sym]; ok && inferred != nil {
-									t = inferred
-								}
-							}
-						}
-						if t == nil {
-							t = ensurePrelimSynth().SynthExpr(src, p, nil)
-						}
-						if t != nil {
-							if localInferred == nil {
-								localInferred = make(map[cfg.SymbolID]typ.Type)
-							}
-							localInferred[target.Symbol] = t
-						}
-						return
-					}
-				}
-			}
-		}
-		values := ensurePrelimSynth().ExpandValues(info.Sources, len(info.Targets), p)
-		info.EachTargetSource(func(i int, target cfg.AssignTarget, _ ast.Expr) {
-			if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
-				return
-			}
-			if _, exists := overlay[target.Symbol]; exists {
-				return
-			}
-			if i < len(values) && values[i] != nil {
-				if localInferred == nil {
-					localInferred = make(map[cfg.SymbolID]typ.Type)
-				}
-				localInferred[target.Symbol] = values[i]
-			}
+		annotated := assign.AnnotatedSymbols(fnGraph, overlay, func(expr ast.TypeExpr) typ.Type {
+			return s.ResolveType(expr, resolveScope)
 		})
-	})
-	for sym, t := range localInferred {
-		if _, exists := overlay[sym]; !exists {
-			overlay[sym] = t
+		inferred := assign.FunctionLocals(fnGraph, assign.UniformScopes(fnGraph, resolveScope), engine, env, s.deps.Ctx, s.deps.Types, overlay, annotated)
+		for sym, t := range inferred {
+			if _, exists := overlay[sym]; !exists {
+				overlay[sym] = t
+			}
 		}
 	}
 
@@ -686,6 +624,25 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 	}
 
 	return returnTypes, erreffect.HasStrictInverseReturnPattern(fnGraph, nil, tempSynth, 0, 1)
+}
+
+// hasUntypedLocal reports whether a local assigned in graph has no overlay type.
+func hasUntypedLocal(graph *cfg.Graph, overlay map[cfg.SymbolID]typ.Type) bool {
+	found := false
+	graph.EachAssign(func(_ cfg.Point, info *cfg.AssignInfo) {
+		if found || info == nil || !info.IsLocal {
+			return
+		}
+		for _, target := range info.Targets {
+			if target.Kind == cfg.TargetIdent && target.Symbol != 0 {
+				if _, exists := overlay[target.Symbol]; !exists {
+					found = true
+					return
+				}
+			}
+		}
+	})
+	return found
 }
 
 func enrichOverlayWithOrderedComparisonHints(fnGraph *cfg.Graph, overlay map[cfg.SymbolID]typ.Type) {
