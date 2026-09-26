@@ -131,7 +131,7 @@ func markDeclaredDepth(t Type, memo map[Type]Type, depth int) Type {
 					return marked
 				}
 				return buildRecordTypeWithFlags(fields, metatable, mapKey, mapValue,
-					marked.Open, true, true, marked.MapInferredPresence, marked.MapExplicitNilWrite)
+					marked.Open, true, true, marked.MapInferredPresence, marked.MapExplicitNilWrite, marked.Complete)
 			},
 			Alias: func(a *Alias) Type {
 				target := markDeclaredDepth(a.Target, memo, depth+1)
@@ -616,5 +616,5 @@ func rewriteRecord(v *Record, orig Type, fn func(Type) (Type, bool), guard inter
 	if fields != nil {
 		fieldsSrc = fields
 	}
-	return buildRecordType(fieldsSrc, metatable, mapKey, mapValue, v.Open, true)
+	return buildRecordType(fieldsSrc, metatable, mapKey, mapValue, v.Open, v.Complete, true)
 }

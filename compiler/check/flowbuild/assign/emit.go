@@ -339,6 +339,11 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 				// The assignment type is published into the flow: pending
 				// positions do not cross that boundary.
 				assignedType = typ.Finalize(assignedType)
+				// A value refining a soft annotation is one value the annotation
+				// admits; the annotation's other keys stay possible.
+				if inputs != nil && inputs.RefinableAnnotatedVars[sym] {
+					assignedType = typ.PartialViewDeep(assignedType)
+				}
 
 				// Build source path with const resolution and bindings.
 				// For dynamic map index reads (t[k]) where k is non-const and

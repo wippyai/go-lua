@@ -556,7 +556,7 @@ func buildRecordWithMap(template *typ.Record, mapKey, mapValue typ.Type) *typ.Re
 	if template == nil {
 		return nil
 	}
-	builder := typ.NewRecord()
+	builder := typ.NewRecord().SetComplete(template.Complete)
 	if template.Open {
 		builder.SetOpen(true)
 	}

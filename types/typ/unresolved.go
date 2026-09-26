@@ -258,7 +258,7 @@ func resolvePendingNode(current, evidence Type, seen map[resolvePair]Type) Type 
 		if !changed {
 			return current
 		}
-		return buildRecordTypeDeclared(fields, a.Metatable, key, value, a.Open, a.Declared, true)
+		return buildRecordTypeDeclared(fields, a.Metatable, key, value, a.Open, a.Declared, a.Complete, true)
 	case *Union:
 		// Union members are separate paths. This API has no source identity
 		// with which to pair them to evidence, even when their kinds match.

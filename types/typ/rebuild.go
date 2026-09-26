@@ -65,16 +65,17 @@ func buildFunctionType(
 	}
 }
 
-func buildRecordType(fields []Field, metatable, mapKey, mapValue Type, open bool, assumeSorted bool) *Record {
-	return buildRecordTypeWithFlags(fields, metatable, mapKey, mapValue, open, false, assumeSorted, false, false)
+func buildRecordType(fields []Field, metatable, mapKey, mapValue Type, open, complete bool, assumeSorted bool) *Record {
+	return buildRecordTypeWithFlags(fields, metatable, mapKey, mapValue, open, false, assumeSorted, false, false, complete)
 }
 
-// buildRecordTypeDeclared rebuilds a record keeping the declared provenance bit.
-func buildRecordTypeDeclared(fields []Field, metatable, mapKey, mapValue Type, open, declared bool, assumeSorted bool) *Record {
-	return buildRecordTypeWithFlags(fields, metatable, mapKey, mapValue, open, declared, assumeSorted, false, false)
+// buildRecordTypeDeclared rebuilds a record keeping the declared provenance
+// and complete bits.
+func buildRecordTypeDeclared(fields []Field, metatable, mapKey, mapValue Type, open, declared, complete bool, assumeSorted bool) *Record {
+	return buildRecordTypeWithFlags(fields, metatable, mapKey, mapValue, open, declared, assumeSorted, false, false, complete)
 }
 
-func buildRecordTypeWithFlags(fields []Field, metatable, mapKey, mapValue Type, open, declared bool, assumeSorted, inferred, explicitNil bool) *Record {
+func buildRecordTypeWithFlags(fields []Field, metatable, mapKey, mapValue Type, open, declared bool, assumeSorted, inferred, explicitNil, complete bool) *Record {
 	sorted := make([]Field, len(fields))
 	copy(sorted, fields)
 	if !assumeSorted || !fieldsSortedByName(sorted) {
@@ -136,6 +137,9 @@ func buildRecordTypeWithFlags(fields []Field, metatable, mapKey, mapValue Type, 
 	if explicitNil {
 		h = internal.HashCombine(h, 8)
 	}
+	if complete {
+		h = internal.HashCombine(h, 32)
+	}
 	softPrunable := softPruneFields(sorted) || softPruneAny(metatable, mapKey, mapValue)
 
 	return &Record{
@@ -146,6 +150,7 @@ func buildRecordTypeWithFlags(fields []Field, metatable, mapKey, mapValue Type, 
 		MapInferredPresence: inferred,
 		MapExplicitNilWrite: explicitNil,
 		Open:                open,
+		Complete:            complete,
 		Declared:            declared,
 		sorted:              true,
 		hash:                h,

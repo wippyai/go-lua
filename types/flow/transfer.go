@@ -1929,7 +1929,7 @@ func rebuildRecordWithMapComponent(rec *typ.Record, mapKey, mapVal typ.Type) typ
 }
 
 func rebuildRecordWithMapComponentFlags(rec *typ.Record, mapKey, mapVal typ.Type, inferred, explicitNil bool) typ.Type {
-	builder := typ.NewRecord().SetDeclared(rec.Declared)
+	builder := typ.NewRecord().SetDeclared(rec.Declared).SetComplete(rec.Complete)
 	if rec.Open {
 		builder.SetOpen(true)
 	}

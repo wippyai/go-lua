@@ -284,7 +284,7 @@ func overwriteStructuredIntIndexNonDynamic(baseType typ.Type, elemType typ.Type)
 	case *typ.Map:
 		return typ.NewMap(t.Key, elemType)
 	case *typ.Record:
-		builder := typ.NewRecord()
+		builder := typ.NewRecord().SetComplete(t.Complete)
 		if t.Open {
 			builder.SetOpen(true)
 		}

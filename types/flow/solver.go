@@ -1024,7 +1024,7 @@ func (s *Solution) mergeFields(baseType typ.Type, baseKey string) typ.Type {
 		},
 		Record: func(r *typ.Record) typ.Type {
 			// Build merged record: existing fields + new fields
-			builder := typ.NewRecord().SetDeclared(r.Declared)
+			builder := typ.NewRecord().SetDeclared(r.Declared).SetComplete(r.Complete)
 			if r.Open {
 				builder.SetOpen(true)
 			}

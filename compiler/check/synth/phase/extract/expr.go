@@ -94,6 +94,11 @@ skipNarrowedAttr:
 			}
 			return it
 		}
+		// A complete record lists every field its table holds, so a field it
+		// lacks reads as nil.
+		if rec, ok := unwrap.Alias(objType).(*typ.Record); ok && rec.Complete && !rec.Declared {
+			return typ.Nil
+		}
 	case *ast.NumberExpr:
 		keyType := ops.ParseNumber(key.Value)
 		if it, ok := s.deps.Types.Index(s.deps.Ctx, objType, keyType); ok {

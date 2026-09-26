@@ -58,6 +58,7 @@ type Processor struct {
 	check         CheckFunc
 	resultForFunc ResultFunc
 	classSelf     map[cfg.SymbolID]typ.Type
+	classReceiver map[cfg.SymbolID]typ.Type
 }
 
 // New creates a nested processor.
@@ -111,6 +112,7 @@ func (p *Processor) ProcessNestedFunctions(graph *cfg.Graph, parentResult *api.F
 // views all refer to the table's stable recursion identity.
 func (p *Processor) bindClassTables(graph *cfg.Graph, children []nested.Child, parentResult *api.FuncResultView) {
 	p.classSelf = make(map[cfg.SymbolID]typ.Type)
+	p.classReceiver = make(map[cfg.SymbolID]typ.Type)
 	if p.store == nil || graph == nil || graph.Bindings() == nil || parentResult == nil {
 		return
 	}
@@ -127,6 +129,7 @@ func (p *Processor) bindClassTables(graph *cfg.Graph, children []nested.Child, p
 			continue
 		}
 		p.classSelf[sym] = p.store.BindClassSelf(graph, info.NF.Point, sym, graph.NameOf(sym), body)
+		p.classReceiver[sym] = p.store.BindClassReceiver(graph, info.NF.Point, sym, graph.NameOf(sym), body)
 	}
 }
 
@@ -375,13 +378,15 @@ func (p *Processor) methodSelfType(graph *cfg.Graph, info *nested.FuncInfo) typ.
 	if !isMethod && !phasecore.HasUnannotatedSelfParam(info.NF.Func, graph.Bindings()) {
 		return nil
 	}
+	// The receiver is any table that uses the method table, so the method
+	// table's own fields describe it partially.
 	if isMethod && info.FuncDef.ReceiverName != "" && info.DefScope != nil {
 		if named, ok := info.DefScope.LookupValueType(info.FuncDef.ReceiverName); ok && named != nil {
-			return nested.NormalizeMethodSelfType(named)
+			return typ.PartialView(nested.NormalizeMethodSelfType(named))
 		}
 	}
 	if sym := classTableOf(graph, info); sym != 0 {
-		return p.classSelf[sym]
+		return p.classReceiver[sym]
 	}
 	return nil
 }

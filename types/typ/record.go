@@ -26,6 +26,8 @@ type Field struct {
 //
 // Features:
 //   - Open: When true, unknown field access returns Unknown instead of error
+//   - Complete: When true, the record lists every field its table holds; a
+//     field it lacks reads as nil
 //   - Declared: When true, the shape came from a type annotation, type alias,
 //     or a module manifest rather than inference. An absent field read on a
 //     declared record is an error; on an inferred record it reads gradually.
@@ -41,11 +43,16 @@ type Record struct {
 	MapInferredPresence bool
 	MapExplicitNilWrite bool
 	Open                bool // Allow access to undefined fields
-	Declared            bool // Shape came from a declaration, not inference
-	sorted              bool
-	hash                uint64
-	softPrunable        bool
-	strCache            stringCache
+	// Complete marks a record that lists every field its table holds, such as
+	// the type of a table literal built in the checked module: a field it
+	// lacks reads as nil. A record without it describes its value partially,
+	// and a field it lacks reads as unknown.
+	Complete     bool
+	Declared     bool // Shape came from a declaration, not inference
+	sorted       bool
+	hash         uint64
+	softPrunable bool
+	strCache     stringCache
 }
 
 // RecordBuilder provides a fluent API for constructing record types.
@@ -64,6 +71,7 @@ type RecordBuilder struct {
 	mapInferredPresence bool
 	mapExplicitNilWrite bool
 	open                bool
+	complete            bool
 	declared            bool
 }
 
@@ -125,6 +133,24 @@ func (b *RecordBuilder) SetOpen(open bool) *RecordBuilder {
 	return b
 }
 
+// SetComplete marks the record as listing every field its table holds.
+func (b *RecordBuilder) SetComplete(complete bool) *RecordBuilder {
+	b.complete = complete
+	return b
+}
+
+// joinedComplete reports whether a record joining a and b lists every field
+// of its table: both inputs must.
+func joinedComplete(a, b *Record) bool {
+	return a.Complete && b.Complete
+}
+
+// JoinedComplete reports whether a record joining a and b lists every field
+// of its table: both inputs must.
+func JoinedComplete(a, b *Record) bool {
+	return joinedComplete(a, b)
+}
+
 // SetDeclared marks the record shape as coming from a declaration (a type
 // annotation, type alias, or module manifest) rather than inference.
 func (b *RecordBuilder) SetDeclared(declared bool) *RecordBuilder {
@@ -149,12 +175,12 @@ func (b *RecordBuilder) MapComponentWithFlags(key, value Type, inferred, explici
 
 // Build creates the record type.
 func (b *RecordBuilder) Build() *Record {
-	return buildRecordTypeWithFlags(b.fields, b.metatable, b.mapKey, b.mapValue, b.open, b.declared, false, b.mapInferredPresence, b.mapExplicitNilWrite)
+	return buildRecordTypeWithFlags(b.fields, b.metatable, b.mapKey, b.mapValue, b.open, b.declared, false, b.mapInferredPresence, b.mapExplicitNilWrite, b.complete)
 }
 
 // WithMetatable returns r with meta as its metatable and everything else kept.
 func (r *Record) WithMetatable(meta Type) *Record {
-	return buildRecordTypeWithFlags(r.Fields, meta, r.MapKey, r.MapValue, r.Open, r.Declared, true, r.MapInferredPresence, r.MapExplicitNilWrite)
+	return buildRecordTypeWithFlags(r.Fields, meta, r.MapKey, r.MapValue, r.Open, r.Declared, true, r.MapInferredPresence, r.MapExplicitNilWrite, r.Complete)
 }
 
 // WithDeclared returns r with its declaration provenance set to declared.
@@ -163,7 +189,7 @@ func (r *Record) WithDeclared(declared bool) *Record {
 	if r.Declared == declared {
 		return r
 	}
-	return buildRecordTypeWithFlags(r.Fields, r.Metatable, r.MapKey, r.MapValue, r.Open, declared, true, r.MapInferredPresence, r.MapExplicitNilWrite)
+	return buildRecordTypeWithFlags(r.Fields, r.Metatable, r.MapKey, r.MapValue, r.Open, declared, true, r.MapInferredPresence, r.MapExplicitNilWrite, r.Complete)
 }
 
 // WithField returns r with f replacing the field of the same name, or added
@@ -182,7 +208,7 @@ func (r *Record) WithField(f Field) *Record {
 	if !replaced {
 		fields = append(fields, f)
 	}
-	return buildRecordTypeWithFlags(fields, r.Metatable, r.MapKey, r.MapValue, r.Open, r.Declared, replaced, r.MapInferredPresence, r.MapExplicitNilWrite)
+	return buildRecordTypeWithFlags(fields, r.Metatable, r.MapKey, r.MapValue, r.Open, r.Declared, replaced, r.MapInferredPresence, r.MapExplicitNilWrite, r.Complete)
 }
 
 func (r *Record) Kind() kind.Kind { return kind.Record }
@@ -291,4 +317,56 @@ func (r *Record) GetField(name string) *Field {
 	}
 
 	return nil
+}
+
+// PartialView returns t with its top-level complete records marked partial:
+// the value t describes may hold fields the record misses, as a method
+// receiver is any table that uses the method table.
+func PartialView(t Type) Type {
+	switch v := t.(type) {
+	case *Record:
+		if !v.Complete {
+			return t
+		}
+		return buildRecordTypeWithFlags(v.Fields, v.Metatable, v.MapKey, v.MapValue, v.Open, v.Declared, true, v.MapInferredPresence, v.MapExplicitNilWrite, false)
+	case *Alias:
+		target := PartialView(v.Target)
+		if target == v.Target {
+			return t
+		}
+		return NewAlias(v.Name, target)
+	case *Optional:
+		inner := PartialView(v.Inner)
+		if inner == v.Inner {
+			return t
+		}
+		return NewOptional(inner)
+	case *Union:
+		members := make([]Type, len(v.Members))
+		changed := false
+		for i, m := range v.Members {
+			members[i] = PartialView(m)
+			changed = changed || members[i] != m
+		}
+		if !changed {
+			return t
+		}
+		return NewUnion(members...)
+	}
+	return t
+}
+
+// PartialViewDeep marks every complete record reachable in t partial: the
+// tables t describes are written by code outside the view, as a module export
+// is written by its importers.
+func PartialViewDeep(t Type) Type {
+	if t == nil {
+		return nil
+	}
+	return Rewrite(t, func(node Type) (Type, bool) {
+		if r, ok := node.(*Record); ok && r.Complete {
+			return PartialViewDeep(buildRecordTypeWithFlags(r.Fields, r.Metatable, r.MapKey, r.MapValue, r.Open, r.Declared, true, r.MapInferredPresence, r.MapExplicitNilWrite, false)), true
+		}
+		return nil, false
+	})
 }

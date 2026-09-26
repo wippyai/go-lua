@@ -431,7 +431,7 @@ func joinParamHintIteration(previous, current typ.Type) typ.Type {
 	if !aOK || !bOK || !rOK {
 		return joined
 	}
-	builder := typ.NewRecord().SetOpen(r.Open).SetDeclared(a.Declared && b.Declared)
+	builder := typ.NewRecord().SetOpen(r.Open).SetComplete(r.Complete).SetDeclared(a.Declared && b.Declared)
 	if r.Metatable != nil {
 		builder.Metatable(r.Metatable)
 	}
@@ -838,10 +838,11 @@ func joinIterationRecords(a, b typ.Type) (typ.Type, bool) {
 	// The join reuses an input record it equals, so unchanged hints keep their
 	// identity across iterations.
 	declared := ar.Declared && br.Declared
-	sameAsA := ar.Metatable == metatable && ar.Open == (ar.Open || br.Open) && ar.Declared == declared
-	sameAsB := br.Metatable == metatable && br.Open == (ar.Open || br.Open) && br.Declared == declared
+	complete := typ.JoinedComplete(ar, br)
+	sameAsA := ar.Metatable == metatable && ar.Open == (ar.Open || br.Open) && ar.Declared == declared && ar.Complete == complete
+	sameAsB := br.Metatable == metatable && br.Open == (ar.Open || br.Open) && br.Declared == declared && br.Complete == complete
 
-	builder := typ.NewRecord().SetOpen(ar.Open || br.Open).SetDeclared(declared)
+	builder := typ.NewRecord().SetOpen(ar.Open || br.Open).SetComplete(complete).SetDeclared(declared)
 	if metatable != nil {
 		builder.Metatable(metatable)
 	}

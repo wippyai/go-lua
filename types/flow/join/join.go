@@ -355,13 +355,16 @@ func CoalesceRecordMapComponents(types []typ.Type) []typ.Type {
 			// declared only when every contributing record is.
 			template := g.template
 			allDeclared := true
+			complete := true
 			for _, r := range g.records {
 				if !r.Declared {
 					allDeclared = false
-					break
+				}
+				if r.Open && !r.Complete {
+					complete = false
 				}
 			}
-			builder := typ.NewRecord().SetDeclared(allDeclared)
+			builder := typ.NewRecord().SetDeclared(allDeclared).SetComplete(complete)
 			if template.Open {
 				builder.SetOpen(true)
 			}

@@ -132,7 +132,7 @@ func RunScope(input ScopeInput) ScopeOutput {
 			}
 			if i < len(synthSig.Params) && synthSig.Params[i].Type != nil {
 				if name == "self" && base.SelfType() == nil {
-					base = base.WithSelf(synthSig.Params[i].Type)
+					base = base.WithSelf(typ.PartialView(synthSig.Params[i].Type))
 				}
 			}
 		}
@@ -274,10 +274,12 @@ func ExtractParamTypes(
 		}
 
 		// Binder/CFG-injected implicit self parameter has no source annotation.
+		// The receiver is any table that uses the method table, so the method
+		// table's fields describe it partially.
 		srcIdx, hasSource := slot.SourceParamIndex()
 		if !hasSource {
 			if base != nil && base.SelfType() != nil {
-				types[slot.Symbol] = base.SelfType()
+				types[slot.Symbol] = typ.PartialView(base.SelfType())
 			} else {
 				types[slot.Symbol] = typ.Unknown
 			}

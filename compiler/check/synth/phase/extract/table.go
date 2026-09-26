@@ -41,7 +41,7 @@ func (s *Synthesizer) SynthTableWithExpected(ex *ast.TableExpr, sc *scope.State,
 			len(ops.CheckTable(querycore.AssignabilityOf(s.deps.Ctx), nil, nil, expected).Errors) == 0 {
 			return expected
 		}
-		return typ.NewRecord().SetOpen(true).Build()
+		return typ.NewRecord().SetOpen(true).SetComplete(true).Build()
 	}
 
 	if _, isUnion := unwrap.Alias(expected).(*typ.Union); isUnion {
@@ -56,7 +56,7 @@ func (s *Synthesizer) SynthTableWithExpected(ex *ast.TableExpr, sc *scope.State,
 		selfType = phasecore.ImplicitSelfType(ex, recurse)
 	}
 
-	builder := typ.NewRecord()
+	builder := typ.NewRecord().SetComplete(true)
 	var fieldDefs []ops.FieldDef
 	var arrayElements []typ.Type
 	hasVararg := false

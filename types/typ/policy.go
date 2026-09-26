@@ -166,7 +166,7 @@ func JoinCompatibleRecords(a, b Type) (Type, bool) {
 		return nil, false
 	}
 
-	builder := NewRecord().SetDeclared(ar.Declared && br.Declared)
+	builder := NewRecord().SetDeclared(ar.Declared && br.Declared).SetComplete(joinedComplete(ar, br))
 	if ar.Open || br.Open {
 		builder.SetOpen(true)
 	}

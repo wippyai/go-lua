@@ -80,3 +80,16 @@ func TestDropPendingAlternatives(t *testing.T) {
 		t.Fatalf("pending position without alternatives changed: %v", got)
 	}
 }
+
+func TestPartialViewForgetsComplete(t *testing.T) {
+	inner := NewRecord().SetOpen(true).SetComplete(true).Build()
+	outer := NewRecord().Field("config", inner).SetOpen(true).SetComplete(true).Build()
+	shallow := PartialView(outer).(*Record)
+	if shallow.Complete || !shallow.GetField("config").Type.(*Record).Complete {
+		t.Fatalf("shallow partial view = %v", shallow)
+	}
+	deep := PartialViewDeep(outer).(*Record)
+	if deep.Complete || deep.GetField("config").Type.(*Record).Complete {
+		t.Fatalf("deep partial view kept a complete record: %v", deep)
+	}
+}

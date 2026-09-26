@@ -35,7 +35,7 @@ end
 -- resolve_delivery answers the item a delivery identity names, reading the log so
 -- a retraction never depends on the read model having caught up.
 function writer.resolve_delivery(origin: string, item_key: string, dedup_key: string): (string?, string?)
-    return delivery().resolve(origin, item_key, dedup_key) -- expect-error: cannot return unknown, expected string?
+    return delivery().resolve(origin, item_key, dedup_key)
 end
 
 local function resolve_to(id: string, status: string, decision: string, meta: any?): (any, string?)

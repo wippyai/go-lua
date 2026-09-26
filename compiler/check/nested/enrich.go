@@ -81,7 +81,7 @@ func EnrichTableTypeWithFuncTypes(
 	if rec.HasMapComponent() {
 		builder = builder.MapComponent(rec.MapKey, rec.MapValue)
 	}
-	return builder.SetOpen(rec.Open).Build()
+	return builder.SetOpen(rec.Open).SetComplete(rec.Complete).Build()
 }
 
 // CollectCapturedFieldAssignments scans a nested function's graph for field assignments
@@ -203,7 +203,7 @@ func mergeFieldsIntoSelfType(selfType typ.Type, fields map[string]typ.Type) typ.
 
 	switch v := selfType.(type) {
 	case *typ.Record:
-		builder := typ.NewRecord().SetDeclared(v.Declared)
+		builder := typ.NewRecord().SetDeclared(v.Declared).SetComplete(v.Complete)
 		if v.Open {
 			builder.SetOpen(true)
 		}
