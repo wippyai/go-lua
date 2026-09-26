@@ -27,6 +27,14 @@ func TestIndex(t *testing.T) {
 		{"array with integer key", arr, typ.Integer, true, func(t typ.Type) bool { return t == typ.String }},
 		{"array with number key", arr, typ.Number, true, func(t typ.Type) bool { return t == typ.String }},
 		{"array with string key", arr, typ.String, false, nil},
+		{"array with unknown key placeholder", arr, typ.Unknown, true, func(t typ.Type) bool {
+			_, ok := t.(*typ.Optional)
+			return ok
+		}},
+		{"array with any key", arr, typ.Any, true, func(t typ.Type) bool {
+			_, ok := t.(*typ.Optional)
+			return ok
+		}},
 		{"map with matching key", m, typ.String, true, func(t typ.Type) bool {
 			_, ok := t.(*typ.Optional)
 			return ok
@@ -50,6 +58,9 @@ func TestIndex(t *testing.T) {
 		{"tuple with zero index", tuple, typ.LiteralInt(0), true, func(t typ.Type) bool { return t == typ.Nil }},
 		{"tuple with negative index", tuple, typ.LiteralInt(-1), true, func(t typ.Type) bool { return t == typ.Nil }},
 		{"tuple with generic integer", tuple, typ.Integer, true, func(t typ.Type) bool {
+			return ContainsNil(t)
+		}},
+		{"tuple with unknown key placeholder", tuple, typ.Unknown, true, func(t typ.Type) bool {
 			return ContainsNil(t)
 		}},
 		{"empty tuple with integer", typ.NewTuple(), typ.Integer, false, nil},

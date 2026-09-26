@@ -60,6 +60,15 @@ func indexDepth(t, keyType typ.Type, depth int) (typ.Type, bool) {
 				}
 				return indexResult{t: a.Element, ok: true}
 			}
+			// A placeholder key may be a valid integer at runtime, and
+			// indexing a table never throws. Read gradually like Map and
+			// Record do instead of rejecting the access.
+			if keyType != nil && keyType.Kind().IsPlaceholder() {
+				if a.Element == nil {
+					return indexResult{t: typ.Nil, ok: true}
+				}
+				return indexResult{t: typ.NewOptional(a.Element), ok: true}
+			}
 			return indexResult{}
 		},
 		Map: func(m *typ.Map) indexResult {
@@ -106,6 +115,12 @@ func indexDepth(t, keyType typ.Type, depth int) (typ.Type, bool) {
 			}
 			// Unknown integer index returns optional union of all elements
 			if isNumeric(keyType) && len(tup.Elements) > 0 {
+				return indexResult{t: typ.NewOptional(typ.NewUnion(tup.Elements...)), ok: true}
+			}
+			// A placeholder key may be a valid integer at runtime, and
+			// indexing a table never throws. Read gradually like the unknown
+			// integer index above instead of rejecting the access.
+			if keyType != nil && keyType.Kind().IsPlaceholder() && len(tup.Elements) > 0 {
 				return indexResult{t: typ.NewOptional(typ.NewUnion(tup.Elements...)), ok: true}
 			}
 
