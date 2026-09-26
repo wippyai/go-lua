@@ -59,7 +59,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/resolve"
 	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/compiler/check/scope"
-	synthpkg "github.com/wippyai/go-lua/compiler/check/synth"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	"github.com/wippyai/go-lua/internal"
 	"github.com/wippyai/go-lua/types/db"
@@ -168,7 +167,7 @@ func collectInferredTypes(
 		}
 	}
 	funcSigTypes := make(map[cfg.SymbolID]typ.Type)
-	seedEngine, _ := synthAPI.(*synthpkg.Engine)
+	seedResolver, _ := synthAPI.(returns.TypeExprResolver)
 	if services != nil {
 		graph.EachFuncDef(func(p cfg.Point, info *cfg.FuncDefInfo) {
 			if info == nil || info.Symbol == 0 {
@@ -191,7 +190,7 @@ func collectInferredTypes(
 				funcSigTypes[info.Symbol] = sig
 				return
 			}
-			if seed, ok := returns.BuildSeedFunctionTypeWithBindings(info.FuncExpr, seedEngine, sc, bindings).(*typ.Function); ok && seed != nil {
+			if seed, ok := returns.BuildSeedFunctionTypeWithBindings(info.FuncExpr, seedResolver, sc, bindings).(*typ.Function); ok && seed != nil {
 				funcSigTypes[info.Symbol] = seed
 			}
 		})
@@ -223,7 +222,7 @@ func collectInferredTypes(
 						funcSigTypes[target.Symbol] = sig
 						continue
 					}
-					if seed, ok := returns.BuildSeedFunctionTypeWithBindings(fnExpr, seedEngine, sc, bindings).(*typ.Function); ok && seed != nil {
+					if seed, ok := returns.BuildSeedFunctionTypeWithBindings(fnExpr, seedResolver, sc, bindings).(*typ.Function); ok && seed != nil {
 						funcSigTypes[target.Symbol] = seed
 					}
 				}

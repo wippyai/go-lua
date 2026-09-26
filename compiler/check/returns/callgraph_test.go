@@ -6,21 +6,20 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/scope"
-	"github.com/wippyai/go-lua/compiler/check/synth"
 	"github.com/wippyai/go-lua/compiler/parse"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
 func TestPropagateParamHintsFromCallGraph_Empty(t *testing.T) {
-	PropagateParamHintsFromCallGraph(nil, synth.Config{})
-	PropagateParamHintsFromCallGraph(map[cfg.SymbolID]*LocalFuncInfo{}, synth.Config{})
+	PropagateParamHintsFromCallGraph(nil, SignatureEnv{})
+	PropagateParamHintsFromCallGraph(map[cfg.SymbolID]*LocalFuncInfo{}, SignatureEnv{})
 }
 
 func TestPropagateParamHintsFromCallGraph_NilGraph(t *testing.T) {
 	localFuncs := map[cfg.SymbolID]*LocalFuncInfo{
 		1: {Sym: 1, Graph: nil},
 	}
-	PropagateParamHintsFromCallGraph(localFuncs, synth.Config{})
+	PropagateParamHintsFromCallGraph(localFuncs, SignatureEnv{})
 }
 
 func TestPropagateParamHintsFromCallGraph_SingleFuncNoArgs(t *testing.T) {
@@ -30,7 +29,7 @@ func TestPropagateParamHintsFromCallGraph_SingleFuncNoArgs(t *testing.T) {
 	localFuncs := map[cfg.SymbolID]*LocalFuncInfo{
 		1: {Sym: 1, Fn: fn, Graph: graph},
 	}
-	PropagateParamHintsFromCallGraph(localFuncs, synth.Config{})
+	PropagateParamHintsFromCallGraph(localFuncs, SignatureEnv{})
 
 	if localFuncs[1].ParamHints != nil {
 		t.Error("expected nil ParamHints for function with no callers")
@@ -38,12 +37,12 @@ func TestPropagateParamHintsFromCallGraph_SingleFuncNoArgs(t *testing.T) {
 }
 
 func TestBuildLocalCallGraph_Empty(t *testing.T) {
-	result := BuildLocalCallGraph(nil, nil, synth.Config{})
+	result := BuildLocalCallGraph(nil, nil, SignatureEnv{})
 	if len(result) != 0 {
 		t.Errorf("expected empty map, got %v", result)
 	}
 
-	result = BuildLocalCallGraph(map[cfg.SymbolID]*LocalFuncInfo{}, nil, synth.Config{})
+	result = BuildLocalCallGraph(map[cfg.SymbolID]*LocalFuncInfo{}, nil, SignatureEnv{})
 	if len(result) != 0 {
 		t.Errorf("expected empty map, got %v", result)
 	}
@@ -53,7 +52,7 @@ func TestBuildLocalCallGraph_NilGraph(t *testing.T) {
 	localFuncs := map[cfg.SymbolID]*LocalFuncInfo{
 		1: {Sym: 1, Graph: nil},
 	}
-	result := BuildLocalCallGraph(localFuncs, nil, synth.Config{})
+	result := BuildLocalCallGraph(localFuncs, nil, SignatureEnv{})
 	if result[1] != nil {
 		t.Error("expected nil callees for func with nil graph")
 	}
@@ -66,7 +65,7 @@ func TestBuildLocalCallGraph_SingleFunc(t *testing.T) {
 	localFuncs := map[cfg.SymbolID]*LocalFuncInfo{
 		1: {Sym: 1, Fn: fn, Graph: graph},
 	}
-	result := BuildLocalCallGraph(localFuncs, nil, synth.Config{})
+	result := BuildLocalCallGraph(localFuncs, nil, SignatureEnv{})
 	// Function with no calls to other local functions has nil callees (correct behavior)
 	callees, exists := result[1]
 	if !exists {
@@ -258,7 +257,7 @@ func TestBuildLocalCallGraph_AddsCallbackFunctionEdges(t *testing.T) {
 		t.Fatalf("expected symbols for a and b, got a=%d b=%d", aSym, bSym)
 	}
 
-	adj := BuildLocalCallGraph(localFuncs, chunkGraph.Bindings(), synth.Config{})
+	adj := BuildLocalCallGraph(localFuncs, chunkGraph.Bindings(), SignatureEnv{})
 	aCallees := adj[aSym]
 	if !containsSymbol(aCallees, bSym) {
 		t.Fatalf("expected call graph edge a -> b via callback argument, got %v", aCallees)
@@ -317,7 +316,7 @@ func TestPropagateParamHintsFromCallGraph_MethodNameDoesNotSelectLocalFunction(t
 		t.Fatalf("expected symbols for callee/caller, got callee=%d caller=%d", calleeSym, callerSym)
 	}
 
-	PropagateParamHintsFromCallGraph(localFuncs, synth.Config{})
+	PropagateParamHintsFromCallGraph(localFuncs, SignatureEnv{})
 
 	for i, hint := range localFuncs[calleeSym].ParamHints {
 		if hint != nil {
