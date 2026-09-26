@@ -299,6 +299,9 @@ func ToFalsy(t typ.Type) typ.Type {
 				},
 				Default: func(t typ.Type) typ.Type {
 					k := t.Kind()
+					if k == kind.Unresolved {
+						return t
+					}
 					if k.IsPlaceholder() {
 						return typ.NewUnion(typ.Nil, typ.LiteralBool(false))
 					}
@@ -668,6 +671,10 @@ func FilterByKind(t typ.Type, target kind.Kind) typ.Type {
 	if t == nil {
 		return nil
 	}
+	// A pending value has no evidence a kind test can filter yet.
+	if typ.IsUnresolved(t) {
+		return t
+	}
 	if t.Kind().IsPlaceholder() {
 		return TypeForKind(target)
 	}
@@ -699,6 +706,9 @@ func FilterByKind(t typ.Type, target kind.Kind) typ.Type {
 			return typ.NewUnion(kept...)
 		},
 		handleLeaf: func(t typ.Type) typ.Type {
+			if typ.IsUnresolved(t) {
+				return t
+			}
 			if t.Kind().IsPlaceholder() {
 				return TypeForKind(target)
 			}
