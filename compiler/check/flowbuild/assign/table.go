@@ -29,7 +29,24 @@ func EmitTableLiteralFieldAssignments(
 	if table == nil || targetSym == 0 {
 		return
 	}
+	emitTableLiteralFieldAssignmentsAt(table, targetSym, targetRoot, nil, p, bindings, constResolver, synth, sc, inputs)
+}
 
+// emitTableLiteralFieldAssignmentsAt emits the field assignments of table,
+// stored at prefix below the target; a nested table literal field emits its
+// own fields one segment deeper.
+func emitTableLiteralFieldAssignmentsAt(
+	table *ast.TableExpr,
+	targetSym cfg.SymbolID,
+	targetRoot string,
+	prefix []constraint.Segment,
+	p cfg.Point,
+	bindings *bind.BindingTable,
+	constResolver func(string) *flow.ConstValue,
+	synth func(ast.Expr, cfg.Point) typ.Type,
+	sc *scope.State,
+	inputs *flow.Inputs,
+) {
 	for _, field := range table.Fields {
 		if field == nil || field.Value == nil {
 			continue
@@ -42,6 +59,11 @@ func EmitTableLiteralFieldAssignments(
 		seg, ok := path.StaticKeySegment(field.Key)
 		if !ok {
 			// Skip non-static keys (array elements / computed keys).
+			continue
+		}
+		segments := append(append([]constraint.Segment(nil), prefix...), seg)
+		if nested, ok := field.Value.(*ast.TableExpr); ok {
+			emitTableLiteralFieldAssignmentsAt(nested, targetSym, targetRoot, segments, p, bindings, constResolver, synth, sc, inputs)
 			continue
 		}
 
@@ -75,7 +97,7 @@ func EmitTableLiteralFieldAssignments(
 			TargetPath: constraint.Path{
 				Root:     targetRoot,
 				Symbol:   targetSym,
-				Segments: []constraint.Segment{seg},
+				Segments: segments,
 			},
 			SourcePath: sourcePath,
 			Type:       resolve.Ref(fieldType, sc),

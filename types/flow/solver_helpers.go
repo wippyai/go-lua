@@ -102,14 +102,21 @@ func (s *Solution) setValue(key string, t typ.Type) {
 		return
 	}
 	s.values[key] = t
-	if s.fieldOverlayCache == nil {
+	if s.fieldOverlayCache == nil && s.childFieldCache == nil {
 		return
 	}
 	_, _, suffix, ok := pathkey.ParseKeyUnchecked(constraint.PathKey(key))
 	if !ok || suffix == "" {
 		return
 	}
-	delete(s.fieldOverlayCache, key[:len(key)-len(suffix)])
+	// Every ancestor prefix composes this child fact into its fields.
+	root := key[:len(key)-len(suffix)]
+	segs := pathkey.ParseSuffix(suffix)
+	for i := 0; i < len(segs); i++ {
+		prefix := root + pathkey.SegmentsSuffix(segs[:i])
+		delete(s.fieldOverlayCache, prefix)
+		delete(s.childFieldCache, prefix)
+	}
 }
 
 // dependencyMap tracks which CFG points depend on a given canonical key.

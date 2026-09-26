@@ -420,7 +420,29 @@ func (i *Inferencer) inferReturnTypesFromBody(
 	)
 	declared := collectReturnTypes(fnGraph, declSynth, state.deadPoints)
 
-	return returns.MergeReturnSummary(declared, narrowed)
+	// The solved flow at each return point is the evidence; the pre-solve
+	// estimate fills only positions the flow leaves pending.
+	return resolveReturnVector(narrowed, declared)
+}
+
+// resolveReturnVector fills the pending slots and positions of evidence from
+// estimate. A slot the evidence lacks takes the estimate's.
+func resolveReturnVector(evidence, estimate []typ.Type) []typ.Type {
+	if len(evidence) == 0 {
+		return estimate
+	}
+	out := append([]typ.Type(nil), evidence...)
+	for i := range out {
+		if i >= len(estimate) || estimate[i] == nil {
+			continue
+		}
+		if out[i] == nil {
+			out[i] = estimate[i]
+			continue
+		}
+		out[i] = typ.Resolve(out[i], estimate[i])
+	}
+	return out
 }
 
 // inferReturnWithSummary infers return types for a single function using available summaries.
