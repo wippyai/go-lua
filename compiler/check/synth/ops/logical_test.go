@@ -196,3 +196,15 @@ func TestLogicalAndTyped_UnknownAndUnknown_DoesNotCollapseToFalsy(t *testing.T) 
 		t.Fatalf("unknown and unknown should stay unknown, got %v", result)
 	}
 }
+
+func TestLogicalOrTyped_TupleOperandsKeepTableShape(t *testing.T) {
+	right := typ.NewTuple(typ.Integer)
+	orResult := LogicalOrTyped(typ.Nil, right)
+	if _, ok := orResult.(*typ.Tuple); !ok {
+		t.Fatalf("nil or tuple should keep the tuple table value, got %T (%v)", orResult, orResult)
+	}
+	andResult := LogicalAndTyped(typ.LiteralBool(true), right)
+	if _, ok := andResult.(*typ.Tuple); !ok {
+		t.Fatalf("true and tuple should keep the tuple table value, got %T (%v)", andResult, andResult)
+	}
+}
