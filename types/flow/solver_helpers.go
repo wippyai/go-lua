@@ -1,6 +1,7 @@
 package flow
 
 import (
+	"strings"
 	"slices"
 	"sort"
 	"strconv"
@@ -148,6 +149,28 @@ func (dm dependencyMap) register(key constraint.PathKey, point cfg.Point) {
 	}
 }
 
+// versionDependencyKey keys the points that read every fact stored below a
+// symbol version: a phi joins its operands' field suffix facts as well as
+// their base values.
+func versionDependencyKey(base string) string {
+	return "$ver:" + base
+}
+
+// versionBaseOfKey returns the symbol-version prefix of a canonical key, or
+// "" when the key is a base key itself.
+func versionBaseOfKey(key string) string {
+	if i := strings.IndexAny(key, ".["); i > 0 {
+		return key[:i]
+	}
+	return ""
+}
+
+func (dm dependencyMap) registerVersion(key constraint.PathKey, point cfg.Point) {
+	if key != "" {
+		dm[versionDependencyKey(string(key))] = append(dm[versionDependencyKey(string(key))], point)
+	}
+}
+
 func (dm dependencyMap) registerSymbol(sym cfg.SymbolID, point cfg.Point) {
 	if sym == 0 {
 		return
@@ -178,6 +201,7 @@ func (s *Solution) buildPhiDependencies() dependencyMap {
 		for _, op := range phi.Operands {
 			opKey := s.pkResolver.KeyAtVersion(op.Version.Symbol, op.Version.ID, nil)
 			deps.register(opKey, phi.Point)
+			deps.registerVersion(opKey, phi.Point)
 		}
 	}
 	return deps
@@ -311,6 +335,15 @@ func addDependentPoints(deps dependencyMap, changedKeys []string, worklist []cfg
 		}
 		if sym := pathkey.KeySymbolUnchecked(constraint.PathKey(key)); sym != 0 {
 			for _, point := range deps[symbolDependencyKey(sym)] {
+				if inQueue[point] || pending[point] {
+					continue
+				}
+				pending[point] = true
+				points = append(points, point)
+			}
+		}
+		if base := versionBaseOfKey(key); base != "" {
+			for _, point := range deps[versionDependencyKey(base)] {
 				if inQueue[point] || pending[point] {
 					continue
 				}

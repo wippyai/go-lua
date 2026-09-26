@@ -797,6 +797,9 @@ func (s *Solution) addDependentPointsBatch(
 			addByKey(assignDeps, symKey)
 			addByKey(edgeDeps, symKey)
 		}
+		if base := versionBaseOfKey(key); base != "" {
+			addByKey(phiDeps, versionDependencyKey(base))
+		}
 	}
 
 	slices.Sort(pendingPts)

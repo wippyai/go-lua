@@ -9,7 +9,7 @@ import (
 )
 
 const indexedBuilderModule = `
-local M = {}
+local M = { _client = require("openai_client") }
 function M.build2(data: any)
     local embeddings = table.create(#data, 0)
     for i, item in ipairs(data) do
@@ -25,6 +25,33 @@ function M.build3(data: any)
     end
     local r = { result = { embeddings = embeddings } }
     return r
+end
+function M.embed(contract_args)
+    if not contract_args.model or not contract_args.input then
+        return nil, "invalid input"
+    end
+    local openai_response, req_err = M._client.request("/embeddings", contract_args)
+    if req_err then return nil, req_err end
+    if not openai_response or not openai_response.data or #openai_response.data == 0 then
+        return nil, "invalid response"
+    end
+    local embeddings = table.create(#openai_response.data, 0)
+    for i, item in ipairs(openai_response.data) do
+        embeddings[i] = item.embedding
+    end
+    local contract_response = {
+        success = true,
+        result = { embeddings = embeddings },
+        model = openai_response.model,
+        metadata = openai_response.metadata or {}
+    }
+    if openai_response.usage then
+        contract_response.tokens = {
+            prompt_tokens = openai_response.usage.prompt_tokens or 0,
+            total_tokens = openai_response.usage.total_tokens or openai_response.usage.prompt_tokens or 0
+        }
+    end
+    return contract_response
 end
 return M
 `
@@ -61,5 +88,14 @@ return first
 `, testutil.WithStdlib(), testutil.WithModule("m", mod))
 	if consumer.HasError() {
 		t.Fatalf("consumer errors: %v", testutil.ErrorMessages(consumer.Errors))
+	}
+	embedConsumer := testutil.Check(`
+local m = require("m")
+local response = m.embed({model = "small", input = "text"})
+local first = response.result.embeddings[1]
+return first[1]
+`, testutil.WithStdlib(), testutil.WithModule("m", mod))
+	if embedConsumer.HasError() {
+		t.Fatalf("embed consumer errors: %v", testutil.ErrorMessages(embedConsumer.Errors))
 	}
 }
