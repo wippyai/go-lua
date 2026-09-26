@@ -675,6 +675,11 @@ func coversMemberFields(a, b typ.Type, visiting map[[2]typ.Type]bool) bool {
 	if a == nil || a.Kind().IsPlaceholder() {
 		return true
 	}
+	// An open record with no fields carries no evidence about a dynamic
+	// return value. Treating it as a refinement of any loses real values.
+	if isOpenTopRecordType(a) && typ.IsAny(b) {
+		return false
+	}
 	ar, aRecord := a.(*typ.Record)
 	br, bRecord := b.(*typ.Record)
 	if aRecord && bRecord {

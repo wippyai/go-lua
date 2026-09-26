@@ -771,6 +771,22 @@ func TestMergeReturnSummary_PrefersStructuredCollectionOverOpenTopRecordField(t 
 	}
 }
 
+func TestMergeReturnSummary_DoesNotRefineRuntimeAnyToEmptyRecord(t *testing.T) {
+	empty := typ.NewRecord().SetOpen(true).Build()
+	weak := []typ.Type{typ.NewRecord().Field("messages", empty).Build()}
+	dynamic := []typ.Type{typ.NewRecord().Field("messages", typ.Any).Build()}
+	for _, pair := range [][2][]typ.Type{{weak, dynamic}, {dynamic, weak}} {
+		merged := MergeReturnSummary(pair[0], pair[1])
+		if len(merged) != 1 {
+			t.Fatalf("merged return slots = %d, want 1", len(merged))
+		}
+		record, ok := merged[0].(*typ.Record)
+		if !ok || record.GetField("messages") == nil || !typ.TypeEquals(record.GetField("messages").Type, typ.Any) {
+			t.Fatalf("merge(%v, %v) = %v, want messages: any", pair[0], pair[1], merged)
+		}
+	}
+}
+
 func TestMergeReturnSummary_PromotesTopLevelStructuredOverOpenTop(t *testing.T) {
 	weak := []typ.Type{
 		typ.NewRecord().SetOpen(true).Build(),
