@@ -79,6 +79,15 @@ func TestTypJoinReturnSlot_PreservesUnknownOverNil(t *testing.T) {
 	}
 }
 
+func TestMergeReturnSummaryResolvesPendingUnionFromCompleteLaterEvidence(t *testing.T) {
+	pending := []typ.Type{typ.NewUnion(typ.Unresolved, typ.LiteralString("application/octet-stream"))}
+	resolved := []typ.Type{typ.String}
+	got := MergeReturnSummary(pending, resolved)
+	if len(got) != 1 || !typ.TypeEquals(got[0], typ.String) {
+		t.Fatalf("pending return union retained after complete evidence: %v", got)
+	}
+}
+
 func TestReturnTypesAllNil(t *testing.T) {
 	if !ReturnTypesAllNil([]typ.Type{typ.Nil}) {
 		t.Fatal("expected [nil] to be nil-only")

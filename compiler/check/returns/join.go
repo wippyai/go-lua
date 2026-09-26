@@ -772,7 +772,7 @@ func fillUnknownSlots(rets, other []typ.Type) []typ.Type {
 func fillPendingSlots(rets, other []typ.Type) []typ.Type {
 	var out []typ.Type
 	for i, t := range rets {
-		if i >= len(other) || !typ.IsUnresolved(t) || other[i] == nil || typ.IsUnresolved(other[i]) || other[i].Kind() == kind.Nil {
+		if i >= len(other) || typ.IsFinal(t) || other[i] == nil || typ.IsUnresolved(other[i]) || other[i].Kind() == kind.Nil {
 			continue
 		}
 		if out == nil {
