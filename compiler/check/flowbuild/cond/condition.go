@@ -412,9 +412,11 @@ func (ce *ConditionExtractor) ConditionFromExpr(expr ast.Expr) constraint.Condit
 	return constraint.TrueCondition()
 }
 
+// isConstTrueExpr reports whether expr is truthy whenever it evaluates: the
+// literal true and every string, number, table, or function literal.
 func isConstTrueExpr(expr ast.Expr) bool {
 	switch e := expr.(type) {
-	case *ast.TrueExpr:
+	case *ast.TrueExpr, *ast.StringExpr, *ast.NumberExpr, *ast.TableExpr, *ast.FunctionExpr:
 		return true
 	case *ast.IdentExpr:
 		return e.Value == "true"
@@ -424,9 +426,11 @@ func isConstTrueExpr(expr ast.Expr) bool {
 	return false
 }
 
+// isConstFalseExpr reports whether expr is falsy whenever it evaluates: the
+// literals false and nil.
 func isConstFalseExpr(expr ast.Expr) bool {
 	switch e := expr.(type) {
-	case *ast.FalseExpr:
+	case *ast.FalseExpr, *ast.NilExpr:
 		return true
 	case *ast.IdentExpr:
 		return e.Value == "false"
