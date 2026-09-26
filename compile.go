@@ -1584,7 +1584,12 @@ func compileStringConcatOpExpr(context *funcContext, reg int, expr *ast.StringCo
 	}
 	a := savereg(ec, reg)
 	basereg := reg
-	reg += compileExpr(context, reg, expr.Lhs, ecnone(0))
+	// CONCAT always consumes one value from each operand. A call can report
+	// zero new registers when this expression starts below the local register
+	// top (as it does for a generic for's iterator slots), but it still writes
+	// its one adjusted result at reg.
+	compileExpr(context, reg, expr.Lhs, ecnone(0))
+	reg++
 	compileExpr(context, reg, expr.Rhs, ecnone(0))
 	for pc := code.LastPC(); pc != 0 && opGetOpCode(code.At(pc)) == OP_CONCAT; pc-- {
 		code.Pop()
