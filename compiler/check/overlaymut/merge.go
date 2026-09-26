@@ -81,7 +81,7 @@ func mergeFields(baseType typ.Type, fields map[string]typ.Type) typ.Type {
 		}
 		return builder.Build()
 	case *typ.Record:
-		builder := typ.NewRecord()
+		builder := typ.NewRecord().SetDeclared(v.Declared)
 		if v.Open {
 			builder.SetOpen(true)
 		}
@@ -198,7 +198,7 @@ func mergeMapComponent(baseType, keyType, valType typ.Type) typ.Type {
 		newVal := typ.JoinPreferNonSoft(v.Value, valType)
 		return typ.NewMap(newKey, newVal)
 	case *typ.Record:
-		builder := typ.NewRecord()
+		builder := typ.NewRecord().SetDeclared(v.Declared)
 		if v.Open {
 			builder.SetOpen(true)
 		}

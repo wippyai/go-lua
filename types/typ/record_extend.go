@@ -37,7 +37,7 @@ func extendRecordWithField(base Type, field string, fieldType Type) Type {
 		return base
 	}
 
-	builder := NewRecord()
+	builder := NewRecord().SetDeclared(rec.Declared)
 	if rec.Open {
 		builder.SetOpen(true)
 	}

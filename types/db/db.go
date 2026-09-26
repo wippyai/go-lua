@@ -106,6 +106,14 @@ func (db *DB) Connect(path string, manifest *io.Manifest) {
 		return
 	}
 
+	// A runtime-provided manifest is an interface declaration, so its records
+	// are closed; MarkDeclared is idempotent and safe under concurrent
+	// connects of the same shared manifest. A Lua-inferred export keeps its
+	// inferred, open shapes.
+	if manifest != nil && !manifest.BodyBacked {
+		manifest.MarkDeclared()
+	}
+
 	db.manifests.Set(path, manifest)
 }
 

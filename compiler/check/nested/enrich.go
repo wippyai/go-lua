@@ -37,7 +37,7 @@ func EnrichTableTypeWithFuncTypes(
 	}
 
 	modified := false
-	builder := typ.NewRecord()
+	builder := typ.NewRecord().SetDeclared(rec.Declared)
 	bindings := graph.Bindings()
 
 	for _, f := range rec.Fields {
@@ -203,7 +203,7 @@ func mergeFieldsIntoSelfType(selfType typ.Type, fields map[string]typ.Type) typ.
 
 	switch v := selfType.(type) {
 	case *typ.Record:
-		builder := typ.NewRecord()
+		builder := typ.NewRecord().SetDeclared(v.Declared)
 		if v.Open {
 			builder.SetOpen(true)
 		}

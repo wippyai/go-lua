@@ -66,10 +66,15 @@ func buildFunctionType(
 }
 
 func buildRecordType(fields []Field, metatable, mapKey, mapValue Type, open bool, assumeSorted bool) *Record {
-	return buildRecordTypeWithFlags(fields, metatable, mapKey, mapValue, open, assumeSorted, false, false)
+	return buildRecordTypeWithFlags(fields, metatable, mapKey, mapValue, open, false, assumeSorted, false, false)
 }
 
-func buildRecordTypeWithFlags(fields []Field, metatable, mapKey, mapValue Type, open bool, assumeSorted, inferred, explicitNil bool) *Record {
+// buildRecordTypeDeclared rebuilds a record keeping the declared provenance bit.
+func buildRecordTypeDeclared(fields []Field, metatable, mapKey, mapValue Type, open, declared bool, assumeSorted bool) *Record {
+	return buildRecordTypeWithFlags(fields, metatable, mapKey, mapValue, open, declared, assumeSorted, false, false)
+}
+
+func buildRecordTypeWithFlags(fields []Field, metatable, mapKey, mapValue Type, open, declared bool, assumeSorted, inferred, explicitNil bool) *Record {
 	sorted := make([]Field, len(fields))
 	copy(sorted, fields)
 	if !assumeSorted || !fieldsSortedByName(sorted) {
@@ -122,6 +127,9 @@ func buildRecordTypeWithFlags(fields []Field, metatable, mapKey, mapValue Type, 
 		h = internal.HashCombine(h, recordMapValueHash)
 		h = internal.HashCombine(h, mapValue.Hash())
 	}
+	if declared {
+		h = internal.HashCombine(h, 16)
+	}
 	if inferred {
 		h = internal.HashCombine(h, 4)
 	}
@@ -138,6 +146,7 @@ func buildRecordTypeWithFlags(fields []Field, metatable, mapKey, mapValue Type, 
 		MapInferredPresence: inferred,
 		MapExplicitNilWrite: explicitNil,
 		Open:                open,
+		Declared:            declared,
 		sorted:              true,
 		hash:                h,
 		softPrunable:        softPrunable,

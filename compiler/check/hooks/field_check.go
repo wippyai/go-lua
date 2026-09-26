@@ -23,6 +23,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	checksynth "github.com/wippyai/go-lua/compiler/check/synth"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
+	"github.com/wippyai/go-lua/internal"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/diag"
 	flowjoin "github.com/wippyai/go-lua/types/flow/join"
@@ -639,6 +640,13 @@ func checkAttrGet(e *ast.AttrGetExpr, p cfg.Point, narrowView api.BaseSynth, res
 	}
 
 	if !result.Found {
+		// A read of an absent field is an error only when the receiver's shape
+		// came from a declaration. On an inferred record the field may be added
+		// later through an alias or a write, so the read stays gradual: the
+		// value type is unknown and no diagnostic is produced.
+		if !missingFieldIsClosed(objType) {
+			return diags
+		}
 		// A table may acquire a field through an alias even when its inferred
 		// record shape does not list it. A live non-nil guard proves that this
 		// particular read succeeds; the flow path version invalidates the proof
@@ -672,6 +680,78 @@ func checkAttrGet(e *ast.AttrGetExpr, p cfg.Point, narrowView api.BaseSynth, res
 	}
 
 	return diags
+}
+
+// missingFieldIsClosed reports whether an absent field read on t must be
+// rejected. Only a shape that came from a declaration (a type annotation, type
+// alias, or module manifest) is closed; an inferred record, and any composite
+// that is not entirely declared, reads the field gradually instead.
+func missingFieldIsClosed(t typ.Type) bool {
+	return missingFieldIsClosedDepth(t, typ.NewGuard())
+}
+
+func missingFieldIsClosedDepth(t typ.Type, guard internal.RecursionGuard) bool {
+	return typ.VisitWithGuard(t, guard, false, func(next internal.RecursionGuard) typ.Visitor[bool] {
+		return typ.Visitor[bool]{
+			Alias: func(a *typ.Alias) bool {
+				return missingFieldIsClosedDepth(a.UnaliasedTarget(), next)
+			},
+			Optional: func(o *typ.Optional) bool {
+				return missingFieldIsClosedDepth(o.Inner, next)
+			},
+			Record: func(r *typ.Record) bool {
+				return r.Declared
+			},
+			Recursive: func(rec *typ.Recursive) bool {
+				if rec.Body == nil || rec.Body == rec {
+					return false
+				}
+				return missingFieldIsClosedDepth(rec.Body, next)
+			},
+			Generic: func(g *typ.Generic) bool {
+				if g.Body == nil {
+					return false
+				}
+				return missingFieldIsClosedDepth(g.Body, next)
+			},
+			Instantiated: func(inst *typ.Instantiated) bool {
+				resolved, err := querycore.ResolveInstantiated(inst)
+				if err != nil || resolved == nil {
+					return false
+				}
+				return missingFieldIsClosedDepth(resolved, next)
+			},
+			Union: func(u *typ.Union) bool {
+				sawMember := false
+				for _, m := range u.Members {
+					if m != nil && m.Kind() == kind.Nil {
+						continue
+					}
+					sawMember = true
+					if !missingFieldIsClosedDepth(m, next) {
+						return false
+					}
+				}
+				return sawMember
+			},
+			Intersection: func(i *typ.Intersection) bool {
+				if len(i.Members) == 0 {
+					return false
+				}
+				for _, m := range i.Members {
+					if !missingFieldIsClosedDepth(m, next) {
+						return false
+					}
+				}
+				return true
+			},
+			Default: func(typ.Type) bool {
+				// Non-record receivers keep their existing diagnostics; only a
+				// record shape carries declaration provenance.
+				return true
+			},
+		}
+	})
 }
 
 func isStringKeyExpr(key ast.Expr) bool {

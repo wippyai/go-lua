@@ -16,7 +16,7 @@ import (
 // Manifest file format constants.
 const (
 	manifestMagic   = 0x4D414E49 // "MANI" - identifies valid manifest files
-	manifestVersion = 12         // v12: possible imported-module writes through exported calls
+	manifestVersion = 13         // v13: record declared-vs-inferred provenance bit
 )
 
 // Manifest decoding errors.
@@ -76,6 +76,8 @@ type Manifest struct {
 	cachedEnriched      typ.Type
 	cachedEnrichedReady bool
 	cachedLookupValues  map[string]lookupValueResult
+
+	declaredOnce sync.Once
 }
 
 // ModuleWrite is a callee write to a table exported by another module.
@@ -411,6 +413,46 @@ func (m *Manifest) EnrichedExport() typ.Type {
 	m.cacheMu.Unlock()
 
 	return cached
+}
+
+// MarkDeclared marks every record in this manifest declared, so that an absent
+// field read on one is closed. A runtime manifest is an interface declaration,
+// so its shape is closed; a Lua-inferred export is not and keeps its inferred,
+// open shapes. Callers skip this for body-backed manifests.
+//
+// The marking runs once per manifest. A linter connects one shared builtin
+// manifest into many databases concurrently, so a sync.Once serializes the
+// single in-place write; every later reader observes it through the database,
+// which happens after Connect. The manifest object keeps its identity, and each
+// source record maps to one marked object, which nominal field narrowing needs.
+func (m *Manifest) MarkDeclared() {
+	if m == nil {
+		return
+	}
+	m.declaredOnce.Do(func() {
+		roots := make([]typ.Type, 0, 1+len(m.Types)+len(m.Globals))
+		roots = append(roots, m.Export)
+		typeNames := sortedKeys(m.Types)
+		for _, name := range typeNames {
+			roots = append(roots, m.Types[name])
+		}
+		globalNames := sortedKeys(m.Globals)
+		for _, name := range globalNames {
+			roots = append(roots, m.Globals[name])
+		}
+		marked := typ.MarkDeclaredShared(roots...)
+		m.Export = marked[0]
+		next := 1
+		for _, name := range typeNames {
+			m.Types[name] = marked[next]
+			next++
+		}
+		for _, name := range globalNames {
+			m.Globals[name] = marked[next]
+			next++
+		}
+		m.invalidateCaches()
+	})
 }
 
 func (m *Manifest) withDeclaredReturnConventions(t typ.Type) typ.Type {

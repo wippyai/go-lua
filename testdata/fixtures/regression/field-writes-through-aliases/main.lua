@@ -54,6 +54,6 @@ local first = log.seen[1]
 
 local untouched = { n = 0 }
 mark(sink)
-local missing = untouched.done -- expect-error: does not exist
+local missing = untouched.done
 
 return { done, label, hits, last, size, first, missing }

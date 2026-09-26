@@ -159,7 +159,7 @@ func JoinCompatibleRecords(a, b Type) (Type, bool) {
 		return nil, false
 	}
 
-	builder := NewRecord()
+	builder := NewRecord().SetDeclared(ar.Declared && br.Declared)
 	if ar.Open || br.Open {
 		builder.SetOpen(true)
 	}

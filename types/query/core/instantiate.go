@@ -186,7 +186,7 @@ func substituteVisited(t typ.Type, subst map[string]typ.Type, visited map[typ.Ty
 				return t
 			}
 
-			builder := typ.NewRecord()
+			builder := typ.NewRecord().SetDeclared(r.Declared)
 
 			for _, f := range newFields {
 				builder.AddField(f)

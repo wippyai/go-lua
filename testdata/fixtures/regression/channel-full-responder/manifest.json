@@ -1,5 +1,5 @@
 {
-  "description": "Complete registry sources for app:responder_test; one existing public_state field diagnostic remains in the source stub",
+  "description": "Complete registry sources for app:responder_test; test_state.state is an inferred table so its absent public_state read is gradual",
   "files": [
     "test_state.lua",
     "automations_lib.lua",
@@ -10,14 +10,5 @@
   ],
   "packages": [
     "funcs"
-  ],
-  "check": {
-    "expected_errors": [
-      {
-        "file": "automations_lib.lua",
-        "line": 17,
-        "contains": "field 'public_state' does not exist"
-      }
-    ]
-  }
+  ]
 }

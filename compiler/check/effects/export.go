@@ -67,7 +67,7 @@ func EnrichExportWithEffects(export typ.Type, rootName string, effectsBySym map[
 		if !changed {
 			return export
 		}
-		builder := typ.NewRecord()
+		builder := typ.NewRecord().SetDeclared(v.Declared)
 		if v.Open {
 			builder.SetOpen(true)
 		}

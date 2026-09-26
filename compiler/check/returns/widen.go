@@ -429,7 +429,7 @@ func joinParamHintIteration(previous, current typ.Type) typ.Type {
 	if !aOK || !bOK || !rOK {
 		return joined
 	}
-	builder := typ.NewRecord().SetOpen(r.Open)
+	builder := typ.NewRecord().SetOpen(r.Open).SetDeclared(a.Declared && b.Declared)
 	if r.Metatable != nil {
 		builder.Metatable(r.Metatable)
 	}
@@ -835,10 +835,11 @@ func joinIterationRecords(a, b typ.Type) (typ.Type, bool) {
 
 	// The join reuses an input record it equals, so unchanged hints keep their
 	// identity across iterations.
-	sameAsA := ar.Metatable == metatable && ar.Open == (ar.Open || br.Open)
-	sameAsB := br.Metatable == metatable && br.Open == (ar.Open || br.Open)
+	declared := ar.Declared && br.Declared
+	sameAsA := ar.Metatable == metatable && ar.Open == (ar.Open || br.Open) && ar.Declared == declared
+	sameAsB := br.Metatable == metatable && br.Open == (ar.Open || br.Open) && br.Declared == declared
 
-	builder := typ.NewRecord().SetOpen(ar.Open || br.Open)
+	builder := typ.NewRecord().SetOpen(ar.Open || br.Open).SetDeclared(declared)
 	if metatable != nil {
 		builder.Metatable(metatable)
 	}

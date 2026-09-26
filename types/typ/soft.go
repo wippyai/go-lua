@@ -455,7 +455,7 @@ func pruneSoftRecord(
 	if fields != nil {
 		fieldsSrc = fields
 	}
-	return buildRecordType(fieldsSrc, metatable, mapKey, mapValue, r.Open, true)
+	return buildRecordTypeDeclared(fieldsSrc, metatable, mapKey, mapValue, r.Open, r.Declared, true)
 }
 
 func isSoftWithMemo(t Type, policy SoftPolicy, memo map[Type]bool) bool {

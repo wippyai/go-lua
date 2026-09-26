@@ -214,6 +214,7 @@ func (w *typeWriter) writeTypeData(t typ.Type) {
 				w.writeType(v.Metatable)
 			}
 			w.writeBool(v.Open)
+			w.writeBool(v.Declared)
 			hasMap := v.HasMapComponent()
 			w.writeBool(hasMap)
 			if hasMap {

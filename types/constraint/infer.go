@@ -807,7 +807,7 @@ func applyInferSubst(t typ.Type, s InferSubstitution, visited map[int]bool, memo
 				return t
 			}
 
-			rb := typ.NewRecord()
+			rb := typ.NewRecord().SetDeclared(r.Declared)
 
 			for _, f := range fields {
 				if f.Readonly {

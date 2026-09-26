@@ -231,7 +231,7 @@ func CoalesceRecordOpenness(types []typ.Type) []typ.Type {
 			result = append(result, t)
 			continue
 		}
-		builder := typ.NewRecord().SetOpen(true)
+		builder := typ.NewRecord().SetOpen(true).SetDeclared(r.Declared)
 		for _, f := range r.Fields {
 			builder.AddField(f)
 		}
@@ -351,9 +351,17 @@ func CoalesceRecordMapComponents(types []typ.Type) []typ.Type {
 					mapValue = Types(mapValue, r.MapValue)
 				}
 			}
-			// Use the first record as the template
+			// Use the first record as the template. The merged shape is
+			// declared only when every contributing record is.
 			template := g.template
-			builder := typ.NewRecord()
+			allDeclared := true
+			for _, r := range g.records {
+				if !r.Declared {
+					allDeclared = false
+					break
+				}
+			}
+			builder := typ.NewRecord().SetDeclared(allDeclared)
 			if template.Open {
 				builder.SetOpen(true)
 			}

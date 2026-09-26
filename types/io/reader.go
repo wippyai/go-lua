@@ -318,6 +318,7 @@ func (r *typeReader) readType() typ.Type {
 		}
 		open := r.readBool()
 		rb.SetOpen(open)
+		rb.SetDeclared(r.readBool())
 		hasMap := r.readBool()
 		if hasMap {
 			key := r.readTypeNonNil()

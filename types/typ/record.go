@@ -26,6 +26,9 @@ type Field struct {
 //
 // Features:
 //   - Open: When true, unknown field access returns Unknown instead of error
+//   - Declared: When true, the shape came from a type annotation, type alias,
+//     or a module manifest rather than inference. An absent field read on a
+//     declared record is an error; on an inferred record it reads gradually.
 //   - MapKey/MapValue: Optional map component for {foo: T, [K]: V} patterns
 //   - Metatable: Optional metatable type for metamethod resolution
 //
@@ -38,6 +41,7 @@ type Record struct {
 	MapInferredPresence bool
 	MapExplicitNilWrite bool
 	Open                bool // Allow access to undefined fields
+	Declared            bool // Shape came from a declaration, not inference
 	sorted              bool
 	hash                uint64
 	softPrunable        bool
@@ -60,6 +64,7 @@ type RecordBuilder struct {
 	mapInferredPresence bool
 	mapExplicitNilWrite bool
 	open                bool
+	declared            bool
 }
 
 // NewRecord starts building a record type.
@@ -120,6 +125,13 @@ func (b *RecordBuilder) SetOpen(open bool) *RecordBuilder {
 	return b
 }
 
+// SetDeclared marks the record shape as coming from a declaration (a type
+// annotation, type alias, or module manifest) rather than inference.
+func (b *RecordBuilder) SetDeclared(declared bool) *RecordBuilder {
+	b.declared = declared
+	return b
+}
+
 // MapComponent sets the map component key and value types.
 func (b *RecordBuilder) MapComponent(key, value Type) *RecordBuilder {
 	b.mapKey = key
@@ -137,12 +149,21 @@ func (b *RecordBuilder) MapComponentWithFlags(key, value Type, inferred, explici
 
 // Build creates the record type.
 func (b *RecordBuilder) Build() *Record {
-	return buildRecordTypeWithFlags(b.fields, b.metatable, b.mapKey, b.mapValue, b.open, false, b.mapInferredPresence, b.mapExplicitNilWrite)
+	return buildRecordTypeWithFlags(b.fields, b.metatable, b.mapKey, b.mapValue, b.open, b.declared, false, b.mapInferredPresence, b.mapExplicitNilWrite)
 }
 
 // WithMetatable returns r with meta as its metatable and everything else kept.
 func (r *Record) WithMetatable(meta Type) *Record {
-	return buildRecordTypeWithFlags(r.Fields, meta, r.MapKey, r.MapValue, r.Open, true, r.MapInferredPresence, r.MapExplicitNilWrite)
+	return buildRecordTypeWithFlags(r.Fields, meta, r.MapKey, r.MapValue, r.Open, r.Declared, true, r.MapInferredPresence, r.MapExplicitNilWrite)
+}
+
+// WithDeclared returns r with its declaration provenance set to declared.
+// Rebuilding through the builder keeps the flag in the hash and equality.
+func (r *Record) WithDeclared(declared bool) *Record {
+	if r.Declared == declared {
+		return r
+	}
+	return buildRecordTypeWithFlags(r.Fields, r.Metatable, r.MapKey, r.MapValue, r.Open, declared, true, r.MapInferredPresence, r.MapExplicitNilWrite)
 }
 
 // WithField returns r with f replacing the field of the same name, or added
@@ -161,7 +182,7 @@ func (r *Record) WithField(f Field) *Record {
 	if !replaced {
 		fields = append(fields, f)
 	}
-	return buildRecordTypeWithFlags(fields, r.Metatable, r.MapKey, r.MapValue, r.Open, replaced, r.MapInferredPresence, r.MapExplicitNilWrite)
+	return buildRecordTypeWithFlags(fields, r.Metatable, r.MapKey, r.MapValue, r.Open, r.Declared, replaced, r.MapInferredPresence, r.MapExplicitNilWrite)
 }
 
 func (r *Record) Kind() kind.Kind { return kind.Record }

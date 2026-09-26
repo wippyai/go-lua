@@ -502,7 +502,9 @@ func (r *Resolver) resolveIntersection(te *ast.IntersectionTypeExpr, sc *scope.S
 }
 
 func (r *Resolver) resolveRecord(te *ast.RecordTypeExpr, sc *scope.State, depth int) typ.Type {
-	builder := typ.NewRecord()
+	// A record written in a type annotation or type alias is a declaration:
+	// its field set is closed, so an absent field read is an error.
+	builder := typ.NewRecord().SetDeclared(true)
 	for _, f := range te.Fields {
 		fieldType := r.resolveTypeDepth(f.Type, sc, depth+1)
 		if len(f.Annotations) > 0 {

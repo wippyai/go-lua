@@ -332,7 +332,7 @@ func expandInstantiatedCore(t typ.Type, orig typ.Type, guard internal.RecursionG
 			return orig
 		}
 
-		builder := typ.NewRecord()
+		builder := typ.NewRecord().SetDeclared(v.Declared)
 		if v.Open {
 			builder.SetOpen(true)
 		}
