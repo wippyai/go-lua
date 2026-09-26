@@ -470,6 +470,7 @@ func ExcludeKind(t typ.Type, target kind.Kind) typ.Type {
 //   - kind.Record matches: Record, Map, Array, Tuple, Interface, Intersection
 //     (all are "table" in Lua typeof).
 //   - kind.Number matches: Number and Integer (integer is a subtype of number).
+//   - Literals match by their base kind: 50 is a number, "x" a string.
 //   - Instantiated types: Match based on the underlying generic body's kind.
 //
 // # Examples
@@ -482,6 +483,10 @@ func KindMatches(t typ.Type, target kind.Kind) bool {
 		return false
 	}
 	k := t.Kind()
+	// A literal has the typeof kind of its base primitive.
+	if lit, ok := t.(*typ.Literal); ok {
+		k = lit.Base
+	}
 	if k == target {
 		return true
 	}

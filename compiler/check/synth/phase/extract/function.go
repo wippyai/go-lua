@@ -144,7 +144,10 @@ func (s *Synthesizer) synthFunctionTypeWithCapturePoint(
 		if expected != nil && len(expected.Params) > 0 && expected.Params[0].Name == "self" && expected.Params[0].Type != nil {
 			implicitSelfType = expected.Params[0].Type
 		}
-		if implicitSelfType == nil && resolveScope != nil && resolveScope.SelfType() != nil {
+		// The scope's self belongs to the function the scope was built for. A
+		// method defined here on another receiver (function node:add inside
+		// ws:node) has its own self, bound when that method is analyzed.
+		if implicitSelfType == nil && resolveScope != nil && resolveScope.SelfType() != nil && !s.isMethodOnOtherReceiver(fn) {
 			implicitSelfType = resolveScope.SelfType()
 		}
 	}
@@ -817,6 +820,28 @@ func (s *Synthesizer) buildFunctionTypeSummaryFallback(
 		return join.WithReturnsOrUnknown(sig, summaries[fnSym])
 	}
 	return join.WithReturnsOrUnknown(sig, nil)
+}
+
+// isMethodOnOtherReceiver reports whether fn is defined in the current graph
+// as a method (R:m) whose receiver R is not the enclosing self.
+func (s *Synthesizer) isMethodOnOtherReceiver(fn *ast.FunctionExpr) bool {
+	if fn == nil || s.deps.CheckCtx == nil {
+		return false
+	}
+	graph, ok := s.deps.CheckCtx.Graph().(*cfg.Graph)
+	if !ok || graph == nil {
+		return false
+	}
+	other := false
+	graph.EachFuncDef(func(_ cfg.Point, fd *cfg.FuncDefInfo) {
+		if fd == nil || fd.FuncExpr != fn || !fd.IsMethod {
+			return
+		}
+		if ident, ok := fd.Receiver.(*ast.IdentExpr); !ok || ident.Value != "self" {
+			other = true
+		}
+	})
+	return other
 }
 
 func (s *Synthesizer) buildParamOverlay(fnGraph *cfg.Graph, sc *scope.State, expected *typ.Function) map[cfg.SymbolID]typ.Type {

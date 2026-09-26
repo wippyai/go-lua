@@ -189,7 +189,7 @@ func RunScope(input ScopeInput) ScopeOutput {
 	exprSynth := func(expr ast.Expr, p cfg.Point, sc *scope.State) typ.Type {
 		return typeResolutionEngine.SynthExprAt(expr, p, sc)
 	}
-	fnSignatureResolver := buildFnSignatureResolver(input.FunctionLiteralSignatures, input.ParamHintSignatures, typeResolutionEngine)
+	fnSignatureResolver := buildFnSignatureResolver(input.FunctionLiteralSignatures, typeResolutionEngine)
 
 	callMutator := buildCallMutator(input.Types, input.Ctx, exprSynth)
 	services := ScopeServicesFuncs{
@@ -227,34 +227,20 @@ func RunScope(input ScopeInput) ScopeOutput {
 	}
 }
 
-// buildFnSignatureResolver creates a function signature resolver that combines
-// pre-computed literal signatures, parameter hints, and annotation-based resolution.
+// buildFnSignatureResolver resolves the callable type of a function literal:
+// its pre-computed literal signature or its annotations. Parameter hints type
+// the body only and never become part of the callable type.
 func buildFnSignatureResolver(
 	literalSigs LiteralSigsProvider,
-	paramHints map[*ast.FunctionExpr][]typ.Type,
 	engine *synth.Engine,
 ) FunctionSignatureResolver {
 	return FunctionSignatureResolverFunc(func(fn *ast.FunctionExpr, sc *scope.State) *typ.Function {
-		var sig *typ.Function
 		if literalSigs != nil {
 			if s := literalSigs.Lookup(fn); s != nil {
-				sig = s
+				return s
 			}
 		}
-		if sig == nil {
-			sig = engine.ResolveFunctionSignature(fn, sc)
-		}
-		if sig == nil {
-			return nil
-		}
-		if paramHints == nil {
-			return sig
-		}
-		hints := paramHints[fn]
-		if len(hints) == 0 {
-			return sig
-		}
-		return paramhints.MergeIntoSignature(fn, hints, sig)
+		return engine.ResolveFunctionSignature(fn, sc)
 	})
 }
 
@@ -308,7 +294,7 @@ func ExtractParamTypes(
 			}
 			if typ.IsRefinableAnnotation(paramType) {
 				if hint != nil {
-					paramType = hint
+					paramType = paramhints.RefineAnnotation(paramType, hint)
 				} else if synthSig != nil && i < len(synthSig.Params) && synthSig.Params[i].Type != nil {
 					paramType = synthSig.Params[i].Type
 				}
@@ -317,7 +303,7 @@ func ExtractParamTypes(
 				hasExplicitAnnotation = true
 			}
 		} else if hint != nil {
-			paramType = hint
+			paramType = paramhints.BodyParamType(hint)
 		} else if synthSig != nil && i < len(synthSig.Params) && synthSig.Params[i].Type != nil {
 			paramType = synthSig.Params[i].Type
 			isAnnotated = true

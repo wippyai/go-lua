@@ -2,6 +2,7 @@ package ops
 
 import (
 	"fmt"
+	"github.com/wippyai/go-lua/types/kind"
 
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/subtype"
@@ -52,6 +53,11 @@ func InferTypeArgsWithExpectedAndMode(fn *typ.Function, args []typ.Type, isMetho
 		// Expand Instantiated types for structural matching
 		expected = subst.ExpandInstantiated(expected)
 		arg = subst.ExpandInstantiated(arg)
+		// never is the empty type: an argument typed never contributes no
+		// values, so it places no lower bound on a type parameter.
+		if arg != nil && arg.Kind() == kind.Never {
+			continue
+		}
 		arg = normalizeArgForGenericInference(expected, arg)
 		constraint.MatchContra(expected, arg, cs)
 	}

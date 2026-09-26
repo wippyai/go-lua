@@ -337,3 +337,62 @@ func TestIsLiteralStringType(t *testing.T) {
 		t.Error("expected false for number type")
 	}
 }
+
+func TestProjectionOverUnionKeepsUnknownMember(t *testing.T) {
+	timeType := typ.NewInterface("time.Time", nil)
+	untyped := typ.NewRecord().Field("value", typ.Unknown).Field("tag", typ.LiteralString("a")).Build()
+	timer := typ.NewRecord().Field("value", timeType).Field("tag", typ.LiteralString("b")).Build()
+	partial := typ.NewRecord().Field("tag", typ.LiteralString("c")).Build()
+	anyValued := typ.NewRecord().Field("value", typ.Any).Build()
+
+	tests := []struct {
+		name string
+		got  func() (typ.Type, bool)
+		want typ.Type
+	}{
+		{
+			name: "field over union with unknown member",
+			got:  func() (typ.Type, bool) { return Field(typ.NewUnion(untyped, timer), "value") },
+			want: typ.Unknown,
+		},
+		{
+			name: "field over union with unknown member and missing member",
+			got:  func() (typ.Type, bool) { return Field(typ.NewUnion(untyped, timer, partial), "value") },
+			want: typ.NewOptional(typ.Unknown),
+		},
+		{
+			name: "any member dominates unknown member",
+			got:  func() (typ.Type, bool) { return Field(typ.NewUnion(untyped, anyValued), "value") },
+			want: typ.Any,
+		},
+		{
+			name: "concrete members join as a union",
+			got:  func() (typ.Type, bool) { return Field(typ.NewUnion(timer, partial), "value") },
+			want: typ.NewOptional(timeType),
+		},
+		{
+			name: "index over union with unknown member",
+			got: func() (typ.Type, bool) {
+				return Index(typ.NewUnion(untyped, timer), typ.LiteralString("value"))
+			},
+			want: typ.Unknown,
+		},
+		{
+			name: "record indexed by string key with unknown field",
+			got:  func() (typ.Type, bool) { return Index(untyped, typ.String) },
+			want: typ.NewOptional(typ.Unknown),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, ok := tt.got()
+			if !ok {
+				t.Fatalf("projection failed, want %v", tt.want)
+			}
+			if !typ.TypeEquals(got, tt.want) {
+				t.Errorf("got %v, want %v", got, tt.want)
+			}
+		})
+	}
+}

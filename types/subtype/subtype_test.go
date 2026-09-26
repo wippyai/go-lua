@@ -2261,3 +2261,97 @@ func TestNormalizeIntersectionDeepDistribution(t *testing.T) {
 		t.Error("intersection distribution should produce a result")
 	}
 }
+
+// A map whose values are any is a real member of a union, not a placeholder:
+// the union admits every type its map member admits, and a union holding it
+// is a subtype only if the map member is.
+func TestUnionWithAnyValuedMapMember(t *testing.T) {
+	anyMap := typ.NewMap(typ.String, typ.Any)
+	shape := typ.NewRecord().Field("kind", typ.String).Build()
+
+	if !IsSubtype(shape, anyMap) {
+		t.Fatal("record with string keys must subtype {[string]: any}")
+	}
+	if !IsSubtype(shape, typ.NewUnion(anyMap, typ.Integer)) {
+		t.Fatal("record must subtype a union whose map member it subtypes")
+	}
+	if !IsSubtype(shape, typ.NewOptional(anyMap)) {
+		t.Fatal("record must subtype the optional map")
+	}
+	if IsSubtype(typ.NewUnion(anyMap, typ.Integer), typ.Integer) {
+		t.Fatal("union with a map member must not subtype integer")
+	}
+}
+
+// A map's value slot is invariant, with the same widening allowance a mutable
+// record field has: a value type widens into any, as {x: T} <: {x: any} does.
+func TestMapValueWidensIntoAny(t *testing.T) {
+	entry := typ.NewRecord().Field("id", typ.String).Build()
+	if !IsSubtype(typ.NewMap(typ.String, entry), typ.NewMap(typ.String, typ.Any)) {
+		t.Fatal("{[string]: T} must subtype {[string]: any}")
+	}
+	if !IsSubtype(typ.NewRecord().Field("x", entry).Build(), typ.NewRecord().Field("x", typ.Any).Build()) {
+		t.Fatal("record field widening into any must hold")
+	}
+	if IsSubtype(typ.NewMap(typ.String, typ.Any), typ.NewMap(typ.String, entry)) {
+		t.Fatal("{[string]: any} must not subtype {[string]: T}")
+	}
+	if IsSubtype(typ.NewMap(typ.String, typ.Integer), typ.NewMap(typ.String, typ.String)) {
+		t.Fatal("unrelated value types stay incompatible")
+	}
+}
+
+// A value known only to be some table is a dynamic table: it may be used as
+// any table shape, and as nothing else.
+func TestBuiltinTableTopFlowsIntoTableShapes(t *testing.T) {
+	top := typ.NewInterface("table", nil)
+	for _, super := range []typ.Type{
+		typ.NewMap(typ.String, typ.Any),
+		typ.NewArray(typ.Any),
+		typ.NewRecord().OptField("name", typ.String).Build(),
+		typ.NewAlias("Map", typ.NewMap(typ.String, typ.Any)),
+	} {
+		if !IsSubtype(top, super) {
+			t.Errorf("table must subtype %s", super)
+		}
+	}
+	if IsSubtype(top, typ.String) {
+		t.Error("table must not subtype string")
+	}
+}
+
+// A value built by setmetatable(obj, {__index = Class}) reads Class's fields.
+func TestRecordFieldsReachedThroughMetatableIndex(t *testing.T) {
+	methods := typ.NewRecord().Field("get", typ.Func().Param("self", typ.Any).Returns(typ.Number).Build()).Build()
+	mt := typ.NewRecord().Field("__index", methods).Build()
+	obj := typ.NewRecord().Field("n", typ.Number).Build().WithMetatable(mt)
+	reader := typ.NewRecord().
+		Field("n", typ.Number).
+		Field("get", typ.Func().Param("self", typ.Any).Returns(typ.Number).Build()).
+		Build()
+
+	if !IsSubtype(obj, reader) {
+		t.Fatal("inherited method must satisfy the record type")
+	}
+	if IsSubtype(typ.NewRecord().Field("n", typ.Number).Build(), reader) {
+		t.Fatal("without the metatable the method is missing")
+	}
+}
+
+// A session decides each query as IsSubtype does and keeps its decisions for
+// later queries.
+func TestSession_AgreesWithIsSubtype(t *testing.T) {
+	rec := func(v typ.Type) typ.Type { return typ.NewRecord().Field("f", typ.Func().Param("x", v).Returns(v).Build()).Build() }
+	pairs := [][2]typ.Type{
+		{typ.Integer, typ.Number}, {typ.Number, typ.Integer},
+		{rec(typ.String), rec(typ.String)}, {rec(typ.String), rec(typ.Number)},
+	}
+	sess := NewSession()
+	for round := 0; round < 2; round++ {
+		for _, p := range pairs {
+			if got, want := sess.IsSubtype(p[0], p[1]), IsSubtype(p[0], p[1]); got != want {
+				t.Fatalf("round %d: session %v <: %v = %v, want %v", round, p[0], p[1], got, want)
+			}
+		}
+	}
+}

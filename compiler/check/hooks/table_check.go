@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/query/core"
+	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
@@ -20,13 +21,13 @@ type TableCheckResult struct {
 }
 
 // tableCheck validates a table literal against an expected type with union expansion.
-func tableCheck(table *ast.TableExpr, expected typ.Type, synth api.Synth, p cfg.Point) TableCheckResult {
+func tableCheck(mode subtype.Assignability, table *ast.TableExpr, expected typ.Type, synth api.Synth, p cfg.Point) TableCheckResult {
 	if table == nil || expected == nil || synth == nil {
 		return TableCheckResult{}
 	}
 	expected = resolveLocalRefsFromScope(expected, synth, p)
 
-	fields, arrayElems, _, earlyFail := extractTableFields(table, expected, synth, p)
+	fields, arrayElems, _, earlyFail := extractTableFields(mode, table, expected, synth, p)
 	if earlyFail {
 		return TableCheckResult{Handled: true, Compatible: false, Reason: "table shape is incompatible with expected record fields"}
 	}
@@ -34,7 +35,7 @@ func tableCheck(table *ast.TableExpr, expected typ.Type, synth api.Synth, p cfg.
 	if u := unwrap.Union(expected); u != nil {
 		bestReason := ""
 		for _, member := range u.Members {
-			ok, reason := checkTableWithOptionalRelax(fields, arrayElems, member)
+			ok, reason := checkTableWithOptionalRelax(mode, fields, arrayElems, member)
 			if ok {
 				return TableCheckResult{Handled: true, Compatible: true}
 			}
@@ -45,27 +46,27 @@ func tableCheck(table *ast.TableExpr, expected typ.Type, synth api.Synth, p cfg.
 		return TableCheckResult{Handled: true, Compatible: false, Reason: bestReason}
 	}
 
-	ok, reason := checkTableWithOptionalRelax(fields, arrayElems, expected)
+	ok, reason := checkTableWithOptionalRelax(mode, fields, arrayElems, expected)
 	return TableCheckResult{Handled: true, Compatible: ok, Reason: reason}
 }
 
 // tableCompatible validates a table literal against an expected type without union expansion.
-func tableCompatible(table *ast.TableExpr, expected typ.Type, synth api.Synth, p cfg.Point) bool {
+func tableCompatible(mode subtype.Assignability, table *ast.TableExpr, expected typ.Type, synth api.Synth, p cfg.Point) bool {
 	if table == nil || expected == nil || synth == nil {
 		return false
 	}
 	expected = resolveLocalRefsFromScope(expected, synth, p)
 
-	fields, arrayElems, _, earlyFail := extractTableFields(table, expected, synth, p)
+	fields, arrayElems, _, earlyFail := extractTableFields(mode, table, expected, synth, p)
 	if earlyFail {
 		return false
 	}
 
-	ok, _ := checkTableWithOptionalRelax(fields, arrayElems, expected)
+	ok, _ := checkTableWithOptionalRelax(mode, fields, arrayElems, expected)
 	return ok
 }
 
-func extractTableFields(table *ast.TableExpr, expected typ.Type, synth api.Synth, p cfg.Point) ([]ops.FieldDef, []typ.Type, bool, bool) {
+func extractTableFields(mode subtype.Assignability, table *ast.TableExpr, expected typ.Type, synth api.Synth, p cfg.Point) ([]ops.FieldDef, []typ.Type, bool, bool) {
 	recordOnly := false
 	if u := unwrap.Union(expected); u != nil {
 		recordOnly = unionAllRecordLike(u)
@@ -119,7 +120,7 @@ func extractTableFields(table *ast.TableExpr, expected typ.Type, synth api.Synth
 		}
 		if ft == nil {
 			if nested, ok := field.Value.(*ast.TableExpr); ok {
-				if nestedType, ok := synthNestedTableWithExpected(nested, expectedFieldType, synth, p); ok {
+				if nestedType, ok := synthNestedTableWithExpected(mode, nested, expectedFieldType, synth, p); ok {
 					ft = nestedType
 				}
 			}
@@ -136,23 +137,23 @@ func extractTableFields(table *ast.TableExpr, expected typ.Type, synth api.Synth
 	return fields, arrayElems, recordOnly, false
 }
 
-func synthNestedTableWithExpected(table *ast.TableExpr, expected typ.Type, synth api.Synth, p cfg.Point) (typ.Type, bool) {
+func synthNestedTableWithExpected(mode subtype.Assignability, table *ast.TableExpr, expected typ.Type, synth api.Synth, p cfg.Point) (typ.Type, bool) {
 	if table == nil || expected == nil || synth == nil {
 		return nil, false
 	}
 	expected = resolveLocalRefsFromScope(expected, synth, p)
-	fields, arrayElems, _, earlyFail := extractTableFields(table, expected, synth, p)
+	fields, arrayElems, _, earlyFail := extractTableFields(mode, table, expected, synth, p)
 	if earlyFail {
 		return nil, false
 	}
-	result := ops.CheckTable(fields, arrayElems, expected)
+	result := ops.CheckTable(mode, fields, arrayElems, expected)
 	if len(result.Errors) == 0 {
 		if result.Type != nil {
 			return result.Type, true
 		}
 		return expected, true
 	}
-	ok, _ := checkTableWithOptionalRelax(fields, arrayElems, expected)
+	ok, _ := checkTableWithOptionalRelax(mode, fields, arrayElems, expected)
 	if ok {
 		if result.Type != nil {
 			return result.Type, true
@@ -206,8 +207,8 @@ func promoteEmptyTableLiteral(expected typ.Type) typ.Type {
 	}
 }
 
-func checkTableWithOptionalRelax(fields []ops.FieldDef, arrayElems []typ.Type, expected typ.Type) (bool, string) {
-	result := ops.CheckTable(fields, arrayElems, expected)
+func checkTableWithOptionalRelax(mode subtype.Assignability, fields []ops.FieldDef, arrayElems []typ.Type, expected typ.Type) (bool, string) {
+	result := ops.CheckTable(mode, fields, arrayElems, expected)
 	if len(result.Errors) == 0 {
 		return true, ""
 	}

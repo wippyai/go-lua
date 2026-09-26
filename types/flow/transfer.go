@@ -61,6 +61,7 @@ func (s *Solution) processPointReturnChangedKeys(p cfg.Point) []string {
 //   - IndexerAssignments: Dynamic index (t[k] = v) widening empty tables to maps
 //   - TableMutatorAssignments: table.insert-like array element widening
 //   - ContainerMutatorAssignments: channel.send-like element type widening
+//   - FieldWriteEffects: fields written later through an alias
 //
 // Returns keys that changed, enabling worklist-driven convergence.
 func (s *Solution) processAssignmentReturnChangedKeys(p cfg.Point) []string {
@@ -165,6 +166,15 @@ func (s *Solution) processAssignmentReturnChangedKeys(p cfg.Point) []string {
 			continue
 		}
 		if key := s.processContainerMutatorAssignmentReturnKey(p, cm); key != "" {
+			changedKeys = append(changedKeys, key)
+		}
+	}
+
+	for _, fw := range s.inputs.FieldWriteEffects {
+		if fw.Point != p {
+			continue
+		}
+		if key := s.processFieldWriteEffectReturnKey(p, fw); key != "" {
 			changedKeys = append(changedKeys, key)
 		}
 	}
@@ -999,6 +1009,97 @@ func (s *Solution) processContainerMutatorAssignmentReturnKey(p cfg.Point, cm Co
 	return string(pathKey)
 }
 
+// processFieldWriteEffectReturnKey widens the target table with a field that
+// may be written through an alias. Annotated variables keep their declared
+// type. Returns the changed key, or empty string when nothing changed.
+func (s *Solution) processFieldWriteEffectReturnKey(p cfg.Point, fw FieldWriteEffect) string {
+	if fw.Target.Symbol == 0 || fw.Field == "" || fw.Type == nil {
+		return ""
+	}
+	if s.inputs.AnnotatedVars != nil && s.inputs.AnnotatedVars[fw.Target.Symbol] {
+		return ""
+	}
+
+	pathKey := s.pkResolver.KeyAt(p, fw.Target)
+	if pathKey == "" {
+		return ""
+	}
+
+	currentType := s.values[string(pathKey)]
+	var newType typ.Type
+	if fw.Field == IndexerWriteField {
+		m, ok := fw.Type.(*typ.Map)
+		if !ok {
+			return ""
+		}
+		// As for a direct index write, a declared template stands in for an
+		// empty or unresolved current value.
+		base := preferDeclaredTemplateForWiden(currentType, s.declaredTypeAtPath(fw.Target))
+		if base == nil {
+			return ""
+		}
+		newType = widenWithIndexer(base, m.Key, subtype.WidenForInference(m.Value))
+	} else {
+		newType = widenFieldWrite(currentType, fw.Field, subtype.WidenForInference(fw.Type))
+	}
+	if newType == nil || typ.TypeEquals(currentType, newType) {
+		return ""
+	}
+
+	s.setValue(string(pathKey), newType)
+	return string(pathKey)
+}
+
+// widenFieldWrite joins a possibly-written field into the record members of t.
+// A present field keeps its optionality and joins the written type; an absent
+// field is added as optional. A field read as unknown already admits the
+// write, so a record whose field is unknown, or an open record without the
+// field, stays unchanged.
+func widenFieldWrite(t typ.Type, field string, valueType typ.Type) typ.Type {
+	if t == nil {
+		return nil
+	}
+	switch v := t.(type) {
+	case *typ.Record:
+		if existing := v.GetField(field); existing != nil {
+			if typ.IsUnknown(existing.Type) {
+				return v
+			}
+			joined := join.Types(existing.Type, valueType)
+			if typ.TypeEquals(existing.Type, joined) {
+				return v
+			}
+			widened := *existing
+			widened.Type = joined
+			return v.WithField(widened)
+		}
+		if v.Open {
+			return v
+		}
+		return v.WithField(typ.Field{Name: field, Type: valueType, Optional: true})
+	case *typ.Optional:
+		inner := widenFieldWrite(v.Inner, field, valueType)
+		if inner == v.Inner {
+			return v
+		}
+		return typ.NewOptional(inner)
+	case *typ.Union:
+		changed := false
+		members := make([]typ.Type, len(v.Members))
+		for i, m := range v.Members {
+			members[i] = widenFieldWrite(m, field, valueType)
+			if members[i] != m {
+				changed = true
+			}
+		}
+		if !changed {
+			return v
+		}
+		return typ.NewUnion(members...)
+	}
+	return t
+}
+
 // widenContainerElementType widens a container's element type by unioning with a new value type.
 //
 // Supports various container types:
@@ -1333,8 +1434,12 @@ func widenWithIndexer(t typ.Type, keyType, valType typ.Type) typ.Type {
 			return typ.NewMap(keyType, elemType)
 		},
 		Record: func(r *typ.Record) typ.Type {
-			// Empty record {} with no map component becomes a map (backward compat)
-			if len(r.Fields) == 0 && !r.HasMapComponent() {
+			// Empty record {} with no map component becomes an array when written
+			// by integer keys (t[#t + 1] = v), a map otherwise.
+			if len(r.Fields) == 0 && !r.HasMapComponent() && r.Metatable == nil {
+				if isIntegerKey(keyType) {
+					return typ.NewArray(valType)
+				}
 				return typ.NewMap(keyType, valType)
 			}
 			// Record with fields: add or widen map component
@@ -1348,6 +1453,18 @@ func widenWithIndexer(t typ.Type, keyType, valType typ.Type) typ.Type {
 			}
 			// Record with fields but no map component: add map component
 			return rebuildRecordWithMapComponent(r, keyType, valType)
+		},
+		Array: func(a *typ.Array) typ.Type {
+			// Integer writes keep an array and widen its element; other keys
+			// turn it into a map over both key domains.
+			elem := mergeMapValueDomain(a.Element, valType)
+			if isIntegerKey(keyType) {
+				if typ.TypeEquals(a.Element, elem) {
+					return t
+				}
+				return typ.NewArray(elem)
+			}
+			return typ.NewMap(mergeMapKeyDomain(typ.Integer, keyType), elem)
 		},
 		Map: func(m *typ.Map) typ.Type {
 			// Widen existing map by unioning key/value types, preferring non-soft.
@@ -1366,6 +1483,11 @@ func widenWithIndexer(t typ.Type, keyType, valType typ.Type) typ.Type {
 			return t
 		},
 	})
+}
+
+// isIntegerKey reports whether an index key is an integer, as array indices are.
+func isIntegerKey(keyType typ.Type) bool {
+	return keyType != nil && keyType.Kind() != kind.Never && subtype.IsSubtype(keyType, typ.Integer)
 }
 
 // rebuildRecordWithMapComponent creates a new record with an added or updated map component.

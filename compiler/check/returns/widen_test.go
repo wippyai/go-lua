@@ -103,6 +103,38 @@ func TestWidenReturnSummaries_UsesMonotoneJoinForHigherOrderReturns(t *testing.T
 	}
 }
 
+// Incomparable approximations of one higher-order record join into a single
+// record whose fields admit both, rather than a union of the approximations.
+// An any-typed field of an earlier iteration is an unresolved placeholder and
+// yields to the resolved string; a resolved any (cache) joined with nil stays any.
+func TestWidenReturnSummaries_JoinsIncomparableHigherOrderRecords(t *testing.T) {
+	method := typ.Func().Returns(typ.Func().Returns(typ.String).Build()).Build()
+	earlier := typ.NewRecord().
+		Field("run", method).
+		Field("id", typ.Any).
+		Field("cache", typ.Nil).
+		Build()
+	current := typ.NewRecord().
+		Field("run", method).
+		Field("id", typ.String).
+		Field("cache", typ.Any).
+		Build()
+
+	merged := WidenReturnSummaries(
+		api.ReturnSummaries{1: []typ.Type{earlier}},
+		api.ReturnSummaries{1: []typ.Type{current}},
+	)
+	got := merged[1]
+	want := typ.NewRecord().
+		Field("cache", typ.Any).
+		Field("id", typ.String).
+		Field("run", method).
+		Build()
+	if len(got) != 1 || !typ.TypeEquals(got[0], want) {
+		t.Fatalf("expected [%v], got %v", want, got)
+	}
+}
+
 func TestWidenReturnSummaries_InterfaceMethodsDoNotBlockOptionalElision(t *testing.T) {
 	dbType := typ.NewInterface("sql.DB", []typ.Method{
 		{
@@ -366,5 +398,252 @@ func TestMethodTypeHasSelfRecursiveReturn_IgnoresInterfaceMethods(t *testing.T) 
 	})
 	if methodTypeHasSelfRecursiveReturn(methodType, owner) {
 		t.Fatalf("expected interface method signatures to be ignored for self-recursive detection")
+	}
+}
+
+// methodTableApproximation returns the method table after n fixpoint steps
+// of `function t:command() return self end`: step n types command against the
+// table of step n-1, starting from a command that returns nil.
+func methodTableApproximation(n int) *typ.Record {
+	ret := typ.Type(typ.Nil)
+	var table *typ.Record
+	for i := 0; i <= n; i++ {
+		table = typ.NewRecord().
+			Field("command", typ.Func().Param("self", typ.Unknown).Returns(ret, typ.NewOptional(typ.String)).Build()).
+			Field("name", typ.String).
+			Build()
+		ret = typ.NewOptional(table)
+	}
+	return table
+}
+
+func TestMaybeWidenTypeForConvergence_FoldsSelfReturningMethodTable(t *testing.T) {
+	approx := methodTableApproximation(3)
+
+	widened := maybeWidenTypeForConvergence(approx)
+	rec, ok := widened.(*typ.Recursive)
+	if !ok {
+		t.Fatalf("expected a recursive method table, got %s", widened)
+	}
+	for i := 0; i <= 5; i++ {
+		if !subtype.IsSubtype(methodTableApproximation(i), rec) {
+			t.Fatalf("approximation %d must be a subtype of the folded table", i)
+		}
+	}
+	if subtype.IsSubtype(rec, methodTableApproximation(0)) {
+		t.Fatal("folded table must be strictly wider than the first approximation")
+	}
+}
+
+func TestMaybeWidenTypeForConvergence_FoldingReachesFixpoint(t *testing.T) {
+	first := maybeWidenTypeForConvergence(methodTableApproximation(3))
+	second := maybeWidenTypeForConvergence(maybeWidenTypeForConvergence(methodTableApproximation(7)))
+	if !typ.TypeEquals(first, second) {
+		t.Fatalf("folding different approximations must converge:\n%s\n%s", first, second)
+	}
+
+	// The next fixpoint step types command against the folded table.
+	step := typ.NewRecord().
+		Field("command", typ.Func().Param("self", typ.Unknown).Returns(typ.NewOptional(first), typ.NewOptional(typ.String)).Build()).
+		Field("name", typ.String).
+		Build()
+	if again := maybeWidenTypeForConvergence(step); !typ.TypeEquals(again, first) {
+		t.Fatalf("step over the folded table must fold back to it:\n%s\n%s", again, first)
+	}
+}
+
+func TestMaybeWidenTypeForConvergence_KeepsRecordsWithOtherFields(t *testing.T) {
+	inner := typ.NewRecord().
+		Field("command", typ.Func().Param("self", typ.Unknown).Returns(typ.Nil).Build()).
+		Build()
+	outer := typ.NewRecord().
+		Field("command", typ.Func().Param("self", typ.Unknown).Returns(inner).Build()).
+		Field("name", typ.String).
+		Build()
+
+	if widened := maybeWidenTypeForConvergence(outer); !typ.TypeEquals(widened, subtype.WidenForInference(outer)) {
+		t.Fatalf("a nested record with different fields is not an approximation of the table, got %s", widened)
+	}
+}
+
+func TestJoinIterationFact_ReadonlyFieldJoinsToUpperBound(t *testing.T) {
+	narrow := typ.NewRecord().
+		ReadonlyField("route", typ.Func().Returns(typ.Nil).Build()).
+		Build()
+	wide := typ.NewRecord().
+		ReadonlyField("route", typ.Func().Returns(typ.NewOptional(typ.Boolean)).Build()).
+		Build()
+
+	for _, got := range []typ.Type{joinIterationFact(narrow, wide), joinIterationFact(wide, narrow)} {
+		if !typ.TypeEquals(got, wide) {
+			t.Fatalf("expected the wider record %s, got %s", wide, got)
+		}
+	}
+}
+
+// A mutable field is invariant: a stale wider field type would reject the
+// values the current fact describes, so the current field type wins.
+func TestJoinIterationFact_MutableFieldTakesCurrentType(t *testing.T) {
+	previous := typ.NewRecord().Field("days", typ.NewArray(typ.NewOptional(typ.Number))).Build()
+	current := typ.NewRecord().Field("days", typ.NewArray(typ.Number)).Build()
+
+	got := joinIterationFact(previous, current)
+	if !typ.TypeEquals(got, current) {
+		t.Fatalf("expected %s, got %s", current, got)
+	}
+	if !subtype.IsSubtype(current, got) {
+		t.Fatalf("joined fact %s must admit the current values %s", got, current)
+	}
+}
+
+// An optional fact joins its present values field by field and stays
+// optional, so an earlier approximation of a record does not remain as a
+// separate union member beside the resolved record.
+func TestJoinIterationFact_OptionalRecordsJoinTheirPresentValues(t *testing.T) {
+	earlier := typ.NewOptional(typ.NewRecord().
+		Field("cache", typ.Nil).
+		Field("session_id", typ.Unknown).
+		Build())
+	current := typ.NewOptional(typ.NewRecord().
+		Field("cache", typ.Any).
+		Field("session_id", typ.String).
+		Build())
+
+	got := joinIterationFact(earlier, current)
+	if !typ.TypeEquals(got, current) {
+		t.Fatalf("expected %s, got %s", current, got)
+	}
+}
+
+func TestJoinParamHint_KeepsFieldsDiscoveredByEitherIteration(t *testing.T) {
+	earlier := typ.NewRecord().
+		Field("route", typ.Func().Returns(typ.Nil).Build()).
+		Field("id", typ.Integer).
+		Build()
+	later := typ.NewRecord().
+		Field("route", typ.Func().Returns(typ.NewOptional(typ.Boolean)).Build()).
+		Field("name", typ.String).
+		Build()
+	want := typ.NewRecord().
+		Field("route", typ.Func().Returns(typ.NewOptional(typ.Boolean)).Build()).
+		Field("id", typ.Integer).
+		Field("name", typ.String).
+		Build()
+
+	if got := joinIterationFact(earlier, later); !typ.TypeEquals(got, want) {
+		t.Fatalf("expected %s, got %s", want, got)
+	}
+}
+
+func TestJoinParamHint_UnknownFieldYieldsToResolvedField(t *testing.T) {
+	card := typ.NewRecord().Field("name", typ.String).Build()
+	earlier := typ.NewRecord().SetOpen(true).
+		Field("card", typ.Unknown).
+		Field("limit", typ.Integer).
+		Build()
+	later := typ.NewRecord().SetOpen(true).
+		Field("card", card).
+		Field("limit", typ.Integer).
+		Build()
+
+	for _, got := range []typ.Type{joinIterationFact(earlier, later), joinIterationFact(later, earlier)} {
+		if !typ.TypeEquals(got, later) {
+			t.Fatalf("expected %s, got %s", later, got)
+		}
+	}
+}
+
+func TestJoinParamHint_KeepsPreviousHintWhenItAdmitsTheCurrentOne(t *testing.T) {
+	narrow := typ.NewRecord().ReadonlyField("size", typ.Integer).Build()
+	wide := typ.NewRecord().ReadonlyField("size", typ.Number).Build()
+	previous := typ.NewUnion(typ.String, narrow, wide)
+	current := typ.NewUnion(typ.String, wide)
+	if !subtype.IsSubtype(previous, current) || !subtype.IsSubtype(current, previous) {
+		t.Fatal("test hints must be equivalent")
+	}
+
+	if got := joinIterationFact(previous, current); got != previous {
+		t.Fatalf("expected the previous hint %s, got %s", previous, got)
+	}
+	if got := joinIterationFact(current, previous); got != current {
+		t.Fatalf("expected the previous hint %s, got %s", current, got)
+	}
+}
+
+func TestJoinParamHint_UnknownYieldsToHintWithPlaceholderMembers(t *testing.T) {
+	withPlaceholder := typ.NewUnion(typ.NewRecord().SetOpen(true).Build(), typ.NewMap(typ.String, typ.Any))
+
+	for _, got := range []typ.Type{joinIterationFact(typ.Unknown, withPlaceholder), joinIterationFact(withPlaceholder, typ.Unknown)} {
+		if !typ.TypeEquals(got, withPlaceholder) {
+			t.Fatalf("expected %s, got %s", withPlaceholder, got)
+		}
+	}
+}
+
+// linkedNodeApproximation is the written type of `node.parent = current;
+// current = node` after n fixpoint steps; the first step saw the name as
+// unresolved.
+func linkedNodeApproximation(n int) typ.Type {
+	var parent typ.Type = typ.Nil
+	name := typ.Unknown
+	var node *typ.Record
+	for i := 0; i <= n; i++ {
+		node = typ.NewRecord().
+			Field("name", name).
+			Field("parent", parent).
+			Build()
+		parent = typ.NewOptional(node)
+		name = typ.String
+	}
+	return node
+}
+
+func TestWidenFieldWrites_FoldsNestedRecordApproximations(t *testing.T) {
+	const fn, target = 1, 2
+	write := func(t typ.Type) api.FieldWrites {
+		return api.FieldWrites{fn: {target: {"current": t}}}
+	}
+
+	first := WidenFieldWrites(write(linkedNodeApproximation(2)), write(linkedNodeApproximation(3)))[fn][target]["current"]
+	if _, ok := first.(*typ.Recursive); !ok {
+		t.Fatalf("expected a recursive node type, got %s", first)
+	}
+	for i := 0; i <= 5; i++ {
+		if !informationBelow(linkedNodeApproximation(i), first, make(map[[2]typ.Type]bool), subtype.NewSession()) {
+			t.Fatalf("approximation %d must lie below the folded node", i)
+		}
+	}
+
+	// The next step writes a node whose parent is the folded type.
+	step := typ.NewRecord().
+		Field("name", typ.String).
+		Field("parent", typ.NewOptional(first)).
+		Build()
+	second := WidenFieldWrites(write(first), write(step))[fn][target]["current"]
+	if !typ.TypeEquals(first, second) {
+		t.Fatalf("a step over the folded node must fold back to it:\n%s\n%s", first, second)
+	}
+}
+
+func TestInformationBelow_UnresolvedFieldIsBelowResolved(t *testing.T) {
+	early := typ.NewRecord().Field("name", typ.Unknown).Build()
+	late := typ.NewRecord().Field("name", typ.String).Build()
+	if !informationBelow(early, late, make(map[[2]typ.Type]bool), subtype.NewSession()) {
+		t.Fatal("an unresolved field must lie below its resolved type")
+	}
+	other := typ.NewRecord().Field("name", typ.Integer).Build()
+	if informationBelow(other, late, make(map[[2]typ.Type]bool), subtype.NewSession()) {
+		t.Fatal("a conflicting resolved field must not lie below another")
+	}
+}
+
+// Arrays join element by element across iterations: an earlier approximation
+// of the element yields to the current one instead of staying a union member.
+func TestJoinIterationFact_ArraysJoinByElement(t *testing.T) {
+	early := typ.NewArray(typ.NewRecord().Field("name", typ.Unknown).Build())
+	late := typ.NewArray(typ.NewRecord().Field("name", typ.String).OptField("content", typ.String).Build())
+	got := joinIterationFact(early, late)
+	if !typ.TypeEquals(got, late) {
+		t.Fatalf("joinIterationFact(%v, %v) = %v, want %v", early, late, got, late)
 	}
 }

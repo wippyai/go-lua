@@ -340,7 +340,7 @@ func (s *Synthesizer) synthIdentCore(ex *ast.IdentExpr, p cfg.Point, sc *scope.S
 			}
 		}
 		if sc != nil {
-			if t, ok := sc.LookupType(ex.Value); ok && t != nil {
+			if t, ok := sc.LookupValueType(ex.Value); ok && t != nil {
 				return typ.NewMeta(t)
 			}
 		}
@@ -467,7 +467,7 @@ fallback:
 	// type values to flow through module exports as first-class values,
 	// supporting patterns like mylib.Config:is(data) across module boundaries.
 	if sc != nil {
-		if t, ok := sc.LookupType(ex.Value); ok && t != nil {
+		if t, ok := sc.LookupValueType(ex.Value); ok && t != nil {
 			return typ.NewMeta(t)
 		}
 	}

@@ -8,6 +8,7 @@ import (
 	fbcore "github.com/wippyai/go-lua/compiler/check/flowbuild/core"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/mutator"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/resolve"
+	"github.com/wippyai/go-lua/compiler/check/infer/paramhints"
 	"github.com/wippyai/go-lua/compiler/check/phase"
 	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/compiler/check/scope"
@@ -46,19 +47,17 @@ func (i *Inferencer) buildParameterOverlay(ctx *returnInferenceContext) map[cfg.
 		}
 		if typ.IsAbsentOrUnknown(paramType) {
 			if ctx.info.ParamHints != nil && i < len(ctx.info.ParamHints) && ctx.info.ParamHints[i] != nil {
-				paramType = ctx.info.ParamHints[i]
+				paramType = paramhints.BodyParamType(ctx.info.ParamHints[i])
 			}
 		}
 		if slot.TypeAnnotation != nil {
 			resolved := ctx.engine.ResolveType(slot.TypeAnnotation, ctx.resolveScope)
 			if resolved != nil {
-				if typ.IsRefinableAnnotation(resolved) {
-					if typ.IsAbsentOrUnknown(paramType) {
-						paramType = resolved
-					}
-				} else {
-					paramType = resolved
+				hint := typ.Type(nil)
+				if ctx.info.ParamHints != nil && i < len(ctx.info.ParamHints) {
+					hint = ctx.info.ParamHints[i]
 				}
+				paramType = paramhints.RefineAnnotation(resolved, hint)
 			}
 		}
 		overlay[slot.Symbol] = paramType
@@ -705,7 +704,7 @@ func (i *Inferencer) applyFieldMutations(ctx *returnInferenceContext, stage *ove
 	var capturedByCallee map[cfg.SymbolID]map[cfg.SymbolID]map[string]typ.Type
 	if i.store != nil {
 		capturedParent := api.ParentScopeForGraph(i.store, stage.fnGraph.ID(), ctx.info.DefScope)
-		capturedByCallee = i.store.GetCapturedFieldAssignsSnapshot(stage.fnGraph, capturedParent)
+		capturedByCallee = i.store.GetFieldWritesSnapshot(stage.fnGraph, capturedParent)
 	}
 	calleeTypeResolver := func(info *cfg.CallInfo, p cfg.Point) typ.Type {
 		return resolve.CalleeType(info, p, stage.enrichedSynthAdapter, nil, nil, stage.fnGraph, nestedBindings, i.store.ModuleBindings())

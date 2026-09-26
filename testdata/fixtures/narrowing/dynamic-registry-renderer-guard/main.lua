@@ -19,4 +19,7 @@ local page = page_registry.build_page({
     data = { data_func = "load_data" },
 })
 
-return get_page_data(page) -- expect-error: expected {data_func?: boolean | string
+-- get_page_data is unannotated: its parameter type comes from this call site,
+-- so the call is not checked against it. The mismatch is reported in the body,
+-- where string is required (lines 12 and 13).
+return get_page_data(page)

@@ -88,9 +88,37 @@ func ApplyEffectTransform(fn *typ.Function, args []typ.Type, returnIdx int, base
 			return result
 		}
 		return baseReturn
+	case effect.WithMetatable:
+		if withMeta := tableWithMetatable(resolveParamType(args, transform.Table), resolveParamType(args, transform.Metatable)); withMeta != nil {
+			return withMeta
+		}
+		return baseReturn
 	default:
 		return baseReturn
 	}
+}
+
+// tableWithMetatable attaches meta as the metatable of a record table. A nil
+// or absent metatable leaves the table as it is. Only records carry a
+// metatable; other table shapes are returned unchanged.
+func tableWithMetatable(table, meta typ.Type) typ.Type {
+	if table == nil {
+		return nil
+	}
+	rec, ok := unwrap.Alias(table).(*typ.Record)
+	if !ok {
+		return table
+	}
+	if meta == nil || unwrap.IsNilType(meta) {
+		return table
+	}
+	if inner := unwrap.Optional(meta); inner != nil {
+		meta = inner
+	}
+	if _, ok := unwrap.Alias(meta).(*typ.Record); !ok {
+		return table
+	}
+	return rec.WithMetatable(meta)
 }
 
 func resolveParamType(args []typ.Type, ref effect.ParamRef) typ.Type {

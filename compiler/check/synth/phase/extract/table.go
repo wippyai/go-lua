@@ -49,43 +49,7 @@ func (s *Synthesizer) SynthTableWithExpected(ex *ast.TableExpr, sc *scope.State,
 	expectedFields := s.resolveExpectedFields(expected)
 	selfType := expected
 	if selfType == nil {
-		selfBuilder := typ.NewRecord()
-		fieldCount := 0
-		for _, field := range ex.Fields {
-			if field.Key == nil {
-				continue
-			}
-			if _, ok := field.Value.(*ast.FunctionExpr); ok {
-				continue
-			}
-			switch k := field.Key.(type) {
-			case *ast.StringExpr:
-				ft := recurse(field.Value)
-				if ft == nil {
-					ft = typ.Unknown
-				}
-				if inner, optional := typ.SplitNilableFieldType(ft); optional {
-					selfBuilder.OptField(k.Value, inner)
-				} else {
-					selfBuilder.Field(k.Value, ft)
-				}
-				fieldCount++
-			case *ast.IdentExpr:
-				ft := recurse(field.Value)
-				if ft == nil {
-					ft = typ.Unknown
-				}
-				if inner, optional := typ.SplitNilableFieldType(ft); optional {
-					selfBuilder.OptField(k.Value, inner)
-				} else {
-					selfBuilder.Field(k.Value, ft)
-				}
-				fieldCount++
-			}
-		}
-		if fieldCount > 0 {
-			selfType = selfBuilder.Build()
-		}
+		selfType = phasecore.ImplicitSelfType(ex, recurse)
 	}
 
 	builder := typ.NewRecord()
@@ -152,14 +116,14 @@ func (s *Synthesizer) SynthTableWithExpected(ex *ast.TableExpr, sc *scope.State,
 		} else {
 			result = typ.NewTuple(arrayElements...)
 		}
-		if expected != nil && len(ops.CheckTable(nil, arrayElements, expected).Errors) == 0 {
+		if expected != nil && len(ops.CheckTable(querycore.AssignabilityOf(s.deps.Ctx), nil, arrayElements, expected).Errors) == 0 {
 			return expected
 		}
 		return result
 	}
 
 	result := builder.Build()
-	if expected != nil && len(ops.CheckTable(fieldDefs, arrayElements, expected).Errors) == 0 {
+	if expected != nil && len(ops.CheckTable(querycore.AssignabilityOf(s.deps.Ctx), fieldDefs, arrayElements, expected).Errors) == 0 {
 		return expected
 	}
 	return result

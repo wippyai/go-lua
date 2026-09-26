@@ -231,7 +231,7 @@ func fieldInUnion(u *typ.Union, name string, depth int) (typ.Type, bool) {
 		return nil, false
 	}
 
-	out := typ.NewUnion(types...)
+	out := joinProjections(types...)
 	if missingFromSome {
 		out = typ.NewOptional(out)
 	}

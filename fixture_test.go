@@ -16,9 +16,15 @@ func TestFixtures(t *testing.T) {
 			if s.Suite.Skip != "" {
 				t.Skip(s.Suite.Skip)
 			}
-			t.Run("check", func(t *testing.T) {
-				runCheckPhase(t, s)
-			})
+			for _, mode := range checkModes(s) {
+				name := "check"
+				if mode != modeGradual {
+					name = "check-" + mode
+				}
+				t.Run(name, func(t *testing.T) {
+					runCheckPhase(t, s, mode)
+				})
+			}
 			t.Run("run", func(t *testing.T) {
 				runExecPhase(t, s)
 			})
@@ -63,6 +69,6 @@ func TestFixtureOrder_GenericRegistryThenMultiReturn(t *testing.T) {
 		t.Fatalf("missing target suites: generic=%q multi=%q", generic.Name, multi.Name)
 	}
 
-	runCheckPhase(t, generic)
-	runCheckPhase(t, multi)
+	runCheckPhase(t, generic, modeGradual)
+	runCheckPhase(t, multi, modeGradual)
 }

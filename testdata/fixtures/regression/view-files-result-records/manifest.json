@@ -1,0 +1,4 @@
+{
+  "description": "kickside uploads view_files trait: rendering results whose optional fields are guarded.",
+  "files": ["artifact_repo.lua", "main.lua"]
+}

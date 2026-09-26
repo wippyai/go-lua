@@ -405,7 +405,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 									link.OnTruthy = constraint.And(link.OnTruthy, constraint.FromConstraints(constraint.IsNil{Path: valuePath}))
 									var checkType typ.Type
 									if sc != nil {
-										if resolved, ok := sc.LookupType(callInfo.TypeCheckName); ok && resolved != nil {
+										if resolved, ok := sc.LookupValueType(callInfo.TypeCheckName); ok && resolved != nil {
 											checkType = resolve.Ref(resolved, sc)
 										}
 									}
@@ -836,8 +836,12 @@ func buildLiftedDynamicIndexerAssignment(
 		valType = wrapStepValue(steps[i], valType, graph, bindings, synth, symResolver, p)
 	}
 
+	// The source value is the entry itself only when the dynamic step is the
+	// last one; otherwise the entry is the wrapped shape built above, and
+	// resolving the source path at solve time would replace it with the
+	// field's value.
 	valuePath := constraint.Path{}
-	if source != nil {
+	if source != nil && firstDynamic == len(steps)-1 {
 		if sp := path.FromExprWithBindings(source, constResolver, bindings); !sp.IsEmpty() {
 			valuePath = constraint.Path{
 				Root:     resolve.RootNameFromBindings(bindings, sp.Symbol, sp.Root),

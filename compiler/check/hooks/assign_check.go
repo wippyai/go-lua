@@ -39,6 +39,7 @@ import (
 	"github.com/wippyai/go-lua/types/diag"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/flow/join"
+	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -49,6 +50,7 @@ func CheckAssignments(graph *cfg.Graph, scopes map[cfg.Point]*scope.State, narro
 		return nil
 	}
 
+	mode := core.AssignabilityOf(narrowSynth.Context())
 	annotated := make(map[cfg.SymbolID]typ.Type)
 	assigned := make(map[cfg.SymbolID]bool)
 	graph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
@@ -173,7 +175,7 @@ func CheckAssignments(graph *cfg.Graph, scopes map[cfg.Point]*scope.State, narro
 			}
 
 			if table, ok := source.(*ast.TableExpr); ok && !sourceUsesTarget {
-				if result := tableCheck(table, declaredType, narrowSynth, p); result.Handled {
+				if result := tableCheck(mode, table, declaredType, narrowSynth, p); result.Handled {
 					if result.Compatible {
 						return
 					}
@@ -233,7 +235,7 @@ func CheckAssignments(graph *cfg.Graph, scopes map[cfg.Point]*scope.State, narro
 				}
 			}
 
-			if !subtype.IsSubtype(valueType, declaredType) {
+			if !mode.Assignable(valueType, declaredType) {
 				pos := diag.Position{File: sourceName, Line: source.Line(), Column: source.Column()}
 				span := ast.SpanOf(source)
 				msg := formatAssignMismatch(valueType, declaredType)

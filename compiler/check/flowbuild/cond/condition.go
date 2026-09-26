@@ -58,7 +58,6 @@ import (
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
-	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 // BranchConditions holds predicate conditions for true and false branches.
@@ -266,6 +265,10 @@ func (ce *ConditionExtractor) ConstraintsFromConditionExpr(expr ast.Expr) Branch
 		}
 	}
 
+	if composed, ok := ce.composedBranchConditions(expr); ok {
+		return composed
+	}
+
 	onTrue := ce.ConditionFromExpr(expr)
 	if onTrue.IsFalse() {
 		return BranchConditions{
@@ -292,6 +295,80 @@ func (ce *ConditionExtractor) ConstraintsFromConditionExpr(expr ast.Expr) Branch
 		OnTrue:  onTrue,
 		OnFalse: constraint.Not(onTrue),
 	}
+}
+
+// composedBranchConditions builds the branch conditions of a logical operator
+// from those of its operands, and those of an ordered comparison.
+//
+// An operand's facts land exactly on the paths where it was evaluated:
+// `A or B` is false only when both are false, and true when A is true or when
+// A is false and B is true. An ordered comparison that evaluates proves its
+// operand has the compared type whatever its outcome, so both branches carry
+// that type; negating it would drop the operand from the false branch.
+func (ce *ConditionExtractor) composedBranchConditions(expr ast.Expr) (BranchConditions, bool) {
+	switch e := expr.(type) {
+	case *ast.LogicalOpExpr:
+		left := ce.ConstraintsFromConditionExpr(e.Lhs)
+		right := ce.ConstraintsFromConditionExpr(e.Rhs)
+		switch e.Operator {
+		case "and":
+			return BranchConditions{
+				OnTrue:  constraint.And(left.OnTrue, right.OnTrue),
+				OnFalse: constraint.Or(left.OnFalse, constraint.And(left.OnTrue, right.OnFalse)),
+			}, true
+		case "or":
+			return BranchConditions{
+				OnTrue:  constraint.Or(left.OnTrue, constraint.And(left.OnFalse, right.OnTrue)),
+				OnFalse: constraint.And(left.OnFalse, right.OnFalse),
+			}, true
+		}
+	case *ast.UnaryNotOpExpr:
+		inner := ce.ConstraintsFromConditionExpr(e.Expr)
+		return BranchConditions{OnTrue: inner.OnFalse, OnFalse: inner.OnTrue}, true
+	case *ast.RelationalOpExpr:
+		switch e.Operator {
+		case "<", "<=", ">", ">=":
+			evaluated := ce.conditionFromOrderedComparison(e.Lhs, e.Rhs)
+			return BranchConditions{OnTrue: evaluated, OnFalse: evaluated}, true
+		case "==", "~=":
+			var indexed ast.Expr
+			if literal.IsNilExpr(e.Rhs) {
+				indexed = e.Lhs
+			} else if literal.IsNilExpr(e.Lhs) {
+				indexed = e.Rhs
+			}
+			get, isGet := indexed.(*ast.AttrGetExpr)
+			if !isGet {
+				break
+			}
+			keyOf, ok := ce.dynamicKeyOf(get)
+			if !ok {
+				break
+			}
+			present := constraint.FromConstraints(keyOf)
+			if e.Operator == "==" {
+				return BranchConditions{OnTrue: constraint.TrueCondition(), OnFalse: present}, true
+			}
+			return BranchConditions{OnTrue: present, OnFalse: constraint.TrueCondition()}, true
+		}
+	}
+	return BranchConditions{}, false
+}
+
+// dynamicKeyOf returns the fact that a read t[k] with a variable key found an
+// entry: k is a key of t. Reads of t[k] at the same versions of t and k then
+// see the entry as present.
+func (ce *ConditionExtractor) dynamicKeyOf(get *ast.AttrGetExpr) (constraint.KeyOf, bool) {
+	key, ok := get.Key.(*ast.IdentExpr)
+	if !ok {
+		return constraint.KeyOf{}, false
+	}
+	tablePath := ce.pathFromExpr(get.Object)
+	keyPath := ce.pathFromExpr(key)
+	if tablePath.IsEmpty() || keyPath.IsEmpty() || keyPath.Symbol == 0 {
+		return constraint.KeyOf{}, false
+	}
+	return constraint.KeyOf{Table: tablePath, Key: keyPath}, true
 }
 
 // conditionFromExpr extracts predicate conditions from an expression (true branch).
@@ -346,6 +423,9 @@ func (ce *ConditionExtractor) ConditionFromExpr(expr ast.Expr) constraint.Condit
 	case *ast.AttrGetExpr:
 		path := ce.pathFromExpr(e)
 		if path.IsEmpty() {
+			if keyOf, ok := ce.dynamicKeyOf(e); ok {
+				return constraint.FromConstraints(keyOf)
+			}
 			return constraint.TrueCondition()
 		}
 		result := []constraint.Constraint{constraint.Truthy{Path: path}}
@@ -607,52 +687,12 @@ func (ce *ConditionExtractor) calleeHasEffect(call *ast.FuncCallExpr, want func(
 	// Fall back to extracting effect from synthesized type.
 	if ce.Synth != nil {
 		if t := ce.Synth(call.Func, ce.P); t != nil {
-			if row, ok := effectRowFromType(t); ok {
+			if row, ok := core.EffectRowOf(t); ok {
 				return want(row)
 			}
 		}
 	}
 	return false
-}
-
-func effectRowFromType(t typ.Type) (effect.Row, bool) {
-	if t == nil {
-		return effect.Row{}, false
-	}
-	switch v := unwrap.Alias(t).(type) {
-	case *typ.Function:
-		row, ok := v.Effects.(effect.Row)
-		return row, ok
-	case *typ.Optional:
-		return effectRowFromType(v.Inner)
-	case *typ.Union:
-		var merged effect.Row
-		for _, m := range v.Members {
-			if row, ok := effectRowFromType(m); ok {
-				merged = merged.With(row.Labels...)
-			}
-		}
-		if len(merged.Labels) > 0 {
-			return merged, true
-		}
-		return effect.Row{}, false
-	case *typ.Intersection:
-		var merged effect.Row
-		for _, m := range v.Members {
-			if row, ok := effectRowFromType(m); ok {
-				merged = merged.With(row.Labels...)
-			}
-		}
-		if len(merged.Labels) > 0 {
-			return merged, true
-		}
-		return effect.Row{}, false
-	case *typ.Instantiated:
-		if resolved, err := core.ResolveInstantiated(v); err == nil {
-			return effectRowFromType(resolved)
-		}
-	}
-	return effect.Row{}, false
 }
 
 // conditionFromInequality handles ~= comparisons.

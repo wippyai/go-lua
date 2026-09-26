@@ -13,19 +13,48 @@ import (
 // from a function signature when no explicit effect labels are present.
 //
 // Rule:
-//   - Signature must have exactly two returns.
-//   - Error slot is selected by conventional position with type-based precedence:
+//   - Two returns: the error slot is selected by conventional position with
+//     type-based precedence:
 //   - Prefer return[1] when it is Optional<LuaError> or Optional<string>.
 //   - Otherwise allow return[0] only when return[1] is not error-like and
 //     return[0] is Optional<LuaError>.
 //   - The other position is treated as the value slot.
+//   - More returns: the last slot is the error when it is Optional<LuaError>
+//     or Optional<string>; every other optional slot is a value slot inversely
+//     correlated with it and co-correlated with the other value slots, as in
+//     `(a?, b?, c?, err?)`: the values are present together exactly when the
+//     error is absent. A slot that is never nil carries its value on both
+//     paths and takes no part.
 //
 // This encodes the conventional `(value?, err?)` API shape while keeping the
 // policy centralized and deterministic.
 func InferErrorReturnConvention(fnType typ.Type) ([]flow.ReturnCorrelation, []flow.ReturnCorrelation) {
 	fn := unwrap.Function(fnType)
-	if fn == nil || len(fn.Returns) != 2 {
+	if fn == nil || len(fn.Returns) < 2 {
 		return nil, nil
+	}
+	if n := len(fn.Returns); n > 2 {
+		if !isOptionalErrorLike(fn.Returns[n-1]) {
+			return nil, nil
+		}
+		var values []int
+		for v := 0; v < n-1; v++ {
+			if unwrap.IsOptionalLike(fn.Returns[v]) {
+				values = append(values, v)
+			}
+		}
+		if len(values) == 0 {
+			return nil, nil
+		}
+		inverse := make([]flow.ReturnCorrelation, 0, len(values))
+		var co []flow.ReturnCorrelation
+		for i, v := range values {
+			inverse = append(inverse, flow.ReturnCorrelation{ValueIndex: v, ErrorIndex: n - 1})
+			for _, w := range values[i+1:] {
+				co = append(co, flow.ReturnCorrelation{ValueIndex: v, ErrorIndex: w})
+			}
+		}
+		return inverse, co
 	}
 
 	errIdx := -1

@@ -18,7 +18,7 @@ state.active_sessions["s1"] = {
 
 for _, session_info in pairs(state.active_sessions) do
     local last_activity = session_info.last_activity or session_info.created_at
-    local elapsed = now:sub(last_activity)
+    local elapsed = now:sub(last_activity) -- expect-error[strict-any]: argument 1
     return elapsed:seconds()
 end
 

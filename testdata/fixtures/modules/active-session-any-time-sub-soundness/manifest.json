@@ -1,7 +1,14 @@
 {
-  "description": "Using any-typed session timestamps in time.Time:sub is a sound checker error",
-  "packages": ["time"],
-  "check": {"errors": 1},
+  "description": "any-typed session timestamps are consistent with time.Time:sub under gradual any and rejected under strict any",
+  "packages": [
+    "time"
+  ],
+  "check": {
+    "modes": [
+      "gradual",
+      "strict-any"
+    ]
+  },
   "files": [
     "session_state.lua",
     "main.lua"

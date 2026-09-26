@@ -469,6 +469,18 @@ func (s *Synthesizer) synthLogicalOpCore(ex *ast.LogicalOpExpr, recurse ExprSynt
 func (s *Synthesizer) synthLogicalOpWithNarrowing(ex *ast.LogicalOpExpr, p cfg.Point, sc *scope.State, narrower api.FlowOps, recurse ExprSynth) typ.Type {
 	left := recurse(ex.Lhs)
 
+	// A type() guard on the left narrows the value it tests for the right
+	// operand: `type(x) == "k" and x` sees x as k, as does `type(x) ~= "k" or x`.
+	if guarded, ok := s.typeGuardNarrowing(ex, p, sc, narrower); ok {
+		right := s.SynthExpr(ex.Rhs, p, guarded)
+		switch ex.Operator {
+		case "and":
+			return ops.LogicalAndTyped(left, right)
+		case "or":
+			return ops.LogicalOrTyped(left, right)
+		}
+	}
+
 	// Extract path for LHS expression
 	var lhsPath constraint.Path
 	if s.deps.Paths != nil {
@@ -514,6 +526,62 @@ func (s *Synthesizer) synthLogicalOpWithNarrowing(ex *ast.LogicalOpExpr, p cfg.P
 	return s.synthLogicalOpCore(ex, recurse)
 }
 
+// typeGuardNarrowing returns flow ops under which the right operand of ex is
+// evaluated when its left operand is a type() test of a path: the test holds
+// for the right operand of `and` when it compares with ==, and of `or` when
+// it compares with ~=.
+func (s *Synthesizer) typeGuardNarrowing(ex *ast.LogicalOpExpr, p cfg.Point, sc *scope.State, narrower api.FlowOps) (api.FlowOps, bool) {
+	rel, ok := ex.Lhs.(*ast.RelationalOpExpr)
+	if !ok || s.deps.Paths == nil {
+		return nil, false
+	}
+	holds := (ex.Operator == "and" && rel.Operator == "==") || (ex.Operator == "or" && rel.Operator == "~=")
+	if !holds {
+		return nil, false
+	}
+	call, lit := typeCallAndLiteral(rel.Lhs, rel.Rhs)
+	if call == nil {
+		return nil, false
+	}
+	key, ok := narrow.KnownBuiltinTypeKey(lit.Value)
+	if !ok || !s.isTypePredicateCall(call, p, narrower) {
+		return nil, false
+	}
+	path := s.deps.Paths(p, call.Args[0], sc)
+	if path.IsEmpty() {
+		return nil, false
+	}
+	current := s.SynthExpr(call.Args[0], p, narrower)
+	narrowed := narrow.ByTypeKey(current, key, nil)
+	if narrowed == nil || typ.IsNever(narrowed) {
+		return nil, false
+	}
+	return &localNarrowOps{inner: narrower, overridePath: path, overrideType: narrowed}, true
+}
+
+// typeCallAndLiteral splits a comparison into a one-argument call and a string
+// literal, in either order.
+func typeCallAndLiteral(a, b ast.Expr) (*ast.FuncCallExpr, *ast.StringExpr) {
+	if call, ok := a.(*ast.FuncCallExpr); ok && len(call.Args) == 1 && call.Receiver == nil {
+		if lit, ok := b.(*ast.StringExpr); ok {
+			return call, lit
+		}
+	}
+	if call, ok := b.(*ast.FuncCallExpr); ok && len(call.Args) == 1 && call.Receiver == nil {
+		if lit, ok := a.(*ast.StringExpr); ok {
+			return call, lit
+		}
+	}
+	return nil, nil
+}
+
+// isTypePredicateCall reports whether call's callee declares the type
+// predicate effect, as the builtin type does.
+func (s *Synthesizer) isTypePredicateCall(call *ast.FuncCallExpr, p cfg.Point, narrower api.FlowOps) bool {
+	row, ok := querycore.EffectRowOf(s.SynthExpr(call.Func, p, narrower))
+	return ok && row.HasTypePredicate()
+}
+
 // synthArithmeticOpCore synthesizes type for arithmetic operators.
 func (s *Synthesizer) synthArithmeticOpCore(ex *ast.ArithmeticOpExpr, recurse ExprSynth) typ.Type {
 	left := recurse(ex.Lhs)
@@ -528,12 +596,13 @@ func (s *Synthesizer) synthUnaryMinusCore(ex *ast.UnaryMinusOpExpr, recurse Expr
 }
 
 // expandValuesCore expands expression list to types using provided synthesis functions.
-func (s *Synthesizer) expandValuesCore(exprs []ast.Expr, needed int, single func(ast.Expr) typ.Type, multi func(ast.Expr) []typ.Type) []typ.Type {
+func (s *Synthesizer) expandValuesCore(exprs []ast.Expr, needed int, single func(ast.Expr) typ.Type, multi func(ast.Expr) []typ.Type, sc *scope.State) []typ.Type {
 	if len(exprs) == 0 {
 		return nil
 	}
 	result := make([]typ.Type, 0, needed)
 
+	last := exprs[len(exprs)-1]
 	for i, expr := range exprs {
 		if i == len(exprs)-1 {
 			result = append(result, multi(expr)...)
@@ -542,11 +611,45 @@ func (s *Synthesizer) expandValuesCore(exprs []ast.Expr, needed int, single func
 		}
 	}
 
+	pad := typ.Type(typ.Nil)
+	if len(result) < needed {
+		if rest := openValueRest(last, single, sc); rest != nil {
+			pad = rest
+		}
+	}
 	for len(result) < needed {
-		result = append(result, typ.Nil)
+		result = append(result, pad)
 	}
 
 	return result
+}
+
+// openValueRest returns the type of the values an expression yields past the
+// ones its type states, when their number is not known: a call to a function
+// value typed any or unknown, or a vararg expression. It returns nil when the
+// expression yields exactly the values its type states.
+func openValueRest(expr ast.Expr, single func(ast.Expr) typ.Type, sc *scope.State) typ.Type {
+	switch ex := expr.(type) {
+	case *ast.FuncCallExpr:
+		target := ex.Func
+		if ex.Receiver != nil {
+			target = ex.Receiver
+		}
+		if target == nil {
+			return nil
+		}
+		callee := unwrap.Alias(single(target))
+		if typ.IsAny(callee) || typ.IsUnknown(callee) {
+			return callee
+		}
+	case *ast.Comma3Expr:
+		vt := sc.VariadicType()
+		if vt == nil {
+			return typ.Unknown
+		}
+		return typ.NewOptional(vt)
+	}
+	return nil
 }
 
 // expandValues expands expression list to types.
@@ -554,6 +657,7 @@ func (s *Synthesizer) expandValues(exprs []ast.Expr, needed int, p cfg.Point, na
 	return s.expandValuesCore(exprs, needed,
 		func(expr ast.Expr) typ.Type { return s.SynthExpr(expr, p, narrower) },
 		func(expr ast.Expr) []typ.Type { return s.MultiTypeOf(expr, p) },
+		s.deps.ScopeAt(p),
 	)
 }
 
@@ -562,6 +666,7 @@ func (s *Synthesizer) expandValuesWithSpec(exprs []ast.Expr, needed int, p cfg.P
 	return s.expandValuesCore(exprs, needed,
 		func(expr ast.Expr) typ.Type { return s.synthExprWithSpec(expr, p, specTypes) },
 		func(expr ast.Expr) []typ.Type { return s.synthMultiWithSpec(expr, p, specTypes) },
+		s.deps.ScopeAt(p),
 	)
 }
 

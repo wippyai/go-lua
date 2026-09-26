@@ -296,6 +296,9 @@ func (r ReturnLength) Equals(other Label) bool {
 //   - SelectCaseOfParam: Builds select case from parameter type.
 //
 //   - SelectResultOfCases: Builds select result from cases and default.
+//
+//   - WithMetatable: Returns a table parameter with another parameter
+//     attached as its metatable, as setmetatable does.
 type ReturnType interface {
 	returnType()
 	String() string
@@ -320,6 +323,19 @@ type SelectResultOfCases struct {
 func (SelectResultOfCases) returnType() {}
 func (s SelectResultOfCases) String() string {
 	return fmt.Sprintf("select_result(%s, %s)", s.Cases, s.Default)
+}
+
+// WithMetatable returns the Table parameter's type with the Metatable
+// parameter's type attached as its metatable, so fields and methods reached
+// through the metatable's __index resolve on the result.
+type WithMetatable struct {
+	Table     ParamRef
+	Metatable ParamRef
+}
+
+func (WithMetatable) returnType() {}
+func (w WithMetatable) String() string {
+	return fmt.Sprintf("with_metatable(%s, %s)", w.Table, w.Metatable)
 }
 
 // ElementOf returns the element type of an array parameter.
@@ -807,6 +823,12 @@ func returnTypeEquals(a, b ReturnType) bool {
 		SelectResultOfCases: func(av SelectResultOfCases) bool {
 			if bv, ok := b.(SelectResultOfCases); ok {
 				return av.Cases.Index == bv.Cases.Index && av.Default.Index == bv.Default.Index
+			}
+			return false
+		},
+		WithMetatable: func(av WithMetatable) bool {
+			if bv, ok := b.(WithMetatable); ok {
+				return av.Table.Index == bv.Table.Index && av.Metatable.Index == bv.Metatable.Index
 			}
 			return false
 		},

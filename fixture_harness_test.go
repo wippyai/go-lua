@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/wippyai/go-lua/compiler/check"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -14,7 +15,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
 	"github.com/wippyai/go-lua/types/diag"
 	"github.com/wippyai/go-lua/types/io"
-	"github.com/wippyai/go-lua/types/typ"
 )
 
 // Suite describes a fixture suite loaded from manifest.json.
@@ -22,7 +22,7 @@ type fixtureSuite struct {
 	Description string        `json:"description,omitempty"`
 	Files       []string      `json:"files,omitempty"`
 	Stdlib      *bool         `json:"stdlib,omitempty"`
-	Packages    []string      `json:"packages,omitempty"` // predefined system packages: "channel", "process", "time", "funcs"
+	Packages    []string      `json:"packages,omitempty"` // predefined system packages: "channel", "funcs", "process", "time"
 	Check       *fixtureCheck `json:"check,omitempty"`
 	Run         *fixtureRun   `json:"run,omitempty"`
 	Bench       *fixtureBench `json:"bench,omitempty"`
@@ -32,6 +32,36 @@ type fixtureSuite struct {
 type fixtureCheck struct {
 	Errors *int   `json:"errors,omitempty"`
 	Skip   string `json:"skip,omitempty"`
+	// Modes lists the checking modes the fixture runs under; the default is
+	// the gradual mode alone.
+	Modes []string `json:"modes,omitempty"`
+}
+
+// Checking modes a fixture can run under.
+const (
+	modeGradual   = "gradual"
+	modeStrictAny = "strict-any"
+)
+
+// checkModes returns the checking modes s runs under.
+func checkModes(s namedSuite) []string {
+	if s.Suite.Check != nil && len(s.Suite.Check.Modes) > 0 {
+		return s.Suite.Check.Modes
+	}
+	return []string{modeGradual}
+}
+
+// checkOptionsFor returns the check options of mode.
+func checkOptionsFor(t *testing.T, mode string) check.Options {
+	t.Helper()
+	switch mode {
+	case modeGradual:
+		return check.Options{}
+	case modeStrictAny:
+		return check.Options{StrictAny: true}
+	}
+	t.Fatalf("unknown check mode: %s", mode)
+	return check.Options{}
 }
 
 type fixtureRun struct {
@@ -55,10 +85,11 @@ type inlineExpectation struct {
 	File     string
 	Line     int
 	Severity string // "error" or "warning"
+	Mode     string // checking mode the expectation holds in; empty for every mode
 	Contains string
 }
 
-var expectRe = regexp.MustCompile(`--\s*expect-(error|warning)(?::\s*(.+?))?\s*$`)
+var expectRe = regexp.MustCompile(`--\s*expect-(error|warning)(?:\[([a-z-]+)\])?(?::\s*(.+?))?\s*$`)
 
 // discoverFixtures recursively walks root and finds directories containing .lua files.
 func discoverFixtures(root string) ([]namedSuite, error) {
@@ -160,14 +191,15 @@ func parseExpectations(filename, source string) []inlineExpectation {
 			File:     filename,
 			Line:     i + 1,
 			Severity: m[1],
-			Contains: strings.TrimSpace(m[2]),
+			Mode:     m[2],
+			Contains: strings.TrimSpace(m[3]),
 		})
 	}
 	return expectations
 }
 
-// runCheckPhase type-checks the fixture and verifies diagnostics.
-func runCheckPhase(t *testing.T, s namedSuite) {
+// runCheckPhase type-checks the fixture under mode and verifies diagnostics.
+func runCheckPhase(t *testing.T, s namedSuite, mode string) {
 	t.Helper()
 	if s.Suite.Check != nil && s.Suite.Check.Skip != "" {
 		t.Skip(s.Suite.Check.Skip)
@@ -176,7 +208,7 @@ func runCheckPhase(t *testing.T, s namedSuite) {
 	files := resolveFiles(s)
 	stdlib := resolveStdlib(s)
 
-	var baseOpts []testutil.Option
+	baseOpts := []testutil.Option{testutil.WithCheckOptions(checkOptionsFor(t, mode))}
 	if stdlib {
 		baseOpts = append(baseOpts, testutil.WithStdlib())
 	}
@@ -194,7 +226,11 @@ func runCheckPhase(t *testing.T, s namedSuite) {
 	for _, f := range files {
 		src := readFixtureFile(s.Dir, f)
 		sources[f] = src
-		allExpectations = append(allExpectations, parseExpectations(f, src)...)
+		for _, exp := range parseExpectations(f, src) {
+			if exp.Mode == "" || exp.Mode == mode {
+				allExpectations = append(allExpectations, exp)
+			}
+		}
 	}
 
 	// Check and export dependency modules (all except entry), preserving file order
@@ -394,35 +430,13 @@ func resolvePackageManifest(name string) *io.Manifest {
 		return testutil.ChannelManifest()
 	case "funcs":
 		return testutil.FuncsManifest()
+	case "process":
+		return testutil.ProcessManifest()
 	case "time":
-		return fixtureTimeManifest()
+		return testutil.TimeManifest()
 	default:
 		return nil
 	}
-}
-
-func fixtureTimeManifest() *io.Manifest {
-	m := io.NewManifest("time")
-
-	durationType := typ.NewInterface("time.Duration", []typ.Method{
-		{Name: "seconds", Type: typ.Func().Param("self", typ.Self).Returns(typ.Number).Build()},
-	})
-
-	timeType := typ.NewInterface("time.Time", []typ.Method{
-		{Name: "sub", Type: typ.Func().Param("self", typ.Self).Param("t", typ.Self).Returns(durationType).Build()},
-		{Name: "add", Type: typ.Func().Param("self", typ.Self).Param("d", durationType).Returns(typ.Self).Build()},
-		{Name: "unix", Type: typ.Func().Param("self", typ.Self).Returns(typ.Integer).Build()},
-	})
-
-	m.DefineType("Time", timeType)
-	m.DefineType("Duration", durationType)
-
-	moduleType := typ.NewInterface("time", []typ.Method{
-		{Name: "now", Type: typ.Func().Returns(timeType).Build()},
-	})
-	m.SetExport(moduleType)
-
-	return m
 }
 
 // installRequire sets up a require() global that loads modules from the given source map.

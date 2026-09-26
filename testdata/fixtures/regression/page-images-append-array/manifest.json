@@ -1,0 +1,4 @@
+{
+  "description": "kickside uploads page_images: a table filled by out[#out + 1] = row is an array.",
+  "files": ["artifact_repo.lua", "main.lua"]
+}

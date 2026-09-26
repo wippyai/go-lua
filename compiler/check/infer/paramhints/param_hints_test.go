@@ -3,6 +3,7 @@ package paramhints
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -186,4 +187,87 @@ func TestMergeHintAt(t *testing.T) {
 			t.Fatalf("expected normalized string hint, got %v", got[0])
 		}
 	})
+}
+
+func TestMergeCallArgHintAt_JoinsEveryCallSite(t *testing.T) {
+	join := func(args ...typ.Type) typ.Type {
+		var hints []typ.Type
+		for _, a := range args {
+			hints, _ = MergeCallArgHintAt(hints, 0, a, typ.JoinPreferNonSoft, true)
+		}
+		return hints[0]
+	}
+
+	if got := join(typ.String, typ.Any); !typ.IsAny(got) {
+		t.Fatalf("an any argument must make the hint any, got %s", got)
+	}
+	if got := join(typ.Unknown, typ.String); !typ.TypeEquals(got, typ.String) {
+		t.Fatalf("an unresolved argument must yield to a resolved one, got %s", got)
+	}
+	if got := join(typ.String, typ.Nil); !typ.TypeEquals(got, typ.NewOptional(typ.String)) {
+		t.Fatalf("a nil argument must make the hint optional, got %s", got)
+	}
+	if got := join(typ.Nil, typ.Nil); got.Kind() != kind.Nil {
+		t.Fatalf("a hint joined from nil arguments only stays nil, got %s", got)
+	}
+	if got := BodyParamType(join(typ.Nil)); !typ.IsUnknown(got) {
+		t.Fatalf("the body must read a nil-only hint as unknown, got %s", got)
+	}
+
+	withRetry := typ.NewRecord().Field("retry", typ.NewRecord().Field("attempts", typ.Integer).Build()).Build()
+	empty := typ.NewRecord().Build()
+	got := join(withRetry, empty)
+	rec, ok := got.(*typ.Record)
+	if !ok {
+		t.Fatalf("table arguments must join into a record, got %s", got)
+	}
+	if f := rec.GetField("retry"); f == nil || !f.Optional {
+		t.Fatalf("a field missing on one call site must become optional, got %s", got)
+	}
+}
+
+func TestRefineAnnotation_NarrowsSoftAnnotationOnlyWithinIt(t *testing.T) {
+	anyMap := typ.NewMap(typ.String, typ.Any)
+	row := typ.NewRecord().Field("binding_id", typ.String).Build()
+
+	if got := RefineAnnotation(anyMap, row); !typ.TypeEquals(got, row) {
+		t.Fatalf("a hint within the soft annotation must refine it, got %s", got)
+	}
+	if got := RefineAnnotation(anyMap, typ.NewOptional(row)); got != typ.Type(anyMap) {
+		t.Fatalf("a nilable hint must not replace a non-nilable annotation, got %s", got)
+	}
+	if got := RefineAnnotation(anyMap, typ.Nil); got != typ.Type(anyMap) {
+		t.Fatalf("a nil-only hint must keep the annotation, got %s", got)
+	}
+	if got := RefineAnnotation(typ.String, typ.LiteralString("x")); got != typ.Type(typ.String) {
+		t.Fatalf("a concrete annotation is the contract, got %s", got)
+	}
+}
+
+// A dynamic argument absorbs the hint: once any value can flow in, the
+// parameter is any, whatever earlier call sites or iterations contributed.
+func TestMergeCallArgHintAt_DynamicArgumentAbsorbs(t *testing.T) {
+	for _, prev := range []typ.Type{typ.Nil, typ.String, typ.NewOptional(typ.String)} {
+		hints, _ := MergeCallArgHintAt([]typ.Type{prev}, 0, typ.Any, nil, false)
+		if !typ.IsAny(hints[0]) {
+			t.Fatalf("hint %v joined with any = %v, want any", prev, hints[0])
+		}
+	}
+	hints, _ := MergeCallArgHintAt(nil, 0, typ.Any, nil, false)
+	if len(hints) != 1 || !typ.IsAny(hints[0]) {
+		t.Fatalf("first any argument = %v, want any", hints)
+	}
+}
+
+// An argument typed never carries no values (its call site is unreachable),
+// so it contributes nothing to the hint.
+func TestMergeCallArgHintAt_NeverArgumentContributesNothing(t *testing.T) {
+	hints, changed := MergeCallArgHintAt(nil, 0, typ.Never, nil, false)
+	if changed || (len(hints) > 0 && hints[0] != nil) {
+		t.Fatalf("never argument set hint %v", hints)
+	}
+	hints, _ = MergeCallArgHintAt([]typ.Type{typ.String}, 0, typ.Never, nil, false)
+	if !typ.TypeEquals(hints[0], typ.String) {
+		t.Fatalf("string hint joined with never = %v, want string", hints[0])
+	}
 }

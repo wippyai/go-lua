@@ -1,6 +1,7 @@
 package functions
 
 import (
+	"github.com/wippyai/go-lua/compiler/check"
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
@@ -90,6 +91,19 @@ func TestDeclaredVsInferredTypes(t *testing.T) {
 			Name: "function return type prevents narrow assignment",
 			Code: `
 				local function getTable(): {x: any}
+					return {x = 42}
+				end
+				local t = getTable()
+				local n: number = t.x
+			`,
+			WantError: true,
+			Stdlib:    true,
+			Options:   check.Options{StrictAny: true},
+		},
+		{
+			Name: "function return type prevents narrow assignment of a union field",
+			Code: `
+				local function getTable(): {x: string | number}
 					return {x = 42}
 				end
 				local t = getTable()

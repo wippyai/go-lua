@@ -118,6 +118,30 @@ func (b *RecordBuilder) Build() *Record {
 	return buildRecordType(b.fields, b.metatable, b.mapKey, b.mapValue, b.open, false)
 }
 
+// WithMetatable returns r with meta as its metatable and everything else kept.
+func (r *Record) WithMetatable(meta Type) *Record {
+	return buildRecordType(r.Fields, meta, r.MapKey, r.MapValue, r.Open, true)
+}
+
+// WithField returns r with f replacing the field of the same name, or added
+// when r has no such field; everything else is kept.
+func (r *Record) WithField(f Field) *Record {
+	fields := make([]Field, 0, len(r.Fields)+1)
+	replaced := false
+	for _, existing := range r.Fields {
+		if existing.Name == f.Name {
+			fields = append(fields, f)
+			replaced = true
+			continue
+		}
+		fields = append(fields, existing)
+	}
+	if !replaced {
+		fields = append(fields, f)
+	}
+	return buildRecordType(fields, r.Metatable, r.MapKey, r.MapValue, r.Open, replaced)
+}
+
 func (r *Record) Kind() kind.Kind { return kind.Record }
 
 func (r *Record) String() string {
@@ -189,6 +213,20 @@ func (r *Record) Equals(other Type) bool {
 // HasMapComponent returns true if the record has a map component (MapKey and MapValue set).
 func (r *Record) HasMapComponent() bool {
 	return r.MapKey != nil && r.MapValue != nil
+}
+
+// HasSameFieldNames reports whether r and other declare the same field names
+// and agree on having a map component.
+func (r *Record) HasSameFieldNames(other *Record) bool {
+	if len(r.Fields) != len(other.Fields) || r.HasMapComponent() != other.HasMapComponent() {
+		return false
+	}
+	for _, f := range r.Fields {
+		if other.GetField(f.Name) == nil {
+			return false
+		}
+	}
+	return true
 }
 
 // GetField returns the field with the given name, or nil.

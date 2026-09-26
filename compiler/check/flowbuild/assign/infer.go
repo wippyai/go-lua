@@ -67,6 +67,7 @@ import (
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 // maxInferIterations limits fixpoint iterations per SCC.
@@ -455,6 +456,30 @@ func collectInferredTypes(
 			}
 		}
 
+		// An assignment or call can embed a symbol's own type only when its
+		// source refers to the SCC.
+		assignRefersSCC := make(map[int]bool, len(sccAssignIdx))
+		for _, idx := range sccAssignIdx {
+			info := assigns[idx].info
+			assignRefersSCC[idx] = exprsReferToSCC(info.Sources, bindings, sccSet) ||
+				exprsReferToSCC(info.IterExprs, bindings, sccSet)
+		}
+		paramCallRefersSCC := make(map[int]bool, len(sccParamCallIdx))
+		for _, idx := range sccParamCallIdx {
+			if info := calls[idx].info; info != nil {
+				paramCallRefersSCC[idx] = exprsReferToSCC(info.Args, bindings, sccSet)
+			}
+		}
+		selfPrev := func(refersSCC bool, sym cfg.SymbolID, overlay api.SpecTypes) typ.Type {
+			if !refersSCC {
+				return nil
+			}
+			if prev, ok := overlay[sym]; ok && prev != nil {
+				return prev
+			}
+			return typ.Unknown
+		}
+
 		// Fixpoint iteration for this SCC
 		converged := false
 		var overlayScratch api.SpecTypes
@@ -587,7 +612,7 @@ func collectInferredTypes(
 						continue
 					}
 					old := inferred[target.Symbol]
-					joined := joinInferredType(old, typ.Integer)
+					joined := joinInferredType(old, typ.Integer, nil)
 					if !typ.TypeEquals(old, joined) {
 						inferred[target.Symbol] = joined
 						changed = true
@@ -617,7 +642,7 @@ func collectInferredTypes(
 							continue
 						}
 						old := inferred[target.Symbol]
-						joined := joinInferredType(old, vt)
+						joined := joinInferredType(old, vt, selfPrev(assignRefersSCC[idx], target.Symbol, overlay))
 						if !typ.TypeEquals(old, joined) {
 							inferred[target.Symbol] = joined
 							changed = true
@@ -690,7 +715,7 @@ func collectInferredTypes(
 							continue
 						}
 						old := inferred[target.Symbol]
-						joined := joinInferredType(old, assignedType)
+						joined := joinInferredType(old, assignedType, selfPrev(assignRefersSCC[idx], target.Symbol, overlay))
 						if !typ.TypeEquals(old, joined) {
 							inferred[target.Symbol] = joined
 							changed = true
@@ -743,7 +768,7 @@ func collectInferredTypes(
 						continue
 					}
 					old := inferred[sym]
-					joined := joinInferredType(old, expected)
+					joined := joinInferredType(old, expected, selfPrev(paramCallRefersSCC[idx], sym, overlay))
 					if !typ.TypeEquals(old, joined) {
 						inferred[sym] = joined
 						changed = true
@@ -1078,40 +1103,222 @@ func collectExprSymbols(expr ast.Expr, bindings *bind.BindingTable, refs *[]cfg.
 	}
 }
 
-// joinInferredType merges inferred variable types while stabilizing recursive
-// self-embedding growth (e.g. t = {t}) in SCC fixpoint iteration.
-func joinInferredType(old, next typ.Type) typ.Type {
+// inferredSelfName names the recursive types that fold self-embedding
+// inferred types.
+const inferredSelfName = "self"
+
+// joinInferredType merges next into old, the symbol's type so far in this SCC
+// round. selfPrev is set when the source of next refers to the symbol's SCC:
+// it is the symbol's type at the start of the round, which is what the round's
+// sources observed. Without it next cannot embed the symbol; a next that
+// contains old is then joined as old.
+//
+// An assignment such as `if v then v = { k = v } end` embeds prev, narrowed by
+// the truthiness test, into next, so plain joins ascend forever:
+// T_(n+1) = T_n | { k: truthy(T_n) }. When next embeds such an approximation
+// of the symbol's own type, the join folds it into mu X. (old | next)[T' := X],
+// the limit of that chain; a round that adds nothing new then reproduces the
+// same recursive type and the SCC converges.
+func joinInferredType(old, next, selfPrev typ.Type) typ.Type {
 	if old == nil {
 		return next
 	}
 	if next == nil {
 		return old
 	}
-	if typeContains(next, old) {
-		if !typ.IsAbsentOrUnknown(old) {
+	if typ.IsAbsentOrUnknown(old) {
+		if typeContains(next, old) {
+			return subtype.WidenForInference(next)
+		}
+		return typ.JoinPreferNonSoft(old, next)
+	}
+	if selfPrev == nil {
+		if typeContains(next, old) {
 			return old
 		}
-		return subtype.WidenForInference(next)
+		return typ.JoinPreferNonSoft(old, next)
 	}
-	return typ.JoinPreferNonSoft(old, next)
+	isSelf := func(node typ.Type) bool {
+		return isSelfApproximation(node, old, selfPrev)
+	}
+	if !typeContainsMatch(next, isSelf) {
+		return typ.JoinPreferNonSoft(old, next)
+	}
+	if coversMembers(old, next) {
+		return old
+	}
+	body := old
+	if rec, ok := old.(*typ.Recursive); ok && rec.Name == inferredSelfName && rec.Body != nil {
+		body = rec.Body
+	}
+	return typ.FoldApproximations(inferredSelfName, typ.JoinPreferNonSoft(body, next), isSelf)
 }
 
+// isSelfApproximation reports whether node approximates the symbol whose type
+// is old: it is old itself when old is a folded self type, which is how a
+// folded type refers to itself, or it
+// is prev refined by a truthiness test (prev with at most nil and false
+// removed). Types without a table, function or tuple constructor are never
+// approximations, since a scalar reached inside next is a value of the same
+// type rather than an embedding of the symbol.
+func isSelfApproximation(node, old, prev typ.Type) bool {
+	if !hasConstructorMember(node) {
+		return false
+	}
+	if isFoldedSelf(old) && (node == old || typ.TypeEquals(node, old)) {
+		return true
+	}
+	if prev == nil || typ.IsAbsentOrUnknown(prev) || !hasConstructorMember(prev) {
+		return false
+	}
+	return subtype.IsSubtype(node, prev) &&
+		subtype.IsSubtype(prev, typ.NewUnion(node, typ.Nil, typ.False))
+}
+
+// coversMembers reports whether every member of next is a subtype of a member
+// of old with the same shape, so joining next into old adds nothing. Plain
+// subtyping is too coarse here: a record whose fields old lacks is a subtype of
+// any record of old with only optional fields, and returning old would drop
+// those fields from the inferred type.
+func coversMembers(old, next typ.Type) bool {
+	oldMembers := joinMembers(old)
+	for _, m := range joinMembers(next) {
+		covered := false
+		for _, o := range oldMembers {
+			if sameShape(m, o) && subtype.IsSubtype(m, o) {
+				covered = true
+				break
+			}
+		}
+		if !covered {
+			return false
+		}
+	}
+	return true
+}
+
+// isFoldedSelf reports whether t is a recursive type joinInferredType folded.
+// Any other type that old happens to be, such as a module interface, can occur
+// inside next as an ordinary value type without embedding the symbol.
+func isFoldedSelf(t typ.Type) bool {
+	rec, ok := t.(*typ.Recursive)
+	return ok && rec.Name == inferredSelfName
+}
+
+// joinMembers lists the alternatives of t: the members of a union, the inner
+// type and nil of an optional, and the body alternatives of a recursive type.
+// A recursive type reached again inside its own body is listed as itself.
+func joinMembers(t typ.Type) []typ.Type {
+	return appendJoinMembers(nil, t, nil)
+}
+
+func appendJoinMembers(out []typ.Type, t typ.Type, expanding map[*typ.Recursive]bool) []typ.Type {
+	switch tt := unwrap.Alias(t).(type) {
+	case *typ.Union:
+		for _, m := range tt.Members {
+			out = appendJoinMembers(out, m, expanding)
+		}
+		return out
+	case *typ.Optional:
+		return append(appendJoinMembers(out, tt.Inner, expanding), typ.Nil)
+	case *typ.Recursive:
+		if tt.Body != nil && !expanding[tt] {
+			if expanding == nil {
+				expanding = make(map[*typ.Recursive]bool)
+			}
+			expanding[tt] = true
+			out = appendJoinMembers(out, tt.Body, expanding)
+			delete(expanding, tt)
+			return out
+		}
+	}
+	return append(out, t)
+}
+
+// sameShape reports whether a and b are records with the same field names, or
+// are of the same kind.
+func sameShape(a, b typ.Type) bool {
+	ra, aok := unwrap.Alias(a).(*typ.Record)
+	rb, bok := unwrap.Alias(b).(*typ.Record)
+	if aok || bok {
+		return aok && bok && ra.HasSameFieldNames(rb)
+	}
+	return a.Kind() == b.Kind()
+}
+
+// exprsReferToSCC reports whether any of exprs refers to a symbol of the SCC.
+func exprsReferToSCC(exprs []ast.Expr, bindings *bind.BindingTable, sccSet map[cfg.SymbolID]bool) bool {
+	var refs []cfg.SymbolID
+	for _, e := range exprs {
+		if e != nil {
+			collectExprSymbols(e, bindings, &refs)
+		}
+	}
+	for _, ref := range refs {
+		if sccSet[ref] {
+			return true
+		}
+	}
+	return false
+}
+
+// hasConstructorMember reports whether t, or a member of t when it is a union
+// or optional, is built by a type constructor rather than being a scalar.
+func hasConstructorMember(t typ.Type) bool {
+	switch tt := unwrap.Alias(t).(type) {
+	case nil:
+		return false
+	case *typ.Union:
+		for _, m := range tt.Members {
+			if hasConstructorMember(m) {
+				return true
+			}
+		}
+		return false
+	case *typ.Optional:
+		return hasConstructorMember(tt.Inner)
+	case *typ.Record, *typ.Array, *typ.Map, *typ.Tuple, *typ.Function,
+		*typ.Intersection, *typ.Interface, *typ.Recursive:
+		return true
+	default:
+		return false
+	}
+}
+
+// typeContains reports whether needle occurs anywhere inside haystack.
+//
+// Inferred types are DAGs: SCC inference of a local reassigned as `v = { k = v }`
+// on several branches builds each round's union from records that all share the
+// previous round's type, so the tree expansion is exponential in the number of
+// rounds while the DAG stays linear. The search is a reachability walk that
+// visits every node once; the visited set also terminates it on cyclic types.
 func typeContains(haystack, needle typ.Type) bool {
-	if haystack == nil || needle == nil {
+	if needle == nil {
 		return false
 	}
-	return typeContainsDepth(haystack, needle, typ.NewGuard())
+	return typeContainsMatch(haystack, func(node typ.Type) bool {
+		return typ.TypeEquals(node, needle)
+	})
 }
 
-func typeContainsDepth(haystack, needle typ.Type, guard internal.RecursionGuard) bool {
-	if haystack == nil || needle == nil {
+// typeContainsMatch reports whether haystack, or a type nested in it, satisfies
+// match, visiting every node of the type once.
+func typeContainsMatch(haystack typ.Type, match func(typ.Type) bool) bool {
+	if haystack == nil {
 		return false
 	}
-	next, ok := guard.Enter(haystack)
-	if !ok {
+	return typeContainsVisit(haystack, match, make(map[typ.Type]struct{}))
+}
+
+func typeContainsVisit(haystack typ.Type, match func(typ.Type) bool, visited map[typ.Type]struct{}) bool {
+	if haystack == nil {
 		return false
 	}
-	if typ.TypeEquals(haystack, needle) {
+	if _, seen := visited[haystack]; seen {
+		return false
+	}
+	visited[haystack] = struct{}{}
+	if match(haystack) {
 		return true
 	}
 
@@ -1127,72 +1334,72 @@ func typeContainsDepth(haystack, needle typ.Type, guard internal.RecursionGuard)
 
 	switch tt := node.(type) {
 	case *typ.Optional:
-		return typeContainsDepth(tt.Inner, needle, next)
+		return typeContainsVisit(tt.Inner, match, visited)
 	case *typ.Union:
 		for _, m := range tt.Members {
-			if typeContainsDepth(m, needle, next) {
+			if typeContainsVisit(m, match, visited) {
 				return true
 			}
 		}
 		return false
 	case *typ.Intersection:
 		for _, m := range tt.Members {
-			if typeContainsDepth(m, needle, next) {
+			if typeContainsVisit(m, match, visited) {
 				return true
 			}
 		}
 		return false
 	case *typ.Array:
-		return typeContainsDepth(tt.Element, needle, next)
+		return typeContainsVisit(tt.Element, match, visited)
 	case *typ.Map:
-		return typeContainsDepth(tt.Key, needle, next) || typeContainsDepth(tt.Value, needle, next)
+		return typeContainsVisit(tt.Key, match, visited) || typeContainsVisit(tt.Value, match, visited)
 	case *typ.Tuple:
 		for _, e := range tt.Elements {
-			if typeContainsDepth(e, needle, next) {
+			if typeContainsVisit(e, match, visited) {
 				return true
 			}
 		}
 		return false
 	case *typ.Function:
 		for _, p := range tt.Params {
-			if typeContainsDepth(p.Type, needle, next) {
+			if typeContainsVisit(p.Type, match, visited) {
 				return true
 			}
 		}
 		for _, r := range tt.Returns {
-			if typeContainsDepth(r, needle, next) {
+			if typeContainsVisit(r, match, visited) {
 				return true
 			}
 		}
 		if tt.Variadic != nil {
-			return typeContainsDepth(tt.Variadic, needle, next)
+			return typeContainsVisit(tt.Variadic, match, visited)
 		}
 		return false
 	case *typ.Record:
 		for _, f := range tt.Fields {
-			if typeContainsDepth(f.Type, needle, next) {
+			if typeContainsVisit(f.Type, match, visited) {
 				return true
 			}
 		}
-		if tt.Metatable != nil && typeContainsDepth(tt.Metatable, needle, next) {
+		if tt.Metatable != nil && typeContainsVisit(tt.Metatable, match, visited) {
 			return true
 		}
 		if tt.HasMapComponent() {
-			return typeContainsDepth(tt.MapKey, needle, next) || typeContainsDepth(tt.MapValue, needle, next)
+			return typeContainsVisit(tt.MapKey, match, visited) || typeContainsVisit(tt.MapValue, match, visited)
 		}
 		return false
 	case *typ.Alias:
-		return typeContainsDepth(tt.Target, needle, next)
+		return typeContainsVisit(tt.Target, match, visited)
 	case *typ.Instantiated:
 		for _, a := range tt.TypeArgs {
-			if typeContainsDepth(a, needle, next) {
+			if typeContainsVisit(a, match, visited) {
 				return true
 			}
 		}
 		return false
 	case *typ.Interface:
 		for _, m := range tt.Methods {
-			if m.Type != nil && typeContainsDepth(m.Type, needle, next) {
+			if m.Type != nil && typeContainsVisit(m.Type, match, visited) {
 				return true
 			}
 		}

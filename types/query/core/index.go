@@ -1,6 +1,7 @@
 package core
 
 import (
+	"github.com/wippyai/go-lua/types/typ/unwrap"
 	"sort"
 
 	"github.com/wippyai/go-lua/types/kind"
@@ -33,6 +34,16 @@ type indexResult struct {
 func indexDepth(t, keyType typ.Type, depth int) (typ.Type, bool) {
 	if stopDepth(t, depth) {
 		return nil, false
+	}
+	// A read with a key that may be nil yields what the non-nil key reads, or
+	// nil: t[nil] reads nil.
+	if keyType != nil && !unwrap.IsNilType(keyType) {
+		if present := unwrap.Optional(keyType); present != nil && !typ.TypeEquals(present, keyType) {
+			if res, ok := indexDepth(t, present, depth); ok {
+				return typ.NewOptional(res), true
+			}
+			return nil, false
+		}
 	}
 	if top, ok := specialAccessType(t); ok {
 		return top, true
@@ -72,6 +83,9 @@ func indexDepth(t, keyType typ.Type, depth int) (typ.Type, bool) {
 			return indexResult{}
 		},
 		Tuple: func(tup *typ.Tuple) indexResult {
+			if keyType == nil {
+				return indexResult{}
+			}
 			// Integer literal index
 			if lit, ok := keyType.(*typ.Literal); ok && lit.Base == kind.Integer {
 				idx := lit.Value.(int64)
@@ -92,6 +106,9 @@ func indexDepth(t, keyType typ.Type, depth int) (typ.Type, bool) {
 			if len(r.Fields) == 0 && !r.HasMapComponent() {
 				return indexResult{t: typ.Nil, ok: true}
 			}
+			if keyType == nil {
+				return indexResult{}
+			}
 			if keySet, ok := exactStringKeyDomain(keyType, depth+1); ok {
 				return indexRecordByExactStringKeyDomain(r, keySet, depth+1)
 			}
@@ -109,7 +126,7 @@ func indexDepth(t, keyType typ.Type, depth int) (typ.Type, bool) {
 					return indexResult{t: typ.Nil, ok: true}
 				}
 
-				return indexResult{t: typ.NewOptional(typ.NewUnion(types...)), ok: true}
+				return indexResult{t: typ.NewOptional(joinProjections(types...)), ok: true}
 			}
 			// Placeholder/unknown keys may still resolve to string fields at runtime.
 			// Keep this sound by returning an optional union of field types.
@@ -124,7 +141,7 @@ func indexDepth(t, keyType typ.Type, depth int) (typ.Type, bool) {
 				if len(types) == 0 {
 					return indexResult{t: typ.Nil, ok: true}
 				}
-				return indexResult{t: typ.NewOptional(typ.NewUnion(types...)), ok: true}
+				return indexResult{t: typ.NewOptional(joinProjections(types...)), ok: true}
 			}
 
 			// Map component fallback for non-string-literal keys.
@@ -152,7 +169,7 @@ func indexDepth(t, keyType typ.Type, depth int) (typ.Type, bool) {
 				return indexResult{}
 			}
 
-			return indexResult{t: typ.NewUnion(types...), ok: true}
+			return indexResult{t: joinProjections(types...), ok: true}
 		},
 		Intersection: func(in *typ.Intersection) indexResult {
 			var types []typ.Type
@@ -369,7 +386,7 @@ func indexRecordByExactStringKeyDomain(r *typ.Record, keys []string, depth int) 
 		return indexResult{}
 	}
 
-	out := typ.NewUnion(matched...)
+	out := joinProjections(matched...)
 	if missing && !containsNilOrOptional(out) {
 		out = typ.NewOptional(out)
 	}

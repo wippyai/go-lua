@@ -1,0 +1,9 @@
+{
+  "check": {
+    "modes": [
+      "gradual",
+      "strict-any"
+    ]
+  },
+  "description": "Outside a Point:is guard an any value is consistent with the record under gradual any and must be narrowed under strict any"
+}

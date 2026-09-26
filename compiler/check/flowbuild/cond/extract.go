@@ -440,9 +440,10 @@ func ConstraintsFromCallOnReturn(
 
 	bindings := resolve.GetBindings(inputs)
 
-	// TypeName(x) pattern - check metatype
-	if info.CalleeName != "" && typeKeyResolver != nil {
-		if typeKey, ok := typeKeyResolver(info.CalleeName, sc); ok && !typeKey.IsZero() {
+	// TypeName(x) pattern - check metatype. Method calls such as x:TypeName()
+	// are not type checks even when the method shares a type's name.
+	if info.IsTypeCheck && info.Method == "" && typeKeyResolver != nil {
+		if typeKey, ok := typeKeyResolver(info.TypeCheckName, sc); ok && !typeKey.IsZero() {
 			if len(callArgs) > 0 {
 				argPath := path.FromExprWithBindingsAt(callArgs[0], constResolver, bindings, graph, p)
 				if !argPath.IsEmpty() {

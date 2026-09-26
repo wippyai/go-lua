@@ -318,3 +318,25 @@ func TestIsNumericKey(t *testing.T) {
 		})
 	}
 }
+
+func TestIndex_UnresolvedKeyTypeResolvesNothing(t *testing.T) {
+	rec := typ.NewRecord().Field("a", typ.String).Build()
+	tuple := typ.NewTuple(typ.String, typ.Integer)
+	for name, container := range map[string]typ.Type{"record": rec, "tuple": tuple} {
+		if got, ok := Index(container, nil); ok {
+			t.Fatalf("%s indexed by an unresolved key type resolved to %v", name, got)
+		}
+	}
+}
+
+// A read with a key that may be nil yields the value or nil.
+func TestIndex_OptionalKeyReadsOptionalValue(t *testing.T) {
+	m := typ.NewMap(typ.String, typ.Integer)
+	got, ok := Index(m, typ.NewOptional(typ.String))
+	if !ok || !typ.TypeEquals(got, typ.NewOptional(typ.Integer)) {
+		t.Fatalf("map[string?] = %v, %v; want integer?", got, ok)
+	}
+	if _, ok := Index(m, typ.NewOptional(typ.Boolean)); ok {
+		t.Fatal("a key outside the map's key type must not resolve")
+	}
+}

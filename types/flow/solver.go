@@ -884,9 +884,15 @@ func (s *Solution) mergeFieldAssignments(baseType typ.Type, baseKey string) typ.
 					// field at this program point. Rebuilding the root should
 					// project that current field value back into the record rather
 					// than re-join it with the declared/base slot as if it were a
-					// separate branch.
-					fieldType = assigned.t
-					optional = assigned.optional
+					// separate branch. A placeholder fact carries no information
+					// about the value of a concrete slot, matching how TypeAt reads
+					// the child path itself; its nilability still applies.
+					if assigned.t.Kind().IsPlaceholder() && !f.Type.Kind().IsPlaceholder() {
+						optional = optional || assigned.optional
+					} else {
+						fieldType = assigned.t
+						optional = assigned.optional
+					}
 					delete(assignedByName, f.Name)
 				}
 				switch {

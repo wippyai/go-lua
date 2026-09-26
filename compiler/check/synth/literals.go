@@ -175,27 +175,7 @@ func FunctionLiteralSignatures(graph *cfg.Graph, engine LiteralSynth, declaredRe
 		expectedFields := querycore.AllFieldTypesResolved(expected)
 		selfType := expected
 		if selfType == nil {
-			selfBuilder := typ.NewRecord()
-			fieldCount := 0
-			for _, field := range tbl.Fields {
-				if field.Key == nil {
-					continue
-				}
-				if _, ok := field.Value.(*ast.FunctionExpr); ok {
-					continue
-				}
-				switch k := field.Key.(type) {
-				case *ast.StringExpr:
-					selfBuilder.Field(k.Value, engine.TypeOf(field.Value, p))
-					fieldCount++
-				case *ast.IdentExpr:
-					selfBuilder.Field(k.Value, engine.TypeOf(field.Value, p))
-					fieldCount++
-				}
-			}
-			if fieldCount > 0 {
-				selfType = selfBuilder.Build()
-			}
+			selfType = phasecore.ImplicitSelfType(tbl, func(e ast.Expr) typ.Type { return engine.TypeOf(e, p) })
 		}
 
 		for _, field := range tbl.Fields {

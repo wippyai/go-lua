@@ -66,7 +66,8 @@ var (
 			Returns(typ.NewOptional(typ.Any)).
 			Build()
 
-	// setmetatable(table, metatable) -> table
+	// setmetatable(table, metatable) -> table, with metatable attached so the
+	// fields and methods of metatable.__index resolve on the result.
 	SetMetatable = func() typ.Type {
 		tp := typ.NewTypeParam("T", nil)
 		return typ.Func().
@@ -75,6 +76,13 @@ var (
 			Param("metatable", typ.NewOptional(typ.Any)).
 			Returns(tp).
 			Effects(effect.StoresParam(1, 0)).
+			Spec(contract.NewSpec().WithEffects(effect.Return{
+				ReturnIndex: 0,
+				Transform: effect.WithMetatable{
+					Table:     effect.ParamRef{Index: 0},
+					Metatable: effect.ParamRef{Index: 1},
+				},
+			})).
 			Build()
 	}()
 

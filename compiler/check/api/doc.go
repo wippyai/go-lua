@@ -36,7 +36,7 @@
 //   - [ParamHints]: Parameter types inferred from call sites
 //   - [FuncTypes]: Canonical types for local function symbols
 //   - [LiteralSigs]: Signatures for anonymous function literals
-//   - [CapturedFieldAssigns]: Field assignments to captured variables
+//   - [FieldWrites]: Field writes through captured variables and parameters
 //
 // Facts are computed incrementally and stored per (graph, parent-scope) pair.
 // The [GraphKey] type provides the canonical key for this lookup.

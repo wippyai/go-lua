@@ -264,7 +264,9 @@ func TestBuildLocalCallGraph_AddsCallbackFunctionEdges(t *testing.T) {
 	}
 }
 
-func TestPropagateParamHintsFromCallGraph_MethodRuntimeIndexing(t *testing.T) {
+// obj:callee(7) calls whatever obj.callee holds at runtime; a local function
+// that merely shares the method's name is not the callee and gets no hints.
+func TestPropagateParamHintsFromCallGraph_MethodNameDoesNotSelectLocalFunction(t *testing.T) {
 	stmts, err := parse.ParseString(`
 		local function callee(self, x)
 			return x
@@ -316,15 +318,10 @@ func TestPropagateParamHintsFromCallGraph_MethodRuntimeIndexing(t *testing.T) {
 
 	PropagateParamHintsFromCallGraph(localFuncs)
 
-	hints := localFuncs[calleeSym].ParamHints
-	if len(hints) < 2 {
-		t.Fatalf("expected at least 2 param hints for callee(self,x), got %d", len(hints))
-	}
-	if !typ.TypeEquals(hints[1], typ.Number) {
-		t.Fatalf("expected hint for x at index 1 to be number, got %v", hints[1])
-	}
-	if hints[0] != nil {
-		t.Fatalf("expected no informative hint for receiver at index 0, got %v", hints[0])
+	for i, hint := range localFuncs[calleeSym].ParamHints {
+		if hint != nil {
+			t.Fatalf("local callee must get no hint from obj:callee(7), got %v at %d", hint, i)
+		}
 	}
 }
 

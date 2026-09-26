@@ -2,6 +2,7 @@ package assign
 
 import (
 	"testing"
+	"time"
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
@@ -11,6 +12,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/parse"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/flow"
+	"github.com/wippyai/go-lua/types/narrow"
 	querycore "github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -201,7 +203,7 @@ func TestJoinInferredType_StabilizesSelfEmbeddingFromUnknown(t *testing.T) {
 	old := typ.Unknown
 	next := typ.NewArray(typ.Unknown)
 
-	got := joinInferredType(old, next)
+	got := joinInferredType(old, next, old)
 	if !typ.TypeEquals(got, next) {
 		t.Fatalf("joinInferredType(unknown, any[]) = %v, want %v", got, next)
 	}
@@ -211,9 +213,112 @@ func TestJoinInferredType_StopsRecursiveNestingGrowth(t *testing.T) {
 	old := typ.NewArray(typ.Unknown)
 	next := typ.NewArray(old)
 
-	got := joinInferredType(old, next)
+	got := joinInferredType(old, next, old)
 	if !typ.TypeEquals(got, old) {
 		t.Fatalf("joinInferredType(any[], any[][]) = %v, want %v", got, old)
+	}
+}
+
+// sharedLadder builds a type DAG of the given depth in which every level is a
+// union of two records that both point at the previous level. The DAG holds
+// 3*depth nodes while its tree expansion holds 2^depth paths, the shape that
+// SCC inference produces for a local reassigned as `v = { key = v }` in
+// several branches.
+func sharedLadder(depth int, leaf typ.Type) typ.Type {
+	level := leaf
+	for i := 0; i < depth; i++ {
+		level = typ.NewUnion(
+			typ.NewRecord().Field("left", level).Build(),
+			typ.NewRecord().Field("right", level).Build(),
+		)
+	}
+	return level
+}
+
+func typeContainsWithin(t *testing.T, bound time.Duration, haystack, needle typ.Type) bool {
+	t.Helper()
+	done := make(chan bool, 1)
+	go func() { done <- typeContains(haystack, needle) }()
+	select {
+	case got := <-done:
+		return got
+	case <-time.After(bound):
+		t.Fatalf("typeContains did not finish within %v on a %T haystack", bound, haystack)
+		return false
+	}
+}
+
+func TestTypeContains_VisitsSharedSubstructureOnce(t *testing.T) {
+	leaf := typ.NewRecord().Field("leaf", typ.String).Build()
+	haystack := sharedLadder(60, leaf)
+
+	if typeContainsWithin(t, 10*time.Second, haystack, typ.Boolean) {
+		t.Fatal("expected boolean to be absent from the ladder")
+	}
+	if !typeContainsWithin(t, 10*time.Second, haystack, leaf) {
+		t.Fatal("expected the leaf record to be found at the bottom of the ladder")
+	}
+}
+
+func TestTypeContains_FindsNeedleBelowDefaultRecursionDepth(t *testing.T) {
+	leaf := typ.NewRecord().Field("leaf", typ.String).Build()
+	var nested typ.Type = leaf
+	for i := 0; i < 2*typ.DefaultRecursionDepth; i++ {
+		nested = typ.NewArray(nested)
+	}
+	if !typeContainsWithin(t, 10*time.Second, nested, leaf) {
+		t.Fatal("expected the leaf record to be found under deep array nesting")
+	}
+}
+
+// inferenceRound applies one SCC round of `if value then value = { key = value } end`
+// for every key: each assignment embeds the truthy narrowing of the round's
+// starting type, and the joins accumulate into the symbol's type.
+func inferenceRound(start typ.Type, keys ...string) typ.Type {
+	embedded := narrow.ToTruthy(start)
+	out := start
+	for _, key := range keys {
+		out = joinInferredType(out, typ.NewRecord().OptField(key, embedded).Build(), start)
+	}
+	return out
+}
+
+func TestJoinInferredType_FoldsTruthyNarrowedSelfEmbedding(t *testing.T) {
+	brief := typ.NewRecord().Field("brief", typ.String).Build()
+	tasks := typ.NewRecord().Field("tasks", typ.Number).Build()
+	start := typ.NewUnion(typ.Nil, brief, tasks)
+
+	got := inferenceRound(start, "brief", "tasks")
+
+	want := typ.NewRecursive(inferredSelfName, func(self typ.Type) typ.Type {
+		return typ.NewUnion(
+			typ.Nil,
+			brief,
+			tasks,
+			typ.NewRecord().OptField("brief", self).Build(),
+			typ.NewRecord().OptField("tasks", self).Build(),
+		)
+	})
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("round 1 = %v, want %v", got, want)
+	}
+
+	again := inferenceRound(got, "brief", "tasks")
+	if !typ.TypeEquals(again, got) {
+		t.Fatalf("round 2 = %v, want the round 1 fixpoint %v", again, got)
+	}
+}
+
+// A scalar is never an approximation of the symbol: joining it keeps the
+// record, and the chain folds once the symbol's type holds a table.
+func TestJoinInferredType_JoinsSelfEmbeddedScalar(t *testing.T) {
+	next := typ.NewRecord().Field("count", typ.Number).Build()
+
+	got := joinInferredType(typ.Number, next, typ.Number)
+
+	want := typ.NewUnion(typ.Number, next)
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("joinInferredType(number, {count: number}) = %v, want %v", got, want)
 	}
 }
 
@@ -485,4 +590,33 @@ func hasSymbol(refs []cfg.SymbolID, sym cfg.SymbolID) bool {
 		}
 	}
 	return false
+}
+
+func TestJoinMembers_RecursiveUnionListsItselfOnce(t *testing.T) {
+	rec := typ.NewRecursivePlaceholder("R")
+	leaf := typ.NewRecord().Field("leaf", typ.String).Build()
+	rec.SetBody(typ.NewUnion(leaf, typ.NewRecord().Field("next", rec).Build(), rec))
+
+	members := joinMembers(rec)
+	if len(members) != 3 {
+		t.Fatalf("expected leaf, node and the recursive self reference, got %v", members)
+	}
+}
+
+// A module interface that appears inside next as an ordinary parameter type is
+// not an embedding of the symbol, even when the symbol's type so far is that
+// interface: kickside's projection tests pass a sql.DB to builders whose
+// Executor methods take a sql.DB.
+func TestJoinInferredType_OrdinaryTypeInsideNextIsNotSelfEmbedding(t *testing.T) {
+	db := typ.NewInterface("sql.DB", []typ.Method{
+		{Name: "release", Type: typ.Func().Param("self", typ.Self).Build()},
+	})
+	executor := typ.NewInterface("sql.Executor", []typ.Method{
+		{Name: "run_with", Type: typ.Func().Param("self", typ.Self).Param("db", db).Returns(typ.Self).Build()},
+	})
+
+	got := joinInferredType(db, executor, typ.Unknown)
+	if _, folded := got.(*typ.Recursive); folded {
+		t.Fatalf("must not fold an ordinary occurrence of the old type, got %s", got)
+	}
 }

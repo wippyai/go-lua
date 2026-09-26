@@ -334,12 +334,12 @@ func BuildContextTypeKeyResolver(ctx api.BaseEnv) func(string, *scope.State) (na
 			return key, true
 		}
 		if ctx != nil && ctx.TypeNames() != nil {
-			if t, ok := ctx.TypeNames().LookupType(name); ok && t != nil {
+			if t, ok := ctx.TypeNames().LookupValueType(name); ok && t != nil {
 				return narrow.HashTypeKey(t.Hash()), true
 			}
 		}
 		if sc != nil {
-			if t, ok := sc.LookupType(name); ok && t != nil {
+			if t, ok := sc.LookupValueType(name); ok && t != nil {
 				return narrow.HashTypeKey(t.Hash()), true
 			}
 		}

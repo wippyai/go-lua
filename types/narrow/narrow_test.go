@@ -1463,3 +1463,26 @@ func TestKindMatches_IntersectionAsTable(t *testing.T) {
 		t.Error("KindMatches(intersection, record) = false, want true")
 	}
 }
+
+func TestKindMatches_LiteralUsesBaseKind(t *testing.T) {
+	cases := []struct {
+		lit    typ.Type
+		target kind.Kind
+		want   bool
+	}{
+		{typ.LiteralInt(50), kind.Number, true},
+		{typ.LiteralInt(50), kind.Integer, true},
+		{typ.LiteralNumber(1.5), kind.Number, true},
+		{typ.LiteralString("x"), kind.String, true},
+		{typ.True, kind.Boolean, true},
+		{typ.LiteralString("x"), kind.Number, false},
+	}
+	for _, c := range cases {
+		if got := narrow.KindMatches(c.lit, c.target); got != c.want {
+			t.Errorf("KindMatches(%s, %v) = %v, want %v", c.lit, c.target, got, c.want)
+		}
+	}
+	if got := narrow.FilterByKind(typ.LiteralInt(50), kind.Number); !typ.TypeEquals(got, typ.LiteralInt(50)) {
+		t.Errorf("FilterByKind(50, number) = %s, want 50", got)
+	}
+}

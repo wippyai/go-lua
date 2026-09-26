@@ -75,7 +75,7 @@ return { f = f }
 	}
 	wantExport := typ.NewRecord().
 		Field("f", typ.Func().
-			OptParam("blocks", typ.Any).
+			OptParam("blocks", typ.Unknown).
 			Returns(
 				typ.NewUnion(
 					typ.NewRecord().

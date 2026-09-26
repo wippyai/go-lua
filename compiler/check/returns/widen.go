@@ -4,6 +4,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/internal"
+	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 	typjoin "github.com/wippyai/go-lua/types/typ/join"
@@ -19,7 +20,7 @@ func WidenFacts(prev, next api.Facts) api.Facts {
 		ParamHints:         WidenParamHints(prev.ParamHints, next.ParamHints),
 		LiteralSigs:        WidenLiteralSigs(prev.LiteralSigs, next.LiteralSigs),
 		CapturedTypes:      WidenCapturedTypes(prev.CapturedTypes, next.CapturedTypes),
-		CapturedFields:     WidenCapturedFieldAssigns(prev.CapturedFields, next.CapturedFields),
+		FieldWrites:        WidenFieldWrites(prev.FieldWrites, next.FieldWrites),
 		CapturedContainers: WidenCapturedContainerMutations(prev.CapturedContainers, next.CapturedContainers),
 		ConstructorFields:  WidenConstructorFields(prev.ConstructorFields, next.ConstructorFields),
 	}
@@ -319,7 +320,9 @@ func joinReturnTypeMonotone(a, b typ.Type) typ.Type {
 	if subtype.IsSubtype(b, a) || TypeExtendsRecord(b, a) || typeElidesOptional(b, a) {
 		return a
 	}
-	return typ.JoinPreferNonSoft(a, b)
+	// Incomparable types join as return slots, which coalesce approximations
+	// of one record field by field.
+	return typ.JoinReturnSlot(a, b)
 }
 
 // WidenParamHints merges two param hint maps using monotone union.
@@ -401,12 +404,33 @@ func joinParamHintVectors(a, b []typ.Type) []typ.Type {
 		if i < len(b) {
 			bi = b[i]
 		}
-		result[i] = joinParamHint(ai, bi)
+		result[i] = joinIterationFact(ai, bi)
 	}
 	return result
 }
 
-func joinParamHint(a, b typ.Type) typ.Type {
+// joinIterationFact joins a fact from the previous fixpoint iteration with the
+// same fact from the current one: a parameter hint, a captured variable type,
+// a captured field or container write, a constructor field. Both describe the
+// same program values, the current one under better-resolved facts, so the
+// join follows the information order of inference:
+//   - an unresolved fact (nil, unknown or a soft placeholder) yields to a
+//     resolved one, and soft placeholder members drop out of unions;
+//   - records join field by field, keeping fields that only one iteration
+//     has discovered; a mutable field is invariant, so differing resolved
+//     field types resolve to the current one;
+//   - resolved types otherwise join to their upper bound, so a fact that
+//     widened between iterations admits the values of both.
+func joinIterationFact(a, b typ.Type) typ.Type {
+	return joinIterationFactAt(a, b, false)
+}
+
+// joinIterationFactAt joins two iteration facts at a covariant position, or
+// at an invariant one such as a mutable record field or a map key or value.
+// At an invariant position an upper bound admits only equivalent types, so
+// resolved facts that are not equivalent resolve to the current one, the
+// fact that describes the values at the position now.
+func joinIterationFactAt(a, b typ.Type, invariant bool) typ.Type {
 	if a == nil {
 		return b
 	}
@@ -419,13 +443,228 @@ func joinParamHint(a, b typ.Type) typ.Type {
 	if unwrap.IsNilType(b) && !unwrap.IsNilType(a) {
 		return a
 	}
-	if TypeExtendsRecord(a, b) {
+	if typ.IsUnknown(a) {
+		return b
+	}
+	if typ.IsUnknown(b) {
 		return a
 	}
-	if TypeExtendsRecord(b, a) {
+	a = typ.PruneSoftUnionMembers(a)
+	b = typ.PruneSoftUnionMembers(b)
+	softA := typ.IsSoft(a, typ.SoftPlaceholderPolicy)
+	softB := typ.IsSoft(b, typ.SoftPlaceholderPolicy)
+	if softA && !softB {
+		return b
+	}
+	if softB && !softA {
+		return a
+	}
+	if !invariant {
+		if joined, ok := joinIterationOptionals(a, b); ok {
+			return joined
+		}
+	}
+	if joined, ok := joinIterationFunctions(a, b); ok {
+		return joined
+	}
+	if joined, ok := joinIterationRecords(a, b); ok {
+		return joined
+	}
+	if joined, ok := joinIterationArrays(a, b); ok {
+		return joined
+	}
+	// The previous fact stays while it admits the current one, so equivalent
+	// facts with different spellings do not alternate between iterations.
+	previousAdmitsCurrent := subtype.IsSubtype(b, a)
+	if invariant {
+		if previousAdmitsCurrent && subtype.IsSubtype(a, b) {
+			return a
+		}
+		return b
+	}
+	if previousAdmitsCurrent {
+		return a
+	}
+	if subtype.IsSubtype(a, b) {
 		return b
 	}
 	return typ.JoinPreferNonSoft(a, b)
+}
+
+// joinIterationArrays joins two array facts element by element. Array slots
+// are mutable, so their elements join at an invariant position: an earlier
+// approximation of the element yields to the current one instead of leaving
+// the two arrays as union members. The join reuses an input it equals.
+func joinIterationArrays(a, b typ.Type) (typ.Type, bool) {
+	arrA, okA := a.(*typ.Array)
+	arrB, okB := b.(*typ.Array)
+	if !okA || !okB {
+		return nil, false
+	}
+	elem := joinIterationFactAt(arrA.Element, arrB.Element, true)
+	switch {
+	case typ.TypeEquals(elem, arrA.Element):
+		return a, true
+	case typ.TypeEquals(elem, arrB.Element):
+		return b, true
+	}
+	return typ.NewArray(elem), true
+}
+
+// joinIterationOptionals joins two optional record or function facts, or one
+// optional and one present: their present values join with
+// joinIterationFact and the result is optional. An earlier approximation of
+// the record or function thereby yields to the resolved one rather than
+// remaining as a separate union member. The join reuses an input it equals,
+// so unchanged facts keep their identity across iterations.
+func joinIterationOptionals(a, b typ.Type) (typ.Type, bool) {
+	presentA := narrow.RemoveNil(a)
+	presentB := narrow.RemoveNil(b)
+	if typ.TypeEquals(presentA, a) && typ.TypeEquals(presentB, b) {
+		return nil, false
+	}
+	if !joinsStructurally(presentA, presentB) {
+		return nil, false
+	}
+	joined := typ.NewOptional(joinIterationFact(presentA, presentB))
+	switch {
+	case typ.TypeEquals(joined, a):
+		return a, true
+	case typ.TypeEquals(joined, b):
+		return b, true
+	}
+	return joined, true
+}
+
+// joinsStructurally reports whether two present facts are both records or
+// both functions, the shapes joinIterationFact joins member by member.
+func joinsStructurally(a, b typ.Type) bool {
+	switch a.(type) {
+	case *typ.Record:
+		_, ok := b.(*typ.Record)
+		return ok
+	case *typ.Function:
+		_, ok := b.(*typ.Function)
+		return ok
+	}
+	return false
+}
+
+// joinIterationFunctions joins two function facts with the same parameter
+// shape return by return with joinIterationFact, so a return that was
+// unresolved in an earlier iteration yields to its resolved type. The
+// parameters are those of the current fact.
+func joinIterationFunctions(a, b typ.Type) (typ.Type, bool) {
+	af, ok := a.(*typ.Function)
+	if !ok {
+		return nil, false
+	}
+	bf, ok := b.(*typ.Function)
+	if !ok {
+		return nil, false
+	}
+	if len(af.Params) != len(bf.Params) ||
+		(af.Variadic == nil) != (bf.Variadic == nil) || len(af.TypeParams) != len(bf.TypeParams) {
+		return nil, false
+	}
+	// A return slot one fact lacks is unresolved there and yields to the other.
+	n := max(len(af.Returns), len(bf.Returns))
+	returns := make([]typ.Type, n)
+	sameAsB := len(bf.Returns) == n
+	for i := range n {
+		var ar, br typ.Type
+		if i < len(af.Returns) {
+			ar = af.Returns[i]
+		}
+		if i < len(bf.Returns) {
+			br = bf.Returns[i]
+		}
+		returns[i] = joinIterationFact(ar, br)
+		sameAsB = sameAsB && returns[i] == br
+	}
+	if sameAsB {
+		return b, true
+	}
+	return typjoin.WithReturns(bf, returns), true
+}
+
+// joinIterationRecords joins two record hints field by field with
+// joinIterationFact. Records with different map-component shapes or conflicting
+// metatables are not joined here.
+func joinIterationRecords(a, b typ.Type) (typ.Type, bool) {
+	ar, ok := a.(*typ.Record)
+	if !ok {
+		return nil, false
+	}
+	br, ok := b.(*typ.Record)
+	if !ok {
+		return nil, false
+	}
+	if ar.HasMapComponent() != br.HasMapComponent() {
+		return nil, false
+	}
+	metatable := ar.Metatable
+	switch {
+	case metatable == nil:
+		metatable = br.Metatable
+	case br.Metatable != nil && !typ.TypeEquals(metatable, br.Metatable):
+		return nil, false
+	}
+
+	// The join reuses an input record it equals, so unchanged hints keep their
+	// identity across iterations.
+	sameAsA := ar.Metatable == metatable && ar.Open == (ar.Open || br.Open)
+	sameAsB := br.Metatable == metatable && br.Open == (ar.Open || br.Open)
+
+	builder := typ.NewRecord().SetOpen(ar.Open || br.Open)
+	if metatable != nil {
+		builder.Metatable(metatable)
+	}
+	if ar.HasMapComponent() {
+		key := joinIterationFactAt(ar.MapKey, br.MapKey, true)
+		value := joinIterationFactAt(ar.MapValue, br.MapValue, true)
+		sameAsA = sameAsA && key == ar.MapKey && value == ar.MapValue
+		sameAsB = sameAsB && key == br.MapKey && value == br.MapValue
+		builder.MapComponent(key, value)
+	}
+	for _, fa := range ar.Fields {
+		field := fa
+		fb := br.GetField(fa.Name)
+		if fb != nil {
+			field.Optional = fa.Optional || fb.Optional
+			field.Readonly = fa.Readonly && fb.Readonly
+			field.Type = joinIterationFactAt(fa.Type, fb.Type, !field.Readonly)
+		}
+		sameAsA = sameAsA && field == fa
+		sameAsB = sameAsB && fb != nil && field == *fb
+		addIterationField(builder, field)
+	}
+	for _, fb := range br.Fields {
+		if ar.GetField(fb.Name) == nil {
+			sameAsA = false
+			addIterationField(builder, fb)
+		}
+	}
+	switch {
+	case sameAsA:
+		return a, true
+	case sameAsB:
+		return b, true
+	}
+	return builder.Build(), true
+}
+
+func addIterationField(builder *typ.RecordBuilder, f typ.Field) {
+	switch {
+	case f.Optional && f.Readonly:
+		builder.OptReadonlyField(f.Name, f.Type)
+	case f.Optional:
+		builder.OptField(f.Name, f.Type)
+	case f.Readonly:
+		builder.ReadonlyField(f.Name, f.Type)
+	default:
+		builder.Field(f.Name, f.Type)
+	}
 }
 
 // WidenLiteralSigs merges two literal signature maps.
@@ -494,7 +733,7 @@ func WidenCapturedTypes(prev, next api.CapturedTypes) api.CapturedTypes {
 	for _, sym := range cfg.SortedSymbolIDs(next) {
 		t := next[sym]
 		if existing := merged[sym]; existing != nil {
-			merged[sym] = maybeWidenTypeForConvergence(typ.JoinPreferNonSoft(existing, t))
+			merged[sym] = maybeWidenTypeForConvergence(joinIterationFact(existing, t))
 		} else {
 			merged[sym] = maybeWidenTypeForConvergence(t)
 		}
@@ -502,8 +741,8 @@ func WidenCapturedTypes(prev, next api.CapturedTypes) api.CapturedTypes {
 	return merged
 }
 
-// WidenCapturedFieldAssigns merges captured field assignment maps using monotone union.
-func WidenCapturedFieldAssigns(prev, next api.CapturedFieldAssigns) api.CapturedFieldAssigns {
+// WidenFieldWrites merges field-write maps using monotone union.
+func WidenFieldWrites(prev, next api.FieldWrites) api.FieldWrites {
 	if prev == nil && next == nil {
 		return nil
 	}
@@ -513,7 +752,7 @@ func WidenCapturedFieldAssigns(prev, next api.CapturedFieldAssigns) api.Captured
 	if next == nil {
 		return prev
 	}
-	merged := make(api.CapturedFieldAssigns, len(prev)+len(next))
+	merged := make(api.FieldWrites, len(prev)+len(next))
 	for _, callee := range cfg.SortedSymbolIDs(prev) {
 		merged[callee] = prev[callee]
 	}
@@ -524,14 +763,30 @@ func WidenCapturedFieldAssigns(prev, next api.CapturedFieldAssigns) api.Captured
 			merged[callee] = captured
 			continue
 		}
-		merged[callee] = MergeCapturedFieldSymbolMaps(existing, captured, func(prev typ.Type, next typ.Type) typ.Type {
+		merged[callee] = MergeFieldWriteSymbolMaps(existing, captured, func(prev typ.Type, next typ.Type) typ.Type {
 			if prev != nil {
-				return maybeWidenTypeForConvergence(typ.JoinPreferNonSoft(prev, next))
+				joined := joinIterationFact(prev, next)
+				if joined == prev {
+					return prev
+				}
+				return widenFieldWriteForConvergence(joined)
 			}
-			return maybeWidenTypeForConvergence(next)
+			return widenFieldWriteForConvergence(next)
 		})
 	}
 	return merged
+}
+
+// widenFieldWriteForConvergence closes a written field type over the records
+// it nests. A write such as `node.parent = current; current = node` types the
+// written record against the field type of the previous iteration, so each
+// iteration nests one more approximation of the record; folding the nested
+// approximations yields the recursive limit of that chain.
+func widenFieldWriteForConvergence(t typ.Type) typ.Type {
+	if t == nil {
+		return nil
+	}
+	return foldSelfRecursiveRecords(maybeWidenTypeForConvergence(t))
 }
 
 // WidenCapturedContainerMutations merges captured container mutation maps using monotone union.
@@ -554,7 +809,7 @@ func WidenCapturedContainerMutations(prev, next api.CapturedContainerMutations) 
 		existing := merged[sym]
 		merged[sym] = MergeCapturedContainerMutationMaps(existing, muts, func(prev *api.ContainerMutation, next api.ContainerMutation) api.ContainerMutation {
 			if prev != nil {
-				next.ValueType = maybeWidenTypeForConvergence(typ.JoinPreferNonSoft(prev.ValueType, next.ValueType))
+				next.ValueType = maybeWidenTypeForConvergence(joinIterationFact(prev.ValueType, next.ValueType))
 			} else {
 				next.ValueType = maybeWidenTypeForConvergence(next.ValueType)
 			}
@@ -593,7 +848,7 @@ func WidenConstructorFields(prev, next api.ConstructorFields) api.ConstructorFie
 		for _, name := range cfg.SortedFieldNames(fields) {
 			t := fields[name]
 			if prevType := out[name]; prevType != nil {
-				out[name] = maybeWidenTypeForConvergence(typ.JoinPreferNonSoft(prevType, t))
+				out[name] = maybeWidenTypeForConvergence(joinIterationFact(prevType, t))
 			} else {
 				out[name] = maybeWidenTypeForConvergence(t)
 			}
@@ -752,7 +1007,151 @@ func maybeWidenTypeForConvergence(t typ.Type) typ.Type {
 	if !hasHigherOrderGrowthRisk(t) {
 		return t
 	}
-	return subtype.WidenForInference(t)
+	return foldSelfRecursiveRecords(subtype.WidenForInference(t))
+}
+
+// selfRecursiveRecordName names the recursive types produced by
+// foldSelfRecursiveRecords.
+const selfRecursiveRecordName = "self"
+
+// foldSelfRecursiveRecords closes records whose methods reach an earlier
+// approximation of the record itself.
+//
+// A table whose methods return the table is inferred one level at a time: each
+// fixpoint iteration types the methods against the table type of the previous
+// iteration, so the table type T_n nests T_(n-1) in its method signatures.
+// The chain T_0 <: T_1 <: ... ascends forever. Replacing every nested
+// approximation T' of T (same fields, T' <: T) by a reference to T itself
+// yields mu X. T[T' := X], an upper bound of the whole chain and its limit.
+func foldSelfRecursiveRecords(t typ.Type) typ.Type {
+	folded := make(map[*typ.Record]typ.Type)
+	// One subtyping session serves the whole pass: the approximation checks
+	// compare the same shared substructure many times.
+	sess := subtype.NewSession()
+	return typ.Rewrite(t, func(node typ.Type) (typ.Type, bool) {
+		rec, ok := node.(*typ.Record)
+		if !ok {
+			return nil, false
+		}
+		if out, ok := folded[rec]; ok {
+			return out, true
+		}
+		out := foldSelfRecursiveRecord(rec, sess)
+		if out == typ.Type(rec) {
+			return nil, false
+		}
+		folded[rec] = out
+		return out, true
+	})
+}
+
+// foldSelfRecursiveRecord returns mu X. owner[T' := X] for every approximation
+// T' of owner nested in owner, or owner itself when none is nested.
+func foldSelfRecursiveRecord(owner *typ.Record, sess *subtype.Session) typ.Type {
+	return typ.FoldApproximations(selfRecursiveRecordName, owner, func(node typ.Type) bool {
+		return isRecordApproximation(node, owner, sess)
+	})
+}
+
+// isRecordApproximation reports whether t is an approximation of owner: a
+// record, or a recursive record, with exactly owner's fields that lies below
+// owner in the information order of inference.
+func isRecordApproximation(t typ.Type, owner *typ.Record, sess *subtype.Session) bool {
+	shape := unwrap.Alias(t)
+	if rr, ok := shape.(*typ.Recursive); ok {
+		shape = rr.Body
+	}
+	rec, ok := shape.(*typ.Record)
+	if !ok || !rec.HasSameFieldNames(owner) {
+		return false
+	}
+	return informationBelow(t, owner, make(map[[2]typ.Type]bool), sess)
+}
+
+// informationBelow reports whether a is an earlier approximation of b: a
+// subtype of b, or a type that differs from one only where an earlier
+// iteration had not yet resolved a type (unknown). Records compare field by
+// field, unions member by member, and recursive types coinductively.
+func informationBelow(a, b typ.Type, assumed map[[2]typ.Type]bool, sess *subtype.Session) bool {
+	if a == nil || typ.IsUnknown(a) {
+		return true
+	}
+	if b == nil {
+		return false
+	}
+	if sess.IsSubtype(a, b) {
+		return true
+	}
+	key := [2]typ.Type{a, b}
+	if assumed[key] {
+		return true
+	}
+	assumed[key] = true
+
+	a = unwrap.Alias(a)
+	b = unwrap.Alias(b)
+	if ar, ok := a.(*typ.Recursive); ok {
+		return informationBelow(ar.Body, b, assumed, sess)
+	}
+	if br, ok := b.(*typ.Recursive); ok {
+		return informationBelow(a, br.Body, assumed, sess)
+	}
+	if au, ok := a.(*typ.Union); ok {
+		for _, m := range au.Members {
+			if !informationBelow(m, b, assumed, sess) {
+				return false
+			}
+		}
+		return true
+	}
+	if ao, ok := a.(*typ.Optional); ok {
+		return informationBelow(typ.Nil, b, assumed, sess) && informationBelow(ao.Inner, b, assumed, sess)
+	}
+	switch bt := b.(type) {
+	case *typ.Optional:
+		return unwrap.IsNilType(a) || informationBelow(a, bt.Inner, assumed, sess)
+	case *typ.Union:
+		for _, m := range bt.Members {
+			if informationBelow(a, m, assumed, sess) {
+				return true
+			}
+		}
+		return false
+	case *typ.Array:
+		aa, ok := a.(*typ.Array)
+		return ok && informationBelow(aa.Element, bt.Element, assumed, sess)
+	case *typ.Record:
+		ar, ok := a.(*typ.Record)
+		if !ok || ar.HasMapComponent() != bt.HasMapComponent() {
+			return false
+		}
+		if ar.HasMapComponent() &&
+			(!informationBelow(ar.MapKey, bt.MapKey, assumed, sess) || !informationBelow(ar.MapValue, bt.MapValue, assumed, sess)) {
+			return false
+		}
+		for _, af := range ar.Fields {
+			bf := bt.GetField(af.Name)
+			if bf == nil {
+				if bt.Open {
+					continue
+				}
+				return false
+			}
+			if af.Optional && !bf.Optional && !typ.IsUnknown(af.Type) {
+				return false
+			}
+			if !informationBelow(af.Type, bf.Type, assumed, sess) {
+				return false
+			}
+		}
+		for _, bf := range bt.Fields {
+			if !bf.Optional && ar.GetField(bf.Name) == nil && !ar.Open {
+				return false
+			}
+		}
+		return true
+	}
+	return false
 }
 
 func maybeWidenFunctionForConvergence(fn *typ.Function) *typ.Function {

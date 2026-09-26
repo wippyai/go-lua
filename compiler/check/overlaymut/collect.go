@@ -69,7 +69,7 @@ func CollectFieldAssignments(
 				result[sym] = make(map[string]typ.Type)
 			}
 			if existing := result[sym][fieldName]; existing != nil {
-				result[sym][fieldName] = typ.JoinPreferNonSoft(existing, fieldType)
+				result[sym][fieldName] = typ.NewUnion(existing, fieldType)
 			} else {
 				result[sym][fieldName] = fieldType
 			}

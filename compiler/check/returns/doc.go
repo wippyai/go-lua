@@ -24,7 +24,9 @@
 // # Type Widening
 //
 // To ensure termination in recursive cases, types are widened:
-//   - After N iterations, recursive types are approximated
+//   - A record whose methods reach an earlier approximation of the record
+//     (a table whose methods return the table) is folded into a recursive
+//     type that bounds every approximation
 //   - Widening preserves soundness while ensuring convergence
 //
 // # Overlay System
