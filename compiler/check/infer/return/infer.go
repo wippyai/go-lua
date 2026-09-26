@@ -50,6 +50,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/synth"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/diag"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/io"
@@ -72,6 +73,7 @@ type Config struct {
 
 // Inferencer computes pre-flow return summaries for local functions.
 type Inferencer struct {
+	specMemo      map[specMemoKey][]typ.Type
 	types         core.TypeOps
 	globalTypes   map[string]typ.Type
 	manifests     io.ManifestQuerier
@@ -194,14 +196,15 @@ func (i *Inferencer) ComputeForGraph(
 	}
 
 	seed := i.store.GetReturnSummariesSnapshot(graph, parentScope)
-	summaries, diags := i.computeReturnSummariesForGroup(run, parentScope.GroupHash(), localFuncs, seed)
-	funcTypes := i.buildLocalFuncTypes(localFuncs, summaries, engine, parentScope)
+	summaries, specs, diags := i.computeReturnSummariesForGroup(run, parentScope.GroupHash(), localFuncs, seed)
+	funcTypes := i.buildLocalFuncTypes(localFuncs, summaries, specs, engine, parentScope)
 	return summaries, funcTypes, diags
 }
 
 func (i *Inferencer) buildLocalFuncTypes(
 	localFuncs map[cfg.SymbolID]*returns.LocalFuncInfo,
 	summaries map[cfg.SymbolID][]typ.Type,
+	specs map[cfg.SymbolID]*contract.Spec,
 	engine *synth.Engine,
 	parentScope *scope.State,
 ) api.FuncTypes {
@@ -238,6 +241,9 @@ func (i *Inferencer) buildLocalFuncTypes(
 				fnType = withSummary
 			}
 		}
+		if spec := specs[sym]; spec != nil {
+			attachBodyReturnSpec(fnType, spec)
+		}
 		out[sym] = fnType
 	}
 	if len(out) == 0 {
@@ -269,19 +275,21 @@ func (i *Inferencer) computeReturnSummariesForGroup(
 	groupHash uint64,
 	localFuncs map[cfg.SymbolID]*returns.LocalFuncInfo,
 	seed map[cfg.SymbolID][]typ.Type,
-) (map[cfg.SymbolID][]typ.Type, []diag.Diagnostic) {
+) (map[cfg.SymbolID][]typ.Type, map[cfg.SymbolID]*contract.Spec, []diag.Diagnostic) {
 	_ = groupHash
 	if len(localFuncs) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	sccs := i.planLocalFunctionSCCs(run, localFuncs)
 	if len(sccs) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	summaries := seedSummariesFromSeed(localFuncs, seed)
-	return summaries, i.processSCCSummaries(run, sccs, localFuncs, summaries)
+	diags := i.processSCCSummaries(run, sccs, localFuncs, summaries)
+	specs := i.buildBodyDerivedReturnSpecs(run, sccs, localFuncs, summaries)
+	return summaries, specs, diags
 }
 
 // returnInferenceContext holds shared state for return type inference phases.
@@ -474,6 +482,52 @@ func (i *Inferencer) inferReturnWithSummary(
 	}
 
 	fn := info.Fn
+
+	ctx := i.setupReturnContext(run, info, summaries, localFuncs)
+	if ctx == nil {
+		return nil
+	}
+
+	// Check for explicit return type annotations.
+	if len(fn.ReturnTypes) > 0 {
+		rets := ctx.engine.ResolveReturnTypes(fn.ReturnTypes, ctx.resolveScope)
+		if len(rets) > 0 {
+			return rets
+		}
+	}
+
+	// Build type overlay with parameter types.
+	overlay := i.buildParameterOverlay(ctx)
+
+	// Build the final overlay through enrichments and phase 1.
+	finalOverlay, untypedCapture := i.finalizeReturnOverlay(ctx, overlay)
+
+	// Phase 2: Infer return types from body.
+	rets := i.inferReturnTypesFromBody(ctx, finalOverlay)
+
+	// Captured types come from the parent's solved flow, so the first round has
+	// none. Returns reading an untyped capture are unknown, and the return-slot
+	// join drops unknown members, so the body result would omit those branches;
+	// the returns stay unknown until the captured types are known.
+	if untypedCapture && len(rets) > 0 {
+		return typ.UnknownReturns(len(rets))
+	}
+	return rets
+}
+
+// setupReturnContext builds the engine, scopes, and shared inference context
+// for one local function.
+func (i *Inferencer) setupReturnContext(
+	run RunContext,
+	info *returns.LocalFuncInfo,
+	summaries map[cfg.SymbolID][]typ.Type,
+	localFuncs map[cfg.SymbolID]*returns.LocalFuncInfo,
+) *returnInferenceContext {
+	if info == nil || info.Fn == nil || info.Graph == nil {
+		return nil
+	}
+
+	fn := info.Fn
 	fnGraph := info.Graph
 	parentScope := info.DefScope
 	moduleAliases := modules.MergeAliases(run.Env.ModuleAliases, modules.CollectAliases(fnGraph))
@@ -496,22 +550,13 @@ func (i *Inferencer) inferReturnWithSummary(
 		resolveScope = resolveScope.WithTypeParams(typeParams)
 	}
 
-	// Check for explicit return type annotations.
-	if len(fn.ReturnTypes) > 0 {
-		rets := engine.ResolveReturnTypes(fn.ReturnTypes, resolveScope)
-		if len(rets) > 0 {
-			return rets
-		}
-	}
-
 	// Resolve bindings for this function.
 	bindings := fnGraph.Bindings()
 	if bindings == nil && i.store != nil {
 		bindings = i.store.ModuleBindings()
 	}
 
-	// Build inference context shared across all phases.
-	ctx := &returnInferenceContext{
+	return &returnInferenceContext{
 		run:           run,
 		info:          info,
 		summaries:     summaries,
@@ -522,10 +567,15 @@ func (i *Inferencer) inferReturnWithSummary(
 		bindings:      bindings,
 		parentFacts:   run.ParentFacts,
 	}
+}
 
-	// Build type overlay with parameter types.
-	overlay := i.buildParameterOverlay(ctx)
-
+// finalizeReturnOverlay runs overlay enrichments, phase 1 inference, and
+// mutation application. It reports whether the function reads untyped
+// captures from the parent scope.
+func (i *Inferencer) finalizeReturnOverlay(
+	ctx *returnInferenceContext,
+	overlay map[cfg.SymbolID]typ.Type,
+) (map[cfg.SymbolID]typ.Type, bool) {
 	// Add sibling function types from summaries.
 	i.enrichOverlayWithSiblings(ctx, overlay)
 
@@ -535,7 +585,7 @@ func (i *Inferencer) inferReturnWithSummary(
 
 	// Add captured variable types from parent.
 	i.enrichOverlayWithCaptured(ctx, overlay)
-	untypedCapture := captured.HasUntypedSelf(fnGraph.Bindings(), fn, overlay) || captured.HasUntypedAliasCall(fnGraph, overlay)
+	untypedCapture := captured.HasUntypedSelf(ctx.info.Graph.Bindings(), ctx.info.Fn, overlay) || captured.HasUntypedAliasCall(ctx.info.Graph, overlay)
 
 	// Add local declared types (annotations, loop variables) as overlay hints.
 	i.enrichOverlayWithLocalDeclarations(ctx, overlay)
@@ -544,17 +594,5 @@ func (i *Inferencer) inferReturnWithSummary(
 	inferred, _, synthAdapter := i.inferLocalVariableTypes(ctx, overlay)
 
 	// Collect field/indexer assignments and apply mutations.
-	finalOverlay := i.collectAndApplyMutations(ctx, overlay, inferred, synthAdapter)
-
-	// Phase 2: Infer return types from body.
-	rets := i.inferReturnTypesFromBody(ctx, finalOverlay)
-
-	// Captured types come from the parent's solved flow, so the first round has
-	// none. Returns reading an untyped capture are unknown, and the return-slot
-	// join drops unknown members, so the body result would omit those branches;
-	// the returns stay unknown until the captured types are known.
-	if untypedCapture && len(rets) > 0 {
-		return typ.UnknownReturns(len(rets))
-	}
-	return rets
+	return i.collectAndApplyMutations(ctx, overlay, inferred, synthAdapter), untypedCapture
 }

@@ -220,7 +220,7 @@ func NarrowReturnTypeBySpec(
 		return nil
 	}
 
-	spec := contract.ExtractSpec(fnType)
+	spec := resolveCallSpec(fnType, callInfo, p, symResolver, graph, bindings, moduleBindings)
 	if spec == nil || spec.Return == nil || len(spec.Return.Cases) == 0 {
 		return nil
 	}
@@ -230,5 +230,38 @@ func NarrowReturnTypeBySpec(
 		return t
 	}
 
+	return nil
+}
+
+// resolveCallSpec returns the callee's contract spec, preferring the
+// synthesized type and falling back to the stored function type when the
+// synthesized view carries no return cases.
+func resolveCallSpec(
+	fnType typ.Type,
+	callInfo *cfg.CallInfo,
+	p cfg.Point,
+	symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool),
+	graph *cfg.Graph,
+	bindings *bind.BindingTable,
+	moduleBindings *bind.BindingTable,
+) *contract.Spec {
+	if spec := contract.ExtractSpec(fnType); spec != nil && spec.Return != nil && len(spec.Return.Cases) > 0 {
+		return spec
+	}
+	if symResolver == nil {
+		return nil
+	}
+	for _, calleeSym := range callsite.CallableCalleeSymbolCandidates(callInfo, graph, bindings, moduleBindings) {
+		if calleeSym == 0 {
+			continue
+		}
+		t, ok := symResolver(p, calleeSym)
+		if !ok || t == nil {
+			continue
+		}
+		if spec := contract.ExtractSpec(t); spec != nil && spec.Return != nil && len(spec.Return.Cases) > 0 {
+			return spec
+		}
+	}
 	return nil
 }

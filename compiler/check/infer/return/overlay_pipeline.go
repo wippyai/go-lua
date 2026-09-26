@@ -751,17 +751,14 @@ type phase2InferenceState struct {
 	deadPoints map[cfg.Point]bool
 }
 
-// runPhase2FlowNarrowing executes extract->solve->narrow over the final overlay.
-// This makes return summary collection path-sensitive instead of declared-only.
-func (i *Inferencer) runPhase2FlowNarrowing(
+// extractForReturn runs flow extraction over the final overlay and returns
+// the environment, scope output, and extraction output for solve/narrow or
+// flow input inspection.
+func (i *Inferencer) extractForReturn(
 	ctx *returnInferenceContext,
 	finalOverlay map[cfg.SymbolID]typ.Type,
-) phase2InferenceState {
+) (phase.PhaseEnv, phase.ScopeOutput, phase.FlowExtractOutput) {
 	fnGraph := ctx.info.Graph
-	if fnGraph == nil {
-		return phase2InferenceState{}
-	}
-
 	fnScopes := uniformFunctionScopes(fnGraph, ctx.resolveScope)
 
 	phaseEnv := phase.PhaseEnv{
@@ -784,17 +781,32 @@ func (i *Inferencer) runPhase2FlowNarrowing(
 			return ctx.engine.ResolveFunctionSignature(fn, sc)
 		}),
 	}
-	phaseReturnSummaries := ctx.summaries
 
 	extractOut := phase.RunExtract(phase.FlowExtractInput{
 		PhaseEnv:        phaseEnv,
 		Resolve:         phase.ResolveOutput{TypeResolver: ctx.engine},
 		Scope:           scopeOut,
-		ReturnSummaries: phaseReturnSummaries,
+		ReturnSummaries: ctx.summaries,
 	})
+	return phaseEnv, scopeOut, extractOut
+}
+
+// runPhase2FlowNarrowing executes extract->solve->narrow over the final overlay.
+// This makes return summary collection path-sensitive instead of declared-only.
+func (i *Inferencer) runPhase2FlowNarrowing(
+	ctx *returnInferenceContext,
+	finalOverlay map[cfg.SymbolID]typ.Type,
+) phase2InferenceState {
+	fnGraph := ctx.info.Graph
+	if fnGraph == nil {
+		return phase2InferenceState{}
+	}
+
+	phaseEnv, scopeOut, extractOut := i.extractForReturn(ctx, finalOverlay)
 	if extractOut.Inputs == nil {
 		return phase2InferenceState{}
 	}
+	phaseReturnSummaries := ctx.summaries
 
 	solveOut := phase.RunSolve(phase.FlowSolveInput{
 		PhaseEnv: phaseEnv,
@@ -837,7 +849,7 @@ func (i *Inferencer) runPhase2FlowNarrowing(
 		ReturnSummaries: phaseReturnSummaries,
 	})
 	return phase2InferenceState{
-		synth:      i.newReturnInferenceEngine(ctx.run, fnScopes, fnCheckCtx),
+		synth:      i.newReturnInferenceEngine(ctx.run, phaseEnv.Scopes, fnCheckCtx),
 		deadPoints: deadPoints,
 	}
 }
