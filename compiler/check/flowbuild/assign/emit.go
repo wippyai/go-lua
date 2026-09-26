@@ -266,31 +266,38 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 
 				// Determine assigned type using identity-based resolver.
 				// For annotated locals, keep the declared type (RHS should not override).
+				rhsType := func() typ.Type {
+					ensureValues()
+					if value := assignValueAt(values, i); value != nil {
+						return preferPreciseDirectSourceType(value, source, p, sc, wrappedSynth, len(info.Targets) == 1)
+					}
+					if wrappedSynth != nil && source != nil {
+						return wrappedSynth(source, p)
+					}
+					return nil
+				}
 				assignedType := typ.Unknown
 				if info.IsLocal {
 					if inputs != nil && inputs.AnnotatedVars != nil && inputs.AnnotatedVars[sym] {
 						if dt, ok := inputs.DeclaredTypes[sym]; ok && dt != nil {
 							assignedType = dt
 						}
-					} else {
-						if t, ok := resolverWithSpec(p, sym); ok && t != nil {
-							// Keep previously resolved assignment types only when
-							// they carry concrete information. Top-like placeholders
-							// (any/unknown/soft) must not block RHS-derived types.
-							if !isTopLikeResolvedAssignType(t) {
-								assignedType = t
-							}
+					} else if t, ok := resolverWithSpec(p, sym); ok && t != nil {
+						// A final resolved type is authoritative when it carries
+						// concrete information; top-like placeholders
+						// (any/unknown/soft) yield to RHS-derived types. A
+						// pending estimate is filled by RHS evidence.
+						if !typ.IsFinal(t) {
+							assignedType = typ.Resolve(t, rhsType())
+						} else if !isTopLikeResolvedAssignType(t) {
+							assignedType = t
 						}
 					}
 				}
 				// Fall back to expression synthesis if no declared/known type
 				if typ.IsAbsentOrUnknown(assignedType) {
-					ensureValues()
-					if value := assignValueAt(values, i); value != nil {
-						assignedType = value
-						assignedType = preferPreciseDirectSourceType(assignedType, source, p, sc, wrappedSynth, len(info.Targets) == 1)
-					} else if wrappedSynth != nil && source != nil {
-						assignedType = wrappedSynth(source, p)
+					if rhs := rhsType(); rhs != nil {
+						assignedType = rhs
 					}
 				}
 				// Override with expanded values if source call has a spec-narrowed receiver.

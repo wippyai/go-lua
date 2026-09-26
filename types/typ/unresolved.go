@@ -262,6 +262,11 @@ func resolvePendingNode(current, evidence Type, seen map[resolvePair]Type) Type 
 	case *Union:
 		// Union members are separate paths. This API has no source identity
 		// with which to pair them to evidence, even when their kinds match.
+		// Final evidence for the whole position supersedes a union that is
+		// still pending on one of its paths.
+		if a.Contains(Unresolved) && IsFinal(evidence) {
+			return evidence
+		}
 		return current
 	case *Function:
 		b, ok := evidence.(*Function)

@@ -47,3 +47,18 @@ func TestFinalizeMissingRecursiveBody(t *testing.T) {
 		t.Fatalf("unfinished recursive return escaped finalization: %v", got)
 	}
 }
+
+func TestResolveSupersedesPendingUnionWithWholeEvidence(t *testing.T) {
+	current := NewUnion(Unresolved, NewOptional(Number))
+	if got := Resolve(current, Number); !TypeEquals(got, Number) {
+		t.Fatalf("pending union position kept against final evidence: %v", got)
+	}
+	record := NewRecord().Field("timeout", current).Build()
+	evidence := NewRecord().Field("timeout", Number).Build()
+	if got := Resolve(record, evidence); !TypeEquals(got, evidence) {
+		t.Fatalf("pending record field kept against final evidence: %v", got)
+	}
+	if got := Resolve(NewRecord().Field("timeout", String).Field("x", Unresolved).Build(), evidence); !TypeEquals(got.(*Record).GetField("timeout").Type, String) {
+		t.Fatalf("final leaf replaced by evidence: %v", got)
+	}
+}
