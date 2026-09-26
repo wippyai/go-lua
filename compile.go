@@ -789,7 +789,7 @@ func compileStmt(context *funcContext, stmt ast.Stmt, isLastStmt bool) { // {{{
 func compileAssignStmtLeft(context *funcContext, stmt *ast.AssignStmt) (int, []*assigncontext) { // {{{
 	reg := context.RegTop()
 	acs := make([]*assigncontext, 0, len(stmt.Lhs))
-	for _, lhs := range stmt.Lhs {
+	for i, lhs := range stmt.Lhs {
 		switch st := lhs.(type) {
 		case *ast.IdentExpr:
 			identtype := getIdentRefType(context, context, st)
@@ -806,12 +806,12 @@ func compileAssignStmtLeft(context *funcContext, stmt *ast.AssignStmt) (int, []*
 			acs = append(acs, &assigncontext{ec: ec})
 		case *ast.AttrGetExpr:
 			ac := &assigncontext{ec: &expcontext{ecTable, regNotDefined, 0}}
-			// A direct local table reference must be saved if that same local is
-			// another assignment target. Otherwise preserve the normal propagation
-			// of the reference (including changes made by RHS calls).
+			// Stores run right to left. Save a direct local table reference only
+			// when a later target will overwrite it before this table store.
+			// Otherwise RHS calls may still change the local being referenced.
 			snapshotObject := false
 			if object, ok := st.Object.(*ast.IdentExpr); ok && getIdentRefType(context, context, object) == ecLocal {
-				for _, target := range stmt.Lhs {
+				for _, target := range stmt.Lhs[i+1:] {
 					if ident, ok := target.(*ast.IdentExpr); ok && ident.Value == object.Value {
 						snapshotObject = true
 						break

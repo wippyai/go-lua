@@ -26,6 +26,8 @@ func TestMultipleAssignmentSnapshotsRightHandValues(t *testing.T) {
 		{"table target key before writes", `local i = 1; local t = {10, 20}; i, t[i] = 2, i + 10; return i, t[1], t[2]`, []LValue{LNumber(2), LNumber(11), LNumber(20)}},
 		{"table target object before writes", `local old = {x = 0}; local t = old; t.x, t = 1, {x = 2}; return old.x, t.x`, []LValue{LNumber(1), LNumber(2)}},
 		{"local before table target object", `local old = {x = 0}; local t = old; t, t.x = {x = 2}, 1; return old.x, t.x`, []LValue{LNumber(1), LNumber(2)}},
+		{"earlier local target does not snapshot table before RHS side effect", `local old = {x = 0}; local new = {x = 2}; local t = old; local function switch() t = new; return {x = 3} end; t, t.x = switch(), 1; return old.x, new.x, t.x`, []LValue{LNumber(0), LNumber(1), LNumber(3)}},
+		{"later local target snapshots table despite RHS side effect", `local old = {x = 0}; local new = {x = 2}; local t = old; local function switch() t = new; return 1 end; t.x, t = switch(), {x = 3}; return old.x, new.x, t.x`, []LValue{LNumber(1), LNumber(2), LNumber(3)}},
 		{"single table target object before call", `local old = {x = 0}; local t = old; local function switch() t = {x = 2}; return 1 end; t.x = switch(); return old.x, t.x`, []LValue{LNumber(0), LNumber(1)}},
 		{"table target object changed by RHS call", `local old = {x = 0}; local t = old; local y = 0; local function switch() t = {x = 2}; return 1 end; t.x, y = switch(), 0; return old.x, t.x, y`, []LValue{LNumber(0), LNumber(1), LNumber(0)}},
 		{"table field swap", `local t = {x = 1, y = 2}; t.x, t.y = t.y, t.x; return t.x, t.y`, []LValue{LNumber(2), LNumber(1)}},
