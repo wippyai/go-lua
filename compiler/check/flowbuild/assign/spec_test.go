@@ -482,3 +482,11 @@ func (s *reprocessSpecSynthAPI) ExpandValuesWithSpecTypes(_ []ast.Expr, needed i
 func (s *reprocessSpecSynthAPI) InferIterVarsWithSpecTypes(_ []ast.Expr, count int, _ cfg.Point, _ api.SpecTypes) []typ.Type {
 	return make([]typ.Type, count)
 }
+
+func (s *specTestSynthAPI) TypeOfWithSpecTypes(expr ast.Expr, p cfg.Point, _ api.SpecTypes) typ.Type {
+	return s.TypeOf(expr, p)
+}
+
+func (s *reprocessSpecSynthAPI) TypeOfWithSpecTypes(expr ast.Expr, p cfg.Point, _ api.SpecTypes) typ.Type {
+	return s.TypeOf(expr, p)
+}

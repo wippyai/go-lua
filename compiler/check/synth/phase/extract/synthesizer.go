@@ -162,6 +162,15 @@ func (s *Synthesizer) ExpandValuesWithSpecTypes(exprs []ast.Expr, needed int, p 
 	return s.expandValuesWithSpec(exprs, needed, p, specTypes)
 }
 
+// TypeOfWithSpecTypes synthesizes an expression with spec-narrowed type lookup
+// for every symbol it reads.
+func (s *Synthesizer) TypeOfWithSpecTypes(expr ast.Expr, p cfg.Point, specTypes api.SpecTypes) typ.Type {
+	if len(specTypes) == 0 {
+		return s.TypeOf(expr, p)
+	}
+	return s.synthExprWithSpec(expr, p, specTypes)
+}
+
 // InferIterVars infers iterator variable types (no narrowing).
 func (s *Synthesizer) InferIterVars(exprs []ast.Expr, count int, p cfg.Point) []typ.Type {
 	return s.inferIterVars(exprs, count, p, nil)
@@ -483,6 +492,11 @@ fallback:
 		}
 	}
 
+	// Scope computation sees declarations only: a bound symbol whose value
+	// comes from flow has no evidence yet.
+	if s.phase == api.PhaseScopeCompute {
+		return typ.Unresolved
+	}
 	return typ.Unknown
 }
 

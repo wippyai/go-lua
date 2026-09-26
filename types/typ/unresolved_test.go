@@ -62,3 +62,21 @@ func TestResolveSupersedesPendingUnionWithWholeEvidence(t *testing.T) {
 		t.Fatalf("final leaf replaced by evidence: %v", got)
 	}
 }
+
+func TestDropPendingAlternatives(t *testing.T) {
+	if got := DropPendingAlternatives(NewUnion(Unresolved, String)); !TypeEquals(got, String) {
+		t.Fatalf("pending alternative kept: %v", got)
+	}
+	nested := NewRecord().Field("k", NewUnion(Unresolved, Number)).Build()
+	want := NewRecord().Field("k", Number).Build()
+	if got := DropPendingAlternatives(nested); !TypeEquals(got, want) {
+		t.Fatalf("nested pending alternative kept: %v", got)
+	}
+	if got := DropPendingAlternatives(Unresolved); got != nil {
+		t.Fatalf("wholly pending type has no evidence to keep: %v", got)
+	}
+	hole := NewRecord().Field("k", Unresolved).Build()
+	if got := DropPendingAlternatives(hole); !TypeEquals(got, hole) {
+		t.Fatalf("pending position without alternatives changed: %v", got)
+	}
+}

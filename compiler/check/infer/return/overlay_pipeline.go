@@ -353,18 +353,7 @@ func (i *Inferencer) inferLocalVariableTypes(
 	})
 
 	fnScopes := uniformFunctionScopes(fnGraph, ctx.resolveScope)
-
-	prelimCtx := api.NewReturnInferenceEnv(api.ReturnInferenceEnvConfig{
-		Graph:           fnGraph,
-		Bindings:        ctx.bindings,
-		BaseScope:       ctx.resolveScope,
-		DeclaredTypes:   overlay,
-		GlobalTypes:     i.globalTypes,
-		ModuleAliases:   ctx.moduleAliases,
-		ReturnSummaries: ctx.summaries,
-	})
-
-	prelimEngine := i.newReturnInferenceEngine(ctx.run, fnScopes, prelimCtx)
+	prelimCtx, prelimEngine := i.newOverlayEngine(ctx, fnScopes, overlay)
 
 	synthAdapter := func(expr ast.Expr, p cfg.Point) typ.Type {
 		return prelimEngine.TypeOf(expr, p)
@@ -395,6 +384,25 @@ func (i *Inferencer) inferLocalVariableTypes(
 	}, overlay, annotated, nil)
 
 	return inferred, prelimEngine, synthAdapter
+}
+
+// newOverlayEngine builds a return-inference engine whose declared types are
+// overlay.
+func (i *Inferencer) newOverlayEngine(
+	ctx *returnInferenceContext,
+	fnScopes map[cfg.Point]*scope.State,
+	overlay map[cfg.SymbolID]typ.Type,
+) (*api.DeclaredEnvImpl, *synth.Engine) {
+	env := api.NewReturnInferenceEnv(api.ReturnInferenceEnvConfig{
+		Graph:           ctx.info.Graph,
+		Bindings:        ctx.bindings,
+		BaseScope:       ctx.resolveScope,
+		DeclaredTypes:   overlay,
+		GlobalTypes:     i.globalTypes,
+		ModuleAliases:   ctx.moduleAliases,
+		ReturnSummaries: ctx.summaries,
+	})
+	return env, i.newReturnInferenceEngine(ctx.run, fnScopes, env)
 }
 
 func (i *Inferencer) enrichOverlayWithLocalDeclarations(
@@ -487,6 +495,14 @@ func (i *Inferencer) collectAndApplyMutations(
 ) map[cfg.SymbolID]typ.Type {
 	stage := newOverlayMutationStage(ctx, overlay, inferred, synthAdapter)
 	mergeInferredIntoOverlay(stage.finalOverlay, stage.inferred, stage.paramSyms)
+	// Mutations are read with the local types phase 1 published: a key or
+	// value expression such as `#t + 1` reads its locals through them.
+	if stage.fnGraph != nil {
+		_, published := i.newOverlayEngine(ctx, uniformFunctionScopes(stage.fnGraph, ctx.resolveScope), cloneOverlay(stage.finalOverlay, 0))
+		stage.synthAdapter = func(expr ast.Expr, p cfg.Point) typ.Type {
+			return published.TypeOf(expr, p)
+		}
+	}
 	stage.enrichedSynthAdapter = buildEnrichedSynthAdapter(stage.fnGraph.Bindings(), stage.inferred, stage.finalOverlay, stage.synthAdapter)
 
 	i.applyFieldMutations(ctx, &stage)

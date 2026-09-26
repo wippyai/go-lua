@@ -1,12 +1,24 @@
 package assign
 
 import (
+	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	checkcallsite "github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/typ"
 )
+
+// overlaySynth synthesizes an expression with overlay applied to every symbol
+// it reads, not only to a root identifier.
+func overlaySynth(synthAPI api.SynthAPI, overlay api.SpecTypes, fallback func(ast.Expr, cfg.Point) typ.Type) func(ast.Expr, cfg.Point) typ.Type {
+	if synthAPI == nil || len(overlay) == 0 {
+		return fallback
+	}
+	return func(expr ast.Expr, p cfg.Point) typ.Type {
+		return synthAPI.TypeOfWithSpecTypes(expr, p, overlay)
+	}
+}
 
 func expandedAssignValues(synthAPI api.SynthAPI, info *cfg.AssignInfo, p cfg.Point, specTypes api.SpecTypes) []typ.Type {
 	if synthAPI == nil || info == nil || len(info.Targets) == 0 || len(info.Sources) == 0 {

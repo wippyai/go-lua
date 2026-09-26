@@ -64,6 +64,7 @@ import (
 	"github.com/wippyai/go-lua/internal"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/flow"
+	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
@@ -84,9 +85,10 @@ func mergeSpecTypesSoftInto(out, base, override api.SpecTypes) api.SpecTypes {
 		out[k] = v
 	}
 	for k, v := range override {
-		// Unknown/nil overlays are uninformative and can poison downstream
+		// Pending and nil overlays are uninformative and can poison downstream
 		// inference (for example, trailing nil padding from unresolved calls).
-		if typ.IsUnknownOrNil(v) {
+		// A declared unknown is a final dynamic type and overrides.
+		if v == nil || typ.IsUnresolved(v) || v.Kind() == kind.Nil {
 			continue
 		}
 		if v != nil && typ.IsSoft(v, typ.SoftAnnotationPolicy) {
@@ -148,7 +150,6 @@ func collectInferredTypes(
 	services fbcore.FlowServices,
 ) api.SpecTypes {
 	inferred := make(api.SpecTypes)
-	pendingKeySeeded := false
 	if graph == nil {
 		return inferred
 	}
@@ -483,6 +484,15 @@ func collectInferredTypes(
 			previous := make(api.SpecTypes, len(sccSyms))
 			for _, sym := range sccSyms {
 				previous[sym] = inferred[sym]
+				// This round re-reads every value the previous round read
+				// while pending, so its result supersedes those alternatives.
+				if t, ok := inferred[sym]; ok && !typ.IsFinal(t) {
+					if evidence := typ.DropPendingAlternatives(t); evidence != nil {
+						inferred[sym] = evidence
+					} else {
+						delete(inferred, sym)
+					}
+				}
 			}
 			overlayScratch = mergeSpecTypesSoftInto(overlayScratch, inferred, specTypes)
 			overlay := overlayScratch
@@ -809,7 +819,6 @@ func collectInferredTypes(
 						keyType = resolve.Ref(keyType, sc)
 						if keyType == nil {
 							keyType = typ.Unresolved
-							pendingKeySeeded = true
 						} else {
 							keyType = canonicalDynamicKeyType(keyType)
 						}
@@ -887,11 +896,11 @@ func collectInferredTypes(
 		}
 	}
 
-	if pendingKeySeeded {
-		for sym, t := range inferred {
-			if !typ.IsFinal(t) {
-				inferred[sym] = typ.Finalize(t)
-			}
+	// Inferred types are published into the flow overlay: pending positions
+	// do not cross that boundary.
+	for sym, t := range inferred {
+		if !typ.IsFinal(t) {
+			inferred[sym] = typ.Finalize(t)
 		}
 	}
 	return inferred

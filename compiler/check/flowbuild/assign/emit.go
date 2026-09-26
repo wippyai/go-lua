@@ -153,7 +153,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 	overlayTypes = mergeSpecTypesInto(overlayTypes, specNarrowed)
 	overlayTypes = mergeSpecTypesInto(overlayTypes, loopVarTypes)
 
-	baseSynth := synthWithOverlayAndPreflow(overlayTypes, bindings, inputs, fc.CallCtx, fc.TypeOps, preflowBranchSolution, synth)
+	baseSynth := synthWithOverlayAndPreflow(overlayTypes, bindings, inputs, fc.CallCtx, fc.TypeOps, preflowBranchSolution, overlaySynth(fc.API, overlayTypes, synth))
 	idom, _ := cfganalysis.ComputeDominators(fc.Graph.CFG())
 	structuredWrites := indexStructuredWrites(fc.Graph)
 	var wrappedSynth func(ast.Expr, cfg.Point) typ.Type
@@ -336,6 +336,9 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 				if narrowed, ok := specNarrowed[sym]; ok {
 					assignedType = narrowed
 				}
+				// The assignment type is published into the flow: pending
+				// positions do not cross that boundary.
+				assignedType = typ.Finalize(assignedType)
 
 				// Build source path with const resolution and bindings.
 				// For dynamic map index reads (t[k]) where k is non-const and

@@ -229,4 +229,7 @@ type SynthAPI interface {
 	InferIterVars(exprs []ast.Expr, count int, p cfg.Point) []typ.Type
 	ExpandValuesWithSpecTypes(exprs []ast.Expr, needed int, p cfg.Point, specTypes SpecTypes) []typ.Type
 	InferIterVarsWithSpecTypes(exprs []ast.Expr, count int, p cfg.Point, specTypes SpecTypes) []typ.Type
+	// TypeOfWithSpecTypes synthesizes expr reading every symbol in specTypes
+	// through its overlay type.
+	TypeOfWithSpecTypes(expr ast.Expr, p cfg.Point, specTypes SpecTypes) typ.Type
 }
