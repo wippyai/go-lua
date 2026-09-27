@@ -9,14 +9,7 @@ import (
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
-// ApplySpecReturnCases evaluates contract.ReturnSpec cases against argument types.
-// This is pure type-based matching that works when argument types are resolved
-// to literal types. The compiler uses this as a fallback when AST-pattern
-// matching (for inline table constructors) doesn't produce a result.
-//
-// Ownership: This function provides the pure type-based logic. The compiler
-// owns the decision of when to apply spec returns and coordinates between
-// AST-pattern matching and type-based matching.
+// ApplySpecReturnCases matches declared FieldEquals cases against argument types.
 func ApplySpecReturnCases(fn *typ.Function, args []typ.Type) typ.Type {
 	if fn == nil || fn.Spec == nil {
 		return nil

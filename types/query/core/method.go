@@ -109,6 +109,18 @@ func methodDepth(t typ.Type, name string, depth int) (typ.Type, bool) {
 				if unwrap.Function(ft) != nil {
 					return fieldResult{t: ft, ok: true}
 				}
+				if inter, ok := ft.(*typ.Intersection); ok && len(inter.Members) > 0 {
+					allFunctions := true
+					for _, member := range inter.Members {
+						if unwrap.Function(member) == nil {
+							allFunctions = false
+							break
+						}
+					}
+					if allFunctions {
+						return fieldResult{t: ft, ok: true}
+					}
+				}
 			}
 
 			if r.Metatable == nil {

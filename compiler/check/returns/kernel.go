@@ -5,7 +5,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/types/typ"
 	typjoin "github.com/wippyai/go-lua/types/typ/join"
-	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 // ReconcileFunctionFactInput captures all channels that can influence a single
@@ -60,7 +59,7 @@ func ReconcileFunctionFact(in ReconcileFunctionFactInput) ReconcileFunctionFactO
 		}
 	}
 
-	if fn := unwrap.Function(out.Func); fn != nil {
+	if fn := typ.GeneralMember(out.Func); fn != nil {
 		alignedSummary := out.Summary
 		if len(out.Narrow) > 0 {
 			// Canonical tie-breaker: function facts track post-flow behavior.
@@ -81,7 +80,11 @@ func ReconcileFunctionFact(in ReconcileFunctionFactInput) ReconcileFunctionFactO
 				aligned, changed = AlignFunctionTypeWithSummary(fn, alignedSummary)
 			}
 			if changed {
-				out.Func = aligned
+				if inter, ok := out.Func.(*typ.Intersection); ok {
+					out.Func = withOverloadGeneral(inter, aligned)
+				} else {
+					out.Func = aligned
+				}
 				fn = aligned
 			}
 		}

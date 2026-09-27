@@ -4,7 +4,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/contract"
-	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/numparse"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -38,53 +37,8 @@ func constraintMatchesArgs(c constraint.Constraint, args []ast.Expr) bool {
 	switch v := c.(type) {
 	case constraint.FieldEquals:
 		return fieldEqualsMatchesArgs(v, args)
-	case constraint.HasType:
-		return hasTypeMatchesArgs(v, args)
 	}
 	return false
-}
-
-// hasTypeMatchesArgs checks if a HasType constraint on a placeholder path
-// matches an inline literal argument. The type key must identify a literal;
-// the argument must be the same literal value, compared by hash.
-func hasTypeMatchesArgs(ht constraint.HasType, args []ast.Expr) bool {
-	paramIdx, ok := constraint.PlaceholderArgIndex(ht.Path, len(args))
-	if !ok {
-		return false
-	}
-	arg := args[paramIdx]
-	if arg == nil {
-		return false
-	}
-	if ht.Type.Kind != narrow.TypeKeyHash {
-		return false
-	}
-	lit := literalFromArgExpr(arg)
-	if lit == nil {
-		return false
-	}
-	return lit.Hash() == ht.Type.Hash
-}
-
-// literalFromArgExpr derives the literal value of an inline argument for
-// literal kinds mirrored by exprMatchesLiteral.
-func literalFromArgExpr(expr ast.Expr) *typ.Literal {
-	switch v := expr.(type) {
-	case *ast.TrueExpr:
-		return typ.LiteralBool(true)
-	case *ast.FalseExpr:
-		return typ.LiteralBool(false)
-	case *ast.StringExpr:
-		return typ.LiteralString(v.Value)
-	case *ast.NumberExpr:
-		if parsed, ok := numparse.ParseIntegerLiteral(v.Value); ok {
-			return typ.LiteralInt(parsed)
-		}
-		if parsed, ok := numparse.ParseFloatLiteral(v.Value); ok {
-			return typ.LiteralNumber(parsed)
-		}
-	}
-	return nil
 }
 
 // fieldEqualsMatchesArgs checks if a FieldEquals constraint matches an inline table literal.

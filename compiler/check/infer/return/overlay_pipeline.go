@@ -143,14 +143,24 @@ func (i *Inferencer) summaryFromSnapshot(
 
 // scratchCallables presents current group estimates to synthesis during this
 // iteration; stable facts are read separately from the previous snapshot.
-func scratchCallables(graph *cfg.Graph, summaries map[cfg.SymbolID][]typ.Type) api.Callables {
-	if graph == nil || len(summaries) == 0 {
+func (i *Inferencer) scratchCallables(ctx *returnInferenceContext) api.Callables {
+	if ctx == nil || ctx.info == nil || ctx.info.Graph == nil {
 		return nil
 	}
+	graph, summaries := ctx.info.Graph, ctx.summaries
 	out := make(api.Callables)
+	parentScope := api.ParentScopeForGraph(i.store, graph.ID(), ctx.info.DefScope)
+	owned := i.store.GetCallablesSnapshot(graph, parentScope)
 	graph.EachLocalFunction(func(_ cfg.Point, sym cfg.SymbolID, fn *ast.FunctionExpr) {
+		var fact api.FunctionFact
 		if summary := summaries[sym]; len(summary) > 0 {
-			out[fn] = api.FunctionFact{Summary: summary, Narrow: summary}
+			fact.Summary, fact.Narrow = summary, summary
+		}
+		if inter, ok := owned[fn].Func.(*typ.Intersection); ok {
+			fact.Func = inter
+		}
+		if fact.Func != nil || len(fact.Summary) > 0 {
+			out[fn] = fact
 		}
 	})
 	return out
@@ -356,7 +366,7 @@ func (i *Inferencer) newOverlayEngine(
 		DeclaredTypes: overlay,
 		GlobalTypes:   i.globalTypes,
 		ModuleAliases: ctx.moduleAliases,
-		Callables:     scratchCallables(ctx.info.Graph, ctx.summaries),
+		Callables:     i.scratchCallables(ctx),
 	})
 	return env, i.newReturnInferenceEngine(ctx.run, fnScopes, env)
 }
@@ -751,7 +761,7 @@ func (i *Inferencer) extractForReturn(
 		PhaseEnv:  phaseEnv,
 		Resolve:   phase.ResolveOutput{TypeResolver: ctx.engine},
 		Scope:     scopeOut,
-		Callables: scratchCallables(ctx.info.Graph, ctx.summaries),
+		Callables: i.scratchCallables(ctx),
 	})
 	return phaseEnv, scopeOut, extractOut
 }
@@ -771,8 +781,6 @@ func (i *Inferencer) runPhase2FlowNarrowing(
 	if extractOut.Inputs == nil {
 		return phase2InferenceState{}
 	}
-	phaseReturnSummaries := ctx.summaries
-
 	solveOut := phase.RunSolve(phase.FlowSolveInput{
 		PhaseEnv: phaseEnv,
 		Extract:  extractOut,
@@ -784,7 +792,7 @@ func (i *Inferencer) runPhase2FlowNarrowing(
 		Scope:     scopeOut,
 		Extract:   extractOut,
 		Solve:     solveOut,
-		Callables: scratchCallables(fnGraph, phaseReturnSummaries),
+		Callables: i.scratchCallables(ctx),
 	})
 
 	deadPoints := map[cfg.Point]bool{}
@@ -811,7 +819,7 @@ func (i *Inferencer) runPhase2FlowNarrowing(
 		DeclaredTypes: finalOverlay,
 		GlobalTypes:   i.globalTypes,
 		ModuleAliases: ctx.moduleAliases,
-		Callables:     scratchCallables(fnGraph, phaseReturnSummaries),
+		Callables:     i.scratchCallables(ctx),
 	})
 	return phase2InferenceState{
 		synth:      i.newReturnInferenceEngine(ctx.run, phaseEnv.Scopes, fnCheckCtx),

@@ -186,21 +186,7 @@ func (r ReturnCase) Equals(other ReturnCase) bool {
 	return r.Type.Equals(other.Type)
 }
 
-// ReturnSpec describes conditional return types.
-//
-// ReturnSpec enables overload-like behavior where the return type depends
-// on the argument types or values. Cases are checked in order; the first
-// matching condition determines the return type.
-//
-// Example for tonumber(s):
-//
-//	ReturnSpec{
-//	    Cases: []ReturnCase{
-//	        {When: HasType{p0, integer}, Type: integer},  // integer input
-//	        {When: HasType{p0, number}, Type: number},    // number input
-//	    },
-//	    Default: typ.NewOptional(typ.Number),  // string input may fail
-//	}
+// ReturnSpec describes ordered declared return cases and their default.
 type ReturnSpec struct {
 	// Cases holds condition-dependent return type refinements.
 	Cases []ReturnCase

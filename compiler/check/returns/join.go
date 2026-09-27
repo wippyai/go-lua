@@ -807,6 +807,19 @@ func MergeFunctionFactType(existing, candidate typ.Type) typ.Type {
 	if candidate == nil {
 		return existing
 	}
+	if inter, ok := candidate.(*typ.Intersection); ok {
+		if prior := typ.GeneralMember(existing); prior != nil {
+			if general := typ.GeneralMember(candidate); general != nil {
+				return withOverloadGeneral(inter, MergeFunctionFactType(prior, general))
+			}
+		}
+		return candidate
+	}
+	if inter, ok := existing.(*typ.Intersection); ok {
+		if general := typ.GeneralMember(existing); general != nil {
+			return withOverloadGeneral(inter, MergeFunctionFactType(general, candidate))
+		}
+	}
 
 	existingFn := unwrap.Function(existing)
 	candidateFn := unwrap.Function(candidate)
@@ -823,6 +836,20 @@ func MergeFunctionFactType(existing, candidate typ.Type) typ.Type {
 		return existing
 	}
 	return typ.JoinPreferNonSoft(existing, candidate)
+}
+
+func withOverloadGeneral(inter *typ.Intersection, general typ.Type) typ.Type {
+	prior := typ.GeneralMember(inter)
+	if prior == nil || general == nil {
+		return inter
+	}
+	members := make([]typ.Type, 0, len(inter.Members))
+	for _, member := range inter.Members {
+		if member != prior {
+			members = append(members, member)
+		}
+	}
+	return typ.NewIntersection(append(members, general)...)
 }
 
 func sameFunctionShapeForFactMerge(a, b *typ.Function) bool {

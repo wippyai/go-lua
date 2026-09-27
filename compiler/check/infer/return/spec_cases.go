@@ -14,10 +14,10 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/types/constraint"
-	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/typ"
+	typjoin "github.com/wippyai/go-lua/types/typ/join"
 )
 
 // specMemoKey identifies a cached per-literal return inference.
@@ -34,17 +34,20 @@ type dispatchSite struct {
 	lit      *typ.Literal
 }
 
-// buildBodyDerivedReturnSpecs derives a return spec per eligible local
-// function. Only single-return, non-recursive, unannotated functions with
-// literal parameter dispatches qualify.
-func (i *Inferencer) buildBodyDerivedReturnSpecs(
+type dispatchReturnCase struct {
+	site    dispatchSite
+	returns []typ.Type
+}
+
+// buildBodyDerivedReturnCases derives literal dispatch cases for eligible local functions.
+func (i *Inferencer) buildBodyDerivedReturnCases(
 	run RunContext,
 	sccs [][]cfg.SymbolID,
 	localFuncs map[cfg.SymbolID]*returns.LocalFuncInfo,
 	summaries map[cfg.SymbolID][]typ.Type,
-) map[cfg.SymbolID]*contract.Spec {
+) map[cfg.SymbolID][]dispatchReturnCase {
 	skip := recursiveMembers(i, sccs)
-	var out map[cfg.SymbolID]*contract.Spec
+	var out map[cfg.SymbolID][]dispatchReturnCase
 	for _, sym := range cfg.SortedSymbolIDs(localFuncs) {
 		if skip[sym] {
 			continue
@@ -57,17 +60,17 @@ func (i *Inferencer) buildBodyDerivedReturnSpecs(
 			continue
 		}
 		summary := summaries[sym]
-		if len(summary) != 1 {
+		if len(summary) == 0 {
 			continue
 		}
-		spec := i.bodyReturnSpec(run, info, summaries, localFuncs, summary[0])
-		if spec == nil {
+		cases := i.bodyReturnCases(run, info, summaries, localFuncs)
+		if len(cases) == 0 {
 			continue
 		}
 		if out == nil {
-			out = make(map[cfg.SymbolID]*contract.Spec)
+			out = make(map[cfg.SymbolID][]dispatchReturnCase)
 		}
-		out[sym] = spec
+		out[sym] = cases
 	}
 	return out
 }
@@ -89,15 +92,14 @@ func recursiveMembers(i *Inferencer, sccs [][]cfg.SymbolID) map[cfg.SymbolID]boo
 	return skip
 }
 
-// bodyReturnSpec builds the return spec for one function from its literal
+// bodyReturnCases builds overload cases for one function from its literal
 // parameter dispatches.
-func (i *Inferencer) bodyReturnSpec(
+func (i *Inferencer) bodyReturnCases(
 	run RunContext,
 	info *returns.LocalFuncInfo,
 	summaries map[cfg.SymbolID][]typ.Type,
 	localFuncs map[cfg.SymbolID]*returns.LocalFuncInfo,
-	def typ.Type,
-) *contract.Spec {
+) []dispatchReturnCase {
 	ctx := i.setupReturnContext(run, info, summaries, localFuncs)
 	if ctx == nil {
 		return nil
@@ -114,34 +116,25 @@ func (i *Inferencer) bodyReturnSpec(
 		return nil
 	}
 
-	spec := contract.NewSpec()
+	var cases []dispatchReturnCase
 	for _, site := range sites {
-		t := i.specCaseType(ctx, untypedCapture, finalOverlay, info.Sym, site)
-		if t == nil {
+		rets := i.specCaseType(ctx, untypedCapture, finalOverlay, info.Sym, site)
+		if len(rets) == 0 {
 			continue
 		}
-		when := constraint.FromConstraints(constraint.HasType{
-			Path: constraint.ParamPath(site.paramIdx),
-			Type: narrow.HashTypeKey(site.lit.Hash()),
-		})
-		spec.WithReturnCase(when, t)
+		cases = append(cases, dispatchReturnCase{site: site, returns: rets})
 	}
-	if len(spec.GetReturnCases()) == 0 {
-		return nil
-	}
-	spec.WithDefaultReturn(typ.Finalize(def))
-	return spec
+	return cases
 }
 
-// specCaseType reruns body return inference with one parameter fixed to one
-// literal and reduces the result to a single case type.
+// specCaseType infers a return vector with one parameter fixed to a literal.
 func (i *Inferencer) specCaseType(
 	ctx *returnInferenceContext,
 	untypedCapture bool,
 	finalOverlay map[cfg.SymbolID]typ.Type,
 	sym cfg.SymbolID,
 	site dispatchSite,
-) typ.Type {
+) []typ.Type {
 	key := specMemoKey{sym: sym, idx: site.paramIdx, lit: site.lit.Hash()}
 	rets, ok := i.specMemo[key]
 	if !ok {
@@ -159,14 +152,30 @@ func (i *Inferencer) specCaseType(
 		}
 		i.specMemo[key] = rets
 	}
-	if len(rets) != 1 {
+	if len(rets) == 0 {
 		return nil
 	}
-	t := typ.Finalize(rets[0])
-	if t == nil || typ.IsUnknown(t) {
-		return nil
+	final := make([]typ.Type, len(rets))
+	for idx, ret := range rets {
+		final[idx] = typ.Finalize(ret)
+		if final[idx] == nil || typ.IsUnknown(final[idx]) {
+			return nil
+		}
 	}
-	return t
+	return final
+}
+
+func overloadMembers(fn *typ.Function, cases []dispatchReturnCase) []typ.Type {
+	var members []typ.Type
+	for _, c := range cases {
+		if c.site.paramIdx < 0 || c.site.paramIdx >= len(fn.Params) {
+			continue
+		}
+		params := append([]typ.Param(nil), fn.Params...)
+		params[c.site.paramIdx].Type = c.site.lit
+		members = append(members, typjoin.WithReturns(fn, c.returns).WithParams(params))
+	}
+	return members
 }
 
 // collectLiteralDispatches finds distinct literals compared against
@@ -176,15 +185,14 @@ func collectLiteralDispatches(fnGraph *cfg.Graph, inputs *flow.Inputs) []dispatc
 		return nil
 	}
 	symParam := make(map[cfg.SymbolID]int)
-	for _, slot := range fnGraph.ParamSlotsReadOnly() {
+	for paramIdx, slot := range fnGraph.ParamSlotsReadOnly() {
 		if slot.Symbol == 0 {
 			continue
 		}
-		idx, ok := slot.SourceParamIndex()
-		if !ok {
+		if !slot.HasSourceParam() {
 			continue
 		}
-		symParam[slot.Symbol] = idx
+		symParam[slot.Symbol] = paramIdx
 	}
 	if len(symParam) == 0 {
 		return nil
@@ -236,24 +244,4 @@ func literalForTypeKey(inputs *flow.Inputs, key narrow.TypeKey) *typ.Literal {
 		return nil
 	}
 	return lit
-}
-
-// attachBodyReturnSpec attaches derived cases to a function type without
-// disturbing an existing contract specification.
-func attachBodyReturnSpec(fnType *typ.Function, spec *contract.Spec) {
-	if fnType == nil || spec == nil || len(spec.GetReturnCases()) == 0 {
-		return
-	}
-	if existing, ok := fnType.Spec.(*contract.Spec); ok && existing != nil {
-		for _, rc := range spec.GetReturnCases() {
-			existing.WithReturnCase(rc.When, rc.Type)
-		}
-		if existing.GetReturnDefault() == nil {
-			existing.WithDefaultReturn(spec.GetReturnDefault())
-		}
-		return
-	}
-	if fnType.Spec == nil {
-		fnType.Spec = spec
-	}
 }

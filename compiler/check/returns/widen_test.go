@@ -492,6 +492,18 @@ func TestMaybeWidenTypeForConvergence_KeepsRecordsWithOtherFields(t *testing.T) 
 	}
 }
 
+func TestMaybeWidenTypeForConvergence_PreservesMethodOverloads(t *testing.T) {
+	write := typ.Func().Param("mode", typ.LiteralString("w")).Returns(typ.String).Build()
+	general := typ.Func().Param("mode", typ.String).Returns(typ.NewOptional(typ.String)).Build()
+	method := typ.NewIntersection(write, general)
+	record := typ.NewRecord().Field("open", method).Build()
+	widened := maybeWidenTypeForConvergence(record)
+	got, ok := widened.(*typ.Record)
+	if !ok || got.GetField("open") == nil || !typ.TypeEquals(got.GetField("open").Type, method) {
+		t.Fatalf("method overload changed during convergence widening: %s", widened)
+	}
+}
+
 func TestJoinIterationFact_ReadonlyFieldJoinsToUpperBound(t *testing.T) {
 	narrow := typ.NewRecord().
 		ReadonlyField("route", typ.Func().Returns(typ.Nil).Build()).
