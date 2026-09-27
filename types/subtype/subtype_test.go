@@ -1025,12 +1025,29 @@ func TestMutualRecursiveSubtypes(t *testing.T) {
 		t.Error("mutual recursive B should be subtype of itself")
 	}
 
-	// A and B should NOT be subtypes of each other
+	// Both bodies have only optional fields, so each admits the other's
+	// unfolded record under structural width subtyping.
+	if !IsSubtype(recA, recB) {
+		t.Error("A should be subtype of B")
+	}
+	if !IsSubtype(recB, recA) {
+		t.Error("B should be subtype of A")
+	}
+}
+
+func TestMutualRecursiveSubtypesDifferentRequiredFields(t *testing.T) {
+	// Distinct required fields prevent structural subtyping in either direction.
+	// The recursive edges alone do not make these records equivalent.
+	recA := typ.NewRecursivePlaceholder("A")
+	recB := typ.NewRecursivePlaceholder("B")
+	recA.SetBody(typ.NewRecord().Field("b", recB).Field("x", typ.Number).Build())
+	recB.SetBody(typ.NewRecord().Field("a", recA).Field("y", typ.String).Build())
+
 	if IsSubtype(recA, recB) {
-		t.Error("A should not be subtype of B")
+		t.Error("A should not be subtype of B: missing required y")
 	}
 	if IsSubtype(recB, recA) {
-		t.Error("B should not be subtype of A")
+		t.Error("B should not be subtype of A: missing required x")
 	}
 }
 

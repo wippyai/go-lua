@@ -309,8 +309,10 @@ func (c *checker) deriveStructural(sub, super typ.Type, depth int) bool {
 		return c.check(sub, aa.UnaliasedTarget(), depth+1)
 	}
 
-	if rr, ok := sub.(*typ.Recursive); ok && super.Kind() != kind.Recursive && rr.Body != nil && rr.Body != rr {
-		return c.check(rr.Body, super, depth+1)
+	if rr, ok := sub.(*typ.Recursive); ok && rr.Body != nil && rr.Body != rr {
+		if sr, ok := super.(*typ.Recursive); !ok || sr.ID != rr.ID {
+			return c.check(rr.Body, super, depth+1)
+		}
 	}
 
 	if rr, ok := super.(*typ.Recursive); ok && sub.Kind() != kind.Recursive && rr.Body != nil && rr.Body != rr {
