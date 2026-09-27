@@ -70,36 +70,6 @@ func InferFunctionRefinement(
 	return inferFunctionRefinementCore(src, g, params, returnType)
 }
 
-// InferFunctionRefinementFromInputs computes a FunctionRefinement without running full flow analysis.
-//
-// This is the pre-flow variant that uses only the extracted return constraints without
-// propagating conditions through the CFG. It produces conservative effects based on:
-//
-//   - ReturnConstraints: Direct constraint extraction from return expressions
-//   - CFG structure: Detecting terminating functions (no return/exit nodes)
-//
-// The pre-flow variant is faster but less precise than post-flow inference because
-// it cannot account for path conditions from prior conditionals. It's suitable for
-// bootstrapping refinement extraction before the full type checking pass.
-//
-// Example: For function `function assert_string(x) assert(type(x) == "string") end`:
-//   - OnReturn: HasType($0, string) (from assert expression)
-//   - Terminates: false (has implicit return via exit)
-func InferFunctionRefinementFromInputs(
-	inputs *Inputs,
-	g *cfg.CFG,
-	params []ParamInfo,
-	returnType typ.Type,
-) *constraint.FunctionRefinement {
-	if inputs == nil || g == nil {
-		return nil
-	}
-
-	src := refinementSource{returnConstraints: inputs.ReturnConstraints}
-
-	return inferFunctionRefinementCore(src, g, params, returnType)
-}
-
 // refinementSource abstracts the data sources for refinement inference.
 //
 // This struct allows the same inference algorithm to work with both pre-flow
