@@ -101,7 +101,7 @@ func closedMapUses(graph *cfg.Graph, bindings *bind.BindingTable, inputs *flow.I
 		target, source := info.Targets[0], info.Sources[0]
 		switch {
 		case target.Kind == cfg.TargetIdent && target.Symbol == sym:
-			if graphPointInCycle(graph, p) {
+			if graph.Reachable(p, p, true) {
 				safe = false
 				return
 			}
@@ -112,7 +112,7 @@ func closedMapUses(graph *cfg.Graph, bindings *bind.BindingTable, inputs *flow.I
 			}
 			initialized++
 		case target.Kind == cfg.TargetIndex && target.BaseSymbol == sym:
-			if graphPointInCycle(graph, p) {
+			if graph.Reachable(p, p, true) {
 				safe = false
 				return
 			}
@@ -210,28 +210,4 @@ func capturedByNested(graph *cfg.Graph, bindings *bind.BindingTable, sym cfg.Sym
 		}
 	}
 	return false
-}
-
-// graphCanReach excludes the starting point. It lets uses after the sole read
-// remain irrelevant while still treating a use in the read's loop as unsafe.
-func graphCanReach(graph *cfg.Graph, from, to cfg.Point) bool {
-	seen := make(map[cfg.Point]bool)
-	work := append([]cfg.Point(nil), graph.Successors(from)...)
-	for len(work) != 0 {
-		p := work[len(work)-1]
-		work = work[:len(work)-1]
-		if p == to {
-			return true
-		}
-		if seen[p] {
-			continue
-		}
-		seen[p] = true
-		work = append(work, graph.Successors(p)...)
-	}
-	return false
-}
-
-func graphPointInCycle(graph *cfg.Graph, p cfg.Point) bool {
-	return graphCanReach(graph, p, p)
 }

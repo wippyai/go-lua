@@ -238,7 +238,7 @@ func evolvingIndexedAliasValue(graph *cfg.Graph, bindings *bind.BindingTable, ma
 	var element typ.Type
 	var explicitNil bool
 	graph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
-		if !graphReachable(graph, storePoint, p) {
+		if !graph.Reachable(storePoint, p, false) {
 			return
 		}
 		for i, target := range info.Targets {
@@ -324,27 +324,6 @@ func carriesTableAlias(expr ast.Expr, bindings *bind.BindingTable, symbols ...cf
 
 func numericIndexedKey(t typ.Type) bool {
 	return t != nil && subtype.IsSubtype(t, typ.Number)
-}
-
-func graphReachable(graph *cfg.Graph, from, to cfg.Point) bool {
-	if graph == nil || from == to {
-		return false
-	}
-	seen := map[cfg.Point]bool{from: true}
-	stack := append([]cfg.Point(nil), graph.Successors(from)...)
-	for len(stack) > 0 {
-		p := stack[len(stack)-1]
-		stack = stack[:len(stack)-1]
-		if p == to {
-			return true
-		}
-		if seen[p] {
-			continue
-		}
-		seen[p] = true
-		stack = append(stack, graph.Successors(p)...)
-	}
-	return false
 }
 
 // CollectNestedFieldWrites scans the graph for writes into tables that

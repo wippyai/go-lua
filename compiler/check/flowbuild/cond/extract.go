@@ -1161,7 +1161,7 @@ func capturedTableMayHaveAlias(inputs *flow.Inputs, graph *cfg.Graph, callPoint 
 		return true
 	}
 	for point, roots := range inputs.CallAliasRoots {
-		if point != callPoint && !graphPathExists(graph, point, callPoint) {
+		if point != callPoint && !graph.Reachable(point, callPoint, true) {
 			continue
 		}
 		for _, sym := range roots {
@@ -1176,30 +1176,9 @@ func capturedTableMayHaveAlias(inputs *flow.Inputs, graph *cfg.Graph, callPoint 
 			(assignment.TargetPath.Symbol == tableSym && len(assignment.TargetPath.Segments) == 0) {
 			continue
 		}
-		if graphPathExists(graph, assignment.Point, callPoint) {
+		if graph.Reachable(assignment.Point, callPoint, true) {
 			return true
 		}
-	}
-	return false
-}
-
-func graphPathExists(graph *cfg.Graph, from, to cfg.Point) bool {
-	if graph == nil {
-		return false
-	}
-	seen := map[cfg.Point]bool{from: true}
-	stack := append([]cfg.Point(nil), graph.Successors(from)...)
-	for len(stack) > 0 {
-		p := stack[len(stack)-1]
-		stack = stack[:len(stack)-1]
-		if p == to {
-			return true
-		}
-		if seen[p] {
-			continue
-		}
-		seen[p] = true
-		stack = append(stack, graph.Successors(p)...)
 	}
 	return false
 }
