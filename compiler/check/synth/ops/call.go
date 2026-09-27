@@ -708,10 +708,12 @@ func (r *InferResult) ExpectedArgType(idx int) typ.Type {
 }
 
 // callIntersection handles calling an intersection type.
-// Matching function members contribute to the return intersection.
+// Matching function members contribute to the return intersection unless one
+// has a strictly more specific literal match.
 func callIntersection(ctx *db.QueryContext, query core.TypeOps, inter *typ.Intersection, args []typ.Type, explicit int, receiver typ.Type, isMethod bool, forceMethodReceiver bool, baseErrors []CallError) CallResult {
 	var returnTypes []typ.Type
 	var returnVectors [][]typ.Type
+	var literalMatches []int
 	var rejected *CallResult
 
 	for _, member := range inter.Members {
@@ -735,6 +737,7 @@ func callIntersection(ctx *db.QueryContext, query core.TypeOps, inter *typ.Inter
 			argOffset = 1
 		}
 		literalMismatch := false
+		matched := 0
 		for idx, param := range fn.Params[argOffset:] {
 			if idx >= len(args) {
 				break
@@ -744,6 +747,7 @@ func callIntersection(ctx *db.QueryContext, query core.TypeOps, inter *typ.Inter
 					literalMismatch = true
 					break
 				}
+				matched++
 			}
 		}
 		if literalMismatch {
@@ -759,6 +763,7 @@ func callIntersection(ctx *db.QueryContext, query core.TypeOps, inter *typ.Inter
 
 		returnTypes = append(returnTypes, result.Type)
 		returnVectors = append(returnVectors, normalizedCallReturns(result))
+		literalMatches = append(literalMatches, matched)
 	}
 
 	if len(returnTypes) == 0 {
@@ -768,19 +773,23 @@ func callIntersection(ctx *db.QueryContext, query core.TypeOps, inter *typ.Inter
 		return singleValueCallResult(typ.Unknown, baseErrors)
 	}
 
-	if len(returnTypes) == 1 {
-		return callResultFromReturns(returnVectors[0], baseErrors)
+	best, ties := 0, 1
+	for i := 1; i < len(literalMatches); i++ {
+		if literalMatches[i] > literalMatches[best] {
+			best, ties = i, 1
+		} else if literalMatches[i] == literalMatches[best] {
+			ties++
+		}
+	}
+	if ties == 1 {
+		return callResultFromReturns(returnVectors[best], baseErrors)
 	}
 
 	if returns, ok := intersectReturnVectors(returnVectors); ok {
 		return callResultFromReturns(returns, baseErrors)
 	}
 
-	return CallResult{
-		Type:    typ.NewIntersection(returnTypes...),
-		Returns: []typ.Type{typ.NewIntersection(returnTypes...)},
-		Errors:  baseErrors,
-	}
+	return singleValueCallResult(typ.NewIntersection(returnTypes...), baseErrors)
 }
 
 // callUnionWithGenericInference handles calling a union of functions where each

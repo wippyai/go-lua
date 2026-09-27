@@ -173,7 +173,8 @@ func TableTopAsMap(t typ.Type) typ.Type {
 	return t
 }
 
-// Function extracts a Function type, unwrapping Alias and Optional.
+// Function extracts a Function type, unwrapping transparent wrappers and
+// selecting the general member of an all-function intersection.
 func Function(t typ.Type) *typ.Function {
 	return unwrapFunctionDepth(t, typ.NewGuard())
 }
@@ -183,6 +184,17 @@ func unwrapFunctionDepth(t typ.Type, guard internal.RecursionGuard) *typ.Functio
 		return typ.Visitor[*typ.Function]{
 			Function: func(fn *typ.Function) *typ.Function {
 				return fn
+			},
+			Intersection: func(in *typ.Intersection) *typ.Function {
+				if len(in.Members) == 0 {
+					return nil
+				}
+				for _, member := range in.Members {
+					if unwrapFunctionDepth(member, next) == nil {
+						return nil
+					}
+				}
+				return typ.GeneralMember(in)
 			},
 			Optional: func(o *typ.Optional) *typ.Function {
 				return unwrapFunctionDepth(o.Inner, next)

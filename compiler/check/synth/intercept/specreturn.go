@@ -72,10 +72,5 @@ func ResolveSpecFunction(t typ.Type) *typ.Function {
 		}
 	}
 
-	fn, ok := t.(*typ.Function)
-	if !ok {
-		return nil
-	}
-
-	return fn
+	return unwrap.Function(t)
 }

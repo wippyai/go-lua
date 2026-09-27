@@ -487,7 +487,7 @@ func (s *Synthesizer) applyPostCallTransforms(calleeType typ.Type, args []typ.Ty
 
 	var result []typ.Type
 	for i := range returns {
-		transformed := transform.ApplyEffectTransform(fn, args, i, returns[i])
+		transformed := transform.ApplyEffectTransform(fn, args, i, returns)
 		transformed = applyTruthyIdentityReturn(fn, args, i, transformed)
 		if transformed == nil || transformed == returns[i] {
 			continue
