@@ -120,7 +120,10 @@ func (p *Processor) bindClassTables(graph *cfg.Graph, children []nested.Child, p
 	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].NF.Point < ordered[j].NF.Point })
 	for _, child := range ordered {
 		info := &nested.FuncInfo{Child: child}
-		sym := classTableOf(graph, info)
+		if info.FuncDef != nil && (info.FuncDef.TargetKind == cfg.FuncDefField || info.FuncDef.TargetKind == cfg.FuncDefMethod) && len(info.FuncDef.TargetPath.Segments) != 1 {
+			continue
+		}
+		sym := nested.MethodOwner(graph, info.NF.Func, info.FuncDef, info.NF.Point)
 		if sym == 0 || p.classSelf[sym] != nil || hasDeclaredMethodSelf(info) {
 			continue
 		}
@@ -155,24 +158,6 @@ func (p *Processor) moduleGraphs() []*cfg.Graph {
 		}
 	}
 	return out
-}
-
-// classTableOf returns the table a nested function is stored into:
-// the receiver of `function T.f` or `function T:m`, or the owner of a
-// function stored in a table literal or assigned to a table field.
-func classTableOf(graph *cfg.Graph, info *nested.FuncInfo) cfg.SymbolID {
-	if def := info.FuncDef; def != nil && (def.TargetKind == cfg.FuncDefField || def.TargetKind == cfg.FuncDefMethod) {
-		if len(def.TargetPath.Segments) != 1 {
-			return 0
-		}
-		return def.TargetPath.Symbol
-	}
-	fn := info.NF.Func
-	if tbl, sym := nested.FindTableLiteralOwner(graph, fn); tbl != nil {
-		return sym
-	}
-	sym, _, _ := nested.FindFieldAssignmentBase(graph, fn, info.NF.Point)
-	return sym
 }
 
 // classTableType is the type of class table sym for its nested functions:
@@ -404,7 +389,10 @@ func (p *Processor) methodSelfType(graph *cfg.Graph, info *nested.FuncInfo) typ.
 			return typ.PartialView(nested.NormalizeMethodSelfType(named))
 		}
 	}
-	if sym := classTableOf(graph, info); sym != 0 {
+	if info.FuncDef != nil && (info.FuncDef.TargetKind == cfg.FuncDefField || info.FuncDef.TargetKind == cfg.FuncDefMethod) && len(info.FuncDef.TargetPath.Segments) != 1 {
+		return nil
+	}
+	if sym := nested.MethodOwner(graph, info.NF.Func, info.FuncDef, info.NF.Point); sym != 0 {
 		return p.classReceiver[sym]
 	}
 	return nil

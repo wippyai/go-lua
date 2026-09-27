@@ -238,21 +238,28 @@ func (s *Synthesizer) SynthCallCoreWithExpected(ex *ast.FuncCallExpr, p cfg.Poin
 
 // synthMethodCallCoreWithExpected synthesizes method call with optional expected return type.
 func (s *Synthesizer) synthMethodCallCoreWithExpected(ex *ast.FuncCallExpr, p cfg.Point, sc *scope.State, recurse ExprSynth, expected typ.Type) []typ.Type {
+	return s.synthMethodCall(ex, p, sc, func() typ.Type { return recurse(ex.Receiver) }, recurse, expected)
+}
+
+// SynthCallWithReceiverType synthesizes method call with an explicit receiver type.
+func (s *Synthesizer) SynthCallWithReceiverType(ex *ast.FuncCallExpr, p cfg.Point, sc *scope.State, recvType typ.Type, recurse ExprSynth) []typ.Type {
+	return s.synthMethodCall(ex, p, sc, func() typ.Type { return recvType }, recurse, nil)
+}
+
+func (s *Synthesizer) synthMethodCall(ex *ast.FuncCallExpr, p cfg.Point, sc *scope.State, receiver func() typ.Type, recurse ExprSynth, expected typ.Type) []typ.Type {
 	env := intercept.CallEnv{
 		Scope:      sc,
 		Recurse:    intercept.ExprSynth(recurse),
 		TypeLookup: s.declaredTypeLookup(sc),
 	}
-
 	chain := s.buildInterceptChain(sc)
 	if result := chain.InterceptMethodCall(ex, env); result.Skip {
 		return result.Types
 	}
 
-	recvType := recurse(ex.Receiver)
+	recvType := receiver()
 	args := synthArgs(ex.Args, recurse, func(arg ast.Expr) []typ.Type { return s.SynthMulti(arg, p, nil) })
 	calleeType := s.resolveMethodCallee(recvType, ex.Method)
-
 	def := ops.CallDef{
 		IsMethod:            true,
 		Receiver:            recvType,
@@ -263,55 +270,14 @@ func (s *Synthesizer) synthMethodCallCoreWithExpected(ex *ast.FuncCallExpr, p cf
 		ExpectedReturn:      expected,
 		ForceMethodReceiver: s.forceMethodReceiverAtPoint(p, ex),
 	}
-
 	pipeline := NewCallPipeline(s.deps.Ctx, def, ex.Args).
 		WithReSynth(s.callbackAwareReSynth(calleeType, sc))
-
 	if expected != nil {
 		pipeline = pipeline.WithExpected(expected)
 	}
-
 	result := pipeline.Run()
 	returns := unwrapCallResult(result)
 	returns = s.applyPostCallTransforms(calleeType, args, returns)
-
-	specOverride := s.specReturnOverride(calleeType, ex.Args, args)
-	return intercept.ApplyOverride(returns, specOverride)
-}
-
-// SynthCallWithReceiverType synthesizes method call with an explicit receiver type.
-func (s *Synthesizer) SynthCallWithReceiverType(ex *ast.FuncCallExpr, p cfg.Point, sc *scope.State, recvType typ.Type, recurse ExprSynth) []typ.Type {
-	env := intercept.CallEnv{
-		Scope:      sc,
-		Recurse:    intercept.ExprSynth(recurse),
-		TypeLookup: s.declaredTypeLookup(sc),
-	}
-
-	chain := s.buildInterceptChain(sc)
-	if result := chain.InterceptMethodCall(ex, env); result.Skip {
-		return result.Types
-	}
-
-	args := synthArgs(ex.Args, recurse, func(arg ast.Expr) []typ.Type { return s.SynthMulti(arg, p, nil) })
-	calleeType := s.resolveMethodCallee(recvType, ex.Method)
-
-	def := ops.CallDef{
-		IsMethod:            true,
-		Receiver:            recvType,
-		MethodName:          ex.Method,
-		Args:                args,
-		ExplicitArgs:        len(ex.Args),
-		Query:               s.GetCallQuery(),
-		ForceMethodReceiver: s.forceMethodReceiverAtPoint(p, ex),
-	}
-
-	pipeline := NewCallPipeline(s.deps.Ctx, def, ex.Args).
-		WithReSynth(s.callbackAwareReSynth(calleeType, sc))
-
-	result := pipeline.Run()
-	returns := unwrapCallResult(result)
-	returns = s.applyPostCallTransforms(calleeType, args, returns)
-
 	specOverride := s.specReturnOverride(calleeType, ex.Args, args)
 	return intercept.ApplyOverride(returns, specOverride)
 }

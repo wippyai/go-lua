@@ -4,7 +4,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/assign"
-	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -42,40 +41,26 @@ func DetectConstructorPattern(nestedGraph, parentGraph *cfg.Graph, fn *ast.Funct
 		return 0, 0
 	}
 
-	// Check if function is T.new pattern
-	var receiverSymbol cfg.SymbolID
-	var receiverName string
+	// Only a field named new is a constructor target.
 	if funcDef != nil && funcDef.TargetKind == cfg.FuncDefField {
-		if funcDef.TargetPath.Symbol != 0 && len(funcDef.TargetPath.Segments) == 1 {
-			seg := funcDef.TargetPath.Segments[0]
-			if seg.Kind == constraint.SegmentField && seg.Name == "new" {
-				receiverSymbol = funcDef.TargetPath.Symbol
-				receiverName = funcDef.ReceiverName
-			}
+		if len(funcDef.TargetPath.Segments) != 1 || funcDef.TargetPath.Segments[0].Name != "new" {
+			return 0, 0
 		}
 	}
-
-	// Also check for T.new = function(...) pattern in the parent graph
-	if receiverSymbol == 0 && parentGraph != nil {
-		var found cfg.SymbolID
-		var foundName string
-		parentGraph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
-			if found != 0 {
-				return
-			}
+	receiverSymbol := MethodOwner(parentGraph, fn, funcDef, 0)
+	if funcDef == nil && parentGraph != nil {
+		// Assigned functions must target the new field.
+		valid := false
+		parentGraph.EachAssign(func(_ cfg.Point, info *cfg.AssignInfo) {
 			info.EachTargetSource(func(_ int, target cfg.AssignTarget, src ast.Expr) {
-				fnExpr, ok := src.(*ast.FunctionExpr)
-				if !ok || fnExpr != fn {
-					return
-				}
-				if target.Kind == cfg.TargetField && target.BaseSymbol != 0 && len(target.FieldPath) == 1 && target.FieldPath[0] == "new" {
-					found = target.BaseSymbol
-					foundName = target.BaseName
+				if src == fn && target.Kind == cfg.TargetField && target.BaseSymbol == receiverSymbol && len(target.FieldPath) == 1 && target.FieldPath[0] == "new" {
+					valid = true
 				}
 			})
 		})
-		receiverSymbol = found
-		receiverName = foundName
+		if !valid {
+			return 0, 0
+		}
 	}
 
 	if receiverSymbol == 0 {
@@ -83,7 +68,7 @@ func DetectConstructorPattern(nestedGraph, parentGraph *cfg.Graph, fn *ast.Funct
 	}
 
 	// Find setmetatable call that creates self
-	selfSym := findSetmetatablePatternByName(nestedGraph, receiverName)
+	selfSym := findSetmetatablePattern(nestedGraph, receiverSymbol)
 	if selfSym == 0 {
 		return 0, 0
 	}
@@ -96,75 +81,32 @@ func DetectConstructorPattern(nestedGraph, parentGraph *cfg.Graph, fn *ast.Funct
 	return receiverSymbol, selfSym
 }
 
-func findSetmetatablePatternByName(graph *cfg.Graph, expectedClassName string) cfg.SymbolID {
-	if graph == nil {
+func findSetmetatablePattern(graph *cfg.Graph, classSym cfg.SymbolID) cfg.SymbolID {
+	if graph == nil || classSym == 0 || graph.Bindings() == nil {
 		return 0
 	}
-
 	var selfSym cfg.SymbolID
-
-	graph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
-		if selfSym != 0 {
+	graph.EachAssign(func(_ cfg.Point, info *cfg.AssignInfo) {
+		if selfSym != 0 || !info.IsLocal {
 			return
 		}
-		if !info.IsLocal || len(info.Targets) == 0 {
-			return
-		}
-
-		// Look for setmetatable call
-		call, ok := info.SourceAt(0).(*ast.FuncCallExpr)
-		if !ok {
-			return
-		}
-
-		// Check if it's a setmetatable call
-		ident, ok := call.Func.(*ast.IdentExpr)
-		if !ok || ident.Value != "setmetatable" {
-			return
-		}
-
-		if len(call.Args) < 2 {
-			return
-		}
-
-		// First arg should be an empty table literal or table with initial values
-		if _, ok := call.Args[0].(*ast.TableExpr); !ok {
-			return
-		}
-
-		// Second arg is the metatable - check for T or {__index = T}
-		var foundClassName string
-
-		switch mt := call.Args[1].(type) {
-		case *ast.IdentExpr:
-			foundClassName = mt.Value
-		case *ast.TableExpr:
-			for _, field := range mt.Fields {
-				if field.Key == nil {
-					continue
-				}
-				keyStr, ok := field.Key.(*ast.StringExpr)
-				if !ok || keyStr.Value != "__index" {
-					continue
-				}
-				if valIdent, ok := field.Value.(*ast.IdentExpr); ok {
-					foundClassName = valIdent.Value
-				}
+		info.EachTargetSource(func(_ int, target cfg.AssignTarget, src ast.Expr) {
+			call, ok := src.(*ast.FuncCallExpr)
+			if !ok || target.Kind != cfg.TargetIdent || target.Symbol == 0 || len(call.Args) < 2 {
+				return
 			}
-		}
-
-		// Validate class name if expected
-		if expectedClassName != "" && foundClassName != expectedClassName {
-			return
-		}
-
-		if target, ok := info.FirstTarget(); ok {
-			if target.Kind == cfg.TargetIdent && target.Symbol != 0 {
+			callee, ok := call.Func.(*ast.IdentExpr)
+			if !ok || callee.Value != "setmetatable" {
+				return
+			}
+			if _, ok := call.Args[0].(*ast.TableExpr); !ok {
+				return
+			}
+			if metatableResolvesTo(call.Args[1], classSym, graph.Bindings(), nil) {
 				selfSym = target.Symbol
 			}
-		}
+		})
 	})
-
 	return selfSym
 }
 

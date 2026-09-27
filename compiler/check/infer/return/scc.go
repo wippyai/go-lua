@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/nested"
 	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/types/diag"
 	"github.com/wippyai/go-lua/types/narrow"
@@ -106,7 +107,7 @@ func (i *Inferencer) runSCCIteration(
 		}
 		newReturn := i.inferReturnWithSummary(run, info, summaries, localFuncs)
 		if binder, ok := i.store.(api.ClassSelfBinder); ok && info.Graph != nil && len(info.Fn.ReturnTypes) == 0 && len(newReturn) > 0 {
-			if tableSym, point := returns.ReturnedMethodTable(info.Graph); tableSym != 0 {
+			if tableSym, point := nested.ReturnedClassTable(info.Graph); tableSym != 0 {
 				present := narrow.RemoveNil(newReturn[0])
 				switch present.(type) {
 				case *typ.Record, *typ.Recursive:

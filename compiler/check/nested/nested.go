@@ -37,8 +37,7 @@
 // # Self Type Resolution
 //
 // Helper functions support self-type resolution for methods:
-//   - FindTableLiteralOwner: For table literal methods
-//   - FindFieldAssignmentBase: For field assignment methods
+//   - MethodOwner: For named, table literal, and assigned methods
 //   - EnrichSelfTypeWithConstructorFields: For constructor-enriched self
 package nested
 
