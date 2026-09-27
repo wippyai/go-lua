@@ -553,7 +553,7 @@ func TestRecursiveInUnionMultiple(t *testing.T) {
 	}
 }
 
-// TestRecursiveEqualsDifferentNames tests that name affects equality.
+// TestRecursiveEqualsDifferentNames tests that names are display-only.
 func TestRecursiveEqualsDifferentNames(t *testing.T) {
 	rec1 := NewRecursive("Node", func(self Type) Type {
 		return NewRecord().OptField("next", self).Build()
@@ -563,14 +563,12 @@ func TestRecursiveEqualsDifferentNames(t *testing.T) {
 		return NewRecord().OptField("next", self).Build()
 	})
 
-	// Different names means different types
-	if TypeEquals(rec1, rec2) {
-		t.Error("recursive types with different names should not be equal")
+	if !TypeEquals(rec1, rec2) {
+		t.Error("recursive types with the same structure should be equal")
 	}
 
-	// Hashes should differ
-	if rec1.Hash() == rec2.Hash() {
-		t.Error("recursive types with different names should have different hashes")
+	if rec1.Hash() != rec2.Hash() {
+		t.Error("equal recursive types should have equal hashes")
 	}
 }
 

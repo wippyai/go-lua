@@ -218,7 +218,7 @@ func hashWithVisited(t Type, st *recursiveHashState) uint64 {
 			// Compute structurally rather than using pre-computed hash.
 			// This ensures correct hashing during mutual recursion setup
 			// when the other recursive type's hash may not be computed yet.
-			h := internal.HashCombine(uint64(kind.Recursive), internal.FnvString(rec.Name))
+			h := internal.HashCombine(uint64(kind.Recursive), internal.FnvString("$body"))
 			if rec.Body != nil {
 				h = internal.HashCombine(h, hashBodyWithVisited(rec.Body, st))
 			} else {
