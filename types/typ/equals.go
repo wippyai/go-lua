@@ -217,9 +217,6 @@ func typeEqualsGuard(a, b Type, guard internal.RecursionGuard, seen map[typePair
 		if !ok {
 			return false
 		}
-		if va.Name != vb.Name {
-			return false
-		}
 		return typeEqualsGuard(va.Body, vb.Body, next, seen)
 	default:
 		return a.Equals(b)
