@@ -1,6 +1,7 @@
 package regression
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -50,6 +51,18 @@ local x = contract()
 local y = x:with_actor({}):with_scope({}):open()
 `
 	result := testutil.Check(source, testutil.WithStdlib())
+	expectNoFixpointWarning(t, result, "inter-function fixpoint did not converge")
+}
+
+// Reduced from keeper.logger:process, process.lua:12-54, 88-99, 127-171,
+// 222-275 and 278-383. Buffer writes flow through helper return values and
+// back into captured state along the caller's branches.
+func TestReproFixpointLoggerBufferHelpers(t *testing.T) {
+	source, err := os.ReadFile("testdata/fixpoint_logger.lua")
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := testutil.Check(string(source), testutil.WithStdlib())
 	expectNoFixpointWarning(t, result, "inter-function fixpoint did not converge")
 }
 

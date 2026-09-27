@@ -21,20 +21,23 @@ func (d *Driver) roundBudget(store api.IterationStore) int {
 }
 
 // structuralDepth returns the propagation depth of the registered graph
-// hierarchy: twice the maximum closure-nesting depth plus the maximum local
-// call-chain depth.
+// hierarchy: twice the maximum closure-nesting depth plus four rounds per
+// edge of the maximum local call chain.
 //
 // Each driver round carries interprocedural facts one closure level up (field
 // writes, captured mutations), one closure level down (captured types) or one
-// call hop. A fact produced in the deepest closure reaches the root and
-// returns to the deepest closure of another branch in twice the nesting
-// depth, and crosses the longest call chain in its depth.
+// channel hop. A call edge can pass through parameter hints, container
+// mutations, return summaries and signatures or captured types before its
+// caller sees the result. These channels read the previous round, so each
+// edge needs up to four rounds. A fact produced in the deepest closure also
+// reaches the root and returns to a deepest closure in twice the nesting
+// depth.
 func structuralDepth(store api.IterationStore) int {
 	if store == nil {
 		return 0
 	}
 	graphs := store.Graphs()
-	return 2*nestingDepth(store, graphs) + callChainDepth(store, graphs)
+	return 2*nestingDepth(store, graphs) + 4*callChainDepth(store, graphs)
 }
 
 // nestingDepth returns the maximum number of enclosing function graphs of any
