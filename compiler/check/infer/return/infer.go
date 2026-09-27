@@ -432,7 +432,7 @@ func (i *Inferencer) inferReturnTypesFromBody(
 		DeclaredTypes:   finalOverlay,
 		GlobalTypes:     i.globalTypes,
 		ModuleAliases:   ctx.moduleAliases,
-		ReturnSummaries: phaseReturnSummaries,
+		Callables: scratchCallables(fnGraph, phaseReturnSummaries),
 	})
 	declSynth := i.newReturnInferenceEngine(
 		ctx.run,

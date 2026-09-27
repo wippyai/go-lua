@@ -38,25 +38,15 @@ func WidenFacts(prev, next api.Facts) api.Facts {
 	for fn := range literals {
 		prevFact := prev.Callables[fn]
 		nextFact := next.Callables[fn]
-		reconciled := ReconcileFunctionFact(ReconcileFunctionFactInput{
-			ExistingSummary:  prevFact.Summary,
-			ExistingNarrow:   prevFact.Narrow,
-			ExistingFunc:     prevFact.Func,
-			CandidateSummary: nextFact.Summary,
-			CandidateNarrow:  nextFact.Narrow,
-			CandidateFunc:    nextFact.Func,
-		})
-		sig := nextFact.Sig
-		if next.Callables == nil {
-			sig = prevFact.Sig
-		} else if prev.Callables != nil {
-			sig = maybeWidenFunctionForConvergence(mergeLiteralSig(prevFact.Sig, sig))
+		merged := mergeCallable(prevFact, nextFact)
+		if prev.Callables != nil && next.Callables != nil {
+			merged.Sig = maybeWidenFunctionForConvergence(merged.Sig)
 		}
 		out.Callables[fn] = api.FunctionFact{
-			Summary: widenReturnVectorForConvergence(reconciled.Summary),
-			Narrow:  widenReturnVectorForConvergence(reconciled.Narrow),
-			Func:    maybeWidenTypeForConvergence(reconciled.Func),
-			Sig:     sig,
+			Summary: widenReturnVectorForConvergence(merged.Summary),
+			Narrow:  widenReturnVectorForConvergence(merged.Narrow),
+			Func:    maybeWidenTypeForConvergence(merged.Func),
+			Sig:     merged.Sig,
 		}
 	}
 	return out
@@ -939,18 +929,14 @@ func copyFunctionWithSpec(fn *typ.Function, spec typ.SpecInfo) *typ.Function {
 	return b.Build()
 }
 
-// JoinProvedEffects carries effects proved for one body onto an existing
-// callable signature without replacing its parameter or return estimates.
-func JoinProvedEffects(base, proved *typ.Function) *typ.Function {
-	if base == nil {
-		return proved
+// WithOwnerRelations carries body-proved return relations onto a contextual signature.
+func WithOwnerRelations(sig *typ.Function, owner typ.Type) *typ.Function {
+	if sig == nil {
+		return nil
 	}
-	if proved == nil {
-		return base
-	}
-	provedSpec := contract.ExtractSpec(proved)
+	provedSpec := contract.ExtractSpec(owner)
 	if provedSpec == nil || len(provedSpec.Effects.Labels) == 0 {
-		return base
+		return sig
 	}
 	var relations effect.Row
 	for _, label := range provedSpec.Effects.Labels {
@@ -960,18 +946,18 @@ func JoinProvedEffects(base, proved *typ.Function) *typ.Function {
 		}
 	}
 	if len(relations.Labels) == 0 {
-		return base
+		return sig
 	}
-	baseSpec := contract.ExtractSpec(base)
+	baseSpec := contract.ExtractSpec(sig)
 	var joined contract.Spec
 	if baseSpec != nil {
 		joined = *baseSpec
 	}
 	joined.Effects = effect.Union(joined.Effects, relations)
 	if baseSpec != nil && baseSpec.Effects.Equals(joined.Effects) {
-		return base
+		return sig
 	}
-	return copyFunctionWithSpec(base, &joined)
+	return copyFunctionWithSpec(sig, &joined)
 }
 
 // WidenCapturedTypes merges two captured type maps using monotone join.

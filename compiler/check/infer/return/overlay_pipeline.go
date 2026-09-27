@@ -141,6 +141,21 @@ func (i *Inferencer) summaryFromSnapshot(
 	return normalized
 }
 
+// scratchCallables presents current group estimates to synthesis during this
+// iteration; stable facts are read separately from the previous snapshot.
+func scratchCallables(graph *cfg.Graph, summaries map[cfg.SymbolID][]typ.Type) api.Callables {
+	if graph == nil || len(summaries) == 0 {
+		return nil
+	}
+	out := make(api.Callables)
+	graph.EachLocalFunction(func(_ cfg.Point, sym cfg.SymbolID, fn *ast.FunctionExpr) {
+		if summary := summaries[sym]; len(summary) > 0 {
+			out[fn] = api.FunctionFact{Summary: summary, Narrow: summary}
+		}
+	})
+	return out
+}
+
 func (i *Inferencer) resolveLocalFunctionSummary(
 	ctx *returnInferenceContext,
 	allSummaries map[cfg.SymbolID][]typ.Type,
@@ -347,7 +362,7 @@ func (i *Inferencer) newOverlayEngine(
 		DeclaredTypes:   overlay,
 		GlobalTypes:     i.globalTypes,
 		ModuleAliases:   ctx.moduleAliases,
-		ReturnSummaries: ctx.summaries,
+		Callables: scratchCallables(ctx.info.Graph, ctx.summaries),
 	})
 	return env, i.newReturnInferenceEngine(ctx.run, fnScopes, env)
 }
@@ -742,7 +757,7 @@ func (i *Inferencer) extractForReturn(
 		PhaseEnv:        phaseEnv,
 		Resolve:         phase.ResolveOutput{TypeResolver: ctx.engine},
 		Scope:           scopeOut,
-		ReturnSummaries: ctx.summaries,
+		Callables: scratchCallables(ctx.info.Graph, ctx.summaries),
 	})
 	return phaseEnv, scopeOut, extractOut
 }
@@ -775,7 +790,7 @@ func (i *Inferencer) runPhase2FlowNarrowing(
 		Scope:                 scopeOut,
 		Extract:               extractOut,
 		Solve:                 solveOut,
-		NarrowReturnSummaries: phaseReturnSummaries,
+		Callables: scratchCallables(fnGraph, phaseReturnSummaries),
 	})
 
 	deadPoints := map[cfg.Point]bool{}
@@ -802,7 +817,7 @@ func (i *Inferencer) runPhase2FlowNarrowing(
 		DeclaredTypes:   finalOverlay,
 		GlobalTypes:     i.globalTypes,
 		ModuleAliases:   ctx.moduleAliases,
-		ReturnSummaries: phaseReturnSummaries,
+		Callables: scratchCallables(fnGraph, phaseReturnSummaries),
 	})
 	return phase2InferenceState{
 		synth:      i.newReturnInferenceEngine(ctx.run, phaseEnv.Scopes, fnCheckCtx),

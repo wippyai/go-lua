@@ -53,7 +53,7 @@ func RunNarrow(input NarrowInput) NarrowOutput {
 		WithSiblingTypes(input.SiblingTypes).
 		WithLiteralTypes(input.LiteralTypes).
 		WithSolution(input.Solve.Solution).
-		WithNarrowReturnSummaries(input.NarrowReturnSummaries).
+		WithCallables(input.Callables).
 		BuildNarrow()
 
 	engine := createNarrowedEngine(input.PhaseEnv, input.Scope.Scopes, input.Solve.Solution, narrowingCtx, input.Extract.Conditions)

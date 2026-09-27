@@ -57,7 +57,7 @@ func (r *Runner) appendCapturedMutatorAssignments(
 	env phase.PhaseEnv,
 	scopeOut phase.ScopeOutput,
 	literalOut phase.LiteralOutput,
-	returnSummaries map[cfg.SymbolID][]typ.Type,
+	callables api.Callables,
 	extractOut *phase.FlowExtractOutput,
 ) {
 	if store == nil || graph == nil || extractOut == nil || extractOut.Inputs == nil {
@@ -78,7 +78,7 @@ func (r *Runner) appendCapturedMutatorAssignments(
 		WithScope(scopeOut).
 		WithSiblingTypes(scopeOut.SiblingTypes).
 		WithLiteralTypes(literalOut.LiteralTypes).
-		WithReturnSummaries(returnSummaries).
+		WithCallables(callables).
 		BuildDeclared()
 
 	env.Scopes = scopeOut.Scopes
