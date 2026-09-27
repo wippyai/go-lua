@@ -741,9 +741,9 @@ func collectInferredTypes(
 					if len(targetPath.Segments) == 0 {
 						newType = flow.WidenArrayElementType(old, valueType, typ.JoinPreferNonSoft)
 					} else if old != nil {
-						newType = overlaymut.MergeAtPath(old, targetPath.Segments, func(list typ.Type) typ.Type {
+						newType = overlaymut.EditAtPath(old, targetPath.Segments, func(list typ.Type) typ.Type {
 							return flow.WidenArrayElementType(list, valueType, typ.JoinPreferNonSoft)
-						})
+						}, overlaymut.MergePathEdit)
 					}
 					if newType != nil && !typ.TypeEquals(old, newType) {
 						inferred[targetPath.Symbol] = newType

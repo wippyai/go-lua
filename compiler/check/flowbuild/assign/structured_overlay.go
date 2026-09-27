@@ -5,8 +5,8 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	cfganalysis "github.com/wippyai/go-lua/compiler/cfg/analysis"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/overlaymut"
 	"github.com/wippyai/go-lua/types/constraint"
-	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -169,134 +169,10 @@ func mergeVisibleStructuredWrites(
 				valueType = resolved
 			}
 		}
-		current = applyStructuredWrite(current, write.segments, valueType)
+		current = overlaymut.EditAtPath(current, write.segments, func(typ.Type) typ.Type {
+			return valueType
+		}, overlaymut.OverwritePathEdit)
 	}
 
 	return current
-}
-
-func applyStructuredWrite(baseType typ.Type, segments []constraint.Segment, valueType typ.Type) typ.Type {
-	if len(segments) == 0 {
-		if valueType == nil {
-			return baseType
-		}
-		return valueType
-	}
-
-	seg := segments[0]
-	child := childTypeForStructuredSegment(baseType, seg)
-	updatedChild := applyStructuredWrite(child, segments[1:], valueType)
-
-	switch seg.Kind {
-	case constraint.SegmentField, constraint.SegmentIndexString:
-		return overwriteStructuredField(baseType, seg.Name, updatedChild)
-	case constraint.SegmentIndexInt:
-		return overwriteStructuredIntIndex(baseType, updatedChild)
-	default:
-		return baseType
-	}
-}
-
-func childTypeForStructuredSegment(baseType typ.Type, seg constraint.Segment) typ.Type {
-	if baseType == nil {
-		return nil
-	}
-
-	switch t := baseType.(type) {
-	case *typ.Alias:
-		return childTypeForStructuredSegment(t.Target, seg)
-	case *typ.Record:
-		switch seg.Kind {
-		case constraint.SegmentField, constraint.SegmentIndexString:
-			if field := t.GetField(seg.Name); field != nil {
-				return field.Type
-			}
-			if t.HasMapComponent() && (typ.IsAny(t.MapKey) || t.MapKey.Kind() == kind.String) {
-				return t.MapValue
-			}
-		case constraint.SegmentIndexInt:
-			if t.HasMapComponent() && (typ.IsAny(t.MapKey) || t.MapKey.Kind() == kind.Integer || t.MapKey.Kind() == kind.Number) {
-				return t.MapValue
-			}
-		}
-	case *typ.Map:
-		switch seg.Kind {
-		case constraint.SegmentField, constraint.SegmentIndexString:
-			if typ.IsAny(t.Key) || t.Key.Kind() == kind.String {
-				return t.Value
-			}
-		case constraint.SegmentIndexInt:
-			if typ.IsAny(t.Key) || t.Key.Kind() == kind.Integer || t.Key.Kind() == kind.Number {
-				return t.Value
-			}
-		}
-	case *typ.Array:
-		if seg.Kind == constraint.SegmentIndexInt {
-			return t.Element
-		}
-	}
-
-	return nil
-}
-
-func overwriteStructuredField(baseType typ.Type, field string, fieldType typ.Type) typ.Type {
-	if field == "" || fieldType == nil {
-		return baseType
-	}
-
-	switch t := baseType.(type) {
-	case *typ.Alias:
-		updated := overwriteStructuredField(t.Target, field, fieldType)
-		if updated == nil || typ.TypeEquals(updated, t.Target) {
-			return baseType
-		}
-		return typ.NewAlias(t.Name, updated)
-	case *typ.Map:
-		return typ.NewRecord().
-			SetOpen(true).
-			MapComponent(t.Key, t.Value).
-			Field(field, fieldType).
-			Build()
-	default:
-		return typ.ExtendRecordWithField(baseType, field, fieldType)
-	}
-}
-
-func overwriteStructuredIntIndex(baseType typ.Type, elemType typ.Type) typ.Type {
-	if elemType == nil {
-		return baseType
-	}
-	return typ.WriteInto(baseType, func(t typ.Type) typ.Type {
-		return overwriteStructuredIntIndexNonDynamic(t, elemType)
-	})
-}
-
-func overwriteStructuredIntIndexNonDynamic(baseType typ.Type, elemType typ.Type) typ.Type {
-	switch t := baseType.(type) {
-	case *typ.Alias:
-		updated := overwriteStructuredIntIndex(t.Target, elemType)
-		if updated == nil || typ.TypeEquals(updated, t.Target) {
-			return baseType
-		}
-		return typ.NewAlias(t.Name, updated)
-	case *typ.Array:
-		return typ.NewArray(elemType)
-	case *typ.Map:
-		return typ.NewMap(t.Key, elemType)
-	case *typ.Record:
-		builder := typ.NewRecord().SetComplete(t.Complete)
-		if t.Open {
-			builder.SetOpen(true)
-		}
-		for _, f := range t.Fields {
-			builder.AddField(f)
-		}
-		if t.Metatable != nil {
-			builder.Metatable(t.Metatable)
-		}
-		builder.MapComponent(typ.Integer, elemType)
-		return builder.Build()
-	default:
-		return typ.NewMap(typ.Integer, elemType)
-	}
 }

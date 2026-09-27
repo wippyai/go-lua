@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/mutator"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow"
+	"github.com/wippyai/go-lua/types/kind"
 	querycore "github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
@@ -301,9 +302,9 @@ func ApplyFieldWritesToOverlay(overlay map[cfg.SymbolID]typ.Type, writes map[cfg
 		t := overlay[sym]
 		for _, path := range paths {
 			fields := byPath[path]
-			t = MergeAtPath(t, api.FieldWriteKey{Path: path}.Segments(), func(table typ.Type) typ.Type {
+			t = EditAtPath(t, api.FieldWriteKey{Path: path}.Segments(), func(table typ.Type) typ.Type {
 				return mergeWrittenFields(table, fields)
-			})
+			}, MergePathEdit)
 		}
 		if t != nil {
 			overlay[sym] = t
@@ -326,36 +327,178 @@ func mergeWrittenFields(table typ.Type, fields map[string]typ.Type) typ.Type {
 	return table
 }
 
-// MergeAtPath rebuilds t with apply run on the type of the record field at
-// segments below it. A path t does not describe as record fields leaves t as
-// is.
-func MergeAtPath(t typ.Type, segments []constraint.Segment, apply func(typ.Type) typ.Type) typ.Type {
+type PathEditMode uint8
+
+const (
+	MergePathEdit PathEditMode = iota
+	OverwritePathEdit
+)
+
+// EditAtPath applies one leaf edit while rebuilding the types along a static
+// path. The mode selects the path's field-merge or structured-overwrite rules.
+func EditAtPath(
+	t typ.Type,
+	segments []constraint.Segment,
+	apply func(typ.Type) typ.Type,
+	mode PathEditMode,
+) typ.Type {
 	if len(segments) == 0 {
 		return apply(t)
 	}
-	switch v := t.(type) {
-	case *typ.Optional:
-		inner := MergeAtPath(v.Inner, segments, apply)
-		if inner == v.Inner {
-			return t
-		}
-		return typ.NewOptional(inner)
-	case *typ.Record:
-		seg := segments[0]
-		if seg.Kind == constraint.SegmentIndexInt {
-			return t
-		}
-		field := v.GetField(seg.Name)
-		if field == nil {
-			return t
-		}
-		merged := MergeAtPath(field.Type, segments[1:], apply)
-		if merged == nil || typ.TypeEquals(merged, field.Type) {
-			return t
-		}
-		updated := *field
-		updated.Type = merged
-		return v.WithField(updated)
+	child, rest, rebuild := pathEditStep(t, segments, mode)
+	if rebuild == nil {
+		return t
 	}
-	return t
+	return rebuild(EditAtPath(child, rest, apply, mode))
+}
+
+func pathEditStep(
+	t typ.Type,
+	segments []constraint.Segment,
+	mode PathEditMode,
+) (typ.Type, []constraint.Segment, func(typ.Type) typ.Type) {
+	seg := segments[0]
+	switch mode {
+	case MergePathEdit:
+		switch v := t.(type) {
+		case *typ.Optional:
+			return v.Inner, segments, func(inner typ.Type) typ.Type {
+				if inner == v.Inner {
+					return t
+				}
+				return typ.NewOptional(inner)
+			}
+		case *typ.Record:
+			if seg.Kind == constraint.SegmentIndexInt {
+				return nil, nil, nil
+			}
+			field := v.GetField(seg.Name)
+			if field == nil {
+				return nil, nil, nil
+			}
+			return field.Type, segments[1:], func(merged typ.Type) typ.Type {
+				if merged == nil || typ.TypeEquals(merged, field.Type) {
+					return t
+				}
+				updated := *field
+				updated.Type = merged
+				return v.WithField(updated)
+			}
+		}
+	case OverwritePathEdit:
+		switch seg.Kind {
+		case constraint.SegmentField, constraint.SegmentIndexString, constraint.SegmentIndexInt:
+			return structuredChildType(t, seg), segments[1:], func(child typ.Type) typ.Type {
+				return rebuildStructuredChild(t, seg, child)
+			}
+		}
+	}
+	return nil, nil, nil
+}
+
+func structuredChildType(baseType typ.Type, seg constraint.Segment) typ.Type {
+	for alias, ok := baseType.(*typ.Alias); ok; alias, ok = baseType.(*typ.Alias) {
+		baseType = alias.Target
+	}
+
+	switch t := baseType.(type) {
+	case *typ.Record:
+		switch seg.Kind {
+		case constraint.SegmentField, constraint.SegmentIndexString:
+			if field := t.GetField(seg.Name); field != nil {
+				return field.Type
+			}
+			if t.HasMapComponent() && (typ.IsAny(t.MapKey) || t.MapKey.Kind() == kind.String) {
+				return t.MapValue
+			}
+		case constraint.SegmentIndexInt:
+			if t.HasMapComponent() && (typ.IsAny(t.MapKey) || t.MapKey.Kind() == kind.Integer || t.MapKey.Kind() == kind.Number) {
+				return t.MapValue
+			}
+		}
+	case *typ.Map:
+		switch seg.Kind {
+		case constraint.SegmentField, constraint.SegmentIndexString:
+			if typ.IsAny(t.Key) || t.Key.Kind() == kind.String {
+				return t.Value
+			}
+		case constraint.SegmentIndexInt:
+			if typ.IsAny(t.Key) || t.Key.Kind() == kind.Integer || t.Key.Kind() == kind.Number {
+				return t.Value
+			}
+		}
+	case *typ.Array:
+		if seg.Kind == constraint.SegmentIndexInt {
+			return t.Element
+		}
+	}
+	return nil
+}
+
+func rebuildStructuredChild(baseType typ.Type, seg constraint.Segment, childType typ.Type) typ.Type {
+	switch seg.Kind {
+	case constraint.SegmentField, constraint.SegmentIndexString:
+		return overwriteStructuredField(baseType, seg.Name, childType)
+	case constraint.SegmentIndexInt:
+		return overwriteStructuredIndex(baseType, childType)
+	default:
+		return baseType
+	}
+}
+
+func overwriteStructuredField(baseType typ.Type, field string, fieldType typ.Type) typ.Type {
+	if field == "" || fieldType == nil {
+		return baseType
+	}
+	switch t := baseType.(type) {
+	case *typ.Alias:
+		updated := overwriteStructuredField(t.Target, field, fieldType)
+		if updated == nil || typ.TypeEquals(updated, t.Target) {
+			return baseType
+		}
+		return typ.NewAlias(t.Name, updated)
+	case *typ.Map:
+		return typ.NewRecord().SetOpen(true).MapComponent(t.Key, t.Value).Field(field, fieldType).Build()
+	default:
+		return typ.ExtendRecordWithField(baseType, field, fieldType)
+	}
+}
+
+func overwriteStructuredIndex(baseType typ.Type, elemType typ.Type) typ.Type {
+	if elemType == nil {
+		return baseType
+	}
+	return typ.WriteInto(baseType, func(t typ.Type) typ.Type {
+		return overwriteStructuredIndexNonDynamic(t, elemType)
+	})
+}
+
+func overwriteStructuredIndexNonDynamic(baseType typ.Type, elemType typ.Type) typ.Type {
+	switch t := baseType.(type) {
+	case *typ.Alias:
+		updated := overwriteStructuredIndex(t.Target, elemType)
+		if updated == nil || typ.TypeEquals(updated, t.Target) {
+			return baseType
+		}
+		return typ.NewAlias(t.Name, updated)
+	case *typ.Array:
+		return typ.NewArray(elemType)
+	case *typ.Map:
+		return typ.NewMap(t.Key, elemType)
+	case *typ.Record:
+		builder := typ.NewRecord().SetComplete(t.Complete)
+		if t.Open {
+			builder.SetOpen(true)
+		}
+		for _, f := range t.Fields {
+			builder.AddField(f)
+		}
+		if t.Metatable != nil {
+			builder.Metatable(t.Metatable)
+		}
+		builder.MapComponent(typ.Integer, elemType)
+		return builder.Build()
+	default:
+		return typ.NewMap(typ.Integer, elemType)
+	}
 }
