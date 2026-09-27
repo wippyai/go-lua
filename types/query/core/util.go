@@ -581,7 +581,7 @@ func keyTypeDepth(t typ.Type, depth int) typ.Type {
 
 	return typ.Visit(t, typ.Visitor[typ.Type]{
 		Interface: func(i *typ.Interface) typ.Type {
-			if i.Name == "table" && len(i.Methods) == 0 {
+			if unwrap.IsBuiltinTableTop(i) {
 				return typ.Any
 			}
 			return nil
@@ -661,7 +661,7 @@ func valueTypeDepth(t typ.Type, depth int) typ.Type {
 
 	return typ.Visit(t, typ.Visitor[typ.Type]{
 		Interface: func(i *typ.Interface) typ.Type {
-			if i.Name == "table" && len(i.Methods) == 0 {
+			if unwrap.IsBuiltinTableTop(i) {
 				return typ.Any
 			}
 			return nil
