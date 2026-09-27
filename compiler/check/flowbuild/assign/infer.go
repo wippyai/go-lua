@@ -58,7 +58,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/predicate"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/resolve"
 	"github.com/wippyai/go-lua/compiler/check/overlaymut"
-	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	"github.com/wippyai/go-lua/internal"
@@ -123,7 +122,7 @@ func CollectInferredTypes(fc *fbcore.FlowContext, specTypes api.SpecTypes, annot
 	preflowBranchSolution := buildPreflowFacts(fc, inputs)
 	return collectInferredTypes(
 		fc.Graph, fc.Scopes, synth, fc.API, symResolver,
-		specTypes, annotated, inputs, fc.ModuleBindings, fc.CallCtx, fc.TypeOps, preflowBranchSolution, fc.Services,
+		specTypes, annotated, inputs, fc.ModuleBindings, fc.CallCtx, fc.TypeOps, preflowBranchSolution,
 	)
 }
 
@@ -147,7 +146,6 @@ func collectInferredTypes(
 	callCtx *db.QueryContext,
 	typeOps core.TypeOps,
 	preflowBranchSolution *preflowFacts,
-	services fbcore.FlowServices,
 ) api.SpecTypes {
 	inferred := make(api.SpecTypes)
 	if graph == nil {
@@ -167,70 +165,6 @@ func collectInferredTypes(
 			paramSet[sym] = true
 		}
 	}
-	funcSigTypes := make(map[cfg.SymbolID]typ.Type)
-	seedResolver, _ := synthAPI.(returns.TypeExprResolver)
-	if services != nil {
-		graph.EachFuncDef(func(p cfg.Point, info *cfg.FuncDefInfo) {
-			if info == nil || info.Symbol == 0 {
-				return
-			}
-			if info.TargetKind != cfg.FuncDefGlobal || info.FuncExpr == nil {
-				return
-			}
-			sc := scopes[p]
-			if sc == nil {
-				sc = scopes[graph.Entry()]
-			}
-			if inputs != nil && inputs.SiblingTypes != nil {
-				if sibling := inputs.SiblingTypes[info.Symbol]; sibling != nil {
-					funcSigTypes[info.Symbol] = sibling
-					return
-				}
-			}
-			if sig := services.ResolveFunctionSignature(info.FuncExpr, sc); sig != nil {
-				funcSigTypes[info.Symbol] = sig
-				return
-			}
-			if seed, ok := returns.BuildSeedFunctionTypeWithBindings(info.FuncExpr, seedResolver, sc, bindings).(*typ.Function); ok && seed != nil {
-				funcSigTypes[info.Symbol] = seed
-			}
-		})
-		graph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
-			if info == nil || !info.IsLocal || len(info.Targets) == 0 {
-				return
-			}
-			sc := scopes[p]
-			if sc == nil {
-				sc = scopes[graph.Entry()]
-			}
-			sources := info.Sources
-			for i, target := range info.Targets {
-				var source ast.Expr
-				if i < len(sources) {
-					source = sources[i]
-				}
-				if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
-					continue
-				}
-				if fnExpr, ok := source.(*ast.FunctionExpr); ok {
-					if inputs != nil && inputs.SiblingTypes != nil {
-						if sibling := inputs.SiblingTypes[target.Symbol]; sibling != nil {
-							funcSigTypes[target.Symbol] = sibling
-							continue
-						}
-					}
-					if sig := services.ResolveFunctionSignature(fnExpr, sc); sig != nil {
-						funcSigTypes[target.Symbol] = sig
-						continue
-					}
-					if seed, ok := returns.BuildSeedFunctionTypeWithBindings(fnExpr, seedResolver, sc, bindings).(*typ.Function); ok && seed != nil {
-						funcSigTypes[target.Symbol] = seed
-					}
-				}
-			}
-		})
-	}
-
 	type assignEntry struct {
 		p    cfg.Point
 		info *cfg.AssignInfo
@@ -497,7 +431,7 @@ func collectInferredTypes(
 			overlayScratch = mergeSpecTypesSoftInto(overlayScratch, inferred, specTypes)
 			overlay := overlayScratch
 
-			wrappedSynth := synthWithInferenceOverlay(synthAPI, overlay, funcSigTypes, paramSet, annotated, bindings, inputs, callCtx, typeOps, preflowBranchSolution, synth)
+			wrappedSynth := synthWithInferenceOverlay(synthAPI, overlay, paramSet, annotated, bindings, inputs, callCtx, typeOps, preflowBranchSolution, synth)
 			callSynthFor := func(p cfg.Point, info *cfg.CallInfo) func(ast.Expr, cfg.Point) typ.Type {
 				if info == nil {
 					return wrappedSynth
@@ -525,7 +459,7 @@ func collectInferredTypes(
 				}, preflowBranchSolution)
 				callOverlay = enrichStructuredOverlayAtPoint(graph, idom, structuredWrites, p, callOverlay, rhsResolver, wrappedSynth)
 
-				return synthWithInferenceOverlay(synthAPI, callOverlay, funcSigTypes, paramSet, annotated, bindings, inputs, callCtx, typeOps, preflowBranchSolution, synth)
+				return synthWithInferenceOverlay(synthAPI, callOverlay, paramSet, annotated, bindings, inputs, callCtx, typeOps, preflowBranchSolution, synth)
 			}
 
 			// Infer expected argument types for a call using the call inference pipeline.
@@ -571,9 +505,6 @@ func collectInferredTypes(
 					}
 					calleeCandidates := callsite.CallableCalleeSymbolCandidates(info, graph, bindings, moduleBindings)
 					for _, calleeSym := range calleeCandidates {
-						if sig, ok := funcSigTypes[calleeSym]; ok && sig != nil {
-							setCallee(sig)
-						}
 						if symResolver != nil {
 							if t, ok := symResolver(p, calleeSym); ok && t != nil {
 								setCallee(t)
@@ -683,41 +614,29 @@ func collectInferredTypes(
 							continue
 						}
 						assignedType := typ.Unknown
-						// Canonical local-function policy: use the signature seed captured
-						// from declaration shape (params/annotations), not synthesized return
-						// summaries at this stage. Return summaries are reconciled in interproc
-						// channels and should not be re-injected through local assignment
-						// inference, which can reintroduce stale unions.
-						if _, isFnLiteral := source.(*ast.FunctionExpr); isFnLiteral {
-							if sig, ok := funcSigTypes[target.Symbol]; ok && sig != nil {
-								assignedType = sig
-							}
-						}
-						if typ.IsAbsentOrUnknown(assignedType) {
-							if !valuesComputed {
-								rhsResolver := symResolver
-								if rhsResolver == nil {
-									rhsResolver = func(_ cfg.Point, sym cfg.SymbolID) (typ.Type, bool) {
-										t, ok := overlay[sym]
-										return t, ok
-									}
+						if !valuesComputed {
+							rhsResolver := symResolver
+							if rhsResolver == nil {
+								rhsResolver = func(_ cfg.Point, sym cfg.SymbolID) (typ.Type, bool) {
+									t, ok := overlay[sym]
+									return t, ok
 								}
-								rhsOverlay := rhsSpecTypesAtAssignPoint(graph, info, p, overlay, func(point cfg.Point, sym cfg.SymbolID) (typ.Type, bool) {
-									if t, ok := overlay[sym]; ok && t != nil && !t.Kind().IsPlaceholder() {
-										return t, true
-									}
-									return rhsResolver(point, sym)
-								}, preflowBranchSolution)
-								rhsOverlay = enrichStructuredOverlayAtPoint(graph, idom, structuredWrites, p, rhsOverlay, rhsResolver, wrappedSynth)
-								values = expandedAssignValues(synthAPI, info, p, rhsOverlay)
-								valuesComputed = true
 							}
-							if value := assignValueAt(values, i); !typ.IsAbsentOrUnknown(value) {
-								assignedType = value
-								assignedType = preferPreciseDirectSourceType(assignedType, source, p, sc, wrappedSynth, len(info.Targets) == 1)
-							} else if wrappedSynth != nil && source != nil {
-								assignedType = wrappedSynth(source, p)
-							}
+							rhsOverlay := rhsSpecTypesAtAssignPoint(graph, info, p, overlay, func(point cfg.Point, sym cfg.SymbolID) (typ.Type, bool) {
+								if t, ok := overlay[sym]; ok && t != nil && !t.Kind().IsPlaceholder() {
+									return t, true
+								}
+								return rhsResolver(point, sym)
+							}, preflowBranchSolution)
+							rhsOverlay = enrichStructuredOverlayAtPoint(graph, idom, structuredWrites, p, rhsOverlay, rhsResolver, wrappedSynth)
+							values = expandedAssignValues(synthAPI, info, p, rhsOverlay)
+							valuesComputed = true
+						}
+						if value := assignValueAt(values, i); !typ.IsAbsentOrUnknown(value) {
+							assignedType = value
+							assignedType = preferPreciseDirectSourceType(assignedType, source, p, sc, wrappedSynth, len(info.Targets) == 1)
+						} else if wrappedSynth != nil && source != nil {
+							assignedType = wrappedSynth(source, p)
 						}
 						assignedType = resolve.Ref(assignedType, sc)
 						if typ.IsAbsentOrUnknown(assignedType) {
@@ -999,7 +918,6 @@ func dedupeSymbolIDs(refs []cfg.SymbolID) []cfg.SymbolID {
 func synthWithInferenceOverlay(
 	synthAPI api.SynthAPI,
 	overlay map[cfg.SymbolID]typ.Type,
-	funcSigTypes map[cfg.SymbolID]typ.Type,
 	paramSet map[cfg.SymbolID]bool,
 	annotated map[cfg.SymbolID]bool,
 	bindings *bind.BindingTable,
@@ -1009,18 +927,8 @@ func synthWithInferenceOverlay(
 	preflow *preflowFacts,
 	base func(ast.Expr, cfg.Point) typ.Type,
 ) func(ast.Expr, cfg.Point) typ.Type {
-	mergedOverlay := make(map[cfg.SymbolID]typ.Type, len(overlay)+len(funcSigTypes))
-	for sym, t := range funcSigTypes {
-		if t != nil {
-			mergedOverlay[sym] = t
-		}
-	}
-	for sym, t := range overlay {
-		mergedOverlay[sym] = t
-	}
-
 	if base != nil {
-		base = overlaySynth(synthAPI, mergedOverlay, base)
+		base = overlaySynth(synthAPI, overlay, base)
 	}
 	wrappedBase := func(expr ast.Expr, p cfg.Point) typ.Type {
 		if ident, ok := expr.(*ast.IdentExpr); ok && bindings != nil {
@@ -1036,7 +944,7 @@ func synthWithInferenceOverlay(
 		return base(expr, p)
 	}
 
-	return synthWithOverlayAndPreflow(mergedOverlay, bindings, inputs, callCtx, typeOps, preflow, wrappedBase)
+	return synthWithOverlayAndPreflow(overlay, bindings, inputs, callCtx, typeOps, preflow, wrappedBase)
 }
 
 func assignmentOwningSourceCall(assigns []*cfg.AssignInfo, call *cfg.CallInfo) *cfg.AssignInfo {

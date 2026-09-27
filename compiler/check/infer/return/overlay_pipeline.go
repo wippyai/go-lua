@@ -255,21 +255,6 @@ func (i *Inferencer) enrichOverlayWithCaptured(
 	if localBindings == nil {
 		return
 	}
-	if i.store != nil && ctx.info.DefScope != nil {
-		parentScope := api.ParentScopeForGraph(i.store, ctx.info.Graph.ID(), ctx.info.DefScope)
-		if capturedTypes := i.store.GetCapturedTypesSnapshot(ctx.info.Graph, parentScope); len(capturedTypes) > 0 {
-			for _, sym := range cfg.SortedSymbolIDs(capturedTypes) {
-				t := capturedTypes[sym]
-				if sym == 0 || t == nil {
-					continue
-				}
-				if existing, ok := overlay[sym]; ok && existing != nil && !typ.IsSoft(existing, typ.SoftAnnotationPolicy) {
-					continue
-				}
-				overlay[sym] = t
-			}
-		}
-	}
 	resolveCapturedAnnotation := func(sym cfg.SymbolID) typ.Type {
 		parentGraph := ctx.info.ParentGraph
 		if parentGraph == nil || sym == 0 {
@@ -297,15 +282,24 @@ func (i *Inferencer) enrichOverlayWithCaptured(
 		})
 		return annType
 	}
+	var capturedTypes map[cfg.SymbolID]typ.Type
+	if i.store != nil && ctx.info.DefScope != nil {
+		parentScope := api.ParentScopeForGraph(i.store, ctx.info.Graph.ID(), ctx.info.DefScope)
+		capturedTypes = i.store.GetCapturedTypesSnapshot(ctx.info.Graph, parentScope)
+	}
 	for _, sym := range localBindings.CapturedSymbols(ctx.info.Fn) {
 		if sym == 0 {
+			continue
+		}
+		if annType := resolveCapturedAnnotation(sym); annType != nil {
+			overlay[sym] = annType
 			continue
 		}
 		if existing, ok := overlay[sym]; ok && existing != nil && !typ.IsSoft(existing, typ.SoftAnnotationPolicy) {
 			continue
 		}
-		if annType := resolveCapturedAnnotation(sym); annType != nil {
-			overlay[sym] = annType
+		if captured := capturedTypes[sym]; captured != nil {
+			overlay[sym] = captured
 			continue
 		}
 		if ctx.parentFacts != nil {
@@ -356,13 +350,13 @@ func (i *Inferencer) newOverlayEngine(
 	overlay map[cfg.SymbolID]typ.Type,
 ) (*api.DeclaredEnvImpl, *synth.Engine) {
 	env := api.NewReturnInferenceEnv(api.ReturnInferenceEnvConfig{
-		Graph:           ctx.info.Graph,
-		Bindings:        ctx.bindings,
-		BaseScope:       ctx.resolveScope,
-		DeclaredTypes:   overlay,
-		GlobalTypes:     i.globalTypes,
-		ModuleAliases:   ctx.moduleAliases,
-		Callables: scratchCallables(ctx.info.Graph, ctx.summaries),
+		Graph:         ctx.info.Graph,
+		Bindings:      ctx.bindings,
+		BaseScope:     ctx.resolveScope,
+		DeclaredTypes: overlay,
+		GlobalTypes:   i.globalTypes,
+		ModuleAliases: ctx.moduleAliases,
+		Callables:     scratchCallables(ctx.info.Graph, ctx.summaries),
 	})
 	return env, i.newReturnInferenceEngine(ctx.run, fnScopes, env)
 }
@@ -754,9 +748,9 @@ func (i *Inferencer) extractForReturn(
 	}
 
 	extractOut := phase.RunExtract(phase.FlowExtractInput{
-		PhaseEnv:        phaseEnv,
-		Resolve:         phase.ResolveOutput{TypeResolver: ctx.engine},
-		Scope:           scopeOut,
+		PhaseEnv:  phaseEnv,
+		Resolve:   phase.ResolveOutput{TypeResolver: ctx.engine},
+		Scope:     scopeOut,
 		Callables: scratchCallables(ctx.info.Graph, ctx.summaries),
 	})
 	return phaseEnv, scopeOut, extractOut
@@ -786,10 +780,10 @@ func (i *Inferencer) runPhase2FlowNarrowing(
 	})
 
 	narrowOut := phase.RunNarrow(phase.NarrowInput{
-		PhaseEnv:              phaseEnv,
-		Scope:                 scopeOut,
-		Extract:               extractOut,
-		Solve:                 solveOut,
+		PhaseEnv:  phaseEnv,
+		Scope:     scopeOut,
+		Extract:   extractOut,
+		Solve:     solveOut,
 		Callables: scratchCallables(fnGraph, phaseReturnSummaries),
 	})
 
@@ -811,13 +805,13 @@ func (i *Inferencer) runPhase2FlowNarrowing(
 
 	// Fallback: declared-phase synth (should be uncommon, e.g. nil solution path).
 	fnCheckCtx := api.NewReturnInferenceEnv(api.ReturnInferenceEnvConfig{
-		Graph:           fnGraph,
-		Bindings:        ctx.bindings,
-		BaseScope:       ctx.resolveScope,
-		DeclaredTypes:   finalOverlay,
-		GlobalTypes:     i.globalTypes,
-		ModuleAliases:   ctx.moduleAliases,
-		Callables: scratchCallables(fnGraph, phaseReturnSummaries),
+		Graph:         fnGraph,
+		Bindings:      ctx.bindings,
+		BaseScope:     ctx.resolveScope,
+		DeclaredTypes: finalOverlay,
+		GlobalTypes:   i.globalTypes,
+		ModuleAliases: ctx.moduleAliases,
+		Callables:     scratchCallables(fnGraph, phaseReturnSummaries),
 	})
 	return phase2InferenceState{
 		synth:      i.newReturnInferenceEngine(ctx.run, phaseEnv.Scopes, fnCheckCtx),

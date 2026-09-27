@@ -810,12 +810,9 @@ func MergeFunctionFactType(existing, candidate typ.Type) typ.Type {
 
 	existingFn := unwrap.Function(existing)
 	candidateFn := unwrap.Function(candidate)
-	if mergedFromVariants, ok := mergeFunctionFactVariants(existing, candidate); ok {
-		return mergedFromVariants
-	}
 	if existingFn != nil && candidateFn != nil {
 		if sameFunctionShapeForFactMerge(existingFn, candidateFn) {
-			return mergeFunctionFactsByShape(existingFn, candidateFn, false)
+			return mergeFunctionFactsByShape(existingFn, candidateFn)
 		}
 	}
 
@@ -826,69 +823,6 @@ func MergeFunctionFactType(existing, candidate typ.Type) typ.Type {
 		return existing
 	}
 	return typ.JoinPreferNonSoft(existing, candidate)
-}
-
-func mergeFunctionFactVariants(existing, candidate typ.Type) (typ.Type, bool) {
-	_, existingUnion := unwrap.Alias(existing).(*typ.Union)
-	_, candidateUnion := unwrap.Alias(candidate).(*typ.Union)
-	if !existingUnion && !candidateUnion {
-		return nil, false
-	}
-	existingFns := functionVariantsForFactMerge(existing)
-	candidateFns := functionVariantsForFactMerge(candidate)
-	if len(existingFns) == 0 || len(candidateFns) == 0 {
-		return nil, false
-	}
-	all := make([]*typ.Function, 0, len(existingFns)+len(candidateFns))
-	all = append(all, existingFns...)
-	all = append(all, candidateFns...)
-	for i := 1; i < len(all); i++ {
-		if !sameFunctionShapeForFactMerge(all[0], all[i]) {
-			return nil, false
-		}
-	}
-	merged := all[0]
-	for i := 1; i < len(all); i++ {
-		next, _ := mergeFunctionFactsByShape(merged, all[i], true).(*typ.Function)
-		if next == nil {
-			return nil, false
-		}
-		merged = next
-	}
-	return merged, true
-}
-
-func functionVariantsForFactMerge(t typ.Type) []*typ.Function {
-	if t == nil {
-		return nil
-	}
-	switch v := unwrap.Alias(t).(type) {
-	case *typ.Optional:
-		// Optional function values include nil. Do not collapse them to a plain
-		// function fact or we lose optionality in merged facts.
-		return nil
-	case *typ.Function:
-		return []*typ.Function{v}
-	case *typ.Union:
-		if len(v.Members) == 0 {
-			return nil
-		}
-		var out []*typ.Function
-		for _, m := range v.Members {
-			fn := unwrap.Function(m)
-			if fn == nil {
-				// Only collapse union variants when the union is function-only.
-				// Mixed unions (for example function|nil) must stay untouched.
-				return nil
-			}
-			out = append(out, fn)
-		}
-		return out
-	}
-	if fn := unwrap.Function(t); fn != nil {
-		return []*typ.Function{fn}
-	}
-	return nil
 }
 
 func sameFunctionShapeForFactMerge(a, b *typ.Function) bool {
@@ -909,7 +843,7 @@ func sameFunctionShapeForFactMerge(a, b *typ.Function) bool {
 	return true
 }
 
-func mergeFunctionFactsByShape(existing, candidate *typ.Function, alternatives bool) typ.Type {
+func mergeFunctionFactsByShape(existing, candidate *typ.Function) typ.Type {
 	if existing == nil {
 		return candidate
 	}
@@ -951,7 +885,6 @@ func mergeFunctionFactsByShape(existing, candidate *typ.Function, alternatives b
 	if effects != nil {
 		builder = builder.Effects(effects)
 	}
-	// Alternative callable signatures guarantee only their common effects.
 	// Repeated estimates for one function are updates to the same summary.
 	existingSpec := contract.ExtractSpec(existing)
 	candidateSpec := contract.ExtractSpec(candidate)
@@ -962,13 +895,7 @@ func mergeFunctionFactsByShape(existing, candidate *typ.Function, alternatives b
 		} else {
 			merged = *existingSpec
 		}
-		if alternatives {
-			if existingSpec == nil || candidateSpec == nil {
-				merged.Effects = effect.Empty
-			} else {
-				merged.Effects = effect.Intersect(existingSpec.Effects, candidateSpec.Effects)
-			}
-		} else if existingSpec != nil && candidateSpec != nil {
+		if existingSpec != nil && candidateSpec != nil {
 			// Repeated estimates describe one body. A round that cannot yet
 			// prove a return relation does not refute an earlier complete proof.
 			merged.Effects = effect.Union(existingSpec.Effects, candidateSpec.Effects)

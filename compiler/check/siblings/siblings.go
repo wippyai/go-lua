@@ -39,7 +39,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/types/typ"
-	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 // FuncEntry captures the minimum info needed for sibling type construction.
@@ -81,14 +80,12 @@ type BuildConfig struct {
 type BuildServices interface {
 	CapturedSymbols(fn *ast.FunctionExpr) []cfg.SymbolID
 	TypeAtPoint(point cfg.Point, sym cfg.SymbolID) typ.Type
-	EnrichRecord(rec *typ.Record, sym cfg.SymbolID) typ.Type
 }
 
 // BuildServicesFuncs adapts functions to BuildServices.
 type BuildServicesFuncs struct {
 	CapturedSymbolsFn func(fn *ast.FunctionExpr) []cfg.SymbolID
 	TypeAtPointFn     func(point cfg.Point, sym cfg.SymbolID) typ.Type
-	EnrichRecordFn    func(rec *typ.Record, sym cfg.SymbolID) typ.Type
 }
 
 func (b BuildServicesFuncs) CapturedSymbols(fn *ast.FunctionExpr) []cfg.SymbolID {
@@ -103,13 +100,6 @@ func (b BuildServicesFuncs) TypeAtPoint(point cfg.Point, sym cfg.SymbolID) typ.T
 		return nil
 	}
 	return b.TypeAtPointFn(point, sym)
-}
-
-func (b BuildServicesFuncs) EnrichRecord(rec *typ.Record, sym cfg.SymbolID) typ.Type {
-	if b.EnrichRecordFn == nil {
-		return nil
-	}
-	return b.EnrichRecordFn(rec, sym)
 }
 
 // Build constructs the sibling types map for a scope group.
@@ -157,11 +147,6 @@ func Build(c BuildConfig) map[cfg.SymbolID]typ.Type {
 				}
 				if typ.IsSoft(capturedType, typ.SoftAnnotationPolicy) {
 					continue
-				}
-				if rec, ok := unwrap.Alias(capturedType).(*typ.Record); ok {
-					if enriched := c.Services.EnrichRecord(rec, sym); enriched != nil {
-						capturedType = enriched
-					}
 				}
 				prev := result[sym]
 				if typ.IsSoft(prev, typ.SoftAnnotationPolicy) && !typ.IsSoft(capturedType, typ.SoftAnnotationPolicy) {
