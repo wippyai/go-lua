@@ -55,6 +55,19 @@ func TestScope_Shadowing(t *testing.T) {
 	testutil.RunCases(t, tests)
 }
 
+func TestScope_ParameterShadowKeepsLocalType(t *testing.T) {
+	result := testutil.Check(`
+		local function f(x: string): number
+			local x = 1
+			return x + 1
+		end
+		return f
+	`, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("shadowing local must retain its numeric type: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
 // TestScope_RequireShadowing tests that require properly shadows module names.
 func TestScope_RequireShadowing(t *testing.T) {
 	// Create http module (server-side, takes 0-1 args)
