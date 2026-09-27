@@ -83,14 +83,6 @@ func NewBuilderWithCapacity(nodeCap, edgeCap int) *Builder {
 	}
 }
 
-// AddNodeWithSnapshot creates a CFG node and immediately takes a visibility snapshot.
-func (b *Builder) AddNodeWithSnapshot(kind basecfg.NodeKind, target basecfg.SymbolID, callee string) basecfg.Point {
-	point := b.Cfg.AddNode(kind, target, callee)
-	b.ScopeTracker.SnapshotVisibility(point)
-
-	return point
-}
-
 // symbolFromIdent looks up the symbol for an identifier expression using bindings.
 func (b *Builder) symbolFromIdent(ident *ast.IdentExpr) (basecfg.SymbolID, bool) {
 	if ident == nil || b.Bindings == nil {

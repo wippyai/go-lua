@@ -27,17 +27,6 @@ func DefaultValidationContext() *ValidationContext {
 	return &ValidationContext{registry: validate.Default}
 }
 
-// RegisterValidator adds a validator that works with LValue.
-func (vc *ValidationContext) RegisterValidator(name string, fn ValidatorFunc) {
-	vc.registry.RegisterValidator(name, func(val any, arg any) *validate.Error {
-		lv, ok := val.(LValue)
-		if !ok {
-			return nil
-		}
-		return fn(lv, arg)
-	})
-}
-
 // Validate checks value against type with annotations.
 // Uses zero-alloc path building - paths only built on error.
 func (vc *ValidationContext) Validate(val LValue, lt *LType) []*validate.Error {

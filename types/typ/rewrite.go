@@ -7,16 +7,6 @@ import (
 	"github.com/wippyai/go-lua/types/kind"
 )
 
-// MarkDeclared marks every record reachable from t as declared, so that an
-// absent field read is closed. It is used at module-manifest boundaries: a
-// manifest is a declaration of an interface, not an inferred shape.
-func MarkDeclared(t Type) Type {
-	if t == nil {
-		return nil
-	}
-	return markDeclaredDepth(t, make(map[Type]Type), 0)
-}
-
 // MarkDeclaredShared marks records reachable from several roots as declared in
 // one pass. A source record reachable from more than one root maps to a single
 // marked object, so nominal comparisons across the roots keep pointer identity.

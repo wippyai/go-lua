@@ -25,7 +25,7 @@ func stopDepthPattern(pattern, concrete typ.Type, depth int) bool {
 //
 // # Algorithm
 //
-// 1. Constraints are added via [InferSet.AddSubtype] and [InferSet.AddEqual]
+// 1. Constraints are added via [InferSet.AddSubtype]
 // 2. Lower bounds (types that are subtypes of the variable) are joined
 // 3. Upper bounds (types that the variable must be a subtype of) are met
 // 4. Cyclic dependencies are resolved using Tarjan's SCC algorithm
@@ -107,12 +107,6 @@ func (c *InferSet) AddSubtype(sub, super typ.Type) {
 			c.unsatisfiable = true
 		}
 	}
-}
-
-// AddEqual records that two types must be equal.
-func (c *InferSet) AddEqual(a, b typ.Type) {
-	c.AddSubtype(a, b)
-	c.AddSubtype(b, a)
 }
 
 // Solve attempts to solve all constraints.
@@ -838,11 +832,6 @@ func applyInferSubst(t typ.Type, s InferSubstitution, visited map[int]bool, memo
 	})
 	memo[t] = result
 	return result
-}
-
-// Match walks pattern and concrete types in parallel, collecting constraints.
-func Match(pattern, concrete typ.Type, cs *InferSet) {
-	matchDepth(pattern, concrete, cs, subtype.Covariant, 0)
 }
 
 // MatchContra matches with contravariant orientation (for parameter positions).
