@@ -91,9 +91,9 @@ func TestFuncTypesEqual_Same(t *testing.T) {
 	}
 }
 
-func TestLiteralSigsEqual_Empty(t *testing.T) {
-	if !LiteralSigsEqual(nil, nil) {
-		t.Error("nil literal sigs should be equal")
+func TestCallablesEqual_Empty(t *testing.T) {
+	if !CallablesEqual(nil, nil) {
+		t.Error("nil callables should be equal")
 	}
 }
 

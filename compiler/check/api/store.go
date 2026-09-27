@@ -80,7 +80,7 @@ type SnapshotStore interface {
 	GetFieldWritesSnapshot(graph *cfg.Graph, parent *scope.State) FieldWrites
 	GetCapturedContainerMutationsSnapshot(graph *cfg.Graph, parent *scope.State) CapturedContainerMutations
 	GetLocalFuncTypesSnapshot(graph *cfg.Graph, parent *scope.State) FuncTypes
-	GetLiteralSigsSnapshot(graph *cfg.Graph, parent *scope.State) LiteralSigs
+	GetCallablesSnapshot(graph *cfg.Graph, parent *scope.State) Callables
 }
 
 // FunctionRefs provides symbol/function lookup for function graphs.
@@ -129,7 +129,7 @@ type NestedStore interface {
 
 // LiteralSigSource is used by phase runners to supply literal signatures.
 type LiteralSigSource interface {
-	GetLiteralSigsSnapshot(graph *cfg.Graph, parent *scope.State) LiteralSigs
+	GetCallablesSnapshot(graph *cfg.Graph, parent *scope.State) Callables
 }
 
 // LiteralSigSink accepts literal signature results from analysis.

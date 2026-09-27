@@ -17,11 +17,29 @@ import (
 func WidenFacts(prev, next api.Facts) api.Facts {
 	out := api.Facts{
 		ParamHints:         WidenParamHints(prev.ParamHints, next.ParamHints),
-		LiteralSigs:        WidenLiteralSigs(prev.LiteralSigs, next.LiteralSigs),
 		CapturedTypes:      WidenCapturedTypes(prev.CapturedTypes, next.CapturedTypes),
 		FieldWrites:        WidenFieldWrites(prev.FieldWrites, next.FieldWrites),
 		CapturedContainers: WidenCapturedContainerMutations(prev.CapturedContainers, next.CapturedContainers),
 		ConstructorFields:  WidenConstructorFields(prev.ConstructorFields, next.ConstructorFields),
+	}
+	if len(prev.Callables)+len(next.Callables) > 0 {
+		out.Callables = make(api.Callables, len(prev.Callables)+len(next.Callables))
+		for fn, fact := range prev.Callables {
+			if next.Callables != nil {
+				fact.Sig = maybeWidenFunctionForConvergence(fact.Sig)
+			}
+			out.Callables[fn] = fact
+		}
+		for fn, fact := range next.Callables {
+			existing, ok := out.Callables[fn]
+			if prev.Callables != nil {
+				if ok && existing.Sig != nil {
+					fact.Sig = mergeLiteralSig(prev.Callables[fn].Sig, fact.Sig)
+				}
+				fact.Sig = maybeWidenFunctionForConvergence(fact.Sig)
+			}
+			out.Callables[fn] = fact
+		}
 	}
 
 	symbols := make(map[cfg.SymbolID]bool, len(prev.FunctionFacts)+len(next.FunctionFacts))
@@ -892,31 +910,6 @@ func joinIterationRecords(a, b typ.Type) (typ.Type, bool) {
 
 func addIterationField(builder *typ.RecordBuilder, f typ.Field) {
 	builder.AddField(f)
-}
-
-// WidenLiteralSigs merges two literal signature maps.
-func WidenLiteralSigs(prev, next api.LiteralSigs) api.LiteralSigs {
-	if prev == nil && next == nil {
-		return nil
-	}
-	if prev == nil {
-		return next
-	}
-	if next == nil {
-		return prev
-	}
-	merged := make(api.LiteralSigs, len(prev)+len(next))
-	for fn, sig := range prev {
-		merged[fn] = maybeWidenFunctionForConvergence(sig)
-	}
-	for fn, sig := range next {
-		if existing := merged[fn]; existing != nil {
-			merged[fn] = maybeWidenFunctionForConvergence(mergeLiteralSig(existing, sig))
-		} else {
-			merged[fn] = maybeWidenFunctionForConvergence(sig)
-		}
-	}
-	return merged
 }
 
 func mergeLiteralSig(prev, next *typ.Function) *typ.Function {

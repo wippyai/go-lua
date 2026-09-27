@@ -296,47 +296,47 @@ func TestMergeFuncTypes_MapVsOpenRecordUsesCanonicalJoin(t *testing.T) {
 	}
 }
 
-func TestWidenLiteralSigs_DoesNotNarrowComparableSignature(t *testing.T) {
+func TestWidenFacts_DoesNotNarrowComparableCallable(t *testing.T) {
 	lit := &ast.FunctionExpr{}
 
-	prev := api.LiteralSigs{
-		lit: typ.Func().Returns(typ.Number).Build(),
-	}
-	next := api.LiteralSigs{
-		lit: typ.Func().Returns(typ.Integer).Build(),
-	}
+	prev := api.Facts{Callables: api.Callables{
+		lit: {Sig: typ.Func().Returns(typ.Number).Build()},
+	}}
+	next := api.Facts{Callables: api.Callables{
+		lit: {Sig: typ.Func().Returns(typ.Integer).Build()},
+	}}
 
-	merged := WidenLiteralSigs(prev, next)
-	got := merged[lit]
+	merged := WidenFacts(prev, next)
+	got := merged.Callables[lit].Sig
 	if got == nil {
 		t.Fatal("expected merged literal signature")
 	}
 	if len(got.Returns) != 1 {
 		t.Fatalf("expected one return, got %d", len(got.Returns))
 	}
-	if !subtype.IsSubtype(prev[lit].Returns[0], got.Returns[0]) {
-		t.Fatalf("expected merged return to be supertype of prev (%v), got %v", prev[lit].Returns[0], got.Returns[0])
+	if !subtype.IsSubtype(prev.Callables[lit].Sig.Returns[0], got.Returns[0]) {
+		t.Fatalf("expected merged return to be supertype of prev (%v), got %v", prev.Callables[lit].Sig.Returns[0], got.Returns[0])
 	}
-	if !subtype.IsSubtype(next[lit].Returns[0], got.Returns[0]) {
-		t.Fatalf("expected merged return to be supertype of next (%v), got %v", next[lit].Returns[0], got.Returns[0])
+	if !subtype.IsSubtype(next.Callables[lit].Sig.Returns[0], got.Returns[0]) {
+		t.Fatalf("expected merged return to be supertype of next (%v), got %v", next.Callables[lit].Sig.Returns[0], got.Returns[0])
 	}
-	if typ.TypeEquals(got.Returns[0], next[lit].Returns[0]) {
+	if typ.TypeEquals(got.Returns[0], next.Callables[lit].Sig.Returns[0]) {
 		t.Fatalf("expected merged return not to regress to narrower next-only type %v", got.Returns[0])
 	}
 }
 
-func TestWidenLiteralSigs_PrefersMergedSameShapeSignature(t *testing.T) {
+func TestWidenFacts_PrefersMergedSameShapeSignature(t *testing.T) {
 	lit := &ast.FunctionExpr{}
 
-	prev := api.LiteralSigs{
-		lit: typ.Func().Returns(typ.String).Build(),
-	}
-	next := api.LiteralSigs{
-		lit: typ.Func().Returns(typ.Integer).Build(),
-	}
+	prev := api.Facts{Callables: api.Callables{
+		lit: {Sig: typ.Func().Returns(typ.String).Build()},
+	}}
+	next := api.Facts{Callables: api.Callables{
+		lit: {Sig: typ.Func().Returns(typ.Integer).Build()},
+	}}
 
-	merged := WidenLiteralSigs(prev, next)
-	got := merged[lit]
+	merged := WidenFacts(prev, next)
+	got := merged.Callables[lit].Sig
 	if got == nil {
 		t.Fatal("expected merged literal signature")
 	}

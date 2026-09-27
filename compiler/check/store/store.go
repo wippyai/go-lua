@@ -199,8 +199,8 @@ type IterationStore struct {
 // IterationScratch holds iteration-local state cleared each cycle.
 // Not double-buffered; reset at each iteration boundary.
 type IterationScratch struct {
-	// LiteralSigsByGraphID stores literal signatures computed this iteration.
-	LiteralSigsByGraphID map[uint64]map[*ast.FunctionExpr]*typ.Function
+	// SigsByGraphID stores signatures computed this iteration.
+	SigsByGraphID map[uint64]map[*ast.FunctionExpr]*typ.Function
 }
 
 // effectsEqual compares two FunctionRefinements for structural equality.
@@ -340,7 +340,7 @@ func NewIterationStore() *IterationStore {
 // NewIterationScratch creates an initialized iteration scratch.
 func NewIterationScratch() *IterationScratch {
 	return &IterationScratch{
-		LiteralSigsByGraphID: make(map[uint64]map[*ast.FunctionExpr]*typ.Function),
+		SigsByGraphID: make(map[uint64]map[*ast.FunctionExpr]*typ.Function),
 	}
 }
 
@@ -365,7 +365,7 @@ func (s *SessionStore) resetScratch() {
 		s.Scratch = NewIterationScratch()
 		return
 	}
-	s.Scratch.LiteralSigsByGraphID = make(map[uint64]map[*ast.FunctionExpr]*typ.Function)
+	s.Scratch.SigsByGraphID = make(map[uint64]map[*ast.FunctionExpr]*typ.Function)
 }
 
 func swapSnapshotChannel[T any](
@@ -679,8 +679,8 @@ func initInterprocFacts(f *api.Facts) {
 	if f.ParamHints == nil {
 		f.ParamHints = make(map[cfg.SymbolID][]typ.Type)
 	}
-	if f.LiteralSigs == nil {
-		f.LiteralSigs = make(map[*ast.FunctionExpr]*typ.Function)
+	if f.Callables == nil {
+		f.Callables = make(api.Callables)
 	}
 	if f.CapturedTypes == nil {
 		f.CapturedTypes = make(api.CapturedTypes)
@@ -975,13 +975,13 @@ func (s *SessionStore) GetLocalFuncTypesSnapshot(
 	return returns.FuncTypeViewFromFacts(s.GetInterprocFactsSnapshot(graph, parent))
 }
 
-// GetLiteralSigsSnapshot returns literal signatures from the stable interproc snapshot.
-func (s *SessionStore) GetLiteralSigsSnapshot(
+// GetCallablesSnapshot returns callables from the stable interproc snapshot.
+func (s *SessionStore) GetCallablesSnapshot(
 	graph *cfg.Graph,
 	parent *scope.State,
-) map[*ast.FunctionExpr]*typ.Function {
+) api.Callables {
 	s.requirePhase(api.PhaseScopeCompute, api.PhaseNarrowing)
-	return s.GetInterprocFactsSnapshot(graph, parent).LiteralSigs
+	return s.GetInterprocFactsSnapshot(graph, parent).Callables
 }
 
 // GetCapturedTypesSnapshot returns captured variable types from the stable interproc snapshot.
@@ -1001,20 +1001,20 @@ func (s *SessionStore) StoreLiteralSigs(graphID uint64, sigs map[*ast.FunctionEx
 	if s.Scratch == nil {
 		s.Scratch = NewIterationScratch()
 	}
-	if s.Scratch.LiteralSigsByGraphID == nil {
-		s.Scratch.LiteralSigsByGraphID = make(map[uint64]map[*ast.FunctionExpr]*typ.Function)
+	if s.Scratch.SigsByGraphID == nil {
+		s.Scratch.SigsByGraphID = make(map[uint64]map[*ast.FunctionExpr]*typ.Function)
 	}
-	s.Scratch.LiteralSigsByGraphID[graphID] = sigs
+	s.Scratch.SigsByGraphID[graphID] = sigs
 }
 
 // ScratchLiteralSigs returns literal signatures computed in the current iteration.
 // This is an iteration-local cache used to avoid re-synthesizing literal signatures
 // for nested functions within the same fixpoint cycle.
 func (s *SessionStore) ScratchLiteralSigs(graphID uint64) map[*ast.FunctionExpr]*typ.Function {
-	if s == nil || s.Scratch == nil || s.Scratch.LiteralSigsByGraphID == nil {
+	if s == nil || s.Scratch == nil || s.Scratch.SigsByGraphID == nil {
 		return nil
 	}
-	return s.Scratch.LiteralSigsByGraphID[graphID]
+	return s.Scratch.SigsByGraphID[graphID]
 }
 
 // GetFieldWritesSnapshot returns field-write effects from the stable interproc snapshot.

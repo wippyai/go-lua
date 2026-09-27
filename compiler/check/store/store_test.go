@@ -237,10 +237,10 @@ func TestIterationStore_Fields(t *testing.T) {
 
 func TestIterationScratch_Fields(t *testing.T) {
 	s := &IterationScratch{
-		LiteralSigsByGraphID: make(map[uint64]map[*ast.FunctionExpr]*typ.Function),
+		SigsByGraphID: make(map[uint64]map[*ast.FunctionExpr]*typ.Function),
 	}
-	if s.LiteralSigsByGraphID == nil {
-		t.Error("LiteralSigsByGraphID should be initialized")
+	if s.SigsByGraphID == nil {
+		t.Error("SigsByGraphID should be initialized")
 	}
 }
 
@@ -302,7 +302,7 @@ func TestClearIterationChannels_InitializesMissingState(t *testing.T) {
 	if s.InterprocPrev == nil || s.InterprocNext == nil {
 		t.Fatal("expected interproc states to be initialized")
 	}
-	if s.Scratch.LiteralSigsByGraphID == nil {
+	if s.Scratch.SigsByGraphID == nil {
 		t.Fatal("expected scratch literal signatures map to be initialized")
 	}
 }

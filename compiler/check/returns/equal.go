@@ -14,7 +14,7 @@ func FactsEqual(a, b api.Facts) bool {
 	if !symbolTypeVectorMapEqual(a.ParamHints, b.ParamHints) {
 		return false
 	}
-	if !LiteralSigsEqual(a.LiteralSigs, b.LiteralSigs) {
+	if !CallablesEqual(a.Callables, b.Callables) {
 		return false
 	}
 	if !symbolTypeMapEqual(a.CapturedTypes, b.CapturedTypes) {
@@ -56,14 +56,14 @@ func FunctionFactsEqual(a, b api.FunctionFacts) bool {
 	return true
 }
 
-// LiteralSigsEqual checks if two literal signature maps are equal.
-func LiteralSigsEqual(a, b api.LiteralSigs) bool {
+// CallablesEqual checks facts keyed by function literal.
+func CallablesEqual(a, b api.Callables) bool {
 	if len(a) != len(b) {
 		return false
 	}
-	for fn, sig := range a {
+	for fn, fact := range a {
 		other, ok := b[fn]
-		if !ok || !typ.TypeEquals(sig, other) {
+		if !ok || !typ.TypeEquals(fact.Sig, other.Sig) || !ReturnTypesEqual(fact.Summary, other.Summary) || !ReturnTypesEqual(fact.Narrow, other.Narrow) || !typ.TypeEquals(fact.Func, other.Func) {
 			return false
 		}
 	}

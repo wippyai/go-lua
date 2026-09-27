@@ -35,7 +35,7 @@
 //   - [NarrowReturnSummaries]: Post-narrowing return types
 //   - [ParamHints]: Parameter types inferred from call sites
 //   - [FuncTypes]: Canonical types for local function symbols
-//   - [LiteralSigs]: Signatures for anonymous function literals
+//   - [Callables]: Facts for function literals
 //   - [FieldWrites]: Field writes through captured variables and parameters
 //
 // Facts are computed incrementally and stored per (graph, parent-scope) pair.

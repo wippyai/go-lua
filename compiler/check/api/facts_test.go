@@ -16,8 +16,8 @@ func TestFacts_Zero(t *testing.T) {
 	if f.ParamHints != nil {
 		t.Error("zero Facts should have nil ParamHints")
 	}
-	if f.LiteralSigs != nil {
-		t.Error("zero Facts should have nil LiteralSigs")
+	if f.Callables != nil {
+		t.Error("zero Facts should have nil Callables")
 	}
 	if f.CapturedTypes != nil {
 		t.Error("zero Facts should have nil CapturedTypes")

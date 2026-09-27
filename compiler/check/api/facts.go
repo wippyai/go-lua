@@ -38,15 +38,14 @@ type FunctionFact struct {
 	Summary []typ.Type
 	Narrow  []typ.Type
 	Func    typ.Type
+	Sig     *typ.Function
 }
 
 // FunctionFacts maps function symbols to their canonical function facts.
 type FunctionFacts = map[cfg.SymbolID]FunctionFact
 
-// LiteralSigs maps anonymous function literal expressions to their signatures.
-// Used when function literals are passed as arguments or assigned to variables
-// without explicit type annotations.
-type LiteralSigs = map[*ast.FunctionExpr]*typ.Function
+// Callables owns facts keyed by the function literal being analyzed.
+type Callables = map[*ast.FunctionExpr]FunctionFact
 
 // CapturedTypes maps captured symbols to their flow-derived types for a graph.
 // These are computed from the parent function's flow facts at the definition
@@ -89,8 +88,8 @@ type ConstructorFields = map[cfg.SymbolID]map[string]typ.Type
 // These facts are computed during analysis and stored per (graph, parent) pair.
 type Facts struct {
 	FunctionFacts      FunctionFacts
+	Callables          Callables
 	ParamHints         ParamHints
-	LiteralSigs        LiteralSigs
 	CapturedTypes      CapturedTypes
 	FieldWrites        FieldWrites
 	CapturedContainers CapturedContainerMutations
