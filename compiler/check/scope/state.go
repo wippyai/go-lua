@@ -296,60 +296,43 @@ func (s *State) IsLocal(name string) bool {
 	return ok
 }
 
-// WithLocalName marks a name as locally declared.
-func (s *State) WithLocalName(name string) *State {
+func (s *State) update(apply func(*State)) *State {
 	if s == nil {
 		s = New()
 	}
+	next := *s
+	apply(&next)
+	next.stamp = nextScopeStamp()
+	next.cachedHash = 0
+	return &next
+}
+
+// WithLocalName marks a name as locally declared.
+func (s *State) WithLocalName(name string) *State {
 	if name == "" {
+		if s == nil {
+			return New()
+		}
 		return s
 	}
-	return &State{
-		types:        s.types,
-		moduleTypes:  s.moduleTypes,
-		typeParams:   s.typeParams,
-		locals:       s.locals.Set(name, true),
-		mutated:      s.mutated,
-		id:           s.id,
-		stamp:        nextScopeStamp(),
-		depth:        s.depth,
-		name:         s.name,
-		parent:       s.parent,
-		selfType:     s.selfType,
-		variadicType: s.variadicType,
-		returnTypes:  s.returnTypes,
-	}
+	return s.update(func(next *State) { next.locals = next.locals.Set(name, true) })
 }
 
 // WithLocalNames marks multiple names as locally declared.
 func (s *State) WithLocalNames(names []string) *State {
-	if s == nil {
-		s = New()
-	}
 	if len(names) == 0 {
+		if s == nil {
+			return New()
+		}
 		return s
 	}
-	locals := s.locals
-	for _, name := range names {
-		if name != "" {
-			locals = locals.Set(name, true)
+	return s.update(func(next *State) {
+		for _, name := range names {
+			if name != "" {
+				next.locals = next.locals.Set(name, true)
+			}
 		}
-	}
-	return &State{
-		types:        s.types,
-		moduleTypes:  s.moduleTypes,
-		typeParams:   s.typeParams,
-		locals:       locals,
-		mutated:      s.mutated,
-		id:           s.id,
-		stamp:        nextScopeStamp(),
-		depth:        s.depth,
-		name:         s.name,
-		parent:       s.parent,
-		selfType:     s.selfType,
-		variadicType: s.variadicType,
-		returnTypes:  s.returnTypes,
-	}
+	})
 }
 
 // IsMutated reports whether the name was mutated in this scope chain.
@@ -363,58 +346,30 @@ func (s *State) IsMutated(name string) bool {
 
 // WithMutated marks a name as mutated.
 func (s *State) WithMutated(name string) *State {
-	if s == nil {
-		s = New()
-	}
 	if name == "" {
+		if s == nil {
+			return New()
+		}
 		return s
 	}
-	return &State{
-		types:        s.types,
-		moduleTypes:  s.moduleTypes,
-		typeParams:   s.typeParams,
-		locals:       s.locals,
-		mutated:      s.mutated.Set(name, true),
-		id:           s.id,
-		stamp:        nextScopeStamp(),
-		depth:        s.depth,
-		name:         s.name,
-		parent:       s.parent,
-		selfType:     s.selfType,
-		variadicType: s.variadicType,
-		returnTypes:  s.returnTypes,
-	}
+	return s.update(func(next *State) { next.mutated = next.mutated.Set(name, true) })
 }
 
 // WithMutatedNames marks multiple names as mutated.
 func (s *State) WithMutatedNames(names []string) *State {
-	if s == nil {
-		s = New()
-	}
 	if len(names) == 0 {
+		if s == nil {
+			return New()
+		}
 		return s
 	}
-	mutated := s.mutated
-	for _, name := range names {
-		if name != "" {
-			mutated = mutated.Set(name, true)
+	return s.update(func(next *State) {
+		for _, name := range names {
+			if name != "" {
+				next.mutated = next.mutated.Set(name, true)
+			}
 		}
-	}
-	return &State{
-		types:        s.types,
-		moduleTypes:  s.moduleTypes,
-		typeParams:   s.typeParams,
-		locals:       s.locals,
-		mutated:      mutated,
-		id:           s.id,
-		stamp:        nextScopeStamp(),
-		depth:        s.depth,
-		name:         s.name,
-		parent:       s.parent,
-		selfType:     s.selfType,
-		variadicType: s.variadicType,
-		returnTypes:  s.returnTypes,
-	}
+	})
 }
 
 // LookupType finds a type definition. O(log n).
@@ -464,72 +419,21 @@ func (s *State) MetaForName(name string) *typ.Meta {
 
 // WithType returns new state with type definition added.
 func (s *State) WithType(name string, t typ.Type) *State {
-	if s == nil {
-		s = New()
-	}
-	return &State{
-		types:        s.types.Set(name, t),
-		moduleTypes:  s.moduleTypes,
-		typeParams:   s.typeParams,
-		locals:       s.locals,
-		mutated:      s.mutated,
-		id:           s.id,
-		stamp:        nextScopeStamp(),
-		depth:        s.depth,
-		name:         s.name,
-		parent:       s.parent,
-		selfType:     s.selfType,
-		variadicType: s.variadicType,
-		returnTypes:  s.returnTypes,
-	}
+	return s.update(func(next *State) { next.types = next.types.Set(name, t) })
 }
 
 // withModuleType returns new state with a builtin module type bound.
 func (s *State) withModuleType(name string, t typ.Type) *State {
-	if s == nil {
-		s = New()
-	}
-	return &State{
-		types:        s.types,
-		moduleTypes:  s.moduleTypes.Set(name, t),
-		typeParams:   s.typeParams,
-		locals:       s.locals,
-		mutated:      s.mutated,
-		id:           s.id,
-		stamp:        nextScopeStamp(),
-		depth:        s.depth,
-		name:         s.name,
-		parent:       s.parent,
-		selfType:     s.selfType,
-		variadicType: s.variadicType,
-		returnTypes:  s.returnTypes,
-	}
+	return s.update(func(next *State) { next.moduleTypes = next.moduleTypes.Set(name, t) })
 }
 
 // WithTypes returns new state with multiple type definitions added.
 func (s *State) WithTypes(types map[string]typ.Type) *State {
-	if s == nil {
-		s = New()
-	}
-	tables := s.types
-	for name, t := range types {
-		tables = tables.Set(name, t)
-	}
-	return &State{
-		types:        tables,
-		moduleTypes:  s.moduleTypes,
-		typeParams:   s.typeParams,
-		locals:       s.locals,
-		mutated:      s.mutated,
-		id:           s.id,
-		stamp:        nextScopeStamp(),
-		depth:        s.depth,
-		name:         s.name,
-		parent:       s.parent,
-		selfType:     s.selfType,
-		variadicType: s.variadicType,
-		returnTypes:  s.returnTypes,
-	}
+	return s.update(func(next *State) {
+		for name, t := range types {
+			next.types = next.types.Set(name, t)
+		}
+	})
 }
 
 // LookupTypeParam finds a type parameter. O(log n).
@@ -542,50 +446,16 @@ func (s *State) LookupTypeParam(name string) (typ.Type, bool) {
 
 // WithTypeParams returns new state with type parameters added.
 func (s *State) WithTypeParams(params map[string]typ.Type) *State {
-	if s == nil {
-		s = New()
-	}
-	typeParams := s.typeParams
-	for name, t := range params {
-		typeParams = typeParams.Set(name, t)
-	}
-	return &State{
-		types:        s.types,
-		moduleTypes:  s.moduleTypes,
-		typeParams:   typeParams,
-		locals:       s.locals,
-		mutated:      s.mutated,
-		id:           s.id,
-		stamp:        nextScopeStamp(),
-		depth:        s.depth,
-		name:         s.name,
-		parent:       s.parent,
-		selfType:     s.selfType,
-		variadicType: s.variadicType,
-		returnTypes:  s.returnTypes,
-	}
+	return s.update(func(next *State) {
+		for name, t := range params {
+			next.typeParams = next.typeParams.Set(name, t)
+		}
+	})
 }
 
 // WithName returns new state with scope name set.
 func (s *State) WithName(name string) *State {
-	if s == nil {
-		s = New()
-	}
-	return &State{
-		types:        s.types,
-		moduleTypes:  s.moduleTypes,
-		typeParams:   s.typeParams,
-		locals:       s.locals,
-		mutated:      s.mutated,
-		id:           s.id,
-		stamp:        nextScopeStamp(),
-		depth:        s.depth,
-		name:         name,
-		parent:       s.parent,
-		selfType:     s.selfType,
-		variadicType: s.variadicType,
-		returnTypes:  s.returnTypes,
-	}
+	return s.update(func(next *State) { next.name = name })
 }
 
 // SelfType returns the current self type.
@@ -598,24 +468,7 @@ func (s *State) SelfType() typ.Type {
 
 // WithSelf returns new state with self type set.
 func (s *State) WithSelf(self typ.Type) *State {
-	if s == nil {
-		s = New()
-	}
-	return &State{
-		types:        s.types,
-		moduleTypes:  s.moduleTypes,
-		typeParams:   s.typeParams,
-		locals:       s.locals,
-		mutated:      s.mutated,
-		id:           s.id,
-		stamp:        nextScopeStamp(),
-		depth:        s.depth,
-		name:         s.name,
-		parent:       s.parent,
-		selfType:     self,
-		variadicType: s.variadicType,
-		returnTypes:  s.returnTypes,
-	}
+	return s.update(func(next *State) { next.selfType = self })
 }
 
 // VariadicType returns the variadic parameter type.
@@ -628,24 +481,7 @@ func (s *State) VariadicType() typ.Type {
 
 // WithVariadic returns new state with variadic type set.
 func (s *State) WithVariadic(t typ.Type) *State {
-	if s == nil {
-		s = New()
-	}
-	return &State{
-		types:        s.types,
-		moduleTypes:  s.moduleTypes,
-		typeParams:   s.typeParams,
-		locals:       s.locals,
-		mutated:      s.mutated,
-		id:           s.id,
-		stamp:        nextScopeStamp(),
-		depth:        s.depth,
-		name:         s.name,
-		parent:       s.parent,
-		selfType:     s.selfType,
-		variadicType: t,
-		returnTypes:  s.returnTypes,
-	}
+	return s.update(func(next *State) { next.variadicType = t })
 }
 
 // ReturnTypes returns expected return types.
@@ -660,26 +496,9 @@ func (s *State) ReturnTypes() []typ.Type {
 
 // WithReturn returns new state with return types set.
 func (s *State) WithReturn(types []typ.Type) *State {
-	if s == nil {
-		s = New()
-	}
 	ret := make([]typ.Type, len(types))
 	copy(ret, types)
-	return &State{
-		types:        s.types,
-		moduleTypes:  s.moduleTypes,
-		typeParams:   s.typeParams,
-		locals:       s.locals,
-		mutated:      s.mutated,
-		id:           s.id,
-		stamp:        nextScopeStamp(),
-		depth:        s.depth,
-		name:         s.name,
-		parent:       s.parent,
-		selfType:     s.selfType,
-		variadicType: s.variadicType,
-		returnTypes:  ret,
-	}
+	return s.update(func(next *State) { next.returnTypes = ret })
 }
 
 // AllLocals returns locally declared names for this scope.
@@ -688,10 +507,8 @@ func (s *State) AllLocals() map[string]bool {
 		return nil
 	}
 	result := make(map[string]bool)
-	s.locals.Range(func(name string, value bool) bool {
-		if value {
-			result[name] = true
-		}
+	projectNames(s.locals, func(name string) bool {
+		result[name] = true
 		return true
 	})
 	return result
@@ -703,13 +520,20 @@ func (s *State) AllMutated() map[string]bool {
 		return nil
 	}
 	result := make(map[string]bool)
-	s.mutated.Range(func(name string, value bool) bool {
-		if value {
-			result[name] = true
-		}
+	projectNames(s.mutated, func(name string) bool {
+		result[name] = true
 		return true
 	})
 	return result
+}
+
+func projectNames(names *internal.HAMT[string, bool], fn func(name string) bool) {
+	if names == nil || fn == nil {
+		return
+	}
+	names.Range(func(name string, value bool) bool {
+		return !value || fn(name)
+	})
 }
 
 // RangeLocals iterates over local names without allocation.
@@ -717,12 +541,7 @@ func (s *State) RangeLocals(fn func(name string) bool) {
 	if s == nil || fn == nil {
 		return
 	}
-	s.locals.Range(func(name string, value bool) bool {
-		if value {
-			return fn(name)
-		}
-		return true
-	})
+	projectNames(s.locals, fn)
 }
 
 // RangeMutations iterates over mutated names without allocation.
@@ -730,12 +549,7 @@ func (s *State) RangeMutations(fn func(name string) bool) {
 	if s == nil || fn == nil {
 		return
 	}
-	s.mutated.Range(func(name string, value bool) bool {
-		if value {
-			return fn(name)
-		}
-		return true
-	})
+	projectNames(s.mutated, fn)
 }
 
 // AllTypes returns all visible type definitions.
