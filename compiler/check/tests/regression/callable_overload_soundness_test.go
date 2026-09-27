@@ -33,3 +33,29 @@ local n = f("x")
 		t.Fatalf("nullable intersection member must retain the call obligation: %v", testutil.ErrorMessages(result.Errors))
 	}
 }
+
+// Alternative opener variant of kickside/platform/transfer/src/bundle_test.lua:11-23,137-139.
+func TestUnionCallRetainsRejectedAlternativeReturn(t *testing.T) {
+	result := testutil.Check(`
+local function good(mode)
+    if mode == "w" then return { write = function() end } end
+    return nil
+end
+local function bad(mode: number) return nil end
+local function use(flag: boolean)
+    local opener = bad
+    if flag then opener = good end
+    local h = opener("w")
+    h:write()
+end
+`, testutil.WithStdlib())
+	var nilCall bool
+	for _, d := range result.Errors {
+		if d.Position.Line == 11 && d.Message == "cannot call method on optional value without nil check" {
+			nilCall = true
+		}
+	}
+	if !nilCall {
+		t.Fatalf("bad opener's nil return must survive the union call: %v", testutil.ErrorMessages(result.Errors))
+	}
+}

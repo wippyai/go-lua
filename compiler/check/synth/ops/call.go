@@ -720,6 +720,11 @@ func callIntersection(ctx *db.QueryContext, query core.TypeOps, inter *typ.Inter
 		if member.Kind().IsPlaceholder() {
 			continue
 		}
+		if alternatives, ok := unwrap.Alias(typ.UnwrapAnnotated(member)).(*typ.Union); ok {
+			// A union member represents runtime alternatives. Other intersection
+			// members cannot establish which alternative supplied the value.
+			return callUnionWithGenericInference(ctx, alternatives, CallDef{Args: args, ExplicitArgs: explicit, Query: query}, isMethod, receiver, forceMethodReceiver, baseErrors)
+		}
 
 		if unwrap.IsOptionalLike(member) {
 			return singleValueCallResult(typ.Unknown, append(baseErrors, CallError{Kind: ErrOptionalCall, Message: "cannot call optional value without nil check"}))
@@ -798,9 +803,9 @@ func callIntersection(ctx *db.QueryContext, query core.TypeOps, inter *typ.Inter
 
 // callUnionWithGenericInference handles calling a union of functions where each
 // member may be generic. Per-member generic inference is applied before calling.
-// Union semantics: the call succeeds if any member succeeds.
+// Every union member is a possible runtime callee, so each member's return and
+// argument errors contribute even when another member accepts the call.
 func callUnionWithGenericInference(ctx *db.QueryContext, u *typ.Union, def CallDef, isMethod bool, receiver typ.Type, forceMethodReceiver bool, baseErrors []CallError) CallResult {
-	var validReturns [][]typ.Type
 	var allReturns [][]typ.Type
 	var hardErrors []CallError
 
@@ -811,8 +816,6 @@ func callUnionWithGenericInference(ctx *db.QueryContext, u *typ.Union, def CallD
 			allReturns = append(allReturns, normalizedCallReturns(result))
 			if hasHardErrors(result.Errors[len(seedErrors):]) {
 				hardErrors = append(hardErrors, result.Errors...)
-			} else {
-				validReturns = append(validReturns, normalizedCallReturns(result))
 			}
 			continue
 		}
@@ -836,15 +839,10 @@ func callUnionWithGenericInference(ctx *db.QueryContext, u *typ.Union, def CallD
 			continue
 		}
 
-		validReturns = append(validReturns, normalizedCallReturns(result))
-	}
-
-	if len(validReturns) > 0 {
-		return callResultFromReturns(mergeReturnVectors(validReturns), baseErrors)
 	}
 
 	if len(allReturns) > 0 {
-		return callResultFromReturns(mergeReturnVectors(allReturns), uniqueCallErrors(hardErrors))
+		return callResultFromReturns(mergeReturnVectors(allReturns), uniqueCallErrors(append(baseErrors, hardErrors...)))
 	}
 
 	return singleValueCallResult(typ.Unknown, uniqueCallErrors(hardErrors))
@@ -876,6 +874,17 @@ func mergeReturnVectors(vectors [][]typ.Type) []typ.Type {
 				slotTypes = append(slotTypes, returns[i])
 			} else {
 				slotTypes = append(slotTypes, typ.Nil)
+			}
+		}
+		// An unknown return from one possible callee may be nil. Keep that
+		// possibility when another alternative has a concrete return; the
+		// union normalizer otherwise drops unknown beside concrete members.
+		if len(slotTypes) > 1 {
+			for _, slot := range slotTypes {
+				if typ.IsUnknown(slot) {
+					slotTypes = append(slotTypes, typ.Nil)
+					break
+				}
 			}
 		}
 		merged[i] = typ.NewUnion(slotTypes...)
