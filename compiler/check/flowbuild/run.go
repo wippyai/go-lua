@@ -60,6 +60,7 @@ import (
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 // coreDecomposer implements flow.TypeDecomposer using query/core functions.
@@ -109,7 +110,7 @@ func Run(fc *fbcore.FlowContext) *flow.Inputs {
 	// Assignments with const resolution.
 	assign.ExtractAssignments(fc, inputs, keyscoll.BuildKeysCollectorDetector(fc.Graph, fc.ModuleBindings))
 	inputs.ClosedMapVars = assign.ClosedMapVars(fc.Graph, inputs)
-	inputs.CallAliasRoots = collectCallAliasRoots(fc.Graph)
+	inputs.CallAliasRoots = collectCallAliasRoots(fc)
 	if bindings := fc.Graph.Bindings(); bindings != nil {
 		fresh := bindings.FreshTablePaths()
 		capturedFresh := make(map[cfg.SymbolID]map[string]bool, len(fresh))
@@ -182,7 +183,8 @@ func Run(fc *fbcore.FlowContext) *flow.Inputs {
 	return inputs
 }
 
-func collectCallAliasRoots(graph *cfg.Graph) map[cfg.Point][]cfg.SymbolID {
+func collectCallAliasRoots(fc *fbcore.FlowContext) map[cfg.Point][]cfg.SymbolID {
+	graph := fc.Graph
 	if graph == nil || graph.Bindings() == nil {
 		return nil
 	}
@@ -190,6 +192,17 @@ func collectCallAliasRoots(graph *cfg.Graph) map[cfg.Point][]cfg.SymbolID {
 	byPoint := make(map[cfg.Point]map[cfg.SymbolID]bool)
 	record := func(p cfg.Point, expr ast.Expr) {
 		visitCalls(expr, func(call *ast.FuncCallExpr) {
+			// A closed borrow-all contract cannot retain or mutate an argument.
+			// Its guard facts remain valid after the call (notably type(t[k])).
+			if fc.Derived != nil && fc.Derived.Synth != nil {
+				if callee := fc.Derived.Synth(call.Func, p); callee != nil {
+					if _, single := unwrap.Alias(callee).(*typ.Function); single {
+						if row, ok := core.EffectRowOf(callee); ok && row.IsClosed() && row.BorrowsAllParams() && !row.HasStore() && !row.HasMutate() {
+							return
+						}
+					}
+				}
+			}
 			roots := byPoint[p]
 			if roots == nil {
 				roots = make(map[cfg.SymbolID]bool)
