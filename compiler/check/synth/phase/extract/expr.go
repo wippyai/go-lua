@@ -56,7 +56,7 @@ func (s *Synthesizer) synthAttrGetCore(ex *ast.AttrGetExpr, p cfg.Point, sc *sco
 		if !path.IsEmpty() {
 			narrowed := narrower.NarrowedTypeAt(p, path)
 			if narrowed != nil {
-				if _, cast := ex.Object.(*ast.CastExpr); cast && typ.IsAny(unwrap.Alias(objType)) {
+				if _, cast := ex.Object.(*ast.CastExpr); cast && typ.IsAny(unwrap.Alias(objType)) && querycore.AssignabilityOf(s.deps.Ctx) != subtype.Strict {
 					goto skipNarrowedAttr
 				}
 				if specialized := s.stableLocalFunctionValueType(ex, p, sc, narrowed, nil); specialized != nil {
@@ -469,6 +469,11 @@ func (s *Synthesizer) synthLogicalOpCore(ex *ast.LogicalOpExpr, recurse ExprSynt
 
 	switch ex.Operator {
 	case "and":
+		if querycore.AssignabilityOf(s.deps.Ctx) == subtype.Strict && typ.IsAny(left) {
+			// The only way the left operand survives `and` is as nil or false.
+			// In strict mode, preserve that fact instead of propagating any.
+			return typ.JoinBranchOutcome(narrow.ToFalsy(left), right)
+		}
 		return ops.LogicalAndTyped(left, right)
 	case "or":
 		return ops.LogicalOrTyped(left, right)
@@ -558,6 +563,9 @@ func (s *Synthesizer) synthLogicalOpWithNarrowing(ex *ast.LogicalOpExpr, p cfg.P
 	left := recurse(ex.Lhs)
 	right := s.SynthExpr(ex.Rhs, p, assumeFlow(narrower, cond))
 	if ex.Operator == "and" {
+		if querycore.AssignabilityOf(s.deps.Ctx) == subtype.Strict && typ.IsAny(left) {
+			return typ.JoinBranchOutcome(narrow.ToFalsy(left), right)
+		}
 		return ops.LogicalAndTyped(left, right)
 	}
 	return ops.LogicalOrTyped(left, right)
