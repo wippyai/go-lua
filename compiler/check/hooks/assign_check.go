@@ -320,54 +320,23 @@ func exprReferencesSymbol(expr ast.Expr, sym cfg.SymbolID, bindings identBinding
 	if expr == nil || sym == 0 || bindings == nil {
 		return false
 	}
-
-	switch e := expr.(type) {
-	case *ast.IdentExpr:
-		if bound, ok := bindings.SymbolOf(e); ok && bound == sym {
-			return true
-		}
-		return false
-	case *ast.AttrGetExpr:
-		return exprReferencesSymbol(e.Object, sym, bindings) || exprReferencesSymbol(e.Key, sym, bindings)
-	case *ast.TableExpr:
-		for _, field := range e.Fields {
-			if field == nil {
-				continue
-			}
-			if exprReferencesSymbol(field.Key, sym, bindings) || exprReferencesSymbol(field.Value, sym, bindings) {
-				return true
-			}
-		}
-		return false
-	case *ast.FuncCallExpr:
-		if exprReferencesSymbol(e.Func, sym, bindings) || exprReferencesSymbol(e.Receiver, sym, bindings) {
-			return true
-		}
-		for _, arg := range e.Args {
-			if exprReferencesSymbol(arg, sym, bindings) {
-				return true
-			}
-		}
-		return false
-	case *ast.LogicalOpExpr:
-		return exprReferencesSymbol(e.Lhs, sym, bindings) || exprReferencesSymbol(e.Rhs, sym, bindings)
-	case *ast.RelationalOpExpr:
-		return exprReferencesSymbol(e.Lhs, sym, bindings) || exprReferencesSymbol(e.Rhs, sym, bindings)
-	case *ast.StringConcatOpExpr:
-		return exprReferencesSymbol(e.Lhs, sym, bindings) || exprReferencesSymbol(e.Rhs, sym, bindings)
-	case *ast.ArithmeticOpExpr:
-		return exprReferencesSymbol(e.Lhs, sym, bindings) || exprReferencesSymbol(e.Rhs, sym, bindings)
-	case *ast.UnaryMinusOpExpr:
-		return exprReferencesSymbol(e.Expr, sym, bindings)
-	case *ast.UnaryNotOpExpr:
-		return exprReferencesSymbol(e.Expr, sym, bindings)
-	case *ast.UnaryLenOpExpr:
-		return exprReferencesSymbol(e.Expr, sym, bindings)
-	case *ast.UnaryBNotOpExpr:
-		return exprReferencesSymbol(e.Expr, sym, bindings)
-	default:
+	if ident, ok := expr.(*ast.IdentExpr); ok {
+		bound, ok := bindings.SymbolOf(ident)
+		return ok && bound == sym
+	}
+	if _, ok := expr.(*ast.CastExpr); ok {
 		return false
 	}
+	if _, ok := expr.(*ast.NonNilAssertExpr); ok {
+		return false
+	}
+	found := false
+	ast.WalkExprChildren(expr, func(child ast.Expr, _ int) {
+		if !found {
+			found = exprReferencesSymbol(child, sym, bindings)
+		}
+	})
+	return found
 }
 
 func preAssignmentExprTypeForAssign(expr ast.Expr, p cfg.Point, synth api.Synth, graph *cfg.Graph, expected typ.Type) typ.Type {

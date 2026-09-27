@@ -228,47 +228,66 @@ func checkFieldExpr(expr ast.Expr, p cfg.Point, narrowView api.BaseSynth, resolv
 	case *ast.AttrGetExpr:
 		diags = append(diags, checkAttrGet(e, p, narrowView, resolver, seen, sourceName)...)
 	case *ast.FuncCallExpr:
-		diags = append(diags, checkFieldExpr(e.Func, p, narrowView, resolver, seen, sourceName)...)
-		for _, arg := range e.Args {
-			diags = append(diags, checkFieldExpr(arg, p, narrowView, resolver, seen, sourceName)...)
-		}
+		ast.WalkExprChildren(e, func(child ast.Expr, index int) {
+			if index != 1 {
+				diags = append(diags, checkFieldExpr(child, p, narrowView, resolver, seen, sourceName)...)
+			}
+		})
 	case *ast.TableExpr:
-		for _, f := range e.Fields {
-			diags = append(diags, checkFieldExpr(f.Value, p, narrowView, resolver, seen, sourceName)...)
-		}
+		ast.WalkExprChildren(e, func(child ast.Expr, index int) {
+			if index%2 == 1 {
+				diags = append(diags, checkFieldExpr(child, p, narrowView, resolver, seen, sourceName)...)
+			}
+		})
 	case *ast.LogicalOpExpr:
-		diags = append(diags, checkFieldExpr(e.Lhs, p, narrowView, resolver, seen, sourceName)...)
-		lhsType := narrowView.TypeOf(e.Lhs, p)
-		if e.Operator == "and" && ops.IsFalsy(lhsType) {
-			return diags
-		}
-		if e.Operator == "or" && ops.IsTruthy(lhsType) {
-			return diags
-		}
-		rhsView, rhsResolver := applyLogicalOpNarrowing(e, p, narrowView, resolver)
-		diags = append(diags, checkFieldExpr(e.Rhs, p, rhsView, rhsResolver, seen, sourceName)...)
+		var skipRHS bool
+		var rhsView api.BaseSynth
+		var rhsResolver fieldResolverImpl
+		ast.WalkExprChildren(e, func(child ast.Expr, index int) {
+			if index == 0 {
+				diags = append(diags, checkFieldExpr(child, p, narrowView, resolver, seen, sourceName)...)
+				lhsType := narrowView.TypeOf(child, p)
+				skipRHS = e.Operator == "and" && ops.IsFalsy(lhsType) || e.Operator == "or" && ops.IsTruthy(lhsType)
+				if !skipRHS {
+					rhsView, rhsResolver = applyLogicalOpNarrowing(e, p, narrowView, resolver)
+				}
+				return
+			}
+			if index == 1 && !skipRHS {
+				diags = append(diags, checkFieldExpr(child, p, rhsView, rhsResolver, seen, sourceName)...)
+			}
+		})
 	case *ast.RelationalOpExpr:
-		diags = append(diags, checkFieldExpr(e.Lhs, p, narrowView, resolver, seen, sourceName)...)
-		diags = append(diags, checkFieldExpr(e.Rhs, p, narrowView, resolver, seen, sourceName)...)
+		ast.WalkExprChildren(e, func(child ast.Expr, _ int) {
+			diags = append(diags, checkFieldExpr(child, p, narrowView, resolver, seen, sourceName)...)
+		})
 		diags = append(diags, checkRelational(e, p, narrowView, sourceName)...)
 	case *ast.ArithmeticOpExpr:
-		diags = append(diags, checkFieldExpr(e.Lhs, p, narrowView, resolver, seen, sourceName)...)
-		diags = append(diags, checkFieldExpr(e.Rhs, p, narrowView, resolver, seen, sourceName)...)
+		ast.WalkExprChildren(e, func(child ast.Expr, _ int) {
+			diags = append(diags, checkFieldExpr(child, p, narrowView, resolver, seen, sourceName)...)
+		})
 		diags = append(diags, checkArithmetic(e, p, narrowView, sourceName)...)
 	case *ast.StringConcatOpExpr:
-		diags = append(diags, checkFieldExpr(e.Lhs, p, narrowView, resolver, seen, sourceName)...)
-		diags = append(diags, checkFieldExpr(e.Rhs, p, narrowView, resolver, seen, sourceName)...)
+		ast.WalkExprChildren(e, func(child ast.Expr, _ int) {
+			diags = append(diags, checkFieldExpr(child, p, narrowView, resolver, seen, sourceName)...)
+		})
 		diags = append(diags, checkStringConcat(e, p, narrowView, sourceName)...)
 	case *ast.UnaryMinusOpExpr:
-		diags = append(diags, checkFieldExpr(e.Expr, p, narrowView, resolver, seen, sourceName)...)
+		ast.WalkExprChildren(e, func(child ast.Expr, _ int) {
+			diags = append(diags, checkFieldExpr(child, p, narrowView, resolver, seen, sourceName)...)
+		})
 		diags = append(diags, checkUnaryMinus(e, p, narrowView, sourceName)...)
 	case *ast.UnaryLenOpExpr:
 		diags = append(diags, checkUnaryLength(e, p, narrowView, sourceName)...)
 	case *ast.UnaryBNotOpExpr:
-		diags = append(diags, checkFieldExpr(e.Expr, p, narrowView, resolver, seen, sourceName)...)
+		ast.WalkExprChildren(e, func(child ast.Expr, _ int) {
+			diags = append(diags, checkFieldExpr(child, p, narrowView, resolver, seen, sourceName)...)
+		})
 		diags = append(diags, checkUnaryBNot(e, p, narrowView, sourceName)...)
 	case *ast.UnaryNotOpExpr:
-		diags = append(diags, checkFieldExpr(e.Expr, p, narrowView, resolver, seen, sourceName)...)
+		ast.WalkExprChildren(e, func(child ast.Expr, _ int) {
+			diags = append(diags, checkFieldExpr(child, p, narrowView, resolver, seen, sourceName)...)
+		})
 	}
 
 	return diags
@@ -602,7 +621,11 @@ func checkNumericFor(info *cfg.NumericForInfo, p cfg.Point, narrowView api.BaseS
 func checkAttrGet(e *ast.AttrGetExpr, p cfg.Point, narrowView api.BaseSynth, resolver fieldResolverImpl, seen map[ast.Expr]bool, sourceName string) []diag.Diagnostic {
 	var diags []diag.Diagnostic
 
-	diags = append(diags, checkFieldExpr(e.Object, p, narrowView, resolver, seen, sourceName)...)
+	ast.WalkExprChildren(e, func(child ast.Expr, index int) {
+		if index == 0 {
+			diags = append(diags, checkFieldExpr(child, p, narrowView, resolver, seen, sourceName)...)
+		}
+	})
 
 	objType := narrowView.TypeOf(e.Object, p)
 

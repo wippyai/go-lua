@@ -892,19 +892,32 @@ func (ce *ConditionExtractor) hasLocalTableTypePredicate(call *ast.FuncCallExpr)
 func exprContainsTypeCheck(expr ast.Expr, paramName, kindName string) bool {
 	switch e := expr.(type) {
 	case *ast.LogicalOpExpr:
-		return exprContainsTypeCheck(e.Lhs, paramName, kindName) ||
-			exprContainsTypeCheck(e.Rhs, paramName, kindName)
+		found := false
+		ast.WalkExprChildren(e, func(child ast.Expr, _ int) {
+			if !found {
+				found = exprContainsTypeCheck(child, paramName, kindName)
+			}
+		})
+		return found
 	case *ast.RelationalOpExpr:
 		if e.Operator != "==" {
 			return false
 		}
-		if callIsTypeOfParam(e.Lhs, paramName) {
-			if s, ok := e.Rhs.(*ast.StringExpr); ok && s.Value == kindName {
+		var lhs, rhs ast.Expr
+		ast.WalkExprChildren(e, func(child ast.Expr, index int) {
+			if index == 0 {
+				lhs = child
+			} else if index == 1 {
+				rhs = child
+			}
+		})
+		if callIsTypeOfParam(lhs, paramName) {
+			if s, ok := rhs.(*ast.StringExpr); ok && s.Value == kindName {
 				return true
 			}
 		}
-		if callIsTypeOfParam(e.Rhs, paramName) {
-			if s, ok := e.Lhs.(*ast.StringExpr); ok && s.Value == kindName {
+		if callIsTypeOfParam(rhs, paramName) {
+			if s, ok := lhs.(*ast.StringExpr); ok && s.Value == kindName {
 				return true
 			}
 		}
