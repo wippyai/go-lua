@@ -120,6 +120,9 @@ func (p *Processor) bindClassTables(graph *cfg.Graph, children []nested.Child, p
 	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].NF.Point < ordered[j].NF.Point })
 	for _, child := range ordered {
 		info := &nested.FuncInfo{Child: child}
+		if info.FuncDef != nil && (info.FuncDef.TargetKind == cfg.FuncDefField || info.FuncDef.TargetKind == cfg.FuncDefMethod) && len(info.FuncDef.TargetPath.Segments) != 1 {
+			continue
+		}
 		sym := nested.MethodOwner(graph, info.NF.Func, info.FuncDef, info.NF.Point)
 		if sym == 0 || p.classSelf[sym] != nil || hasDeclaredMethodSelf(info) {
 			continue
@@ -385,6 +388,9 @@ func (p *Processor) methodSelfType(graph *cfg.Graph, info *nested.FuncInfo) typ.
 		if named, ok := info.DefScope.LookupValueType(info.FuncDef.ReceiverName); ok && named != nil {
 			return typ.PartialView(nested.NormalizeMethodSelfType(named))
 		}
+	}
+	if info.FuncDef != nil && (info.FuncDef.TargetKind == cfg.FuncDefField || info.FuncDef.TargetKind == cfg.FuncDefMethod) && len(info.FuncDef.TargetPath.Segments) != 1 {
+		return nil
 	}
 	if sym := nested.MethodOwner(graph, info.NF.Func, info.FuncDef, info.NF.Point); sym != 0 {
 		return p.classReceiver[sym]

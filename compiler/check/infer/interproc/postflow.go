@@ -76,7 +76,7 @@ func StoreFactsFromResult(
 		}
 	}
 	summaryFromSnapshot := returnSummarySnapshotForSymbol(store, result, parent, fnSym)
-	if tableSym, point := returns.ReturnedMethodTable(result.Graph); tableSym != 0 && len(fnType.Returns) > 0 && (fn == nil || len(fn.ReturnTypes) == 0) {
+	if tableSym, point := nested.ReturnedClassTable(result.Graph); tableSym != 0 && len(fnType.Returns) > 0 && (fn == nil || len(fn.ReturnTypes) == 0) {
 		ret, ok := result.Graph.Info(point).(*cfg.ReturnInfo)
 		if ok && len(ret.Exprs) > 0 {
 			atReturn := narrow.RemoveNil(result.NarrowSynth.TypeOf(ret.Exprs[0], point))
