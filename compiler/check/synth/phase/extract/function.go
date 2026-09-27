@@ -54,6 +54,7 @@ import (
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/join"
+	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 // FunctionType synthesizes a complete function type from a function expression.
@@ -221,11 +222,48 @@ func (s *Synthesizer) synthFunctionTypeWithCapturePoint(
 		}
 	}
 
-	fnType := returns.WithOwnerRelations(builder.Build(), owner.Func)
+	fnType := returns.WithOwnerRelations(builder.Build(), typ.GeneralMember(owner.Func))
 	if inferredErrorReturn {
 		fnType = erreffect.AttachErrorReturnSpec(fnType, 0, 1)
 	}
 	return fnType
+}
+
+// functionTypeWithOwnerOverloads applies body-derived literal cases to the
+// contextual signature. Only the literal discriminant comes from the owner;
+// every other parameter comes from the current synthesis context.
+func (s *Synthesizer) functionTypeWithOwnerOverloads(fn *ast.FunctionExpr, sc *scope.State) typ.Type {
+	general := s.FunctionType(fn, sc)
+	if general == nil || s.deps.CheckCtx == nil {
+		return general
+	}
+	ctx, ok := s.deps.CheckCtx.(interface{ Callables() api.Callables })
+	if !ok {
+		return general
+	}
+	owner, ok := ctx.Callables()[fn].Func.(*typ.Intersection)
+	if !ok {
+		return general
+	}
+	ownerGeneral := typ.GeneralMember(owner)
+	members := make([]typ.Type, 0, len(owner.Members))
+	for _, member := range owner.Members {
+		specialized := unwrap.Function(typ.UnwrapAnnotated(member))
+		if specialized == nil || specialized == ownerGeneral || len(specialized.Params) != len(general.Params) {
+			continue
+		}
+		params := append([]typ.Param(nil), general.Params...)
+		for idx, param := range specialized.Params {
+			if literal, ok := param.Type.(*typ.Literal); ok {
+				params[idx].Type = literal
+			}
+		}
+		members = append(members, join.WithReturns(general, specialized.Returns).WithParams(params))
+	}
+	if len(members) == 0 {
+		return general
+	}
+	return typ.NewIntersection(append(members, general)...)
 }
 
 func hasBroadMapReturn(returns []typ.Type) bool {

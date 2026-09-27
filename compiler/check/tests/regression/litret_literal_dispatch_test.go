@@ -98,3 +98,40 @@ return response
 		t.Fatalf("captured literal dispatch errors: %v", testutil.ErrorMessages(result.Errors))
 	}
 }
+
+func TestLitretLiteralDispatchSkipsGeneralRegistryReturn(t *testing.T) {
+	source := `
+local M = { _modules = {} }
+local http = { response = function(): string return "ok" end }
+local function mod(name)
+    if name == "http" then return http end
+    return M._modules[name]
+end
+local h = mod("http")
+local response: string = h.response()
+`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("literal return should be selected: %v", testutil.ErrorMessages(result.Errors))
+	}
+}
+
+func TestLitretOverloadKeepsErrorReturnCorrelation(t *testing.T) {
+	source := `
+local function lookup(text: string?)
+    if not text or text == "" then return nil, "missing" end
+    return text, nil
+end
+local function use(text: string?)
+    local value, err = lookup(text)
+    if err then return end
+    local required: string = value
+    return required
+end
+return use("ok")
+`
+	result := testutil.Check(source, testutil.WithStdlib())
+	if result.HasError() {
+		t.Fatalf("error guard should narrow the value: %v", testutil.ErrorMessages(result.Errors))
+	}
+}

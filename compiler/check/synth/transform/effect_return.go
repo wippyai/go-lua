@@ -12,7 +12,8 @@ import (
 // ApplyEffectTransform applies return type effects to compute the actual return type.
 // If the function has a contract.Spec with a Return effect, the transform is applied
 // to derive the concrete return type from the argument types.
-func ApplyEffectTransform(fn *typ.Function, args []typ.Type, returnIdx int, baseReturn typ.Type) typ.Type {
+func ApplyEffectTransform(fn *typ.Function, args []typ.Type, returnIdx int, returns []typ.Type) typ.Type {
+	baseReturn := returns[returnIdx]
 	if fn == nil || fn.Spec == nil {
 		return baseReturn
 	}
@@ -22,9 +23,13 @@ func ApplyEffectTransform(fn *typ.Function, args []typ.Type, returnIdx int, base
 		return baseReturn
 	}
 
-	// Error-return pattern: value is optional when an error return is present.
+	// Error-return pattern: value is optional when the error slot can be present.
 	if er := spec.Effects.GetErrorReturn(returnIdx); er != nil {
-		if !unwrap.IsOptionalLike(baseReturn) {
+		errorSlot := typ.Type(typ.Nil)
+		if er.ErrorIndex < len(returns) && returns[er.ErrorIndex] != nil {
+			errorSlot = returns[er.ErrorIndex]
+		}
+		if !unwrap.IsNilType(errorSlot) && !unwrap.IsOptionalLike(baseReturn) {
 			return typ.NewOptional(baseReturn)
 		}
 	}
@@ -39,63 +44,53 @@ func ApplyEffectTransform(fn *typ.Function, args []typ.Type, returnIdx int, base
 		if resolved := resolveParamType(args, transform.Source); resolved != nil {
 			return resolved
 		}
-		return baseReturn
 	case effect.ElementOf:
 		if resolved := resolveParamType(args, transform.Source); resolved != nil {
 			if elem := querycore.ElementType(resolved); elem != nil {
 				return elem
 			}
 		}
-		return baseReturn
 	case effect.OptionalElementOf:
 		if resolved := resolveParamType(args, transform.Source); resolved != nil {
 			if elem := querycore.ElementType(resolved); elem != nil {
 				return typ.NewOptional(elem)
 			}
 		}
-		return baseReturn
 	case effect.DeepElementOf:
 		if resolved := resolveParamType(args, transform.Source); resolved != nil {
 			if elem := deepElementType(resolved); elem != nil {
 				return elem
 			}
 		}
-		return baseReturn
 	case effect.StringUnpackValue:
 		if resolved := resolveParamType(args, transform.Format); resolved != nil {
 			if unpacked := unpackFirstValueType(resolved); unpacked != nil {
 				return unpacked
 			}
 		}
-		return baseReturn
 	case effect.CallbackReturn:
 		if resolved := resolveParamType(args, transform.CallbackParam); resolved != nil {
 			if cbRet := callbackReturnType(resolved); cbRet != nil {
 				return cbRet
 			}
 		}
-		return baseReturn
 	case effect.ArrayOfCallbackReturn:
 		if resolved := resolveParamType(args, transform.CallbackParam); resolved != nil {
 			if cbRet := callbackReturnType(resolved); cbRet != nil {
 				return typ.NewArray(cbRet)
 			}
 		}
-		return baseReturn
 	case effect.SelectResultOfCases:
 		result := buildSelectResultUnion(args, transform)
 		if result != nil {
 			return result
 		}
-		return baseReturn
 	case effect.WithMetatable:
 		if withMeta := tableWithMetatable(resolveParamType(args, transform.Table), resolveParamType(args, transform.Metatable)); withMeta != nil {
 			return withMeta
 		}
-		return baseReturn
-	default:
-		return baseReturn
 	}
+	return baseReturn
 }
 
 // tableWithMetatable attaches meta as the metatable of a record table. A nil

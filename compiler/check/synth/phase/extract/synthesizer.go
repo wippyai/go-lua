@@ -264,7 +264,7 @@ func (s *Synthesizer) synthExprCore(expr ast.Expr, sc *scope.State, p cfg.Point,
 		}
 		return typ.Nil
 	case *ast.FunctionExpr:
-		return s.FunctionType(ex, sc)
+		return s.functionTypeWithOwnerOverloads(ex, sc)
 	case *ast.LogicalOpExpr:
 		if s.IsNarrowing() && narrower != nil {
 			return s.synthLogicalOpWithNarrowing(ex, p, narrower, recurse)

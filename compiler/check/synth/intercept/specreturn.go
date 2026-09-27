@@ -10,38 +10,8 @@ import (
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
-// SpecReturnOverride handles contract-based return type specialization.
-//
-// Functions with contract specifications (contract.Spec) can declare conditional
-// return types based on argument values. For example:
-//
-//	function format(options: {mode: "json" | "xml"}): JsonResult | XmlResult
-//	  -- @spec return when options.mode == "json" -> JsonResult
-//	  -- @spec return when options.mode == "xml" -> XmlResult
-//
-// This component provides AST-level pattern matching for such specifications,
-// enabling the type checker to refine return types when inline literals are used:
-//
-//	local result = format({mode = "json"})  -- Inferred as JsonResult
-//
-// Two-tier approach:
-// - Tier 1 (this): AST-pattern matching for inline table constructor literals
-// - Tier 2 (transform.ApplySpecReturnCases): Type-based matching for variable arguments
-//
-// SpecReturnOverride computes spec-based return type overrides using AST-pattern matching.
-//
-// Ownership: The compiler owns spec return handling through a two-tier approach:
-//   - Tier 1 (this): AST-pattern matching for inline table constructor literals
-//   - Tier 2: Type-based matching via transform.ApplySpecReturnCases
-//
-// The synth/ops layer does not apply spec returns internally - all spec logic
-// is coordinated here in the compiler. This allows
-// the compiler to use AST inspection for cases where type inference hasn't
-// yet resolved to literal types.
-//
-// AST-pattern matching can detect {field = "value"} inline literals directly,
-// while type-based matching requires the field to have a literal type in the
-// type system.
+// SpecReturnOverride matches declared FieldEquals return cases against inline tables.
+// Type-based matching for variable arguments lives in transform.ApplySpecReturnCases.
 type SpecReturnOverride struct {
 	Phase api.Phase
 }
@@ -102,10 +72,5 @@ func ResolveSpecFunction(t typ.Type) *typ.Function {
 		}
 	}
 
-	fn, ok := t.(*typ.Function)
-	if !ok {
-		return nil
-	}
-
-	return fn
+	return unwrap.Function(t)
 }

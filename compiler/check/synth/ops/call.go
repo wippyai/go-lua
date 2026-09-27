@@ -1,53 +1,6 @@
-// Package ops implements type synthesis operations for the type checker.
-// The call.go file handles function call type synthesis, including generic
-// type inference, method resolution, and argument type checking.
-//
-// # TWO-PHASE CALL SYNTHESIS
-//
-// Function calls with callback arguments require two-phase synthesis to enable
-// contextual typing. The phases are:
-//
-//  1. InferCall: Resolve callee, infer type arguments, compute ExpectedArgs
-//  2. Re-synthesize function literal arguments using ExpectedArgs from phase 1
-//  3. ReInfer: Re-infer type arguments with updated argument types
-//  4. FinishCall: Check arguments against parameters, compute return type
-//
-// For simple calls without callbacks, CallWithGenericInference combines phases.
-//
-// # GENERIC TYPE INFERENCE
-//
-// Generic functions have their type parameters inferred from argument types.
-// The inference algorithm:
-//   - Collects constraints from argument-to-parameter matching
-//   - Uses ExpectedReturn for bidirectional inference when available
-//   - Instantiates the function with inferred type arguments
-//
-// Example:
-//
-//	function get<T>(): T? end
-//	local x: string? = get()  -- T inferred as string from ExpectedReturn
-//
-// # METHOD CALL HANDLING
-//
-// Method calls (obj:method(args)) follow Lua call semantics:
-//   - The receiver is passed as the first runtime argument
-//   - Remaining arguments map positionally after the receiver
-//   - Self type substitution is applied in parameter and return types
-//
-// UNION/INTERSECTION CALLEES
-//
-// Union callees succeed if any member function accepts the arguments.
-// The return type is the union of successful member return types.
-//
-// Intersection callees require all members to accept the arguments.
-// The return type is the intersection of all member return types.
-//
-// # ERROR HANDLING
-//
-// Call errors are accumulated in CallResult.Errors without stopping synthesis.
-// This allows partial type information even when calls have type errors.
-// Error kinds include: arity mismatches, type mismatches, optional calls,
-// and generic inference failures.
+// Package ops checks calls and infers generic function arguments.
+// Union callees join successful member returns; intersection overloads
+// intersect the returns of members that accept the arguments.
 package ops
 
 import (
@@ -459,12 +412,32 @@ func inferUnion(ctx *db.QueryContext, u *typ.Union, def CallDef, isMethod bool, 
 	// types. Selecting the first matching member would make ordinary overloads
 	// order-dependent.
 	var candidates []unionCallCandidate
+	hasIntersection := false
 	var (
 		aggExpected []typ.Type
 		aggVariadic typ.Type
 		found       bool
 	)
 	for _, member := range u.Members {
+		if inter, ok := member.(*typ.Intersection); ok {
+			hasIntersection = true
+			if fn := typ.GeneralMember(inter); fn != nil {
+				expectedArgs, expectedVariadic := computeExpectedArgs(ctx, def.Query, fn, isMethod, receiver, def.ForceMethodReceiver)
+				called := callIntersection(ctx, def.Query, inter, def.Args, def.ExplicitArgs, receiver, isMethod, def.ForceMethodReceiver, nil)
+				if !hasHardErrors(called.Errors) {
+					candidates = append(candidates, unionCallCandidate{fn: fn, inst: fn, expected: expectedArgs, variadic: expectedVariadic})
+				}
+				if !found {
+					found = true
+					result.Function, result.Instantiated = fn, fn
+					aggExpected, aggVariadic = append([]typ.Type(nil), expectedArgs...), expectedVariadic
+				} else {
+					aggExpected = mergeExpectedArgVectors(aggExpected, expectedArgs)
+					aggVariadic = typ.JoinPreferNonSoft(aggVariadic, expectedVariadic)
+				}
+			}
+			continue
+		}
 		fn, ok := member.(*typ.Function)
 		if !ok {
 			continue
@@ -514,7 +487,7 @@ func inferUnion(ctx *db.QueryContext, u *typ.Union, def CallDef, isMethod bool, 
 		result.ExpectedVariadic = aggVariadic
 	}
 
-	if selected, ok := uniqueMostSpecificCandidate(ctx, def.Query, candidates); ok {
+	if selected, ok := uniqueMostSpecificCandidate(ctx, def.Query, candidates); ok && !hasIntersection {
 		result.Kind = InferKindFunction
 		result.Callee = selected.fn
 		result.Function = selected.fn
@@ -735,19 +708,29 @@ func (r *InferResult) ExpectedArgType(idx int) typ.Type {
 }
 
 // callIntersection handles calling an intersection type.
-// All function members are called with the same args; if any member fails, the whole call fails.
-// The return type is the intersection of all member return types.
+// Matching function members contribute to the return intersection unless one
+// has a strictly more specific literal match.
 func callIntersection(ctx *db.QueryContext, query core.TypeOps, inter *typ.Intersection, args []typ.Type, explicit int, receiver typ.Type, isMethod bool, forceMethodReceiver bool, baseErrors []CallError) CallResult {
 	var returnTypes []typ.Type
 	var returnVectors [][]typ.Type
+	var literalMatches []int
+	var rejected *CallResult
 
 	for _, member := range inter.Members {
 		if member.Kind().IsPlaceholder() {
 			continue
 		}
+		if alternatives, ok := unwrap.Alias(typ.UnwrapAnnotated(member)).(*typ.Union); ok {
+			// A union member represents runtime alternatives. Other intersection
+			// members cannot establish which alternative supplied the value.
+			return callUnionWithGenericInference(ctx, alternatives, CallDef{Args: args, ExplicitArgs: explicit, Query: query}, isMethod, receiver, forceMethodReceiver, baseErrors)
+		}
 
-		fn, ok := member.(*typ.Function)
-		if !ok {
+		if unwrap.IsOptionalLike(member) {
+			return singleValueCallResult(typ.Unknown, append(baseErrors, CallError{Kind: ErrOptionalCall, Message: "cannot call optional value without nil check"}))
+		}
+		fn, _ := unwrap.Alias(typ.UnwrapAnnotated(member)).(*typ.Function)
+		if fn == nil {
 			return CallResult{
 				Type:    typ.Unknown,
 				Returns: []typ.Type{typ.Unknown},
@@ -756,43 +739,86 @@ func callIntersection(ctx *db.QueryContext, query core.TypeOps, inter *typ.Inter
 		}
 
 		seedErrors := append([]CallError(nil), baseErrors...)
+		// A broad or unknown argument cannot prove a literal overload.
+		argOffset := 0
+		if isMethod && (forceMethodReceiver || hasExplicitSelfSimple(fn, receiver)) {
+			argOffset = 1
+		}
+		literalMismatch := false
+		matched := 0
+		for idx, param := range fn.Params[argOffset:] {
+			if _, literal := param.Type.(*typ.Literal); literal {
+				if idx >= len(args) {
+					literalMismatch = true
+					break
+				}
+				if _, exact := args[idx].(*typ.Literal); !exact {
+					literalMismatch = true
+					break
+				}
+				matched++
+			}
+		}
+		if literalMismatch {
+			continue
+		}
 		result := callFunction(ctx, query, fn, args, explicit, receiver, isMethod, forceMethodReceiver, seedErrors)
 		if hasHardErrors(result.Errors[len(seedErrors):]) {
-			return result
+			if rejected == nil {
+				rejected = &result
+			}
+			continue
 		}
 
 		returnTypes = append(returnTypes, result.Type)
 		returnVectors = append(returnVectors, normalizedCallReturns(result))
+		literalMatches = append(literalMatches, matched)
 	}
 
 	if len(returnTypes) == 0 {
+		if rejected != nil {
+			return *rejected
+		}
 		return singleValueCallResult(typ.Unknown, baseErrors)
 	}
 
-	if len(returnTypes) == 1 {
-		return callResultFromReturns(returnVectors[0], baseErrors)
+	best, ties := 0, 1
+	for i := 1; i < len(literalMatches); i++ {
+		if literalMatches[i] > literalMatches[best] {
+			best, ties = i, 1
+		} else if literalMatches[i] == literalMatches[best] {
+			ties++
+		}
+	}
+	if ties == 1 {
+		return callResultFromReturns(returnVectors[best], baseErrors)
 	}
 
 	if returns, ok := intersectReturnVectors(returnVectors); ok {
 		return callResultFromReturns(returns, baseErrors)
 	}
 
-	return CallResult{
-		Type:    typ.NewIntersection(returnTypes...),
-		Returns: []typ.Type{typ.NewIntersection(returnTypes...)},
-		Errors:  baseErrors,
-	}
+	return singleValueCallResult(typ.NewIntersection(returnTypes...), baseErrors)
 }
 
 // callUnionWithGenericInference handles calling a union of functions where each
 // member may be generic. Per-member generic inference is applied before calling.
-// Union semantics: the call succeeds if any member succeeds.
+// Every union member is a possible runtime callee, so each member's return and
+// argument errors contribute even when another member accepts the call.
 func callUnionWithGenericInference(ctx *db.QueryContext, u *typ.Union, def CallDef, isMethod bool, receiver typ.Type, forceMethodReceiver bool, baseErrors []CallError) CallResult {
-	var validReturns [][]typ.Type
 	var allReturns [][]typ.Type
 	var hardErrors []CallError
 
 	for _, member := range u.Members {
+		if inter, ok := member.(*typ.Intersection); ok {
+			seedErrors := append([]CallError(nil), baseErrors...)
+			result := callIntersection(ctx, def.Query, inter, def.Args, def.ExplicitArgs, receiver, isMethod, forceMethodReceiver, seedErrors)
+			allReturns = append(allReturns, normalizedCallReturns(result))
+			if hasHardErrors(result.Errors[len(seedErrors):]) {
+				hardErrors = append(hardErrors, result.Errors...)
+			}
+			continue
+		}
 		fn, ok := member.(*typ.Function)
 		if !ok {
 			hardErrors = append(hardErrors, CallError{Kind: ErrNotCallable, Message: fmt.Sprintf("expected function, got %s", typ.FormatShort(member))})
@@ -813,15 +839,10 @@ func callUnionWithGenericInference(ctx *db.QueryContext, u *typ.Union, def CallD
 			continue
 		}
 
-		validReturns = append(validReturns, normalizedCallReturns(result))
-	}
-
-	if len(validReturns) > 0 {
-		return callResultFromReturns(mergeReturnVectors(validReturns), baseErrors)
 	}
 
 	if len(allReturns) > 0 {
-		return callResultFromReturns(mergeReturnVectors(allReturns), uniqueCallErrors(hardErrors))
+		return callResultFromReturns(mergeReturnVectors(allReturns), uniqueCallErrors(append(baseErrors, hardErrors...)))
 	}
 
 	return singleValueCallResult(typ.Unknown, uniqueCallErrors(hardErrors))
@@ -853,6 +874,17 @@ func mergeReturnVectors(vectors [][]typ.Type) []typ.Type {
 				slotTypes = append(slotTypes, returns[i])
 			} else {
 				slotTypes = append(slotTypes, typ.Nil)
+			}
+		}
+		// An unknown return from one possible callee may be nil. Keep that
+		// possibility when another alternative has a concrete return; the
+		// union normalizer otherwise drops unknown beside concrete members.
+		if len(slotTypes) > 1 {
+			for _, slot := range slotTypes {
+				if typ.IsUnknown(slot) {
+					slotTypes = append(slotTypes, typ.Nil)
+					break
+				}
 			}
 		}
 		merged[i] = typ.NewUnion(slotTypes...)

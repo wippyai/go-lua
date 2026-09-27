@@ -15,11 +15,33 @@ func TestApplyEffectTransform_ErrorReturnOptionalizes(t *testing.T) {
 		Spec(spec).
 		Build()
 
-	got := ApplyEffectTransform(fn, nil, 0, typ.String)
+	got := ApplyEffectTransform(fn, nil, 0, []typ.Type{typ.String, typ.NewOptional(typ.LuaError)})
 	want := typ.NewOptional(typ.String)
 
 	if !typ.TypeEquals(got, want) {
 		t.Fatalf("ApplyEffectTransform error return: got %v, want %v", got, want)
+	}
+}
+
+func TestApplyEffectTransform_ErrorReturnNeedsErrorSlot(t *testing.T) {
+	spec := contract.NewSpec().WithEffects(effect.ErrorReturn{ValueIndex: 0, ErrorIndex: 1})
+	fn := typ.Func().Returns(typ.String, typ.NewOptional(typ.String)).Spec(spec).Build()
+
+	for _, tc := range []struct {
+		name    string
+		returns []typ.Type
+		want    typ.Type
+	}{
+		{"missing error slot", []typ.Type{typ.String}, typ.String},
+		{"nil error slot", []typ.Type{typ.String, typ.Nil}, typ.String},
+		{"possible error", []typ.Type{typ.String, typ.NewOptional(typ.String)}, typ.NewOptional(typ.String)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ApplyEffectTransform(fn, nil, 0, tc.returns)
+			if !typ.TypeEquals(got, tc.want) {
+				t.Fatalf("got %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -146,7 +168,7 @@ func TestApplyEffectTransform_CallbackReturn(t *testing.T) {
 		typ.Func().Returns(typ.String).Build(),
 	}
 
-	got := ApplyEffectTransform(fn, args, 1, typ.Any)
+	got := ApplyEffectTransform(fn, args, 1, []typ.Type{typ.Boolean, typ.Any})
 	if !typ.TypeEquals(got, typ.String) {
 		t.Fatalf("expected callback return transform to produce string, got %v", got)
 	}
@@ -168,7 +190,7 @@ func TestApplyEffectTransform_ArrayOfCallbackReturn(t *testing.T) {
 		typ.Func().Param("x", typ.Integer).Returns(typ.String).Build(),
 	}
 
-	got := ApplyEffectTransform(fn, args, 0, typ.Any)
+	got := ApplyEffectTransform(fn, args, 0, []typ.Type{typ.Any})
 	want := typ.NewArray(typ.String)
 	if !typ.TypeEquals(got, want) {
 		t.Fatalf("expected array(callback return) transform to produce %v, got %v", want, got)
@@ -188,7 +210,7 @@ func TestApplyEffectTransform_StringUnpackValue_IntegerFormat(t *testing.T) {
 		Spec(spec).
 		Build()
 
-	got := ApplyEffectTransform(fn, []typ.Type{typ.LiteralString(">I4"), typ.String, typ.Integer}, 0, typ.Any)
+	got := ApplyEffectTransform(fn, []typ.Type{typ.LiteralString(">I4"), typ.String, typ.Integer}, 0, []typ.Type{typ.Any})
 	if !typ.TypeEquals(got, typ.Integer) {
 		t.Fatalf("expected string.unpack integer format to produce integer, got %v", got)
 	}
@@ -207,7 +229,7 @@ func TestApplyEffectTransform_StringUnpackValue_StringFormat(t *testing.T) {
 		Spec(spec).
 		Build()
 
-	got := ApplyEffectTransform(fn, []typ.Type{typ.LiteralString("z"), typ.String, typ.Integer}, 0, typ.Any)
+	got := ApplyEffectTransform(fn, []typ.Type{typ.LiteralString("z"), typ.String, typ.Integer}, 0, []typ.Type{typ.Any})
 	if !typ.TypeEquals(got, typ.String) {
 		t.Fatalf("expected string.unpack string format to produce string, got %v", got)
 	}
@@ -226,7 +248,7 @@ func TestApplyEffectTransform_StringUnpackValue_UnsupportedFormatFallsBack(t *te
 		Spec(spec).
 		Build()
 
-	got := ApplyEffectTransform(fn, []typ.Type{typ.LiteralString("X"), typ.String, typ.Integer}, 0, typ.Any)
+	got := ApplyEffectTransform(fn, []typ.Type{typ.LiteralString("X"), typ.String, typ.Integer}, 0, []typ.Type{typ.Any})
 	if !typ.TypeEquals(got, typ.Any) {
 		t.Fatalf("expected unsupported string.unpack format to fall back to any, got %v", got)
 	}
@@ -249,7 +271,7 @@ func TestApplyEffectTransform_WithMetatableKeepsRecursiveMetatable(t *testing.T)
 	fn := typ.Func().Param("table", typ.Any).Param("metatable", typ.Any).Returns(typ.Any).Spec(spec).Build()
 	table := typ.NewRecord().Build()
 
-	got := ApplyEffectTransform(fn, []typ.Type{table, class}, 0, table)
+	got := ApplyEffectTransform(fn, []typ.Type{table, class}, 0, []typ.Type{table})
 
 	rec, ok := got.(*typ.Record)
 	if !ok || rec.Metatable != typ.Type(class) {

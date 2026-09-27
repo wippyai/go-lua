@@ -50,7 +50,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth"
 	"github.com/wippyai/go-lua/types/constraint"
-	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/diag"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/io"
@@ -217,15 +216,15 @@ func (i *Inferencer) ComputeForGraph(
 	}
 
 	seed := i.store.GetReturnSummariesSnapshot(graph, parentScope)
-	summaries, specs, diags := i.computeReturnSummariesForGroup(run, parentScope.GroupHash(), localFuncs, seed)
-	funcTypes := i.buildLocalFuncTypes(localFuncs, summaries, specs, engine, parentScope)
+	summaries, cases, diags := i.computeReturnSummariesForGroup(run, parentScope.GroupHash(), localFuncs, seed)
+	funcTypes := i.buildLocalFuncTypes(localFuncs, summaries, cases, engine, parentScope)
 	return summaries, funcTypes, diags
 }
 
 func (i *Inferencer) buildLocalFuncTypes(
 	localFuncs map[cfg.SymbolID]*returns.LocalFuncInfo,
 	summaries map[cfg.SymbolID][]typ.Type,
-	specs map[cfg.SymbolID]*contract.Spec,
+	cases map[cfg.SymbolID][]dispatchReturnCase,
 	engine *synth.Engine,
 	parentScope *scope.State,
 ) api.Callables {
@@ -262,10 +261,11 @@ func (i *Inferencer) buildLocalFuncTypes(
 				fnType = withSummary
 			}
 		}
-		if spec := specs[sym]; spec != nil {
-			attachBodyReturnSpec(fnType, spec)
+		var callable typ.Type = fnType
+		if members := overloadMembers(fnType, cases[sym]); len(members) > 0 {
+			callable = typ.NewIntersection(append(members, fnType)...)
 		}
-		out[info.Fn] = api.FunctionFact{Summary: summaries[sym], Func: fnType}
+		out[info.Fn] = api.FunctionFact{Summary: summaries[sym], Func: callable}
 	}
 	if len(out) == 0 {
 		return nil
@@ -296,7 +296,7 @@ func (i *Inferencer) computeReturnSummariesForGroup(
 	groupHash uint64,
 	localFuncs map[cfg.SymbolID]*returns.LocalFuncInfo,
 	seed map[cfg.SymbolID][]typ.Type,
-) (map[cfg.SymbolID][]typ.Type, map[cfg.SymbolID]*contract.Spec, []diag.Diagnostic) {
+) (map[cfg.SymbolID][]typ.Type, map[cfg.SymbolID][]dispatchReturnCase, []diag.Diagnostic) {
 	_ = groupHash
 	if len(localFuncs) == 0 {
 		return nil, nil, nil
@@ -309,8 +309,8 @@ func (i *Inferencer) computeReturnSummariesForGroup(
 
 	summaries := seedSummariesFromSeed(localFuncs, seed)
 	diags := i.processSCCSummaries(run, sccs, localFuncs, summaries)
-	specs := i.buildBodyDerivedReturnSpecs(run, sccs, localFuncs, summaries)
-	return summaries, specs, diags
+	cases := i.buildBodyDerivedReturnCases(run, sccs, localFuncs, summaries)
+	return summaries, cases, diags
 }
 
 // returnInferenceContext holds shared state for return type inference phases.
@@ -424,15 +424,14 @@ func (i *Inferencer) inferReturnTypesFromBody(
 	if fnGraph == nil {
 		return narrowed
 	}
-	phaseReturnSummaries := ctx.summaries
 	declCheckCtx := api.NewReturnInferenceEnv(api.ReturnInferenceEnvConfig{
-		Graph:           fnGraph,
-		Bindings:        ctx.bindings,
-		BaseScope:       ctx.resolveScope,
-		DeclaredTypes:   finalOverlay,
-		GlobalTypes:     i.globalTypes,
-		ModuleAliases:   ctx.moduleAliases,
-		Callables: scratchCallables(fnGraph, phaseReturnSummaries),
+		Graph:         fnGraph,
+		Bindings:      ctx.bindings,
+		BaseScope:     ctx.resolveScope,
+		DeclaredTypes: finalOverlay,
+		GlobalTypes:   i.globalTypes,
+		ModuleAliases: ctx.moduleAliases,
+		Callables:     i.scratchCallables(ctx),
 	})
 	declSynth := i.newReturnInferenceEngine(
 		ctx.run,

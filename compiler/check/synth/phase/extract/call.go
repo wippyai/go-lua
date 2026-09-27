@@ -186,7 +186,7 @@ func (s *Synthesizer) synthCallCoreWithCaptureTypes(
 	returns := unwrapCallResult(result)
 	returns = s.applyPostCallTransforms(calleeType, args, returns)
 
-	specOverride := s.specReturnOverride(s.resolveSpecCallee(calleeType, ex.Func), ex.Args, args)
+	specOverride := s.specReturnOverride(calleeType, ex.Args, args)
 	return intercept.ApplyOverride(returns, specOverride)
 }
 
@@ -275,7 +275,7 @@ func (s *Synthesizer) synthMethodCallCoreWithExpected(ex *ast.FuncCallExpr, p cf
 	returns := unwrapCallResult(result)
 	returns = s.applyPostCallTransforms(calleeType, args, returns)
 
-	specOverride := s.specReturnOverride(s.resolveSpecCallee(calleeType, ex.Func), ex.Args, args)
+	specOverride := s.specReturnOverride(calleeType, ex.Args, args)
 	return intercept.ApplyOverride(returns, specOverride)
 }
 
@@ -312,7 +312,7 @@ func (s *Synthesizer) SynthCallWithReceiverType(ex *ast.FuncCallExpr, p cfg.Poin
 	returns := unwrapCallResult(result)
 	returns = s.applyPostCallTransforms(calleeType, args, returns)
 
-	specOverride := s.specReturnOverride(s.resolveSpecCallee(calleeType, ex.Func), ex.Args, args)
+	specOverride := s.specReturnOverride(calleeType, ex.Args, args)
 	return intercept.ApplyOverride(returns, specOverride)
 }
 
@@ -432,25 +432,6 @@ func (s *Synthesizer) Field(t typ.Type, name string) (typ.Type, bool) {
 	return ft, true
 }
 
-// resolveSpecCallee prefers the current callee type but falls back to the
-// stored local function snapshot when it carries no return cases. Callee
-// specialization rebuilds capturing functions without contract specs, so
-// direct calls would otherwise never refine through body-derived cases.
-func (s *Synthesizer) resolveSpecCallee(calleeType typ.Type, callee ast.Expr) typ.Type {
-	if spec := contract.ExtractSpec(calleeType); spec != nil && spec.Return != nil && len(spec.Return.Cases) > 0 {
-		return calleeType
-	}
-	sym, _, _ := s.graphLocalFunctionForExpr(callee)
-	if sym == 0 {
-		return calleeType
-	}
-	snapshot := s.stableGraphLocalFunctionSnapshotType(sym)
-	if spec := contract.ExtractSpec(snapshot); spec != nil && spec.Return != nil && len(spec.Return.Cases) > 0 {
-		return snapshot
-	}
-	return calleeType
-}
-
 // specReturnOverride computes spec-based return type override.
 func (s *Synthesizer) specReturnOverride(fnType typ.Type, astArgs []ast.Expr, argTypes []typ.Type) typ.Type {
 	phase := api.PhaseScopeCompute
@@ -506,7 +487,7 @@ func (s *Synthesizer) applyPostCallTransforms(calleeType typ.Type, args []typ.Ty
 
 	var result []typ.Type
 	for i := range returns {
-		transformed := transform.ApplyEffectTransform(fn, args, i, returns[i])
+		transformed := transform.ApplyEffectTransform(fn, args, i, returns)
 		transformed = applyTruthyIdentityReturn(fn, args, i, transformed)
 		if transformed == nil || transformed == returns[i] {
 			continue
