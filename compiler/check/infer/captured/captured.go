@@ -38,7 +38,12 @@ func FromParentFacts(
 		if sym == 0 {
 			continue
 		}
-		tv := parentFacts.EffectiveTypeAt(defPoint, sym)
+		var tv flow.TypedValue
+		if parentFacts.IsAnnotated(sym) {
+			tv = parentFacts.DeclaredAt(defPoint, sym)
+		} else {
+			tv = parentFacts.EffectiveTypeAt(defPoint, sym)
+		}
 		if tv.State == flow.StateResolved && tv.Type != nil {
 			out[sym] = tv.Type
 		}
