@@ -540,6 +540,9 @@ func joinIterationFactAt(a, b typ.Type, invariant bool) typ.Type {
 	if joined, ok := joinIterationMaps(a, b); ok {
 		return joined
 	}
+	if joined, ok := joinIterationInstantiated(a, b); ok {
+		return joined
+	}
 	// The previous fact stays while it admits the current one, so equivalent
 	// facts with different spellings do not alternate between iterations. A
 	// record admits one with other fields when their field types admit nil,
@@ -607,6 +610,34 @@ func joinIterationMaps(a, b typ.Type) (typ.Type, bool) {
 		return b, true
 	}
 	return typ.NewMap(key, value), true
+}
+
+// Instantiations of one generic describe the same captured value across
+// iterations. Their arguments are invariant, so an unresolved Channel<unknown>
+// element yields to the resolved Channel<integer> element.
+func joinIterationInstantiated(a, b typ.Type) (typ.Type, bool) {
+	previous, ok := a.(*typ.Instantiated)
+	if !ok {
+		return nil, false
+	}
+	current, ok := b.(*typ.Instantiated)
+	if !ok || !typ.TypeEquals(previous.Generic, current.Generic) || len(previous.TypeArgs) != len(current.TypeArgs) {
+		return nil, false
+	}
+	args := make([]typ.Type, len(previous.TypeArgs))
+	sameAsPrevious, sameAsCurrent := true, true
+	for i := range args {
+		args[i] = joinIterationFactAt(previous.TypeArgs[i], current.TypeArgs[i], true)
+		sameAsPrevious = sameAsPrevious && typ.TypeEquals(args[i], previous.TypeArgs[i])
+		sameAsCurrent = sameAsCurrent && typ.TypeEquals(args[i], current.TypeArgs[i])
+	}
+	if sameAsPrevious {
+		return a, true
+	}
+	if sameAsCurrent {
+		return b, true
+	}
+	return typ.Instantiate(current.Generic, args...), true
 }
 
 // hasUnresolvedKeyDomain reports whether t is a table written by keys of
