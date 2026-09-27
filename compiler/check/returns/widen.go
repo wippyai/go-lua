@@ -38,25 +38,15 @@ func WidenFacts(prev, next api.Facts) api.Facts {
 	for fn := range literals {
 		prevFact := prev.Callables[fn]
 		nextFact := next.Callables[fn]
-		reconciled := ReconcileFunctionFact(ReconcileFunctionFactInput{
-			ExistingSummary:  prevFact.Summary,
-			ExistingNarrow:   prevFact.Narrow,
-			ExistingFunc:     prevFact.Func,
-			CandidateSummary: nextFact.Summary,
-			CandidateNarrow:  nextFact.Narrow,
-			CandidateFunc:    nextFact.Func,
-		})
-		sig := nextFact.Sig
-		if next.Callables == nil {
-			sig = prevFact.Sig
-		} else if prev.Callables != nil {
-			sig = maybeWidenFunctionForConvergence(mergeLiteralSig(prevFact.Sig, sig))
+		merged := mergeCallable(prevFact, nextFact)
+		if prev.Callables != nil && next.Callables != nil {
+			merged.Sig = maybeWidenFunctionForConvergence(merged.Sig)
 		}
 		out.Callables[fn] = api.FunctionFact{
-			Summary: widenReturnVectorForConvergence(reconciled.Summary),
-			Narrow:  widenReturnVectorForConvergence(reconciled.Narrow),
-			Func:    maybeWidenTypeForConvergence(reconciled.Func),
-			Sig:     sig,
+			Summary: widenReturnVectorForConvergence(merged.Summary),
+			Narrow:  widenReturnVectorForConvergence(merged.Narrow),
+			Func:    maybeWidenTypeForConvergence(merged.Func),
+			Sig:     merged.Sig,
 		}
 	}
 	return out

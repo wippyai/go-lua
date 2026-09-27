@@ -93,12 +93,7 @@ func ReconcileFunctionFact(in ReconcileFunctionFactInput) ReconcileFunctionFactO
 	return out
 }
 
-// MergeCallable reconciles one literal's facts without changing its contextual signature.
-func MergeCallable(facts *api.Facts, fn *ast.FunctionExpr, candidate api.FunctionFact) {
-	if facts == nil || fn == nil {
-		return
-	}
-	existing := facts.Callables[fn]
+func mergeCallable(existing, candidate api.FunctionFact) api.FunctionFact {
 	reconciled := ReconcileFunctionFact(ReconcileFunctionFactInput{
 		ExistingSummary:  existing.Summary,
 		ExistingNarrow:   existing.Narrow,
@@ -107,13 +102,25 @@ func MergeCallable(facts *api.Facts, fn *ast.FunctionExpr, candidate api.Functio
 		CandidateNarrow:  candidate.Narrow,
 		CandidateFunc:    candidate.Func,
 	})
-	if facts.Callables == nil {
-		facts.Callables = make(api.Callables)
+	sig := existing.Sig
+	if candidate.Sig != nil {
+		sig = mergeLiteralSig(sig, candidate.Sig)
 	}
-	facts.Callables[fn] = api.FunctionFact{
+	return api.FunctionFact{
 		Summary: reconciled.Summary,
 		Narrow:  reconciled.Narrow,
 		Func:    reconciled.Func,
-		Sig:     existing.Sig,
+		Sig:     sig,
 	}
+}
+
+// MergeCallable reconciles one literal's facts, including its contextual signature.
+func MergeCallable(facts *api.Facts, fn *ast.FunctionExpr, candidate api.FunctionFact) {
+	if facts == nil || fn == nil {
+		return
+	}
+	if facts.Callables == nil {
+		facts.Callables = make(api.Callables)
+	}
+	facts.Callables[fn] = mergeCallable(facts.Callables[fn], candidate)
 }
