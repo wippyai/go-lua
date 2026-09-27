@@ -6,6 +6,63 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
+type namedMemberLookup[T any] func(typ.Type, int) (T, bool)
+
+type namedMemberResolver[T any] struct {
+	special      func(typ.Type) (T, bool)
+	optional     func(*typ.Optional, int, namedMemberLookup[T]) (T, bool)
+	union        func(*typ.Union, int, namedMemberLookup[T]) (T, bool)
+	intersection func(*typ.Intersection, int, namedMemberLookup[T]) (T, bool)
+	visit        func(typ.Type, int, namedMemberLookup[T]) (T, bool)
+}
+
+func (resolver namedMemberResolver[T]) lookup(t typ.Type, depth int) (T, bool) {
+	var zero T
+	if stopDepth(t, depth) {
+		return zero, false
+	}
+	if resolver.special != nil {
+		if result, ok := resolver.special(t); ok {
+			return result, true
+		}
+	}
+
+	next := resolver.lookup
+	switch current := t.(type) {
+	case *typ.TypeParam:
+		if current.Constraint == nil {
+			return zero, false
+		}
+		return next(current.Constraint, depth+1)
+	case *typ.Recursive:
+		if current.Body == nil || current.Body == current {
+			return zero, false
+		}
+		return next(current.Body, depth+1)
+	case *typ.Alias:
+		return next(current.Target, depth+1)
+	case *typ.Instantiated:
+		resolved, err := ResolveInstantiated(current)
+		if err != nil {
+			return zero, false
+		}
+		return next(resolved, depth+1)
+	case *typ.Optional:
+		if resolver.optional != nil {
+			return resolver.optional(current, depth, next)
+		}
+	case *typ.Union:
+		if resolver.union != nil {
+			return resolver.union(current, depth, next)
+		}
+	case *typ.Intersection:
+		if resolver.intersection != nil {
+			return resolver.intersection(current, depth, next)
+		}
+	}
+	return resolver.visit(t, depth, next)
+}
+
 // Field resolves a field type on a container without using an engine.
 //
 // This is the pure, non-memoized version of field lookup. It traverses the
@@ -33,85 +90,73 @@ func HasField(t typ.Type, name string) bool {
 // fieldDepth recursively resolves field lookup with depth limiting.
 // The depth parameter prevents infinite recursion on recursive types.
 func fieldDepth(t typ.Type, name string, depth int) (typ.Type, bool) {
-	if stopDepth(t, depth) {
-		return nil, false
+	resolver := namedMemberResolver[fieldResult]{
+		special: func(t typ.Type) (fieldResult, bool) {
+			ft, ok := specialAccessType(t)
+			return fieldResult{t: ft, ok: ok}, ok
+		},
+		optional: func(o *typ.Optional, depth int, lookup namedMemberLookup[fieldResult]) (fieldResult, bool) {
+			if o == nil {
+				return fieldResult{}, false
+			}
+			ft, ok := lookup(o.Inner, depth+1)
+			if !ok {
+				return fieldResult{}, false
+			}
+			return fieldResult{t: typ.NewOptional(ft.t), ok: true}, true
+		},
+		union: func(u *typ.Union, depth int, lookup namedMemberLookup[fieldResult]) (fieldResult, bool) {
+			ft, ok := fieldInUnion(u, name, depth, func(t typ.Type, depth int) (typ.Type, bool) {
+				result, ok := lookup(t, depth)
+				return result.t, ok
+			})
+			return fieldResult{t: ft, ok: ok}, ok
+		},
+		intersection: func(i *typ.Intersection, depth int, lookup namedMemberLookup[fieldResult]) (fieldResult, bool) {
+			ft, ok := fieldInIntersection(i, name, depth, func(t typ.Type, depth int) (typ.Type, bool) {
+				result, ok := lookup(t, depth)
+				return result.t, ok
+			})
+			return fieldResult{t: ft, ok: ok}, ok
+		},
+		visit: func(t typ.Type, depth int, lookup namedMemberLookup[fieldResult]) (fieldResult, bool) {
+			result := typ.Visit(t, typ.Visitor[fieldResult]{
+				Record: func(r *typ.Record) fieldResult {
+					ft, ok := fieldInRecord(r, name)
+					return fieldResult{t: ft, ok: ok}
+				},
+				Map: func(m *typ.Map) fieldResult {
+					key := typ.LiteralString(name)
+					if subtype.IsSubtype(key, m.Key) {
+						if m.Value == nil {
+							return fieldResult{t: typ.Nil, ok: true}
+						}
+						if m.InferredPresence && !m.ExplicitNilWrite {
+							return fieldResult{t: m.Value, ok: true}
+						}
+						// Map field access behaves like index with string key (missing keys return nil).
+						return fieldResult{t: typ.NewOptional(m.Value), ok: true}
+					}
+					return fieldResult{}
+				},
+				Interface: func(i *typ.Interface) fieldResult {
+					ft, ok := fieldInInterface(i, name)
+					return fieldResult{t: ft, ok: ok}
+				},
+				Generic: func(g *typ.Generic) fieldResult {
+					result, ok := lookup(g.Body, depth+1)
+					return fieldResult{t: result.t, ok: ok}
+				},
+				Default: func(t typ.Type) fieldResult {
+					ft, ok := fieldOnSpecial(t, name)
+					return fieldResult{t: ft, ok: ok}
+				},
+			})
+			return result, result.ok
+		},
 	}
-	if top, ok := specialAccessType(t); ok {
-		return top, true
-	}
-
-	res := typ.Visit(t, typ.Visitor[fieldResult]{
-		TypeParam: func(tp *typ.TypeParam) fieldResult {
-			if tp.Constraint != nil {
-				ft, ok := fieldDepth(tp.Constraint, name, depth+1)
-				return fieldResult{t: ft, ok: ok}
-			}
-			return fieldResult{}
-		},
-		Record: func(r *typ.Record) fieldResult {
-			ft, ok := fieldInRecord(r, name)
-			return fieldResult{t: ft, ok: ok}
-		},
-		Map: func(m *typ.Map) fieldResult {
-			key := typ.LiteralString(name)
-			if subtype.IsSubtype(key, m.Key) {
-				if m.Value == nil {
-					return fieldResult{t: typ.Nil, ok: true}
-				}
-				if m.InferredPresence && !m.ExplicitNilWrite {
-					return fieldResult{t: m.Value, ok: true}
-				}
-				// Map field access behaves like index with string key (missing keys return nil).
-				return fieldResult{t: typ.NewOptional(m.Value), ok: true}
-			}
-			return fieldResult{}
-		},
-		Interface: func(i *typ.Interface) fieldResult {
-			ft, ok := fieldInInterface(i, name)
-			return fieldResult{t: ft, ok: ok}
-		},
-		Union: func(u *typ.Union) fieldResult {
-			ft, ok := fieldInUnion(u, name, depth)
-			return fieldResult{t: ft, ok: ok}
-		},
-		Intersection: func(i *typ.Intersection) fieldResult {
-			ft, ok := fieldInIntersection(i, name, depth)
-			return fieldResult{t: ft, ok: ok}
-		},
-		Optional: func(o *typ.Optional) fieldResult {
-			ft, ok := fieldInOptional(o, name, depth)
-			return fieldResult{t: ft, ok: ok}
-		},
-		Recursive: func(rec *typ.Recursive) fieldResult {
-			if rec.Body == nil || rec.Body == rec {
-				return fieldResult{}
-			}
-			ft, ok := fieldDepth(rec.Body, name, depth+1)
-			return fieldResult{t: ft, ok: ok}
-		},
-		Alias: func(a *typ.Alias) fieldResult {
-			ft, ok := fieldDepth(a.Target, name, depth+1)
-			return fieldResult{t: ft, ok: ok}
-		},
-		Instantiated: func(inst *typ.Instantiated) fieldResult {
-			resolved, err := ResolveInstantiated(inst)
-			if err != nil {
-				return fieldResult{}
-			}
-
-			ft, ok := fieldDepth(resolved, name, depth+1)
-			return fieldResult{t: ft, ok: ok}
-		},
-		Generic: func(g *typ.Generic) fieldResult {
-			ft, ok := fieldDepth(g.Body, name, depth+1)
-			return fieldResult{t: ft, ok: ok}
-		},
-		Default: func(t typ.Type) fieldResult {
-			ft, ok := fieldOnSpecial(t, name)
-			return fieldResult{t: ft, ok: ok}
-		},
-	})
-	return res.t, res.ok
+	result, ok := resolver.lookup(t, depth)
+	return result.t, ok
 }
 
 // fieldInRecord looks up a field in a record type.
@@ -228,7 +273,7 @@ func fieldInInterface(i *typ.Interface, name string) (typ.Type, bool) {
 //
 // Nil-bearing unions retain gradual field projection; other unions only allow
 // missing fields on table-like members.
-func fieldInUnion(u *typ.Union, name string, depth int) (typ.Type, bool) {
+func fieldInUnion(u *typ.Union, name string, depth int, lookup func(typ.Type, int) (typ.Type, bool)) (typ.Type, bool) {
 	var types []typ.Type
 	missingFromSome := false
 	containsNil := false
@@ -240,7 +285,7 @@ func fieldInUnion(u *typ.Union, name string, depth int) (typ.Type, bool) {
 	}
 
 	for _, m := range u.Members {
-		ft, ok := fieldDepth(m, name, depth+1)
+		ft, ok := lookup(m, depth+1)
 		if !ok {
 			if containsNil || allowsMissingFieldAsNil(m, depth+1) {
 				missingFromSome = true
@@ -267,12 +312,12 @@ func fieldInUnion(u *typ.Union, name string, depth int) (typ.Type, bool) {
 // For an intersection A & B, field access t.name succeeds if ANY member has
 // the field. The result is the intersection of field types from all members
 // that have the field. Returns (nil, false) if no member has the field.
-func fieldInIntersection(i *typ.Intersection, name string, depth int) (typ.Type, bool) {
+func fieldInIntersection(i *typ.Intersection, name string, depth int, lookup func(typ.Type, int) (typ.Type, bool)) (typ.Type, bool) {
 	// Field from ANY member
 	var types []typ.Type
 
 	for _, m := range i.Members {
-		if ft, ok := fieldDepth(m, name, depth+1); ok {
+		if ft, ok := lookup(m, depth+1); ok {
 			types = append(types, ft)
 		}
 	}
@@ -286,21 +331,6 @@ func fieldInIntersection(i *typ.Intersection, name string, depth int) (typ.Type,
 	}
 
 	return typ.NewIntersection(types...), true
-}
-
-// fieldInOptional resolves a field on an optional type.
-// The result is wrapped in Optional since the base value may be nil.
-// Example: (T?).name -> T.name? (the field type becomes optional)
-func fieldInOptional(o *typ.Optional, name string, depth int) (typ.Type, bool) {
-	if o == nil {
-		return nil, false
-	}
-
-	if ft, ok := fieldDepth(o.Inner, name, depth+1); ok {
-		return typ.NewOptional(ft), true
-	}
-
-	return nil, false
 }
 
 // fieldOnSpecial handles special fields on primitive types.
