@@ -88,7 +88,7 @@ func FunctionLiteralTypes(graph *cfg.Graph, synth api.ExprSynth) flow.DeclaredTy
 //   - For return expressions, uses declared return types as expected types
 //
 // Returns nil if graph or engine is nil, or if no function literals found.
-func FunctionLiteralSignatures(graph *cfg.Graph, engine LiteralSynth, declaredReturns []typ.Type) map[*ast.FunctionExpr]*typ.Function {
+func FunctionLiteralSignatures(graph *cfg.Graph, engine api.LiteralSynth, declaredReturns []typ.Type) map[*ast.FunctionExpr]*typ.Function {
 	if graph == nil || engine == nil {
 		return nil
 	}

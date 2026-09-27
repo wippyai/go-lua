@@ -80,10 +80,6 @@ func TestSynth_Interface(t *testing.T) {
 	var _ Synth = (*mockSynth)(nil)
 }
 
-func TestLiteralSynth_Interface(t *testing.T) {
-	var _ LiteralSynth = (*mockLiteralSynth)(nil)
-}
-
 type mockBaseSynth struct{}
 
 func (m *mockBaseSynth) TypeOf(expr ast.Expr, p cfg.Point) typ.Type {
@@ -160,22 +156,4 @@ func (m *mockSynth) AllowReturnTransforms() bool {
 
 func (m *mockSynth) Context() *db.QueryContext {
 	return nil
-}
-
-type mockLiteralSynth struct{}
-
-func (m *mockLiteralSynth) TypeOf(expr ast.Expr, p cfg.Point) typ.Type {
-	return typ.Unknown
-}
-
-func (m *mockLiteralSynth) SynthFunctionTypeWithExpected(fn *ast.FunctionExpr, sc *scope.State, expected *typ.Function) *typ.Function {
-	return nil
-}
-
-func (m *mockLiteralSynth) Scopes() api.ScopeMap {
-	return nil
-}
-
-func (m *mockLiteralSynth) Entry() cfg.Point {
-	return 0
 }
