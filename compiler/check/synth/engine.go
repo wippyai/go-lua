@@ -212,31 +212,13 @@ func (e *Engine) MultiTypeOf(expr ast.Expr, p cfg.Point) []typ.Type {
 // If more values are available than needed, truncates to needed.
 func (e *Engine) ExpandValues(exprs []ast.Expr, needed int, p cfg.Point) []typ.Type {
 	if e.IsNarrowing() {
-		return e.expandValuesNarrowed(exprs, needed, p)
+		return e.Synthesizer.ExpandValuesUsing(exprs, needed,
+			func(expr ast.Expr) typ.Type { return e.TypeOf(expr, p) },
+			func(expr ast.Expr) []typ.Type { return e.MultiTypeOf(expr, p) },
+			e.deps.ScopeAt(p),
+		)
 	}
 	return e.Synthesizer.ExpandValues(exprs, needed, p)
-}
-
-func (e *Engine) expandValuesNarrowed(exprs []ast.Expr, needed int, p cfg.Point) []typ.Type {
-	if len(exprs) == 0 {
-		return nil
-	}
-	result := make([]typ.Type, 0, needed)
-
-	for i, expr := range exprs {
-		if i == len(exprs)-1 {
-			multi := e.MultiTypeOf(expr, p)
-			result = append(result, multi...)
-		} else {
-			result = append(result, e.TypeOf(expr, p))
-		}
-	}
-
-	for len(result) < needed {
-		result = append(result, typ.Nil)
-	}
-
-	return result
 }
 
 // SynthWithExpected synthesizes with expected type, using flow information.

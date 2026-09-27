@@ -576,8 +576,8 @@ func (s *Synthesizer) synthUnaryMinusCore(ex *ast.UnaryMinusOpExpr, recurse Expr
 	return s.deps.Types.UnaryOp(s.deps.Ctx, "-", operand)
 }
 
-// expandValuesCore expands expression list to types using provided synthesis functions.
-func (s *Synthesizer) expandValuesCore(exprs []ast.Expr, needed int, single func(ast.Expr) typ.Type, multi func(ast.Expr) []typ.Type, sc *scope.State) []typ.Type {
+// ExpandValuesUsing expands expression list with the supplied phase's synthesis functions.
+func (s *Synthesizer) ExpandValuesUsing(exprs []ast.Expr, needed int, single func(ast.Expr) typ.Type, multi func(ast.Expr) []typ.Type, sc *scope.State) []typ.Type {
 	if len(exprs) == 0 {
 		return nil
 	}
@@ -635,7 +635,7 @@ func openValueRest(expr ast.Expr, single func(ast.Expr) typ.Type, sc *scope.Stat
 
 // expandValues expands expression list to types.
 func (s *Synthesizer) expandValues(exprs []ast.Expr, needed int, p cfg.Point, narrower api.FlowOps) []typ.Type {
-	return s.expandValuesCore(exprs, needed,
+	return s.ExpandValuesUsing(exprs, needed,
 		func(expr ast.Expr) typ.Type { return s.SynthExpr(expr, p, narrower) },
 		func(expr ast.Expr) []typ.Type { return s.MultiTypeOf(expr, p) },
 		s.deps.ScopeAt(p),
@@ -644,7 +644,7 @@ func (s *Synthesizer) expandValues(exprs []ast.Expr, needed int, p cfg.Point, na
 
 // expandValuesWithSpec expands expression list with spec-narrowed type lookup.
 func (s *Synthesizer) expandValuesWithSpec(exprs []ast.Expr, needed int, p cfg.Point, specTypes api.SpecTypes) []typ.Type {
-	return s.expandValuesCore(exprs, needed,
+	return s.ExpandValuesUsing(exprs, needed,
 		func(expr ast.Expr) typ.Type { return s.synthExprWithSpec(expr, p, specTypes) },
 		func(expr ast.Expr) []typ.Type { return s.synthMultiWithSpec(expr, p, specTypes) },
 		s.deps.ScopeAt(p),

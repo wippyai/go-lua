@@ -406,15 +406,16 @@ func (s *Synthesizer) synthIdentCore(ex *ast.IdentExpr, p cfg.Point, sc *scope.S
 	}
 
 fallback:
+	var primary, module flow.TypedValue
 	if types := ctx.Types(); types != nil {
-		tv := types.EffectiveTypeAt(p, sym)
-		if tv.State == flow.StateResolved && tv.Type != nil {
-			if specialized := s.stableLocalFunctionValueType(ex, p, sc, tv.Type, nil); specialized != nil {
+		primary = types.EffectiveTypeAt(p, sym)
+		if primary.State == flow.StateResolved && primary.Type != nil {
+			if specialized := s.stableLocalFunctionValueType(ex, p, sc, primary.Type, nil); specialized != nil {
 				return specialized
 			}
 			// Prefer concrete resolved types over module aliases.
 			// Allow module aliases to override unknown/any placeholders.
-			if tv.Type.Kind().IsPlaceholder() {
+			if primary.Type.Kind().IsPlaceholder() {
 				if types.IsAnnotated(sym) {
 					declared := types.DeclaredAt(p, sym)
 					if declared.State == flow.StateResolved && declared.Type != nil {
@@ -425,19 +426,19 @@ fallback:
 				}
 				// defer to module alias below if available
 			} else {
-				return tv.Type
+				return primary.Type
 			}
 		}
 		if moduleSym != 0 && moduleSym != sym {
-			moduleTV := types.EffectiveTypeAt(p, moduleSym)
-			if moduleTV.State == flow.StateResolved && moduleTV.Type != nil {
-				if specialized := s.stableLocalFunctionValueType(ex, p, sc, moduleTV.Type, nil); specialized != nil {
+			module = types.EffectiveTypeAt(p, moduleSym)
+			if module.State == flow.StateResolved && module.Type != nil {
+				if specialized := s.stableLocalFunctionValueType(ex, p, sc, module.Type, nil); specialized != nil {
 					return specialized
 				}
-				if moduleTV.Type.Kind().IsPlaceholder() {
+				if module.Type.Kind().IsPlaceholder() {
 					// keep looking for better sources
 				} else {
-					return moduleTV.Type
+					return module.Type
 				}
 			}
 		}
@@ -454,23 +455,11 @@ fallback:
 		}
 	}
 
-	if types := ctx.Types(); types != nil {
-		tv := types.EffectiveTypeAt(p, sym)
-		if tv.State == flow.StateResolved && tv.Type != nil {
-			if specialized := s.stableLocalFunctionValueType(ex, p, sc, tv.Type, nil); specialized != nil {
-				return specialized
-			}
-			return tv.Type
-		}
-		if moduleSym != 0 && moduleSym != sym {
-			moduleTV := types.EffectiveTypeAt(p, moduleSym)
-			if moduleTV.State == flow.StateResolved && moduleTV.Type != nil {
-				if specialized := s.stableLocalFunctionValueType(ex, p, sc, moduleTV.Type, nil); specialized != nil {
-					return specialized
-				}
-				return moduleTV.Type
-			}
-		}
+	if primary.State == flow.StateResolved && primary.Type != nil {
+		return primary.Type
+	}
+	if module.State == flow.StateResolved && module.Type != nil {
+		return module.Type
 	}
 
 	if t, ok := ctx.GlobalType(sym); ok && t != nil {
