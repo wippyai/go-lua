@@ -739,10 +739,11 @@ func callIntersection(ctx *db.QueryContext, query core.TypeOps, inter *typ.Inter
 		literalMismatch := false
 		matched := 0
 		for idx, param := range fn.Params[argOffset:] {
-			if idx >= len(args) {
-				break
-			}
 			if _, literal := param.Type.(*typ.Literal); literal {
+				if idx >= len(args) {
+					literalMismatch = true
+					break
+				}
 				if _, exact := args[idx].(*typ.Literal); !exact {
 					literalMismatch = true
 					break
