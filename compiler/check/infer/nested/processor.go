@@ -159,10 +159,8 @@ func (p *Processor) moduleGraphs() []*cfg.Graph {
 
 // classTableOf returns the table a nested function is stored into:
 // the receiver of `function T.f` or `function T:m`, or the owner of a
-// function with an unannotated self parameter stored in a table literal or
-// assigned to a table field.
+// function stored in a table literal or assigned to a table field.
 func classTableOf(graph *cfg.Graph, info *nested.FuncInfo) cfg.SymbolID {
-	bindings := graph.Bindings()
 	if def := info.FuncDef; def != nil && (def.TargetKind == cfg.FuncDefField || def.TargetKind == cfg.FuncDefMethod) {
 		if len(def.TargetPath.Segments) != 1 {
 			return 0
@@ -170,9 +168,6 @@ func classTableOf(graph *cfg.Graph, info *nested.FuncInfo) cfg.SymbolID {
 		return def.TargetPath.Symbol
 	}
 	fn := info.NF.Func
-	if !phasecore.HasUnannotatedSelfParam(fn, bindings) {
-		return 0
-	}
 	if tbl, sym := nested.FindTableLiteralOwner(graph, fn); tbl != nil {
 		return sym
 	}
