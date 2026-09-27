@@ -20,3 +20,16 @@ h:write()
 		t.Fatalf("omitted mode must retain the nil obligation: %v", testutil.ErrorMessages(result.Errors))
 	}
 }
+
+// Nullable callable variant of the handle returned by
+// kickside/platform/transfer/src/bundle_test.lua:11-23,137-139.
+func TestNullableIntersectionMemberRetainsCallObligation(t *testing.T) {
+	result := testutil.Check(`
+type F = ((string) -> number)? & ((number) -> number)?
+local f: F = nil
+local n = f("x")
+`, testutil.WithStdlib())
+	if len(result.Errors) != 1 || result.Errors[0].Position.Line != 4 || result.Errors[0].Message != "cannot call optional value without nil check" {
+		t.Fatalf("nullable intersection member must retain the call obligation: %v", testutil.ErrorMessages(result.Errors))
+	}
+}

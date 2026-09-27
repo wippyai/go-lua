@@ -721,7 +721,10 @@ func callIntersection(ctx *db.QueryContext, query core.TypeOps, inter *typ.Inter
 			continue
 		}
 
-		fn := unwrap.Function(typ.UnwrapAnnotated(member))
+		if unwrap.IsOptionalLike(member) {
+			return singleValueCallResult(typ.Unknown, append(baseErrors, CallError{Kind: ErrOptionalCall, Message: "cannot call optional value without nil check"}))
+		}
+		fn, _ := unwrap.Alias(typ.UnwrapAnnotated(member)).(*typ.Function)
 		if fn == nil {
 			return CallResult{
 				Type:    typ.Unknown,
