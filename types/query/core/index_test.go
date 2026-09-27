@@ -89,6 +89,20 @@ func TestIndex(t *testing.T) {
 	}
 }
 
+func TestIndexDynamicRecordKeyWithOpaqueMapAlternative(t *testing.T) {
+	method := typ.Func().Param("self", typ.Any).Param("request", typ.String).Returns(typ.Boolean).Build()
+	record := typ.NewRecord().Field("run", method).SetComplete(true).MapComponent(typ.String, typ.Any).Build()
+	if named, ok := Index(record, typ.LiteralString("run")); !ok || !typ.TypeEquals(named, method) {
+		t.Fatalf("literal field lost its signature: %v, %v", named, ok)
+	}
+	if dynamic, ok := Index(record, typ.String); !ok || !typ.IsAny(typ.UnwrapAnnotated(dynamic)) {
+		t.Fatalf("opaque map alternative must dominate dynamic index: %v, %v", dynamic, ok)
+	}
+	if absent, ok := Index(record, typ.LiteralString("missing")); !ok || absent != typ.Nil {
+		t.Fatalf("complete record cannot contain absent literal key: %v, %v", absent, ok)
+	}
+}
+
 func TestIndex_FiniteNumericMapWithGeneralNumber(t *testing.T) {
 	budget := typ.NewMap(typ.NewUnion(typ.LiteralInt(1), typ.LiteralInt(2)), typ.String)
 	result, ok := Index(budget, typ.Number)

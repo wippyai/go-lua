@@ -236,6 +236,18 @@ func TestArray(t *testing.T) {
 	}
 }
 
+func TestNilTableFieldSatisfiesOptionalDestination(t *testing.T) {
+	actual := typ.NewRecord().Field("namespace", typ.Nil).Build()
+	optional := typ.NewRecord().OptField("namespace", typ.String).Build()
+	if !IsSubtype(actual, optional) {
+		t.Fatal("nil table field is absent and satisfies an optional field")
+	}
+	required := typ.NewRecord().Field("namespace", typ.String).Build()
+	if IsSubtype(actual, required) {
+		t.Fatal("nil table field cannot satisfy a required string field")
+	}
+}
+
 func TestMap(t *testing.T) {
 	mapStrNum := typ.NewMap(typ.String, typ.Number)
 	mapStrInt := typ.NewMap(typ.String, typ.Integer)

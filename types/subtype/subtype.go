@@ -680,6 +680,11 @@ func (c *checker) checkRecord(sub, super *typ.Record, depth int) bool {
 
 			continue
 		}
+		// Assigning nil to a Lua table key removes that key. A nil-valued
+		// field therefore satisfies a destination that permits absence.
+		if (sf.Optional || unwrap.IsOptionalLike(sf.Type)) && unwrap.IsNilType(subField.Type) {
+			continue
+		}
 
 		if sf.Readonly {
 			// Readonly in super: covariant check is sound (no writes through supertype)

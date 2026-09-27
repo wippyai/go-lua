@@ -144,6 +144,11 @@ func fieldInRecordDepth(r *typ.Record, name string, depth int) (typ.Type, bool) 
 		}
 		return f.Type, true
 	}
+	// A complete record names every key it contains. Its map component can
+	// describe a dynamic read, but cannot make a known absent literal present.
+	if r.Complete && r.HasMapComponent() && r.Metatable == nil {
+		return typ.Nil, true
+	}
 
 	// Map component fallback: if record has map component and the literal string key
 	// is a subtype of MapKey, return Optional(MapValue)
