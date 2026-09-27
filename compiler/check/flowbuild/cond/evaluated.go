@@ -233,29 +233,28 @@ func (ce *ConditionExtractor) evaluatedReceiverFacts(expr ast.Expr) constraint.C
 	var facts []constraint.Constraint
 	var visit func(ast.Expr)
 	visit = func(expr ast.Expr) {
+		if expr == nil {
+			return
+		}
+		_, isLogical := expr.(*ast.LogicalOpExpr)
+		ast.WalkExprChildren(expr, func(child ast.Expr, index int) {
+			if isLogical && index == 1 {
+				return
+			}
+			visit(child)
+		})
 		switch e := expr.(type) {
 		case *ast.AttrGetExpr:
-			visit(e.Object)
-			visit(e.Key)
 			if p := ce.pathFromExpr(e.Object); ce.canRetainPath(p) {
 				facts = append(facts, constraint.NotNil{Path: p})
 			}
 		case *ast.FuncCallExpr:
-			visit(e.Func)
-			visit(e.Receiver)
-			for _, arg := range e.Args {
-				visit(arg)
-			}
 			if e.Receiver != nil {
 				if p := ce.pathFromExpr(e.Receiver); ce.canRetainPath(p) {
 					facts = append(facts, constraint.NotNil{Path: p})
 				}
 			}
-		case *ast.LogicalOpExpr:
-			visit(e.Lhs)
 		case *ast.RelationalOpExpr:
-			visit(e.Lhs)
-			visit(e.Rhs)
 			switch e.Operator {
 			case "<", "<=", ">", ">=":
 				// A completed ordered comparison cannot have compared nil.
@@ -264,29 +263,6 @@ func (ce *ConditionExtractor) evaluatedReceiverFacts(expr ast.Expr) constraint.C
 						facts = append(facts, constraint.NotNil{Path: p})
 					}
 				}
-			}
-		case *ast.ArithmeticOpExpr:
-			visit(e.Lhs)
-			visit(e.Rhs)
-		case *ast.StringConcatOpExpr:
-			visit(e.Lhs)
-			visit(e.Rhs)
-		case *ast.UnaryNotOpExpr:
-			visit(e.Expr)
-		case *ast.UnaryMinusOpExpr:
-			visit(e.Expr)
-		case *ast.UnaryLenOpExpr:
-			visit(e.Expr)
-		case *ast.UnaryBNotOpExpr:
-			visit(e.Expr)
-		case *ast.CastExpr:
-			visit(e.Expr)
-		case *ast.NonNilAssertExpr:
-			visit(e.Expr)
-		case *ast.TableExpr:
-			for _, field := range e.Fields {
-				visit(field.Key)
-				visit(field.Value)
 			}
 		}
 	}

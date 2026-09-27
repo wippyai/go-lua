@@ -347,11 +347,19 @@ func ExtractLenBound(expr ast.Expr, p cfg.Point, graph *cfg.Graph) (constraint.P
 	if op.Operator != "+" && op.Operator != "-" {
 		return constraint.Path{}, 0, false
 	}
-	arrPath := ExtractLenPath(op.Lhs, p, graph)
+	var lhs, rhs ast.Expr
+	ast.WalkExprChildren(op, func(child ast.Expr, index int) {
+		if index == 0 {
+			lhs = child
+		} else if index == 1 {
+			rhs = child
+		}
+	})
+	arrPath := ExtractLenPath(lhs, p, graph)
 	if arrPath.IsEmpty() {
 		return constraint.Path{}, 0, false
 	}
-	k, ok := numconst.IntConstFromExpr(op.Rhs)
+	k, ok := numconst.IntConstFromExpr(rhs)
 	if !ok {
 		return constraint.Path{}, 0, false
 	}

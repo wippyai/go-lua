@@ -209,17 +209,23 @@ func ResolveCalleeToFunctionLiteral(callee ast.Expr, graph *cfg.Graph) *ast.Func
 		return nil
 	}
 
-	for _, field := range tableLit.Fields {
-		fieldSeg, ok := pathseg.StaticTableFieldKeySegment(field.Key)
+	var fieldKey ast.Expr
+	var function *ast.FunctionExpr
+	ast.WalkExprChildren(tableLit, func(child ast.Expr, index int) {
+		if function != nil {
+			return
+		}
+		if index%2 == 0 {
+			fieldKey = child
+			return
+		}
+		fieldSeg, ok := pathseg.StaticTableFieldKeySegment(fieldKey)
 		if !ok || fieldSeg != calleeSeg {
-			continue
+			return
 		}
-		if fn, ok := field.Value.(*ast.FunctionExpr); ok {
-			return fn
-		}
-	}
-
-	return nil
+		function, _ = child.(*ast.FunctionExpr)
+	})
+	return function
 }
 
 // Ref resolves typ.Ref to its actual type using scope type lookup.

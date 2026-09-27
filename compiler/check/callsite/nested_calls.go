@@ -86,44 +86,16 @@ func collectNestedFuncCalls(expr ast.Expr, out *nestedCalls) {
 	if expr == nil || out == nil {
 		return
 	}
-	switch e := expr.(type) {
-	case *ast.FuncCallExpr:
-		out.add(e)
-		collectNestedFuncCalls(e.Func, out)
-		collectNestedFuncCalls(e.Receiver, out)
-		for _, arg := range e.Args {
-			collectNestedFuncCalls(arg, out)
-		}
-	case *ast.AttrGetExpr:
-		collectNestedFuncCalls(e.Object, out)
-		collectNestedFuncCalls(e.Key, out)
-	case *ast.TableExpr:
-		for _, field := range e.Fields {
-			if field == nil {
-				continue
-			}
-			collectNestedFuncCalls(field.Key, out)
-			collectNestedFuncCalls(field.Value, out)
-		}
-	case *ast.LogicalOpExpr:
-		collectNestedFuncCalls(e.Lhs, out)
-		collectNestedFuncCalls(e.Rhs, out)
-	case *ast.RelationalOpExpr:
-		collectNestedFuncCalls(e.Lhs, out)
-		collectNestedFuncCalls(e.Rhs, out)
-	case *ast.StringConcatOpExpr:
-		collectNestedFuncCalls(e.Lhs, out)
-		collectNestedFuncCalls(e.Rhs, out)
-	case *ast.ArithmeticOpExpr:
-		collectNestedFuncCalls(e.Lhs, out)
-		collectNestedFuncCalls(e.Rhs, out)
-	case *ast.UnaryMinusOpExpr:
-		collectNestedFuncCalls(e.Expr, out)
-	case *ast.UnaryNotOpExpr:
-		collectNestedFuncCalls(e.Expr, out)
-	case *ast.UnaryLenOpExpr:
-		collectNestedFuncCalls(e.Expr, out)
-	case *ast.UnaryBNotOpExpr:
-		collectNestedFuncCalls(e.Expr, out)
+	if call, ok := expr.(*ast.FuncCallExpr); ok {
+		out.add(call)
 	}
+	if _, ok := expr.(*ast.CastExpr); ok {
+		return
+	}
+	if _, ok := expr.(*ast.NonNilAssertExpr); ok {
+		return
+	}
+	ast.WalkExprChildren(expr, func(child ast.Expr, _ int) {
+		collectNestedFuncCalls(child, out)
+	})
 }

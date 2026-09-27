@@ -985,71 +985,22 @@ func collectExprSymbols(expr ast.Expr, bindings *bind.BindingTable, refs *[]cfg.
 	if expr == nil || bindings == nil {
 		return
 	}
-
-	switch e := expr.(type) {
-	case *ast.IdentExpr:
-		if sym, ok := bindings.SymbolOf(e); ok && sym != 0 {
+	if ident, ok := expr.(*ast.IdentExpr); ok {
+		if sym, ok := bindings.SymbolOf(ident); ok && sym != 0 {
 			*refs = append(*refs, sym)
 		}
-
-	case *ast.AttrGetExpr:
-		if sym := callsite.SymbolFromExpr(e, bindings); sym != 0 {
-			*refs = append(*refs, sym)
-		}
-		collectExprSymbols(e.Object, bindings, refs)
-
-	case *ast.FuncCallExpr:
-		collectExprSymbols(e.Func, bindings, refs)
-		collectExprSymbols(e.Receiver, bindings, refs)
-		for _, arg := range e.Args {
-			collectExprSymbols(arg, bindings, refs)
-		}
-
-	case *ast.TableExpr:
-		for _, field := range e.Fields {
-			if field != nil {
-				collectExprSymbols(field.Key, bindings, refs)
-				collectExprSymbols(field.Value, bindings, refs)
-			}
-		}
-
-	case *ast.UnaryMinusOpExpr:
-		collectExprSymbols(e.Expr, bindings, refs)
-
-	case *ast.UnaryNotOpExpr:
-		collectExprSymbols(e.Expr, bindings, refs)
-
-	case *ast.UnaryLenOpExpr:
-		collectExprSymbols(e.Expr, bindings, refs)
-
-	case *ast.UnaryBNotOpExpr:
-		collectExprSymbols(e.Expr, bindings, refs)
-
-	case *ast.ArithmeticOpExpr:
-		collectExprSymbols(e.Lhs, bindings, refs)
-		collectExprSymbols(e.Rhs, bindings, refs)
-
-	case *ast.RelationalOpExpr:
-		collectExprSymbols(e.Lhs, bindings, refs)
-		collectExprSymbols(e.Rhs, bindings, refs)
-
-	case *ast.LogicalOpExpr:
-		collectExprSymbols(e.Lhs, bindings, refs)
-		collectExprSymbols(e.Rhs, bindings, refs)
-
-	case *ast.StringConcatOpExpr:
-		collectExprSymbols(e.Lhs, bindings, refs)
-		collectExprSymbols(e.Rhs, bindings, refs)
-
-	case *ast.CastExpr:
-		collectExprSymbols(e.Expr, bindings, refs)
-
-	case *ast.NonNilAssertExpr:
-		collectExprSymbols(e.Expr, bindings, refs)
-
-	case *ast.Comma3Expr:
-		// Varargs expression has no sub-expressions to traverse
 	}
+	if attr, ok := expr.(*ast.AttrGetExpr); ok {
+		if sym := callsite.SymbolFromExpr(attr, bindings); sym != 0 {
+			*refs = append(*refs, sym)
+		}
+	}
+	ast.WalkExprChildren(expr, func(child ast.Expr, index int) {
+		if _, isAttr := expr.(*ast.AttrGetExpr); isAttr && index == 1 {
+			return
+		}
+		collectExprSymbols(child, bindings, refs)
+	})
 }
 
 // inferredSelfName names the recursive types that fold self-embedding
