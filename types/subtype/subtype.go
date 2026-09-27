@@ -733,13 +733,45 @@ func (c *checker) checkRecord(sub, super *typ.Record, depth int) bool {
 			if super.GetField(field.Name) != nil {
 				continue // declared fields take precedence over the map component
 			}
-			if !c.check(typ.LiteralString(field.Name), super.MapKey, depth+1) || !c.check(field.Type, super.MapValue, depth+1) {
+			// Lua removes nil-valued entries from a table. Only values that
+			// can actually remain in the map need to satisfy its value type.
+			value := mapFieldPresentType(field.Type)
+			if typ.IsNever(value) {
+				continue
+			}
+			if !c.check(typ.LiteralString(field.Name), super.MapKey, depth+1) || !c.check(value, super.MapValue, depth+1) {
 				return false
 			}
 		}
 	}
 
 	return true
+}
+
+// mapFieldPresentType describes values left in a Lua table after nil deletes
+// the entry. It only strips nil at the field's outermost level.
+func mapFieldPresentType(t typ.Type) typ.Type {
+	t = unwrap.Alias(t)
+	if unwrap.IsNilType(t) {
+		return typ.Never
+	}
+	switch v := t.(type) {
+	case *typ.Optional:
+		return v.Inner
+	case *typ.Union:
+		members := make([]typ.Type, 0, len(v.Members))
+		for _, member := range v.Members {
+			present := mapFieldPresentType(member)
+			if !typ.IsNever(present) {
+				members = append(members, present)
+			}
+		}
+		if len(members) == 0 {
+			return typ.Never
+		}
+		return typ.NewUnion(members...)
+	}
+	return t
 }
 
 // recordFieldOrInherited returns r's own field name, or the field a read of

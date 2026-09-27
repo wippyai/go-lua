@@ -2359,6 +2359,20 @@ func TestCompleteRecordSatisfiesDeclaredMapComponent(t *testing.T) {
 	}
 }
 
+func TestCompleteRecordMapIgnoresNilExtraFields(t *testing.T) {
+	target := typ.NewMap(typ.String, typ.Integer)
+	for _, fieldType := range []typ.Type{typ.Nil, typ.NewOptional(typ.Integer), typ.NewUnion(typ.Nil, typ.Integer)} {
+		record := typ.NewRecord().Field("extra", fieldType).SetComplete(true).Build()
+		if !IsSubtype(record, target) {
+			t.Errorf("%s should satisfy integer map after nil entries are removed", fieldType)
+		}
+	}
+	bad := typ.NewRecord().Field("extra", typ.NewOptional(typ.String)).SetComplete(true).Build()
+	if IsSubtype(bad, target) {
+		t.Fatal("non-nil string must not satisfy integer map")
+	}
+}
+
 // A value known only to be some table is a dynamic table: it may be used as
 // any table shape, and as nothing else.
 func TestBuiltinTableTopFlowsIntoTableShapes(t *testing.T) {

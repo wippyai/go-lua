@@ -2,6 +2,7 @@ package ops
 
 import (
 	"github.com/wippyai/go-lua/types/kind"
+	"github.com/wippyai/go-lua/types/narrow"
 	querycore "github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
@@ -188,6 +189,10 @@ func checkTableAsMap(mode subtype.Assignability, fields []FieldDef, elems []typ.
 	var errors []CheckError
 
 	for _, f := range fields {
+		value := narrow.RemoveNil(f.Type)
+		if typ.IsNever(value) {
+			continue
+		}
 		key := f.KeyType
 		if key == nil {
 			key = typ.LiteralString(f.Name)
@@ -197,9 +202,9 @@ func checkTableAsMap(mode subtype.Assignability, fields []FieldDef, elems []typ.
 				Message: "field key type mismatch", Expected: expected.Key, Got: key, Field: f.Name,
 			})
 		}
-		if !mode.Assignable(f.Type, expected.Value) {
+		if !mode.Assignable(value, expected.Value) {
 			errors = append(errors, CheckError{
-				Message: "field value type mismatch", Expected: expected.Value, Got: f.Type, Field: f.Name,
+				Message: "field value type mismatch", Expected: expected.Value, Got: value, Field: f.Name,
 			})
 		}
 	}
