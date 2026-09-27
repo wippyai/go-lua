@@ -31,6 +31,7 @@ type SessionStore struct {
 	InterprocPrev *InterprocState
 	// InterprocNext accumulates facts/effects produced during the current iteration.
 	InterprocNext *InterprocState
+	functionViews functionViewCache
 
 	// GraphParentHash records the parent scope hash for each graph ID.
 	GraphParentHash     map[uint64]uint64
@@ -50,6 +51,18 @@ type classSelfKey struct {
 	graphID  uint64
 	symbol   cfg.SymbolID
 	receiver bool
+}
+
+type functionView struct {
+	definitions map[cfg.SymbolID]api.FunctionFact
+	summaries   api.ReturnSummaries
+	narrows     api.NarrowReturnSummaries
+	funcs       api.FuncTypes
+}
+
+type functionViewCache struct {
+	snapshot *InterprocState
+	views    map[api.GraphKey]functionView
 }
 
 // BindClassSelf gives a class table one recursion identity across fixpoint
@@ -471,6 +484,12 @@ func (s *SessionStore) swapInterprocChannels() []string {
 // is needed. Returns false when all channels stabilize (fixpoint reached).
 func (s *SessionStore) FixpointSwap() bool {
 	diffs := s.swapInterprocChannels()
+	for _, channel := range diffs {
+		if channel == "InterprocFacts" {
+			s.functionViews = functionViewCache{}
+			break
+		}
+	}
 
 	s.resetScratch()
 
@@ -605,6 +624,7 @@ func (s *SessionStore) ClearIterationChannels() {
 	}
 	s.InterprocPrev = NewInterprocState()
 	s.InterprocNext = NewInterprocState()
+	s.functionViews = functionViewCache{}
 	s.resetScratch()
 	s.Iteration.Revision = 0
 	s.lastSwapDiffs = nil
@@ -936,6 +956,47 @@ func (s *SessionStore) GetInterprocFactsSnapshot(
 	return s.InterprocPrev.Facts[key]
 }
 
+func cloneViewMap[V any](src map[cfg.SymbolID]V) map[cfg.SymbolID]V {
+	if src == nil {
+		return nil
+	}
+	dst := make(map[cfg.SymbolID]V, len(src))
+	for sym, value := range src {
+		dst[sym] = value
+	}
+	return dst
+}
+
+func (s *SessionStore) functionFactView(graph *cfg.Graph, parent *scope.State) functionView {
+	if s == nil || s.InterprocPrev == nil || graph == nil || parent == nil {
+		return functionView{}
+	}
+	key, ok := s.GraphKeyFor(graph, parent)
+	if !ok {
+		return functionView{}
+	}
+	if s.functionViews.snapshot != s.InterprocPrev {
+		s.functionViews = functionViewCache{snapshot: s.InterprocPrev}
+	}
+	if view, ok := s.functionViews.views[key]; ok {
+		return view
+	}
+	definitions := returns.DefinitionView(graph, s.InterprocPrev.Facts[key].Callables)
+	summaries, narrows, funcs := returns.ProjectFunctionFacts(definitions)
+	view := functionView{definitions: definitions, summaries: summaries, narrows: narrows, funcs: funcs}
+	if s.functionViews.views == nil {
+		s.functionViews.views = make(map[api.GraphKey]functionView)
+	}
+	s.functionViews.views[key] = view
+	return view
+}
+
+// GetFunctionFactsSnapshot returns reconciled facts from the stable snapshot.
+func (s *SessionStore) GetFunctionFactsSnapshot(graph *cfg.Graph, parent *scope.State) map[cfg.SymbolID]api.FunctionFact {
+	s.requirePhase(api.PhaseScopeCompute, api.PhaseNarrowing)
+	return cloneViewMap(s.functionFactView(graph, parent).definitions)
+}
+
 // GetParamHintsSnapshot returns param hints from the stable interproc snapshot.
 func (s *SessionStore) GetParamHintsSnapshot(
 	graph *cfg.Graph,
@@ -951,7 +1012,7 @@ func (s *SessionStore) GetReturnSummariesSnapshot(
 	parent *scope.State,
 ) map[cfg.SymbolID][]typ.Type {
 	s.requirePhase(api.PhaseScopeCompute)
-	return returns.SummaryViewFromFacts(graph, s.GetInterprocFactsSnapshot(graph, parent))
+	return cloneViewMap(s.functionFactView(graph, parent).summaries)
 }
 
 // GetNarrowReturnSummariesSnapshot returns post-flow return summaries from the stable snapshot.
@@ -960,7 +1021,7 @@ func (s *SessionStore) GetNarrowReturnSummariesSnapshot(
 	parent *scope.State,
 ) map[cfg.SymbolID][]typ.Type {
 	s.requirePhase(api.PhaseNarrowing)
-	return returns.NarrowViewFromFacts(graph, s.GetInterprocFactsSnapshot(graph, parent))
+	return cloneViewMap(s.functionFactView(graph, parent).narrows)
 }
 
 // GetLocalFuncTypesSnapshot returns canonical local function types from the stable interproc snapshot.
@@ -969,7 +1030,7 @@ func (s *SessionStore) GetLocalFuncTypesSnapshot(
 	parent *scope.State,
 ) map[cfg.SymbolID]typ.Type {
 	s.requirePhase(api.PhaseScopeCompute)
-	return returns.FuncTypeViewFromFacts(graph, s.GetInterprocFactsSnapshot(graph, parent))
+	return cloneViewMap(s.functionFactView(graph, parent).funcs)
 }
 
 // GetCallablesSnapshot returns callables from the stable interproc snapshot.

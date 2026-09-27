@@ -264,7 +264,14 @@ func (r *Runner) capturedCallablesFromOwner(
 	if parentScope == nil {
 		return
 	}
-	parentFacts := returns.DefinitionView(parentGraph, store.GetCallablesSnapshot(parentGraph, parentScope))
+	var parentFacts map[cfg.SymbolID]api.FunctionFact
+	if source, ok := store.(interface {
+		GetFunctionFactsSnapshot(*cfg.Graph, *scope.State) map[cfg.SymbolID]api.FunctionFact
+	}); ok {
+		parentFacts = source.GetFunctionFactsSnapshot(parentGraph, parentScope)
+	} else {
+		parentFacts = returns.DefinitionView(parentGraph, store.GetCallablesSnapshot(parentGraph, parentScope))
+	}
 	for _, sym := range graph.Bindings().CapturedSymbols(fn) {
 		ft := parentFacts[sym].Func
 		if sym == 0 || ft == nil {
