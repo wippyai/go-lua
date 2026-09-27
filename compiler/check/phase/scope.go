@@ -187,14 +187,7 @@ func RunScope(input ScopeInput) ScopeOutput {
 	}
 	annotationResolver := buildFnSignatureResolver(input.FunctionLiteralSignatures, typeResolutionEngine)
 	fnSignatureResolver := FunctionSignatureResolverFunc(func(fn *ast.FunctionExpr, sc *scope.State) *typ.Function {
-		base := annotationResolver.ResolveFunctionSignature(fn, sc)
-		if fn == nil || input.Graph == nil || input.Graph.Bindings() == nil {
-			return base
-		}
-		if sym, ok := input.Graph.Bindings().FuncLitSymbol(fn); ok {
-			return returns.JoinProvedEffects(base, unwrap.Function(input.SiblingTypes[sym]))
-		}
-		return base
+		return returns.WithOwnerRelations(annotationResolver.ResolveFunctionSignature(fn, sc), input.Callables[fn].Func)
 	})
 
 	callMutator := buildCallMutator(input.Types, input.Ctx, exprSynth)
@@ -217,7 +210,7 @@ func RunScope(input ScopeInput) ScopeOutput {
 		fnSignatureResolver,
 		typeResolutionEngine,
 		input.SiblingTypes,
-		input.ReturnSummaries,
+		input.Callables,
 	)
 	declaredTypes = applyModuleAliasExports(declaredTypes, input.ModuleAliases, input.Manifests)
 
@@ -355,7 +348,7 @@ func buildDeclaredTypes(
 	fnSigResolver FunctionSignatureResolver,
 	synthAPI api.SynthAPI,
 	siblingTypes map[cfg.SymbolID]typ.Type,
-	returnSummaries map[cfg.SymbolID][]typ.Type,
+	callables api.Callables,
 ) (flow.DeclaredTypes, map[cfg.SymbolID]bool) {
 	if graph == nil {
 		return nil, nil
@@ -364,11 +357,12 @@ func buildDeclaredTypes(
 	out := make(flow.DeclaredTypes)
 	annotated := make(map[cfg.SymbolID]bool)
 	bindings := graph.Bindings()
+	definitions := returns.DefinitionView(graph, callables)
 	alignWithSummary := func(sym cfg.SymbolID, fn *typ.Function) *typ.Function {
-		if fn == nil || len(returnSummaries) == 0 || sym == 0 {
+		if fn == nil || sym == 0 {
 			return fn
 		}
-		if summary := returnSummaries[sym]; len(summary) > 0 {
+		if summary := definitions[sym].Summary; len(summary) > 0 {
 			return returns.WithSummaryOrUnknown(fn, summary)
 		}
 		return fn

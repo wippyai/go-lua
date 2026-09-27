@@ -19,7 +19,6 @@
 package pipeline
 
 import (
-	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/infer/captured"
 	"github.com/wippyai/go-lua/compiler/check/infer/paramhints"
@@ -120,12 +119,7 @@ func (r *Runner) Run(ctx *db.QueryContext, key api.FuncKey) *api.FuncResult {
 
 	// Canonical local function types for this graph (stable snapshot).
 	siblingTypes := store.GetLocalFuncTypesSnapshot(graph, parent)
-	// Return summaries include captured field assignments (stable snapshot).
-	returnSummaries := store.GetReturnSummariesSnapshot(graph, parent)
-	var narrowReturnSummaries map[cfg.SymbolID][]typ.Type
-	withPhase(api.PhaseNarrowing, func() {
-		narrowReturnSummaries = store.GetNarrowReturnSummariesSnapshot(graph, parent)
-	})
+	callables := store.GetCallablesSnapshot(graph, parent)
 
 	// Phase A: Resolve type annotations.
 	resolveOut := phase.RunResolve(phase.ResolveInput{
@@ -147,7 +141,7 @@ func (r *Runner) Run(ctx *db.QueryContext, key api.FuncKey) *api.FuncResult {
 		FunctionLiteralSignatures: literalSigs,
 		ParamHintSignatures:       paramHintSigs,
 		SiblingTypes:              siblingTypes,
-		ReturnSummaries:           returnSummaries,
+		Callables:                  callables,
 	})
 	// Declared is the default phase for scope/extract and interproc reads.
 
@@ -164,7 +158,7 @@ func (r *Runner) Run(ctx *db.QueryContext, key api.FuncKey) *api.FuncResult {
 		PhaseEnv:        env,
 		Scope:           scopeOut,
 		SiblingTypes:    scopeOut.SiblingTypes,
-		ReturnSummaries: returnSummaries,
+		Callables:      callables,
 	})
 	// Ensure literal function types use canonical local function types.
 	if len(siblingTypes) > 0 {
@@ -186,9 +180,9 @@ func (r *Runner) Run(ctx *db.QueryContext, key api.FuncKey) *api.FuncResult {
 		Scope:           scopeOut,
 		SiblingTypes:    scopeOut.SiblingTypes,
 		LiteralTypes:    literalOut.LiteralTypes,
-		ReturnSummaries: returnSummaries,
+		Callables:      callables,
 	})
-	r.appendCapturedMutatorAssignments(store, graph, parent, env, scopeOut, literalOut, returnSummaries, &extractOut)
+	r.appendCapturedMutatorAssignments(store, graph, parent, env, scopeOut, literalOut, callables, &extractOut)
 	r.appendFieldWriteEffects(store, graph, parent, &extractOut)
 
 	// Phase C: Solve flow system.
@@ -207,7 +201,7 @@ func (r *Runner) Run(ctx *db.QueryContext, key api.FuncKey) *api.FuncResult {
 			Solve:                 solveOut,
 			SiblingTypes:          scopeOut.SiblingTypes,
 			LiteralTypes:          literalOut.LiteralTypes,
-			NarrowReturnSummaries: narrowReturnSummaries,
+			Callables: callables,
 		})
 	})
 

@@ -143,9 +143,7 @@ type ScopeInput struct {
 	// Explicit input - not looked up from store during phase execution.
 	SiblingTypes map[cfg.SymbolID]typ.Type
 
-	// ReturnSummaries contains pre-flow return summaries for sibling functions.
-	// This is declared-phase only and intentionally not part of PhaseEnv.
-	ReturnSummaries map[cfg.SymbolID][]typ.Type
+	Callables api.Callables
 }
 
 // ScopeOutput contains outputs from Phase B (scope computation).
@@ -175,8 +173,7 @@ type LiteralInput struct {
 	PhaseEnv
 	Scope        ScopeOutput
 	SiblingTypes map[cfg.SymbolID]typ.Type
-	// ReturnSummaries contains pre-flow return summaries for sibling functions.
-	ReturnSummaries map[cfg.SymbolID][]typ.Type
+	Callables api.Callables
 }
 
 // LiteralOutput contains outputs from the function literal synthesis phase.
@@ -194,8 +191,7 @@ type FlowExtractInput struct {
 	Scope        ScopeOutput
 	SiblingTypes map[cfg.SymbolID]typ.Type
 	LiteralTypes flow.DeclaredTypes
-	// ReturnSummaries contains pre-flow return summaries for sibling functions.
-	ReturnSummaries map[cfg.SymbolID][]typ.Type
+	Callables api.Callables
 }
 
 // FlowExtractOutput contains outputs from the flow extraction phase.
@@ -232,8 +228,7 @@ type NarrowInput struct {
 	Solve        FlowSolveOutput
 	SiblingTypes map[cfg.SymbolID]typ.Type
 	LiteralTypes flow.DeclaredTypes
-	// NarrowReturnSummaries contains post-flow return summaries for narrowing.
-	NarrowReturnSummaries map[cfg.SymbolID][]typ.Type
+	Callables api.Callables
 }
 
 // NarrowOutput contains outputs from the narrowing phase.
@@ -255,8 +250,7 @@ type ContextBuilder struct {
 	siblingTypes          map[cfg.SymbolID]typ.Type
 	literalTypes          flow.DeclaredTypes
 	solution              *flow.Solution
-	returnSummaries       map[cfg.SymbolID][]typ.Type
-	narrowReturnSummaries map[cfg.SymbolID][]typ.Type
+	callables api.Callables
 }
 
 // NewContextBuilder creates a builder pre-populated from the shared phase environment.
@@ -329,15 +323,9 @@ func (b *ContextBuilder) WithLiteralTypes(lt flow.DeclaredTypes) *ContextBuilder
 	return b
 }
 
-// WithReturnSummaries sets declared-phase return summaries.
-func (b *ContextBuilder) WithReturnSummaries(rs map[cfg.SymbolID][]typ.Type) *ContextBuilder {
-	b.returnSummaries = rs
-	return b
-}
-
-// WithNarrowReturnSummaries sets post-flow return summaries for narrowing.
-func (b *ContextBuilder) WithNarrowReturnSummaries(rs map[cfg.SymbolID][]typ.Type) *ContextBuilder {
-	b.narrowReturnSummaries = rs
+// WithCallables sets the callable facts visible to this phase.
+func (b *ContextBuilder) WithCallables(callables api.Callables) *ContextBuilder {
+	b.callables = callables
 	return b
 }
 
@@ -354,7 +342,7 @@ func (b *ContextBuilder) BuildDeclared() *api.DeclaredEnvImpl {
 		RefinementStore: b.env.RefinementStore,
 		ModuleAliases:   b.env.ModuleAliases,
 		GlobalTypes:     b.env.GlobalTypes,
-		ReturnSummaries: b.returnSummaries,
+		Callables: b.callables,
 	})
 }
 
@@ -372,6 +360,6 @@ func (b *ContextBuilder) BuildNarrow() *api.NarrowEnvImpl {
 		RefinementStore:       b.env.RefinementStore,
 		ModuleAliases:         b.env.ModuleAliases,
 		GlobalTypes:           b.env.GlobalTypes,
-		NarrowReturnSummaries: b.narrowReturnSummaries,
+		Callables: b.callables,
 	})
 }

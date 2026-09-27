@@ -44,6 +44,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/mutator"
 	"github.com/wippyai/go-lua/compiler/check/infer/captured"
 	"github.com/wippyai/go-lua/compiler/check/overlaymut"
+	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth/phase/core"
 	"github.com/wippyai/go-lua/types/constraint"
@@ -111,6 +112,12 @@ func (s *Synthesizer) synthFunctionTypeWithCapturePoint(
 ) *typ.Function {
 	if fn == nil {
 		return nil
+	}
+	var owner api.FunctionFact
+	if ctx, ok := s.deps.CheckCtx.(interface{ Callables() api.Callables }); ok {
+		if pg, ok := s.deps.CheckCtx.Graph().(*cfg.Graph); ok && localFunctionSymbol(pg, fn) != 0 {
+			owner = ctx.Callables()[fn]
+		}
 	}
 	if s.deps.FunctionTypeInProgress == nil {
 		s.deps.FunctionTypeInProgress = make(map[functionTypeProgressKey]bool)
@@ -214,7 +221,7 @@ func (s *Synthesizer) synthFunctionTypeWithCapturePoint(
 		}
 	}
 
-	fnType := builder.Build()
+	fnType := returns.WithOwnerRelations(builder.Build(), owner.Func)
 	if inferredErrorReturn {
 		fnType = erreffect.AttachErrorReturnSpec(fnType, 0, 1)
 	}
@@ -308,16 +315,10 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 		return nil, false
 	}
 
-	var returnSummaries map[cfg.SymbolID][]typ.Type
+	var callables api.Callables
 	if s.deps.CheckCtx != nil {
-		if s.IsNarrowing() {
-			if ctx, ok := s.deps.CheckCtx.(api.NarrowEnv); ok {
-				returnSummaries = ctx.NarrowReturnSummaries()
-			}
-		} else {
-			if ctx, ok := s.deps.CheckCtx.(api.DeclaredEnv); ok {
-				returnSummaries = ctx.ReturnSummaries()
-			}
+		if ctx, ok := s.deps.CheckCtx.(interface{ Callables() api.Callables }); ok {
+			callables = ctx.Callables()
 		}
 	}
 
@@ -328,17 +329,19 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 		}
 	}
 
-	// If a return summary exists for this function symbol, declared phase can
-	// use it directly. Narrowing phase must still infer from the body so flow
-	// predicates can remove stale union members from pre-flow summaries.
+	// Declared synthesis uses the owner summary directly. Narrowing keeps the
+	// solved return as a fallback while flow predicates refine body returns.
 	var summaryFallback []typ.Type
-	if len(returnSummaries) > 0 && fnSym != 0 {
-		if rt := returnSummaries[fnSym]; len(rt) > 0 {
-			if typ.HasKnownType(rt) {
-				summaryFallback = rt
-				if !s.IsNarrowing() && capturePoint == 0 && len(captureTypes) == 0 {
-					return rt, false
-				}
+	if fnSym != 0 {
+		fact := callables[fn]
+		rt := fact.Summary
+		if s.IsNarrowing() {
+			rt = fact.Narrow
+		}
+		if len(rt) > 0 && typ.HasKnownType(rt) {
+			summaryFallback = rt
+			if !s.IsNarrowing() && capturePoint == 0 && len(captureTypes) == 0 {
+				return rt, false
 			}
 		}
 	}
@@ -378,7 +381,7 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 				return
 			}
 			if fnExpr, ok := source.(*ast.FunctionExpr); ok {
-				fnType := s.buildFunctionTypeWithSummary(fnExpr, resolveScope, target.Symbol, returnSummaries)
+				fnType := s.buildFunctionTypeWithSummary(fnExpr, resolveScope, callables)
 				if fnType != nil {
 					overlay[target.Symbol] = fnType
 				}
@@ -460,7 +463,7 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 								if fnExpr == fn {
 									return
 								}
-								fnType := s.buildFunctionTypeWithSummary(fnExpr, parentScope, target.Symbol, returnSummaries)
+								fnType := s.buildFunctionTypeWithSummary(fnExpr, parentScope, callables)
 								if fnType != nil {
 									overlay[target.Symbol] = fnType
 								}
@@ -754,13 +757,7 @@ func localFunctionSymbol(graph *cfg.Graph, fn *ast.FunctionExpr) cfg.SymbolID {
 			}
 		}
 	}
-	var fnSym cfg.SymbolID
-	graph.EachLocalFunction(func(_ cfg.Point, sym cfg.SymbolID, local *ast.FunctionExpr) {
-		if fnSym == 0 && local == fn {
-			fnSym = sym
-		}
-	})
-	return fnSym
+	return 0
 }
 
 // inferReturnExprTypes synthesizes types from return expressions using CFG point.
@@ -803,8 +800,7 @@ func (s *Synthesizer) inferReturnExprTypes(exprs []ast.Expr, p cfg.Point) []typ.
 func (s *Synthesizer) buildFunctionTypeWithSummary(
 	fn *ast.FunctionExpr,
 	sc *scope.State,
-	sym cfg.SymbolID,
-	returnSummaries map[cfg.SymbolID][]typ.Type,
+	callables api.Callables,
 ) *typ.Function {
 	if fn == nil {
 		return nil
@@ -823,8 +819,8 @@ func (s *Synthesizer) buildFunctionTypeWithSummary(
 
 	// Look up return types from summaries
 	var returnTypes []typ.Type
-	if returnSummaries != nil && sym != 0 {
-		returnTypes = returnSummaries[sym]
+	if callables != nil {
+		returnTypes = callables[fn].Summary
 	}
 
 	return join.WithReturnsOrUnknown(sig, returnTypes)
@@ -845,16 +841,13 @@ func (s *Synthesizer) buildFunctionTypeSummaryFallback(
 	if expected != nil && len(sig.Returns) == 0 && len(expected.Returns) > 0 {
 		sig = join.WithReturns(sig, expected.Returns)
 	}
-	var summaries map[cfg.SymbolID][]typ.Type
+	var callables api.Callables
 	if s.deps.CheckCtx != nil {
-		if s.IsNarrowing() {
-			if ctx, ok := s.deps.CheckCtx.(api.NarrowEnv); ok {
-				summaries = ctx.NarrowReturnSummaries()
-			}
-		} else if ctx, ok := s.deps.CheckCtx.(api.DeclaredEnv); ok {
-			summaries = ctx.ReturnSummaries()
+		if ctx, ok := s.deps.CheckCtx.(interface{ Callables() api.Callables }); ok {
+			callables = ctx.Callables()
 		}
 	}
+
 	var fnSym cfg.SymbolID
 	if s.deps.CheckCtx != nil {
 		if pg, ok := s.deps.CheckCtx.Graph().(*cfg.Graph); ok && pg != nil {
@@ -862,7 +855,7 @@ func (s *Synthesizer) buildFunctionTypeSummaryFallback(
 		}
 	}
 	if fnSym != 0 {
-		return join.WithReturnsOrUnknown(sig, summaries[fnSym])
+		return join.WithReturnsOrUnknown(sig, callables[fn].Summary)
 	}
 	return join.WithReturnsOrUnknown(sig, nil)
 }

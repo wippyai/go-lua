@@ -32,7 +32,7 @@ func RunExtract(input FlowExtractInput) FlowExtractOutput {
 		WithScope(input.Scope).
 		WithSiblingTypes(input.SiblingTypes).
 		WithLiteralTypes(input.LiteralTypes).
-		WithReturnSummaries(input.ReturnSummaries).
+		WithCallables(input.Callables).
 		BuildDeclared()
 
 	env := input.PhaseEnv
@@ -88,7 +88,7 @@ func applyModuleAliasTypes(inputs *flow.Inputs, manifests io.ManifestQuerier) {
 func RunLiteral(input LiteralInput) LiteralOutput {
 	initialCtx := NewContextBuilder(input.PhaseEnv).
 		WithScope(input.Scope).
-		WithReturnSummaries(input.ReturnSummaries).
+		WithCallables(input.Callables).
 		BuildDeclared()
 
 	env := input.PhaseEnv

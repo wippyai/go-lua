@@ -36,7 +36,6 @@ import (
 	cfganalysis "github.com/wippyai/go-lua/compiler/cfg/analysis"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
-	"github.com/wippyai/go-lua/compiler/check/erreffect"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/cond"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/constprop"
 	fbcore "github.com/wippyai/go-lua/compiler/check/flowbuild/core"
@@ -47,7 +46,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/predicate"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/resolve"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/tblutil"
-	checkreturns "github.com/wippyai/go-lua/compiler/check/returns"
 	checkscope "github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/contract"
@@ -1157,16 +1155,6 @@ func ExtractFuncDefAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs) {
 		if fnType == nil {
 			fnType = typ.Unknown
 		}
-		if fc.Services != nil && info.FuncExpr != nil {
-			if prior := fc.Services.ResolveFunctionSignature(info.FuncExpr, sc); prior != nil {
-				if erreffect.HasReturnRelationLabel(prior) {
-					if current := unwrap.Function(fnType); current != nil {
-						fnType = checkreturns.JoinProvedEffects(current, prior)
-					}
-				}
-			}
-		}
-
 		// Create sub-path assignment: M.add = function
 		inputs.Assignments = append(inputs.Assignments, flow.UnifiedAssignment{
 			Point: p,
