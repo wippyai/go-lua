@@ -139,15 +139,15 @@ const (
 	// Gradual accepts any wherever a type is expected and any type where any
 	// is expected (IsConsistentSubtype).
 	Gradual Assignability = iota
-	// StrictAny treats any as unknown: it must be narrowed before it is used
+	// Strict treats any as unknown: it must be narrowed before acceptance
 	// where a specific type is expected (IsSubtype).
-	StrictAny
+	Strict
 )
 
 // Assignable reports whether a value of type sub may be used where super is
 // expected under a.
 func (a Assignability) Assignable(sub, super typ.Type) bool {
-	if a == StrictAny {
+	if a == Strict {
 		return IsSubtype(sub, super)
 	}
 	return IsConsistentSubtype(sub, super)

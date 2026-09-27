@@ -208,18 +208,19 @@ func (c *Checker) newPipeline() *pipeline.Driver {
 // programs, as opposed to the analysis limits other options configure. The
 // zero value is the default semantics.
 type Options struct {
-	// StrictAny makes any behave as unknown: an any value is not accepted
-	// where a specific type is expected until it is narrowed. By default any
-	// is gradual, consistent with every type at assignments, arguments and
+	// Strict enables stricter type-checking semantics. Its first rule makes
+	// any behave as unknown: an any value must be narrowed before it is
+	// accepted where a specific type is expected. Further strict rules can
+	// be added here. By default, any is gradual at assignments, arguments and
 	// returns.
-	StrictAny bool
+	Strict bool
 }
 
 // Assignability returns the relation that decides use-site assignability
 // under o.
 func (o Options) Assignability() subtype.Assignability {
-	if o.StrictAny {
-		return subtype.StrictAny
+	if o.Strict {
+		return subtype.Strict
 	}
 	return subtype.Gradual
 }

@@ -833,9 +833,9 @@ func TestIpairsOverAny_ValueNotTypedAsNil(t *testing.T) {
 		end
 		return true
 	`
-	result := testutil.Check(source, testutil.WithStdlib(), testutil.WithCheckOptions(check.Options{StrictAny: true}))
+	result := testutil.Check(source, testutil.WithStdlib(), testutil.WithCheckOptions(check.Options{Strict: true}))
 	if !result.HasError() {
-		t.Fatalf("expected error assigning the any iterator value to nil under strict any, got none")
+		t.Fatalf("expected error assigning the any iterator value to nil under strict mode, got none")
 	}
 }
 

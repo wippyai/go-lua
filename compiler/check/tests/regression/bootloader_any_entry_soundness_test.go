@@ -25,9 +25,9 @@ func TestBootloader_ExplicitAnyEntry_AssignToStringIsError(t *testing.T) {
 		execute_bootloader(e)
 	`
 
-	result := testutil.Check(source, testutil.WithStdlib(), testutil.WithCheckOptions(check.Options{StrictAny: true}))
+	result := testutil.Check(source, testutil.WithStdlib(), testutil.WithCheckOptions(check.Options{Strict: true}))
 	if !result.HasError() {
-		t.Fatal("expected error under strict any: cannot assign any to string")
+		t.Fatal("expected error under strict mode: cannot assign any to string")
 	}
 
 	found := false

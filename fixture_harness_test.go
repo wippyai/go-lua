@@ -51,8 +51,8 @@ type fixtureCheck struct {
 
 // Checking modes a fixture can run under.
 const (
-	modeGradual   = "gradual"
-	modeStrictAny = "strict-any"
+	modeGradual = "gradual"
+	modeStrict  = "strict"
 )
 
 // checkModes returns the checking modes s runs under.
@@ -69,8 +69,8 @@ func checkOptionsFor(t *testing.T, mode string) check.Options {
 	switch mode {
 	case modeGradual:
 		return check.Options{}
-	case modeStrictAny:
-		return check.Options{StrictAny: true}
+	case modeStrict:
+		return check.Options{Strict: true}
 	}
 	t.Fatalf("unknown check mode: %s", mode)
 	return check.Options{}

@@ -37,10 +37,10 @@ local function handle_session_close(payload_data)
 end
 
 return handle_session_close
-`, testutil.WithStdlib(), testutil.WithCheckOptions(check.Options{StrictAny: true}))
+`, testutil.WithStdlib(), testutil.WithCheckOptions(check.Options{Strict: true}))
 
 	if !result.HasError() {
-		t.Fatalf("expected error under strict any, got none")
+		t.Fatalf("expected error under strict mode, got none")
 	}
 
 	msgs := testutil.ErrorMessages(result.Diagnostics)

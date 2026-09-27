@@ -1,5 +1,5 @@
 -- any is the dynamic type: a value typed any is accepted wherever a type is
--- expected, and any accepts every value. Under strict-any, any behaves like
+-- expected, and any accepts every value. Under strict mode, any behaves like
 -- unknown and must be narrowed before such a use.
 type Map = { [string]: any }
 
@@ -21,12 +21,12 @@ local function execute_run(binding_id: string, a: Map): Map
 end
 
 local function execute_binding(args: any): Map
-    return execute_run("b-1", args) -- expect-error[strict-any]: argument 2
+    return execute_run("b-1", args) -- expect-error[strict]: argument 2
 end
 
 -- A row decoded from storage carries dynamic fields.
 local function config_size(row: { cfg: any }): integer
-    return take_map(row.cfg) -- expect-error[strict-any]: argument 1
+    return take_map(row.cfg) -- expect-error[strict]: argument 1
 end
 
 -- dataflow node: keys collected from a dynamic table into a string-keyed map.
@@ -35,23 +35,23 @@ local function merge_context(ctx: any, extra: { dataflow_id: any, node_id: any }
     for k, v in pairs(ctx) do
         merged[k] = v
     end
-    return merged -- expect-error[strict-any]: cannot return
+    return merged -- expect-error[strict]: cannot return
 end
 
 local function label(v: any): string
-    local text: string = v -- expect-error[strict-any]: cannot assign any to string
+    local text: string = v -- expect-error[strict]: cannot assign any to string
     return take_name(text)
 end
 
 -- A type argument nothing determines stays unknown. Gradual assignability
--- accepts it as it accepts any and reports the implicit unknown; strict-any
--- requires it narrowed.
+-- accepts it as it accepts any and reports the implicit unknown; strict mode
+-- requires it to be narrowed.
 local function decode<T>(raw: string): T
     return raw :: T
 end
 
 local function first_key(raw: string): string
-    return take_name(decode(raw)) -- expect-hint[gradual]: argument 1: implicit unknown flows into declared string -- expect-error[strict-any]: argument 1: expected string, got unknown
+    return take_name(decode(raw)) -- expect-hint[gradual]: argument 1: implicit unknown flows into declared string -- expect-error[strict]: argument 1: expected string, got unknown
 end
 
 return {
