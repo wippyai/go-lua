@@ -831,6 +831,30 @@ func (g *Graph) SuccessorsReadOnly(p Point) []Point {
 	return g.cfg.SuccessorsReadOnly(p)
 }
 
+// Reachable reports whether a successor path from from reaches to. A path must
+// contain at least one edge; allowCycleToStart controls whether a cycle back to
+// from counts when from == to.
+func (g *Graph) Reachable(from, to Point, allowCycleToStart bool) bool {
+	if g == nil || g.cfg == nil || from == to && !allowCycleToStart {
+		return false
+	}
+	seen := map[Point]bool{from: true}
+	work := append([]Point(nil), g.SuccessorsReadOnly(from)...)
+	for len(work) != 0 {
+		p := work[len(work)-1]
+		work = work[:len(work)-1]
+		if p == to {
+			return true
+		}
+		if seen[p] {
+			continue
+		}
+		seen[p] = true
+		work = append(work, g.SuccessorsReadOnly(p)...)
+	}
+	return false
+}
+
 // Successor returns single successor (for non-branch nodes).
 func (g *Graph) Successor(p Point) Point {
 	if g == nil || g.cfg == nil {
