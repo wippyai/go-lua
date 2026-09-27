@@ -615,6 +615,14 @@ func NormalizeReturnVector(rets []typ.Type) []typ.Type {
 	if len(rets) == 0 {
 		return nil
 	}
+	for _, t := range rets {
+		if t == nil {
+			goto normalize
+		}
+	}
+	return rets
+
+normalize:
 	out := make([]typ.Type, len(rets))
 	for i, t := range rets {
 		if t == nil {
@@ -627,11 +635,14 @@ func NormalizeReturnVector(rets []typ.Type) []typ.Type {
 }
 
 func normalizeAndPruneReturnVector(rets []typ.Type) []typ.Type {
-	out := NormalizeReturnVector(rets)
-	if len(out) == 0 {
+	if len(rets) == 0 {
 		return nil
 	}
-	for i, ret := range out {
+	out := make([]typ.Type, len(rets))
+	for i, ret := range rets {
+		if ret == nil {
+			ret = typ.Nil
+		}
 		out[i] = typ.PruneSoftUnionMembers(ret)
 	}
 	return out

@@ -86,9 +86,11 @@ func StoreFactsFromResult(
 				returns[0] = boundReturnedTable(fnType.Returns[0], bound)
 				fnType = typjoin.WithReturns(fnType, returns)
 				if len(narrowReturns) > 0 {
+					narrowReturns = append([]typ.Type(nil), narrowReturns...)
 					narrowReturns[0] = boundReturnedTable(narrowReturns[0], bound)
 				}
 				if len(summaryFromSnapshot) > 0 {
+					summaryFromSnapshot = append([]typ.Type(nil), summaryFromSnapshot...)
 					summaryFromSnapshot[0] = boundReturnedTable(summaryFromSnapshot[0], bound)
 				}
 			}

@@ -21,120 +21,147 @@ func IsFinal(t Type) bool {
 	default:
 		return true
 	}
-	seen := make(map[Type]bool)
-	var visit func(Type) bool
-	visit = func(t Type) bool {
-		if t == nil || IsUnresolved(t) {
-			return false
-		}
-		if seen[t] {
+	var state finalityState
+	return state.visit(t)
+}
+
+type finalityState struct {
+	path  [32]Type
+	depth int
+	seen  map[Type]bool
+}
+
+func (s *finalityState) visit(t Type) bool {
+	if t == nil || IsUnresolved(t) {
+		return false
+	}
+	if s.seen != nil {
+		if s.seen[t] {
 			return true
 		}
-		seen[t] = true
-		switch v := t.(type) {
-		case *Annotated:
-			return visit(v.Inner)
-		case *Alias:
-			return visit(v.Target)
-		case *Optional:
-			return visit(v.Inner)
-		case *Array:
-			return visit(v.Element)
-		case *Map:
-			return visit(v.Key) && visit(v.Value)
-		case *Tuple:
-			for _, e := range v.Elements {
-				if !visit(e) {
-					return false
-				}
+		s.seen[t] = true
+	} else {
+		for i := 0; i < s.depth; i++ {
+			if s.path[i] == t {
+				return true
 			}
-		case *Union:
-			for _, m := range v.Members {
-				if !visit(m) {
-					return false
-				}
-			}
-		case *Intersection:
-			for _, m := range v.Members {
-				if !visit(m) {
-					return false
-				}
-			}
-		case *Record:
-			for _, f := range v.Fields {
-				if !visit(f.Type) {
-					return false
-				}
-			}
-			if v.MapKey != nil && (!visit(v.MapKey) || !visit(v.MapValue)) {
-				return false
-			}
-			if v.Metatable != nil && !visit(v.Metatable) {
-				return false
-			}
-		case *Function:
-			for _, p := range v.TypeParams {
-				if p != nil && p.Constraint != nil && !visit(p.Constraint) {
-					return false
-				}
-			}
-			for _, p := range v.Params {
-				if !visit(p.Type) {
-					return false
-				}
-			}
-			for _, r := range v.Returns {
-				if !visit(r) {
-					return false
-				}
-			}
-			if v.Variadic != nil && !visit(v.Variadic) {
-				return false
-			}
-		case *Recursive:
-			return v.Body != nil && visit(v.Body)
-		case *Meta:
-			return visit(v.Of)
-		case *TypeParam:
-			return v.Constraint == nil || visit(v.Constraint)
-		case *Generic:
-			for _, p := range v.TypeParams {
-				if p != nil && !visit(p) {
-					return false
-				}
-			}
-			return v.Body != nil && visit(v.Body)
-		case *Instantiated:
-			if v.Generic == nil || !visit(v.Generic) {
-				return false
-			}
-			for _, arg := range v.TypeArgs {
-				if !visit(arg) {
-					return false
-				}
-			}
-		case *Interface:
-			for _, method := range v.Methods {
-				if !visit(method.Type) {
-					return false
-				}
-			}
-		case *Sum:
-			for _, variant := range v.Variants {
-				for _, arg := range variant.Types {
-					if !visit(arg) {
-						return false
-					}
-				}
-			}
-		case *FieldAccess:
-			return visit(v.Base)
-		case *IndexAccess:
-			return visit(v.Base) && visit(v.Index)
 		}
-		return true
+		if s.depth == len(s.path) {
+			s.seen = make(map[Type]bool, s.depth+1)
+			for _, ancestor := range s.path {
+				s.seen[ancestor] = true
+			}
+			s.seen[t] = true
+		} else {
+			s.path[s.depth] = t
+		}
 	}
-	return visit(t)
+	depth := s.depth
+	s.depth++
+	defer func() { s.depth = depth }()
+
+	switch v := t.(type) {
+	case *Annotated:
+		return s.visit(v.Inner)
+	case *Alias:
+		return s.visit(v.Target)
+	case *Optional:
+		return s.visit(v.Inner)
+	case *Array:
+		return s.visit(v.Element)
+	case *Map:
+		return s.visit(v.Key) && s.visit(v.Value)
+	case *Tuple:
+		for _, e := range v.Elements {
+			if !s.visit(e) {
+				return false
+			}
+		}
+	case *Union:
+		for _, m := range v.Members {
+			if !s.visit(m) {
+				return false
+			}
+		}
+	case *Intersection:
+		for _, m := range v.Members {
+			if !s.visit(m) {
+				return false
+			}
+		}
+	case *Record:
+		for _, f := range v.Fields {
+			if !s.visit(f.Type) {
+				return false
+			}
+		}
+		if v.MapKey != nil && (!s.visit(v.MapKey) || !s.visit(v.MapValue)) {
+			return false
+		}
+		if v.Metatable != nil && !s.visit(v.Metatable) {
+			return false
+		}
+	case *Function:
+		for _, p := range v.TypeParams {
+			if p != nil && p.Constraint != nil && !s.visit(p.Constraint) {
+				return false
+			}
+		}
+		for _, p := range v.Params {
+			if !s.visit(p.Type) {
+				return false
+			}
+		}
+		for _, r := range v.Returns {
+			if !s.visit(r) {
+				return false
+			}
+		}
+		if v.Variadic != nil && !s.visit(v.Variadic) {
+			return false
+		}
+	case *Recursive:
+		return v.Body != nil && s.visit(v.Body)
+	case *Meta:
+		return s.visit(v.Of)
+	case *TypeParam:
+		return v.Constraint == nil || s.visit(v.Constraint)
+	case *Generic:
+		for _, p := range v.TypeParams {
+			if p != nil && !s.visit(p) {
+				return false
+			}
+		}
+		return v.Body != nil && s.visit(v.Body)
+	case *Instantiated:
+		if v.Generic == nil || !s.visit(v.Generic) {
+			return false
+		}
+		for _, arg := range v.TypeArgs {
+			if !s.visit(arg) {
+				return false
+			}
+		}
+	case *Interface:
+		for _, method := range v.Methods {
+			if !s.visit(method.Type) {
+				return false
+			}
+		}
+	case *Sum:
+		for _, variant := range v.Variants {
+			for _, arg := range variant.Types {
+				if !s.visit(arg) {
+					return false
+				}
+			}
+		}
+	case *FieldAccess:
+		return s.visit(v.Base)
+	case *IndexAccess:
+		return s.visit(v.Base) && s.visit(v.Index)
+	}
+	return true
 }
 
 // Resolve fills only pending positions, matching composite positions in the
