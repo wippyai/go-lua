@@ -26,6 +26,7 @@ import (
 	"math/big"
 
 	"github.com/wippyai/go-lua/compiler/ast"
+	compcfg "github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
@@ -86,6 +87,9 @@ skipNarrowedAttr:
 		if ft, ok := s.deps.Types.Field(s.deps.Ctx, objType, key.Value); ok {
 			if manifestPath != "" {
 				ft = enrichWithManifest(s.deps.Manifests, ft, manifestPath, key.Value)
+				if importedFieldWritten(s.deps.CheckCtx, ex.Object, key.Value) {
+					ft = widenImportedLiteral(ft)
+				}
 			}
 			if specialized := s.stableLocalFunctionValueType(ex, p, sc, ft, nil); specialized != nil {
 				return specialized
@@ -212,6 +216,65 @@ skipNarrowedAttr:
 	}
 
 	return typ.Unknown
+}
+
+// A writable imported field cannot remain a singleton after a write in the
+// current function. Conservatively include writes on every CFG path, including
+// loop back-edges, when resolving a literal carried by an imported manifest.
+func importedFieldWritten(env api.BaseEnv, object ast.Expr, field string) bool {
+	ident, ok := object.(*ast.IdentExpr)
+	if !ok || env == nil || env.Bindings() == nil {
+		return false
+	}
+	sym, ok := env.Bindings().SymbolOf(ident)
+	if !ok || sym == 0 {
+		return false
+	}
+	graph, ok := env.Graph().(*compcfg.Graph)
+	if !ok || graph == nil {
+		return false
+	}
+	written := false
+	graph.EachAssign(func(_ compcfg.Point, info *compcfg.AssignInfo) {
+		if written || info == nil {
+			return
+		}
+		for _, target := range info.Targets {
+			if target.BaseSymbol != sym {
+				continue
+			}
+			if target.Kind == compcfg.TargetField && len(target.FieldPath) > 0 && target.FieldPath[0] == field {
+				written = true
+				return
+			}
+			if target.Kind == compcfg.TargetIndex {
+				if key, ok := target.Key.(*ast.StringExpr); ok && key.Value == field {
+					written = true
+					return
+				}
+			}
+		}
+	})
+	return written
+}
+
+func widenImportedLiteral(t typ.Type) typ.Type {
+	lit, ok := typ.UnwrapAnnotated(t).(*typ.Literal)
+	if !ok {
+		return t
+	}
+	switch lit.Base {
+	case kind.String:
+		return typ.String
+	case kind.Integer:
+		return typ.Integer
+	case kind.Number:
+		return typ.Number
+	case kind.Boolean:
+		return typ.Boolean
+	default:
+		return typ.Unknown
+	}
 }
 
 func (s *Synthesizer) indexFromKeyOf(objType typ.Type, objExpr ast.Expr, key *ast.IdentExpr, p cfg.Point, sc *scope.State, narrower api.FlowOps) typ.Type {
