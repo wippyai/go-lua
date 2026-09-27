@@ -700,7 +700,6 @@ func (s *SessionStore) UpdateInterprocFactsNext(key api.GraphKey, update func(*a
 	facts := s.InterprocNext.Facts[key]
 	initInterprocFacts(&facts)
 	update(&facts)
-	returns.NormalizeFunctionFactChannels(&facts)
 	s.InterprocNext.Facts[key] = facts
 }
 

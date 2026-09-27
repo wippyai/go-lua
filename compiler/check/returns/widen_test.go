@@ -14,21 +14,15 @@ func TestWidenFacts_DoesNotOverrideReturnSummariesWithNarrowReturns(t *testing.T
 		FunctionFacts: api.FunctionFacts{
 			1: {Summary: []typ.Type{typ.Integer}},
 		},
-		ReturnSummaries: api.ReturnSummaries{
-			1: []typ.Type{typ.Integer},
-		},
 	}
 	next := api.Facts{
 		FunctionFacts: api.FunctionFacts{
 			1: {Narrow: []typ.Type{typ.Nil}},
 		},
-		NarrowReturns: api.NarrowReturnSummaries{
-			1: []typ.Type{typ.Nil},
-		},
 	}
 
 	merged := WidenFacts(prev, next)
-	got := merged.ReturnSummaries[1]
+	got := merged.FunctionFacts[1].Summary
 	if len(got) != 1 || !typ.TypeEquals(got[0], typ.Integer) {
 		t.Fatalf("expected ReturnSummaries[1]=integer, got %v", got)
 	}
@@ -39,21 +33,15 @@ func TestWidenFacts_ElidesOptionalFromNarrowReturns(t *testing.T) {
 		FunctionFacts: api.FunctionFacts{
 			1: {Summary: []typ.Type{typ.NewOptional(typ.Integer)}},
 		},
-		ReturnSummaries: api.ReturnSummaries{
-			1: []typ.Type{typ.NewOptional(typ.Integer)},
-		},
 	}
 	next := api.Facts{
 		FunctionFacts: api.FunctionFacts{
 			1: {Narrow: []typ.Type{typ.Integer}},
 		},
-		NarrowReturns: api.NarrowReturnSummaries{
-			1: []typ.Type{typ.Integer},
-		},
 	}
 
 	merged := WidenFacts(prev, next)
-	got := merged.ReturnSummaries[1]
+	got := merged.FunctionFacts[1].Summary
 	if len(got) != 1 || !typ.TypeEquals(got[0], typ.Integer) {
 		t.Fatalf("expected ReturnSummaries[1]=integer, got %v", got)
 	}

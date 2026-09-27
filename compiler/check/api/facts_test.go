@@ -13,17 +13,8 @@ func TestFacts_Zero(t *testing.T) {
 	if f.FunctionFacts != nil {
 		t.Error("zero Facts should have nil FunctionFacts")
 	}
-	if f.ReturnSummaries != nil {
-		t.Error("zero Facts should have nil ReturnSummaries")
-	}
-	if f.NarrowReturns != nil {
-		t.Error("zero Facts should have nil NarrowReturns")
-	}
 	if f.ParamHints != nil {
 		t.Error("zero Facts should have nil ParamHints")
-	}
-	if f.FuncTypes != nil {
-		t.Error("zero Facts should have nil FuncTypes")
 	}
 	if f.LiteralSigs != nil {
 		t.Error("zero Facts should have nil LiteralSigs")
@@ -177,27 +168,15 @@ func TestFacts_WithData(t *testing.T) {
 				Func:    typ.Func().Returns(typ.Boolean).Build(),
 			},
 		},
-		ReturnSummaries: ReturnSummaries{
-			1: []typ.Type{typ.String},
-		},
 		ParamHints: ParamHints{
 			2: []typ.Type{typ.Number},
 		},
-		FuncTypes: FuncTypes{
-			3: typ.Func().Build(),
-		},
 	}
 
-	if len(f.ReturnSummaries) != 1 {
-		t.Error("expected 1 return summary")
-	}
 	if len(f.FunctionFacts) != 1 {
 		t.Error("expected 1 function fact")
 	}
 	if len(f.ParamHints) != 1 {
 		t.Error("expected 1 param hint")
-	}
-	if len(f.FuncTypes) != 1 {
-		t.Error("expected 1 func type")
 	}
 }

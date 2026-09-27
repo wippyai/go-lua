@@ -15,9 +15,6 @@ import (
 
 // WidenFacts merges two interproc fact bundles.
 func WidenFacts(prev, next api.Facts) api.Facts {
-	NormalizeFunctionFactChannels(&prev)
-	NormalizeFunctionFactChannels(&next)
-
 	out := api.Facts{
 		ParamHints:         WidenParamHints(prev.ParamHints, next.ParamHints),
 		LiteralSigs:        WidenLiteralSigs(prev.LiteralSigs, next.LiteralSigs),
@@ -27,15 +24,21 @@ func WidenFacts(prev, next api.Facts) api.Facts {
 		ConstructorFields:  WidenConstructorFields(prev.ConstructorFields, next.ConstructorFields),
 	}
 
-	symbols := collectCanonicalFunctionFactSymbols(prev.FunctionFacts, next.FunctionFacts)
+	symbols := make(map[cfg.SymbolID]bool, len(prev.FunctionFacts)+len(next.FunctionFacts))
+	for sym := range prev.FunctionFacts {
+		symbols[sym] = true
+	}
+	for sym := range next.FunctionFacts {
+		symbols[sym] = true
+	}
 	if len(symbols) == 0 {
 		return out
 	}
 
 	out.FunctionFacts = make(api.FunctionFacts, len(symbols))
-	for _, sym := range symbols {
-		prevFact := readFunctionFactFromFacts(&prev, sym)
-		nextFact := readFunctionFactFromFacts(&next, sym)
+	for _, sym := range cfg.SortedSymbolIDs(symbols) {
+		prevFact := prev.FunctionFacts[sym]
+		nextFact := next.FunctionFacts[sym]
 		reconciled := ReconcileFunctionFact(ReconcileFunctionFactInput{
 			ExistingSummary:  prevFact.Summary,
 			ExistingNarrow:   prevFact.Narrow,
@@ -44,11 +47,11 @@ func WidenFacts(prev, next api.Facts) api.Facts {
 			CandidateNarrow:  nextFact.Narrow,
 			CandidateFunc:    nextFact.Func,
 		})
-		writeFunctionFactToFacts(&out, sym, api.FunctionFact{
+		out.FunctionFacts[sym] = api.FunctionFact{
 			Summary: widenReturnVectorForConvergence(reconciled.Summary),
 			Narrow:  widenReturnVectorForConvergence(reconciled.Narrow),
 			Func:    maybeWidenTypeForConvergence(reconciled.Func),
-		})
+		}
 	}
 	if len(out.FunctionFacts) == 0 {
 		out.FunctionFacts = nil

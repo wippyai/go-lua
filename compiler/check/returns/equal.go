@@ -8,7 +8,7 @@ import (
 
 // FactsEqual checks if two interproc fact bundles are equal.
 func FactsEqual(a, b api.Facts) bool {
-	if !FunctionFactsEqual(canonicalFunctionFacts(a), canonicalFunctionFacts(b)) {
+	if !FunctionFactsEqual(a.FunctionFacts, b.FunctionFacts) {
 		return false
 	}
 	if !symbolTypeVectorMapEqual(a.ParamHints, b.ParamHints) {

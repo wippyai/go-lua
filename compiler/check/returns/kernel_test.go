@@ -19,13 +19,13 @@ func TestMergeFunctionFactIntoFacts_InitialWrite(t *testing.T) {
 		Func:    fn,
 	})
 
-	if got := facts.ReturnSummaries[sym]; !ReturnTypesEqual(got, []typ.Type{typ.String}) {
+	if got := facts.FunctionFacts[sym].Summary; !ReturnTypesEqual(got, []typ.Type{typ.String}) {
 		t.Fatalf("summary mismatch: got %v", got)
 	}
-	if got := facts.NarrowReturns[sym]; !ReturnTypesEqual(got, []typ.Type{typ.String}) {
+	if got := facts.FunctionFacts[sym].Narrow; !ReturnTypesEqual(got, []typ.Type{typ.String}) {
 		t.Fatalf("narrow mismatch: got %v", got)
 	}
-	if got := facts.FuncTypes[sym]; !typ.TypeEquals(got, fn) {
+	if got := facts.FunctionFacts[sym].Func; !typ.TypeEquals(got, fn) {
 		t.Fatalf("func mismatch: got %v", got)
 	}
 }
@@ -60,22 +60,13 @@ func TestMergeFunctionFactIntoFacts_MatchesKernelReconcile(t *testing.T) {
 				Func:    existingFn,
 			},
 		},
-		ReturnSummaries: api.ReturnSummaries{
-			sym: []typ.Type{typ.Number},
-		},
-		NarrowReturns: api.NarrowReturnSummaries{
-			sym: []typ.Type{typ.Number},
-		},
-		FuncTypes: api.FuncTypes{
-			sym: existingFn,
-		},
 	}
 	candidate := FunctionFactCandidate{
 		Summary: []typ.Type{typ.String},
 		Narrow:  []typ.Type{typ.String},
 		Func:    candidateFn,
 	}
-	existing := readFunctionFactFromFacts(facts, sym)
+	existing := facts.FunctionFacts[sym]
 	expected := ReconcileFunctionFact(ReconcileFunctionFactInput{
 		ExistingSummary:  existing.Summary,
 		ExistingNarrow:   existing.Narrow,
@@ -87,13 +78,13 @@ func TestMergeFunctionFactIntoFacts_MatchesKernelReconcile(t *testing.T) {
 
 	MergeFunctionFactIntoFacts(facts, sym, candidate)
 
-	if got := facts.ReturnSummaries[sym]; !ReturnTypesEqual(got, expected.Summary) {
+	if got := facts.FunctionFacts[sym].Summary; !ReturnTypesEqual(got, expected.Summary) {
 		t.Fatalf("summary mismatch: got %v want %v", got, expected.Summary)
 	}
-	if got := facts.NarrowReturns[sym]; !ReturnTypesEqual(got, expected.Narrow) {
+	if got := facts.FunctionFacts[sym].Narrow; !ReturnTypesEqual(got, expected.Narrow) {
 		t.Fatalf("narrow mismatch: got %v want %v", got, expected.Narrow)
 	}
-	if got := facts.FuncTypes[sym]; !typ.TypeEquals(got, expected.Func) {
+	if got := facts.FunctionFacts[sym].Func; !typ.TypeEquals(got, expected.Func) {
 		t.Fatalf("func mismatch: got %v want %v", got, expected.Func)
 	}
 }
@@ -118,13 +109,13 @@ func TestMergeFunctionFactsIntoFacts_BatchMerge(t *testing.T) {
 		},
 	)
 
-	if got := facts.ReturnSummaries[symSummary]; !ReturnTypesEqual(got, []typ.Type{typ.String}) {
+	if got := facts.FunctionFacts[symSummary].Summary; !ReturnTypesEqual(got, []typ.Type{typ.String}) {
 		t.Fatalf("summary mismatch: got %v", got)
 	}
-	if got := facts.NarrowReturns[symNarrow]; !ReturnTypesEqual(got, []typ.Type{typ.Number}) {
+	if got := facts.FunctionFacts[symNarrow].Narrow; !ReturnTypesEqual(got, []typ.Type{typ.Number}) {
 		t.Fatalf("narrow mismatch: got %v", got)
 	}
-	if got := facts.FuncTypes[symFunc]; !typ.TypeEquals(got, funcType) {
+	if got := facts.FunctionFacts[symFunc].Func; !typ.TypeEquals(got, funcType) {
 		t.Fatalf("func mismatch: got %v", got)
 	}
 }
@@ -203,103 +194,5 @@ func TestReconcileFunctionFact_NarrowSummaryRepairsNeverArtifact(t *testing.T) {
 	}
 	if !ReturnTypesEqual(fn.Returns, good) {
 		t.Fatalf("func returns mismatch: got %v want %v", fn.Returns, good)
-	}
-}
-
-func TestMergeFunctionFactIntoFacts_ReadsLegacyAndWritesCanonical(t *testing.T) {
-	sym := cfg.SymbolID(41)
-	facts := &api.Facts{
-		ReturnSummaries: api.ReturnSummaries{
-			sym: []typ.Type{typ.Number},
-		},
-		NarrowReturns: api.NarrowReturnSummaries{
-			sym: []typ.Type{typ.Number},
-		},
-		FuncTypes: api.FuncTypes{
-			sym: typ.Func().Returns(typ.Number).Build(),
-		},
-	}
-
-	MergeFunctionFactIntoFacts(facts, sym, FunctionFactCandidate{
-		Summary: []typ.Type{typ.String},
-		Narrow:  []typ.Type{typ.String},
-		Func:    typ.Func().Returns(typ.String).Build(),
-	})
-
-	ff, ok := facts.FunctionFacts[sym]
-	if !ok {
-		t.Fatal("expected canonical FunctionFacts entry")
-	}
-	if !ReturnTypesEqual(ff.Summary, facts.ReturnSummaries[sym]) {
-		t.Fatalf("summary drift: canonical=%v legacy=%v", ff.Summary, facts.ReturnSummaries[sym])
-	}
-	if !ReturnTypesEqual(ff.Narrow, facts.NarrowReturns[sym]) {
-		t.Fatalf("narrow drift: canonical=%v legacy=%v", ff.Narrow, facts.NarrowReturns[sym])
-	}
-	if !typ.TypeEquals(ff.Func, facts.FuncTypes[sym]) {
-		t.Fatalf("func drift: canonical=%v legacy=%v", ff.Func, facts.FuncTypes[sym])
-	}
-}
-
-func TestNormalizeFunctionFactChannels_PromotesLegacyIntoCanonical(t *testing.T) {
-	sym := cfg.SymbolID(77)
-	fn := typ.Func().Returns(typ.Number).Build()
-	facts := &api.Facts{
-		ReturnSummaries: api.ReturnSummaries{
-			sym: []typ.Type{typ.Number},
-		},
-		NarrowReturns: api.NarrowReturnSummaries{
-			sym: []typ.Type{typ.Number},
-		},
-		FuncTypes: api.FuncTypes{
-			sym: fn,
-		},
-	}
-
-	NormalizeFunctionFactChannels(facts)
-
-	ff, ok := facts.FunctionFacts[sym]
-	if !ok {
-		t.Fatal("expected canonical FunctionFacts entry from legacy channels")
-	}
-	if !ReturnTypesEqual(ff.Summary, facts.ReturnSummaries[sym]) {
-		t.Fatalf("summary drift: canonical=%v legacy=%v", ff.Summary, facts.ReturnSummaries[sym])
-	}
-	if !ReturnTypesEqual(ff.Narrow, facts.NarrowReturns[sym]) {
-		t.Fatalf("narrow drift: canonical=%v legacy=%v", ff.Narrow, facts.NarrowReturns[sym])
-	}
-	if !typ.TypeEquals(ff.Func, facts.FuncTypes[sym]) {
-		t.Fatalf("func drift: canonical=%v legacy=%v", ff.Func, facts.FuncTypes[sym])
-	}
-}
-
-func TestFunctionFactViews_UseLegacyChannelsWhenCanonicalMissing(t *testing.T) {
-	sym := cfg.SymbolID(88)
-	fn := typ.Func().Returns(typ.String).Build()
-	facts := api.Facts{
-		ReturnSummaries: api.ReturnSummaries{
-			sym: []typ.Type{typ.String},
-		},
-		NarrowReturns: api.NarrowReturnSummaries{
-			sym: []typ.Type{typ.String},
-		},
-		FuncTypes: api.FuncTypes{
-			sym: fn,
-		},
-	}
-
-	summaries := SummaryViewFromFacts(facts)
-	if got := summaries[sym]; !ReturnTypesEqual(got, []typ.Type{typ.String}) {
-		t.Fatalf("summary view mismatch: got %v", got)
-	}
-
-	narrows := NarrowViewFromFacts(facts)
-	if got := narrows[sym]; !ReturnTypesEqual(got, []typ.Type{typ.String}) {
-		t.Fatalf("narrow view mismatch: got %v", got)
-	}
-
-	funcs := FuncTypeViewFromFacts(facts)
-	if got := funcs[sym]; !typ.TypeEquals(got, fn) {
-		t.Fatalf("func view mismatch: got %v", got)
 	}
 }
