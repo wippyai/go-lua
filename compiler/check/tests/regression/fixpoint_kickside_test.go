@@ -30,7 +30,7 @@ end
 local value = traverse("x", 1, {})
 `
 	result := testutil.Check(source, testutil.WithStdlib())
-	expectFixpointWarning(t, result, "return type fixpoint did not converge")
+	expectNoFixpointWarning(t, result, "return type fixpoint did not converge")
 }
 
 // Reduced from execution_identity_test.lua:24-38 and writer_test.lua:41-61.
@@ -60,15 +60,4 @@ func expectNoFixpointWarning(t *testing.T, result *testutil.Result, message stri
 			t.Fatalf("unexpected non-convergence warning %q: %v", message, result.Diagnostics)
 		}
 	}
-}
-
-// The recursive traversal remains an executable reproduction until its fix lands.
-func expectFixpointWarning(t *testing.T, result *testutil.Result, message string) {
-	t.Helper()
-	for _, d := range result.Diagnostics {
-		if d.Severity == diag.SeverityWarning && strings.Contains(d.Message, message) {
-			return
-		}
-	}
-	t.Fatalf("expected non-convergence warning %q; got %v", message, result.Diagnostics)
 }

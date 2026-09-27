@@ -98,6 +98,8 @@ func TieRecursiveReturns(self, next []typ.Type) []typ.Type {
 		})
 		if rec, ok := folded.(*typ.Recursive); ok && folded != out[i] {
 			out[i] = rec.Body
+		} else {
+			out[i] = foldSelfRecursiveRecords(out[i])
 		}
 	}
 	return out
