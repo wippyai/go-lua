@@ -515,12 +515,6 @@ func (p *Processor) buildSiblingTypesForGroup(
 
 			return chosen
 		},
-		EnrichRecordFn: func(rec *typ.Record, sym cfg.SymbolID) typ.Type {
-			if tbl, _ := nested.FindTableLiteralForSymbol(graph, sym); tbl != nil {
-				return nested.EnrichTableTypeWithFuncTypes(rec, tbl, graph, buildCfg.FuncTypes)
-			}
-			return nil
-		},
 	}
 
 	return siblings.Build(buildCfg)

@@ -26,7 +26,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/phase"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/db"
-	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/io"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/query/core"
@@ -141,46 +140,33 @@ func (r *Runner) Run(ctx *db.QueryContext, key api.FuncKey) *api.FuncResult {
 		FunctionLiteralSignatures: literalSigs,
 		ParamHintSignatures:       paramHintSigs,
 		SiblingTypes:              siblingTypes,
-		Callables:                  callables,
+		Callables:                 callables,
 	})
 	// Declared is the default phase for scope/extract and interproc reads.
 
 	if capturedTypes := store.GetCapturedTypesSnapshot(graph, parent); len(capturedTypes) > 0 {
 		scopeOut.DeclaredTypes = captured.MergeCapturedTypes(scopeOut.DeclaredTypes, capturedTypes)
 	}
-	r.mergeCapturedParentFuncTypes(store, graph, fn, &scopeOut)
+	r.capturedCallablesFromOwner(store, graph, fn, &scopeOut)
 
 	// Populate scopes in env for later phases.
 	env.Scopes = scopeOut.Scopes
 
 	// Phase B (continued): Synthesize function literal types.
 	literalOut := phase.RunLiteral(phase.LiteralInput{
-		PhaseEnv:        env,
-		Scope:           scopeOut,
-		SiblingTypes:    scopeOut.SiblingTypes,
-		Callables:      callables,
+		PhaseEnv:     env,
+		Scope:        scopeOut,
+		SiblingTypes: scopeOut.SiblingTypes,
+		Callables:    callables,
 	})
-	// Ensure literal function types use canonical local function types.
-	if len(siblingTypes) > 0 {
-		if literalOut.LiteralTypes == nil {
-			literalOut.LiteralTypes = make(flow.DeclaredTypes, len(siblingTypes))
-		}
-		for sym, fnType := range siblingTypes {
-			if fnType == nil {
-				continue
-			}
-			literalOut.LiteralTypes[sym] = fnType
-		}
-	}
-
 	// Phase B (continued): Extract flow constraints.
 	extractOut := phase.RunExtract(phase.FlowExtractInput{
-		PhaseEnv:        env,
-		Resolve:         resolveOut,
-		Scope:           scopeOut,
-		SiblingTypes:    scopeOut.SiblingTypes,
-		LiteralTypes:    literalOut.LiteralTypes,
-		Callables:      callables,
+		PhaseEnv:     env,
+		Resolve:      resolveOut,
+		Scope:        scopeOut,
+		SiblingTypes: scopeOut.SiblingTypes,
+		LiteralTypes: literalOut.LiteralTypes,
+		Callables:    callables,
 	})
 	r.appendCapturedMutatorAssignments(store, graph, parent, env, scopeOut, literalOut, callables, &extractOut)
 	r.appendFieldWriteEffects(store, graph, parent, &extractOut)
@@ -195,13 +181,13 @@ func (r *Runner) Run(ctx *db.QueryContext, key api.FuncKey) *api.FuncResult {
 	var narrowOut phase.NarrowOutput
 	withPhase(api.PhaseNarrowing, func() {
 		narrowOut = phase.RunNarrow(phase.NarrowInput{
-			PhaseEnv:              env,
-			Scope:                 scopeOut,
-			Extract:               extractOut,
-			Solve:                 solveOut,
-			SiblingTypes:          scopeOut.SiblingTypes,
-			LiteralTypes:          literalOut.LiteralTypes,
-			Callables: callables,
+			PhaseEnv:     env,
+			Scope:        scopeOut,
+			Extract:      extractOut,
+			Solve:        solveOut,
+			SiblingTypes: scopeOut.SiblingTypes,
+			LiteralTypes: literalOut.LiteralTypes,
+			Callables:    callables,
 		})
 	})
 

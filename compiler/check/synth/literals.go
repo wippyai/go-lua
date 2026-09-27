@@ -20,8 +20,6 @@ import (
 // Processing order (via CFG RPO traversal):
 //  1. Local assignments with function literal RHS: Synthesizes and records function type
 //  2. Local assignments with table literal RHS: Synthesizes and records table/record type
-//  3. Function definitions (function field assignments, method definitions):
-//     Extends receiver types with method fields
 //
 // The resulting map provides declared types that flow analysis uses as the base
 // types before applying any narrowing from control flow.
@@ -64,42 +62,6 @@ func FunctionLiteralTypes(graph *cfg.Graph, synth api.ExprSynth) flow.DeclaredTy
 			}
 		})
 	}
-
-	graph.EachFuncDef(func(p cfg.Point, info *cfg.FuncDefInfo) {
-		if info == nil {
-			return
-		}
-		if info.TargetKind == cfg.FuncDefGlobal {
-			if info.Symbol == 0 || info.FuncExpr == nil || len(info.FuncExpr.ReturnTypes) > 0 {
-				return
-			}
-			if t := synth(info.FuncExpr, p); t != nil {
-				types[info.Symbol] = t
-			}
-			return
-		}
-		if info.TargetKind != cfg.FuncDefField && info.TargetKind != cfg.FuncDefMethod {
-			return
-		}
-		if info.Name == "" {
-			return
-		}
-		receiverSym := info.ReceiverSymbol
-		if receiverSym == 0 {
-			return
-		}
-		fnType := typ.Unknown
-		if info.FuncExpr != nil {
-			if t := synth(info.FuncExpr, p); t != nil {
-				fnType = t
-			}
-		}
-		baseType := types[receiverSym]
-		if baseType == nil && info.Receiver != nil {
-			baseType = synth(info.Receiver, p)
-		}
-		types[receiverSym] = typ.ExtendRecordWithField(baseType, info.Name, fnType)
-	})
 
 	if len(types) == 0 {
 		return nil

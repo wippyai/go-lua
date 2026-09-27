@@ -243,7 +243,7 @@ func (r *Runner) parentScopeForGraph(store api.StoreView, graph *cfg.Graph) *sco
 	return nil
 }
 
-func (r *Runner) mergeCapturedParentFuncTypes(
+func (r *Runner) capturedCallablesFromOwner(
 	store api.StoreView,
 	graph *cfg.Graph,
 	fn *ast.FunctionExpr,
@@ -264,12 +264,9 @@ func (r *Runner) mergeCapturedParentFuncTypes(
 	if parentScope == nil {
 		return
 	}
-	parentFuncTypes := store.GetLocalFuncTypesSnapshot(parentGraph, parentScope)
-	if len(parentFuncTypes) == 0 {
-		return
-	}
+	parentFacts := returns.DefinitionView(parentGraph, store.GetCallablesSnapshot(parentGraph, parentScope))
 	for _, sym := range graph.Bindings().CapturedSymbols(fn) {
-		ft := parentFuncTypes[sym]
+		ft := parentFacts[sym].Func
 		if sym == 0 || ft == nil {
 			continue
 		}
