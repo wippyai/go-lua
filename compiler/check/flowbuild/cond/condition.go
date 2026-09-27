@@ -220,13 +220,13 @@ func (ce *ConditionExtractor) ConstraintsFromConditionExpr(expr ast.Expr) Branch
 		}
 	}
 
-	if isConstTrueExpr(expr) {
+	if constantTruthiness(expr) == 1 {
 		return BranchConditions{
 			OnTrue:  constraint.TrueCondition(),
 			OnFalse: constraint.FalseCondition(),
 		}
 	}
-	if isConstFalseExpr(expr) {
+	if constantTruthiness(expr) == -1 {
 		return BranchConditions{
 			OnTrue:  constraint.FalseCondition(),
 			OnFalse: constraint.TrueCondition(),
@@ -363,10 +363,10 @@ func (ce *ConditionExtractor) ConditionFromExpr(expr ast.Expr) constraint.Condit
 	case *ast.FalseExpr:
 		return constraint.FalseCondition()
 	case *ast.UnaryNotOpExpr:
-		if isConstTrueExpr(e.Expr) {
+		if constantTruthiness(e.Expr) == 1 {
 			return constraint.FalseCondition()
 		}
-		if isConstFalseExpr(e.Expr) {
+		if constantTruthiness(e.Expr) == -1 {
 			return constraint.TrueCondition()
 		}
 		inner := ce.ConditionFromExpr(e.Expr)
@@ -428,32 +428,25 @@ func (ce *ConditionExtractor) ConditionFromExpr(expr ast.Expr) constraint.Condit
 	return constraint.TrueCondition()
 }
 
-// isConstTrueExpr reports whether expr is truthy whenever it evaluates: the
-// literal true and every string, number, table, or function literal.
-func isConstTrueExpr(expr ast.Expr) bool {
+// constantTruthiness returns 1 for always truthy, -1 for always falsy,
+// and 0 when the expression's truthiness is not known from its syntax.
+func constantTruthiness(expr ast.Expr) int {
 	switch e := expr.(type) {
 	case *ast.TrueExpr, *ast.StringExpr, *ast.NumberExpr, *ast.TableExpr, *ast.FunctionExpr:
-		return true
-	case *ast.IdentExpr:
-		return e.Value == "true"
-	case *ast.UnaryNotOpExpr:
-		return isConstFalseExpr(e.Expr)
-	}
-	return false
-}
-
-// isConstFalseExpr reports whether expr is falsy whenever it evaluates: the
-// literals false and nil.
-func isConstFalseExpr(expr ast.Expr) bool {
-	switch e := expr.(type) {
+		return 1
 	case *ast.FalseExpr, *ast.NilExpr:
-		return true
+		return -1
 	case *ast.IdentExpr:
-		return e.Value == "false"
+		switch e.Value {
+		case "true":
+			return 1
+		case "false":
+			return -1
+		}
 	case *ast.UnaryNotOpExpr:
-		return isConstTrueExpr(e.Expr)
+		return -constantTruthiness(e.Expr)
 	}
-	return false
+	return 0
 }
 
 // conditionFromLogicalExpr handles 'and' and 'or' operators.
