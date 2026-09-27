@@ -7,11 +7,11 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-func TestByTypeKey_Builtin(t *testing.T) {
+func TestNarrowByTypeKeyPositive_Builtin(t *testing.T) {
 	base := typ.NewUnion(typ.String, typ.Number, typ.Nil)
 	key := narrow.BuiltinTypeKey("number")
 
-	result := narrow.ByTypeKey(base, key, nil)
+	result := narrow.NarrowByTypeKey(base, key, nil, true)
 	if result == nil {
 		t.Fatal("expected narrowed type")
 	}
@@ -20,21 +20,21 @@ func TestByTypeKey_Builtin(t *testing.T) {
 	}
 }
 
-func TestByTypeKey_ZeroKey(t *testing.T) {
+func TestNarrowByTypeKeyPositive_ZeroKey(t *testing.T) {
 	base := typ.String
 	key := narrow.TypeKey{}
 
-	result := narrow.ByTypeKey(base, key, nil)
+	result := narrow.NarrowByTypeKey(base, key, nil, true)
 	if result != base {
 		t.Fatal("zero key should return original type")
 	}
 }
 
-func TestExcludeByTypeKey_Builtin(t *testing.T) {
+func TestNarrowByTypeKeyNegative_Builtin(t *testing.T) {
 	base := typ.NewUnion(typ.String, typ.Number)
 	key := narrow.BuiltinTypeKey("string")
 
-	result := narrow.ExcludeByTypeKey(base, key, nil)
+	result := narrow.NarrowByTypeKey(base, key, nil, false)
 	if result == nil {
 		t.Fatal("expected narrowed type")
 	}
@@ -43,43 +43,43 @@ func TestExcludeByTypeKey_Builtin(t *testing.T) {
 	}
 }
 
-func TestByTypeKey_Nil(t *testing.T) {
+func TestNarrowByTypeKeyPositive_Nil(t *testing.T) {
 	key := narrow.BuiltinTypeKey("string")
-	result := narrow.ByTypeKey(nil, key, nil)
+	result := narrow.NarrowByTypeKey(nil, key, nil, true)
 	if result != nil {
 		t.Error("nil input should return nil")
 	}
 }
 
-func TestByTypeKey_UnknownBuiltin(t *testing.T) {
+func TestNarrowByTypeKeyPositive_UnknownBuiltin(t *testing.T) {
 	base := typ.String
 	key := narrow.BuiltinTypeKey("nonexistent")
-	result := narrow.ByTypeKey(base, key, nil)
+	result := narrow.NarrowByTypeKey(base, key, nil, true)
 	if result != base {
 		t.Error("unknown builtin kind should return original")
 	}
 }
 
-func TestByTypeKey_HashWithoutResolver(t *testing.T) {
+func TestNarrowByTypeKeyPositive_HashWithoutResolver(t *testing.T) {
 	base := typ.String
 	key := narrow.HashTypeKey(12345)
-	result := narrow.ByTypeKey(base, key, nil)
+	result := narrow.NarrowByTypeKey(base, key, nil, true)
 	if result != base {
 		t.Error("hash key without resolver should return original")
 	}
 }
 
-func TestByTypeKey_HashWithNilResolution(t *testing.T) {
+func TestNarrowByTypeKeyPositive_HashWithNilResolution(t *testing.T) {
 	base := typ.String
 	key := narrow.HashTypeKey(12345)
 	resolver := func(narrow.TypeKey) typ.Type { return nil }
-	result := narrow.ByTypeKey(base, key, resolver)
+	result := narrow.NarrowByTypeKey(base, key, resolver, true)
 	if result != base {
 		t.Error("hash key with nil resolution should return original")
 	}
 }
 
-func TestByTypeKey_HashWithResolver(t *testing.T) {
+func TestNarrowByTypeKeyPositive_HashWithResolver(t *testing.T) {
 	base := typ.NewUnion(typ.String, typ.Number)
 	key := narrow.HashTypeKey(typ.String.Hash())
 	resolver := func(k narrow.TypeKey) typ.Type {
@@ -88,67 +88,67 @@ func TestByTypeKey_HashWithResolver(t *testing.T) {
 		}
 		return nil
 	}
-	result := narrow.ByTypeKey(base, key, resolver)
+	result := narrow.NarrowByTypeKey(base, key, resolver, true)
 	if !typ.TypeEquals(result, typ.String) {
 		t.Errorf("expected string, got %v", result)
 	}
 }
 
-func TestExcludeByTypeKey_Nil(t *testing.T) {
+func TestNarrowByTypeKeyNegative_Nil(t *testing.T) {
 	key := narrow.BuiltinTypeKey("string")
-	result := narrow.ExcludeByTypeKey(nil, key, nil)
+	result := narrow.NarrowByTypeKey(nil, key, nil, false)
 	if result != nil {
 		t.Error("nil input should return nil")
 	}
 }
 
-func TestExcludeByTypeKey_ZeroKey(t *testing.T) {
+func TestNarrowByTypeKeyNegative_ZeroKey(t *testing.T) {
 	base := typ.String
 	key := narrow.TypeKey{}
-	result := narrow.ExcludeByTypeKey(base, key, nil)
+	result := narrow.NarrowByTypeKey(base, key, nil, false)
 	if result != base {
 		t.Error("zero key should return original")
 	}
 }
 
-func TestExcludeByTypeKey_UnknownBuiltin(t *testing.T) {
+func TestNarrowByTypeKeyNegative_UnknownBuiltin(t *testing.T) {
 	base := typ.String
 	key := narrow.BuiltinTypeKey("nonexistent")
-	result := narrow.ExcludeByTypeKey(base, key, nil)
+	result := narrow.NarrowByTypeKey(base, key, nil, false)
 	if result != base {
 		t.Error("unknown builtin kind should return original")
 	}
 }
 
-func TestExcludeByTypeKey_BuiltinResultsNever(t *testing.T) {
+func TestNarrowByTypeKeyNegative_BuiltinResultsNever(t *testing.T) {
 	base := typ.String
 	key := narrow.BuiltinTypeKey("string")
-	result := narrow.ExcludeByTypeKey(base, key, nil)
+	result := narrow.NarrowByTypeKey(base, key, nil, false)
 	if result != base {
 		t.Error("exclusion resulting in never should return original")
 	}
 }
 
-func TestExcludeByTypeKey_HashWithoutResolver(t *testing.T) {
+func TestNarrowByTypeKeyNegative_HashWithoutResolver(t *testing.T) {
 	base := typ.String
 	key := narrow.HashTypeKey(12345)
-	result := narrow.ExcludeByTypeKey(base, key, nil)
+	result := narrow.NarrowByTypeKey(base, key, nil, false)
 	if result != base {
 		t.Error("hash key without resolver should return original")
 	}
 }
 
-func TestExcludeByTypeKey_HashWithNilResolution(t *testing.T) {
+func TestNarrowByTypeKeyNegative_HashWithNilResolution(t *testing.T) {
 	base := typ.String
 	key := narrow.HashTypeKey(12345)
 	resolver := func(narrow.TypeKey) typ.Type { return nil }
-	result := narrow.ExcludeByTypeKey(base, key, resolver)
+	result := narrow.NarrowByTypeKey(base, key, resolver, false)
 	if result != base {
 		t.Error("hash key with nil resolution should return original")
 	}
 }
 
-func TestExcludeByTypeKey_HashWithResolver(t *testing.T) {
+func TestNarrowByTypeKeyNegative_HashWithResolver(t *testing.T) {
 	base := typ.NewUnion(typ.String, typ.Number)
 	key := narrow.HashTypeKey(typ.String.Hash())
 	resolver := func(k narrow.TypeKey) typ.Type {
@@ -157,13 +157,13 @@ func TestExcludeByTypeKey_HashWithResolver(t *testing.T) {
 		}
 		return nil
 	}
-	result := narrow.ExcludeByTypeKey(base, key, resolver)
+	result := narrow.NarrowByTypeKey(base, key, resolver, false)
 	if !typ.TypeEquals(result, typ.Number) {
 		t.Errorf("expected number, got %v", result)
 	}
 }
 
-func TestExcludeByTypeKey_HashResultsNever(t *testing.T) {
+func TestNarrowByTypeKeyNegative_HashResultsNever(t *testing.T) {
 	base := typ.String
 	key := narrow.HashTypeKey(typ.String.Hash())
 	resolver := func(k narrow.TypeKey) typ.Type {
@@ -172,7 +172,7 @@ func TestExcludeByTypeKey_HashResultsNever(t *testing.T) {
 		}
 		return nil
 	}
-	result := narrow.ExcludeByTypeKey(base, key, resolver)
+	result := narrow.NarrowByTypeKey(base, key, resolver, false)
 	if result != base {
 		t.Error("exclusion resulting in never should return original")
 	}

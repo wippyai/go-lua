@@ -330,7 +330,7 @@ func (c Condition) Equals(other Condition) bool {
 		return false
 	}
 	for i := range c.Disjuncts {
-		if !conjunctionEquals(c.Disjuncts[i], other.Disjuncts[i]) {
+		if !conjunctionEquals(c.Disjuncts[i], nil, other.Disjuncts[i], nil) {
 			return false
 		}
 	}
@@ -563,18 +563,6 @@ func ConjunctionContains(conj []Constraint, c Constraint) bool {
 	return false
 }
 
-func conjunctionEquals(a, b []Constraint) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if !a[i].Equals(b[i]) {
-			return false
-		}
-	}
-	return true
-}
-
 func conjunctionHash(conj []Constraint) uint64 {
 	if len(conj) == 0 {
 		return 0
@@ -778,12 +766,12 @@ func constraintHashesAndConjunctionHash(conj []Constraint) ([]uint64, uint64) {
 	return hashes, h
 }
 
-func conjunctionEqualsWithHashes(a []Constraint, aHashes []uint64, b []Constraint, bHashes []uint64) bool {
+func conjunctionEquals(a []Constraint, aHashes []uint64, b []Constraint, bHashes []uint64) bool {
 	if len(a) != len(b) {
 		return false
 	}
 	for i := range a {
-		if aHashes[i] != bHashes[i] {
+		if aHashes != nil && bHashes != nil && aHashes[i] != bHashes[i] {
 			return false
 		}
 		if !a[i].Equals(b[i]) {
@@ -929,7 +917,7 @@ func normalizeCondition(c Condition) Condition {
 	for _, dh := range withHash {
 		duplicate := false
 		for _, kh := range kept {
-			if dh.hash == kh.hash && conjunctionEqualsWithHashes(dh.conj, dh.hashes, kh.conj, kh.hashes) {
+			if dh.hash == kh.hash && conjunctionEquals(dh.conj, dh.hashes, kh.conj, kh.hashes) {
 				duplicate = true
 				break
 			}

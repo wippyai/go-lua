@@ -333,7 +333,7 @@ func (s Solver) applySingleConstraint(c Constraint, target PathKey, t typ.Type, 
 		},
 		HasType: func(v HasType) typ.Type {
 			if resolve(v.Path) == target {
-				return narrow.ByTypeKey(t, v.Type, s.Env.ResolveType)
+				return narrow.NarrowByTypeKey(t, v.Type, s.Env.ResolveType, true)
 			}
 			if lit, ok := literalFromTypeKey(v.Type, s.Env.ResolveType); ok {
 				if parent, field, hasField := SplitFieldPath(v.Path); hasField && resolve(parent) == target {
@@ -344,7 +344,7 @@ func (s Solver) applySingleConstraint(c Constraint, target PathKey, t typ.Type, 
 		},
 		NotHasType: func(v NotHasType) typ.Type {
 			if resolve(v.Path) == target {
-				return narrow.ExcludeByTypeKey(t, v.Type, s.Env.ResolveType)
+				return narrow.NarrowByTypeKey(t, v.Type, s.Env.ResolveType, false)
 			}
 			if lit, ok := literalFromTypeKey(v.Type, s.Env.ResolveType); ok {
 				if parent, field, hasField := SplitFieldPath(v.Path); hasField && resolve(parent) == target {
@@ -534,7 +534,7 @@ func applyConstraint(out *map[PathKey]typ.Type, env Env, c Constraint) bool {
 		},
 		HasType: func(v HasType) bool {
 			changed := applySinglePath(out, v.Path, func(t typ.Type) typ.Type {
-				return narrow.ByTypeKey(t, v.Type, env.ResolveType)
+				return narrow.NarrowByTypeKey(t, v.Type, env.ResolveType, true)
 			})
 			if lit, ok := literalFromTypeKey(v.Type, env.ResolveType); ok {
 				if parent, field, hasField := SplitFieldPath(v.Path); hasField {
@@ -547,7 +547,7 @@ func applyConstraint(out *map[PathKey]typ.Type, env Env, c Constraint) bool {
 		},
 		NotHasType: func(v NotHasType) bool {
 			changed := applySinglePath(out, v.Path, func(t typ.Type) typ.Type {
-				return narrow.ExcludeByTypeKey(t, v.Type, env.ResolveType)
+				return narrow.NarrowByTypeKey(t, v.Type, env.ResolveType, false)
 			})
 			if lit, ok := literalFromTypeKey(v.Type, env.ResolveType); ok {
 				if parent, field, hasField := SplitFieldPath(v.Path); hasField {

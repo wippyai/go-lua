@@ -136,7 +136,7 @@ func (d *TypeDomain) applyHasType(atom constraint.Atom) bool {
 	if base == nil {
 		return true
 	}
-	narrowed := narrow.ByTypeKey(base, atom.TypeKey, d.Env.ResolveType)
+	narrowed := narrow.NarrowByTypeKey(base, atom.TypeKey, d.Env.ResolveType, true)
 	if narrowed == nil || narrowed.Kind().IsNever() {
 		d.Unsat = true
 		return false
@@ -151,7 +151,7 @@ func (d *TypeDomain) applyNotHasType(atom constraint.Atom) bool {
 	if base == nil {
 		return true
 	}
-	narrowed := narrow.ExcludeByTypeKey(base, atom.TypeKey, d.Env.ResolveType)
+	narrowed := narrow.NarrowByTypeKey(base, atom.TypeKey, d.Env.ResolveType, false)
 	if narrowed == nil || narrowed.Kind().IsNever() {
 		d.Unsat = true
 		return false
