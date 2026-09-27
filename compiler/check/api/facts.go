@@ -33,16 +33,13 @@ type ParamHints = map[cfg.SymbolID][]typ.Type
 // same scope as the call site.
 type FuncTypes = map[cfg.SymbolID]typ.Type
 
-// FunctionFact is the canonical function-related interproc fact for one symbol.
+// FunctionFact is the canonical fact for one function literal.
 type FunctionFact struct {
 	Summary []typ.Type
 	Narrow  []typ.Type
 	Func    typ.Type
 	Sig     *typ.Function
 }
-
-// FunctionFacts maps function symbols to their canonical function facts.
-type FunctionFacts = map[cfg.SymbolID]FunctionFact
 
 // Callables owns facts keyed by the function literal being analyzed.
 type Callables = map[*ast.FunctionExpr]FunctionFact
@@ -87,7 +84,6 @@ type ConstructorFields = map[cfg.SymbolID]map[string]typ.Type
 // Facts bundles all interprocedural analysis results for a single function graph.
 // These facts are computed during analysis and stored per (graph, parent) pair.
 type Facts struct {
-	FunctionFacts      FunctionFacts
 	Callables          Callables
 	ParamHints         ParamHints
 	CapturedTypes      CapturedTypes

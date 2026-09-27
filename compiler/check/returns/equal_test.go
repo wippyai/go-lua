@@ -3,6 +3,7 @@ package returns
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/types/typ"
@@ -17,14 +18,15 @@ func TestFactsEqual_Empty(t *testing.T) {
 }
 
 func TestFactsEqual_ReturnSummaries(t *testing.T) {
+	fn := &ast.FunctionExpr{}
 	a := api.Facts{
-		FunctionFacts: api.FunctionFacts{
-			1: {Summary: []typ.Type{typ.String}},
+		Callables: api.Callables{
+			fn: {Summary: []typ.Type{typ.String}},
 		},
 	}
 	b := api.Facts{
-		FunctionFacts: api.FunctionFacts{
-			1: {Summary: []typ.Type{typ.String}},
+		Callables: api.Callables{
+			fn: {Summary: []typ.Type{typ.String}},
 		},
 	}
 	if !FactsEqual(a, b) {
@@ -33,14 +35,15 @@ func TestFactsEqual_ReturnSummaries(t *testing.T) {
 }
 
 func TestFactsEqual_DifferentReturnSummaries(t *testing.T) {
+	fn := &ast.FunctionExpr{}
 	a := api.Facts{
-		FunctionFacts: api.FunctionFacts{
-			1: {Summary: []typ.Type{typ.String}},
+		Callables: api.Callables{
+			fn: {Summary: []typ.Type{typ.String}},
 		},
 	}
 	b := api.Facts{
-		FunctionFacts: api.FunctionFacts{
-			1: {Summary: []typ.Type{typ.Number}},
+		Callables: api.Callables{
+			fn: {Summary: []typ.Type{typ.Number}},
 		},
 	}
 	if FactsEqual(a, b) {

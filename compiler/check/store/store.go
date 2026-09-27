@@ -673,9 +673,6 @@ func (s *SessionStore) ParentGraphKeyForSymbol(sym cfg.SymbolID) (api.GraphKey, 
 }
 
 func initInterprocFacts(f *api.Facts) {
-	if f.FunctionFacts == nil {
-		f.FunctionFacts = make(api.FunctionFacts)
-	}
 	if f.ParamHints == nil {
 		f.ParamHints = make(map[cfg.SymbolID][]typ.Type)
 	}
@@ -954,7 +951,7 @@ func (s *SessionStore) GetReturnSummariesSnapshot(
 	parent *scope.State,
 ) map[cfg.SymbolID][]typ.Type {
 	s.requirePhase(api.PhaseScopeCompute)
-	return returns.SummaryViewFromFacts(s.GetInterprocFactsSnapshot(graph, parent))
+	return returns.SummaryViewFromFacts(graph, s.GetInterprocFactsSnapshot(graph, parent))
 }
 
 // GetNarrowReturnSummariesSnapshot returns post-flow return summaries from the stable snapshot.
@@ -963,7 +960,7 @@ func (s *SessionStore) GetNarrowReturnSummariesSnapshot(
 	parent *scope.State,
 ) map[cfg.SymbolID][]typ.Type {
 	s.requirePhase(api.PhaseNarrowing)
-	return returns.NarrowViewFromFacts(s.GetInterprocFactsSnapshot(graph, parent))
+	return returns.NarrowViewFromFacts(graph, s.GetInterprocFactsSnapshot(graph, parent))
 }
 
 // GetLocalFuncTypesSnapshot returns canonical local function types from the stable interproc snapshot.
@@ -972,7 +969,7 @@ func (s *SessionStore) GetLocalFuncTypesSnapshot(
 	parent *scope.State,
 ) map[cfg.SymbolID]typ.Type {
 	s.requirePhase(api.PhaseScopeCompute)
-	return returns.FuncTypeViewFromFacts(s.GetInterprocFactsSnapshot(graph, parent))
+	return returns.FuncTypeViewFromFacts(graph, s.GetInterprocFactsSnapshot(graph, parent))
 }
 
 // GetCallablesSnapshot returns callables from the stable interproc snapshot.

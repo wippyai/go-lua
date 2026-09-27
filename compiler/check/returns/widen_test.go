@@ -10,38 +10,40 @@ import (
 )
 
 func TestWidenFacts_DoesNotOverrideReturnSummariesWithNarrowReturns(t *testing.T) {
+	fn := &ast.FunctionExpr{}
 	prev := api.Facts{
-		FunctionFacts: api.FunctionFacts{
-			1: {Summary: []typ.Type{typ.Integer}},
+		Callables: api.Callables{
+			fn: {Summary: []typ.Type{typ.Integer}},
 		},
 	}
 	next := api.Facts{
-		FunctionFacts: api.FunctionFacts{
-			1: {Narrow: []typ.Type{typ.Nil}},
+		Callables: api.Callables{
+			fn: {Narrow: []typ.Type{typ.Nil}},
 		},
 	}
 
 	merged := WidenFacts(prev, next)
-	got := merged.FunctionFacts[1].Summary
+	got := merged.Callables[fn].Summary
 	if len(got) != 1 || !typ.TypeEquals(got[0], typ.Integer) {
 		t.Fatalf("expected ReturnSummaries[1]=integer, got %v", got)
 	}
 }
 
 func TestWidenFacts_ElidesOptionalFromNarrowReturns(t *testing.T) {
+	fn := &ast.FunctionExpr{}
 	prev := api.Facts{
-		FunctionFacts: api.FunctionFacts{
-			1: {Summary: []typ.Type{typ.NewOptional(typ.Integer)}},
+		Callables: api.Callables{
+			fn: {Summary: []typ.Type{typ.NewOptional(typ.Integer)}},
 		},
 	}
 	next := api.Facts{
-		FunctionFacts: api.FunctionFacts{
-			1: {Narrow: []typ.Type{typ.Integer}},
+		Callables: api.Callables{
+			fn: {Narrow: []typ.Type{typ.Integer}},
 		},
 	}
 
 	merged := WidenFacts(prev, next)
-	got := merged.FunctionFacts[1].Summary
+	got := merged.Callables[fn].Summary
 	if len(got) != 1 || !typ.TypeEquals(got[0], typ.Integer) {
 		t.Fatalf("expected ReturnSummaries[1]=integer, got %v", got)
 	}

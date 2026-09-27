@@ -167,7 +167,7 @@ func (i *Inferencer) ComputeForGraph(
 	run RunContext,
 	graph *cfg.Graph,
 	parent *scope.State,
-) (api.ReturnSummaries, api.FuncTypes, []diag.Diagnostic) {
+) (api.ReturnSummaries, api.Callables, []diag.Diagnostic) {
 	if i == nil || i.store == nil || graph == nil || parent == nil {
 		return nil, nil, nil
 	}
@@ -228,11 +228,11 @@ func (i *Inferencer) buildLocalFuncTypes(
 	specs map[cfg.SymbolID]*contract.Spec,
 	engine *synth.Engine,
 	parentScope *scope.State,
-) api.FuncTypes {
+) api.Callables {
 	if len(localFuncs) == 0 {
 		return nil
 	}
-	out := make(api.FuncTypes, len(localFuncs))
+	out := make(api.Callables, len(localFuncs))
 	for _, sym := range cfg.SortedSymbolIDs(localFuncs) {
 		info := localFuncs[sym]
 		if info == nil || info.Fn == nil {
@@ -265,7 +265,7 @@ func (i *Inferencer) buildLocalFuncTypes(
 		if spec := specs[sym]; spec != nil {
 			attachBodyReturnSpec(fnType, spec)
 		}
-		out[sym] = fnType
+		out[info.Fn] = api.FunctionFact{Summary: summaries[sym], Func: fnType}
 	}
 	if len(out) == 0 {
 		return nil

@@ -1,6 +1,7 @@
 package returns
 
 import (
+	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/internal"
@@ -22,41 +23,21 @@ func WidenFacts(prev, next api.Facts) api.Facts {
 		CapturedContainers: WidenCapturedContainerMutations(prev.CapturedContainers, next.CapturedContainers),
 		ConstructorFields:  WidenConstructorFields(prev.ConstructorFields, next.ConstructorFields),
 	}
-	if len(prev.Callables)+len(next.Callables) > 0 {
-		out.Callables = make(api.Callables, len(prev.Callables)+len(next.Callables))
-		for fn, fact := range prev.Callables {
-			if next.Callables != nil {
-				fact.Sig = maybeWidenFunctionForConvergence(fact.Sig)
-			}
-			out.Callables[fn] = fact
-		}
-		for fn, fact := range next.Callables {
-			existing, ok := out.Callables[fn]
-			if prev.Callables != nil {
-				if ok && existing.Sig != nil {
-					fact.Sig = mergeLiteralSig(prev.Callables[fn].Sig, fact.Sig)
-				}
-				fact.Sig = maybeWidenFunctionForConvergence(fact.Sig)
-			}
-			out.Callables[fn] = fact
-		}
+	literals := make(map[*ast.FunctionExpr]bool, len(prev.Callables)+len(next.Callables))
+	for fn := range prev.Callables {
+		literals[fn] = true
 	}
-
-	symbols := make(map[cfg.SymbolID]bool, len(prev.FunctionFacts)+len(next.FunctionFacts))
-	for sym := range prev.FunctionFacts {
-		symbols[sym] = true
+	for fn := range next.Callables {
+		literals[fn] = true
 	}
-	for sym := range next.FunctionFacts {
-		symbols[sym] = true
-	}
-	if len(symbols) == 0 {
+	if len(literals) == 0 {
 		return out
 	}
 
-	out.FunctionFacts = make(api.FunctionFacts, len(symbols))
-	for _, sym := range cfg.SortedSymbolIDs(symbols) {
-		prevFact := prev.FunctionFacts[sym]
-		nextFact := next.FunctionFacts[sym]
+	out.Callables = make(api.Callables, len(literals))
+	for fn := range literals {
+		prevFact := prev.Callables[fn]
+		nextFact := next.Callables[fn]
 		reconciled := ReconcileFunctionFact(ReconcileFunctionFactInput{
 			ExistingSummary:  prevFact.Summary,
 			ExistingNarrow:   prevFact.Narrow,
@@ -65,14 +46,18 @@ func WidenFacts(prev, next api.Facts) api.Facts {
 			CandidateNarrow:  nextFact.Narrow,
 			CandidateFunc:    nextFact.Func,
 		})
-		out.FunctionFacts[sym] = api.FunctionFact{
+		sig := nextFact.Sig
+		if next.Callables == nil {
+			sig = prevFact.Sig
+		} else if prev.Callables != nil {
+			sig = maybeWidenFunctionForConvergence(mergeLiteralSig(prevFact.Sig, sig))
+		}
+		out.Callables[fn] = api.FunctionFact{
 			Summary: widenReturnVectorForConvergence(reconciled.Summary),
 			Narrow:  widenReturnVectorForConvergence(reconciled.Narrow),
 			Func:    maybeWidenTypeForConvergence(reconciled.Func),
+			Sig:     sig,
 		}
-	}
-	if len(out.FunctionFacts) == 0 {
-		out.FunctionFacts = nil
 	}
 	return out
 }
