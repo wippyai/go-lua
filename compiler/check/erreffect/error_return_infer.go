@@ -219,22 +219,6 @@ func HasErrorReturnLabel(fn *typ.Function) bool {
 	return false
 }
 
-// HasReturnRelationLabel reports whether the function carries a proved
-// relation between its return slots.
-func HasReturnRelationLabel(fn *typ.Function) bool {
-	spec := contract.ExtractSpec(fn)
-	if spec == nil {
-		return false
-	}
-	for _, label := range spec.Effects.Labels {
-		switch label.(type) {
-		case effect.ErrorReturn, effect.CorrelatedReturn, effect.GuardedReturnType:
-			return true
-		}
-	}
-	return false
-}
-
 func HasStrictInverseReturnPattern(
 	graph *cfg.Graph,
 	solution *flow.Solution,

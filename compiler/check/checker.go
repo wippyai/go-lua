@@ -398,8 +398,3 @@ func (c *Checker) ClearCache() {
 	// Function-result memoization is session-local and discarded at the end of Check.
 	// Kept for API compatibility.
 }
-
-// Database returns the checker's type database for connecting external manifests.
-func (c *Checker) Database() *db.DB {
-	return c.db
-}
