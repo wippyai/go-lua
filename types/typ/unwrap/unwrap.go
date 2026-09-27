@@ -36,10 +36,21 @@ func underlyingDepth(t typ.Type, guard internal.RecursionGuard) typ.Type {
 
 // Alias unwraps only Alias wrappers, preserving Optional.
 func Alias(t typ.Type) typ.Type {
+	plain := typ.UnwrapAnnotated(t)
+	if _, ok := plain.(*typ.Alias); !ok {
+		return plain
+	}
 	return unwrapAliasDepth(t, typ.NewGuard())
 }
 
 func unwrapAliasDepth(t typ.Type, guard internal.RecursionGuard) typ.Type {
+	plain := typ.UnwrapAnnotated(t)
+	if _, ok := plain.(*typ.Alias); !ok {
+		if guard.Depth() > typ.DefaultRecursionDepth {
+			return nil
+		}
+		return plain
+	}
 	return typ.VisitWithGuard(t, guard, nil, func(next internal.RecursionGuard) typ.Visitor[typ.Type] {
 		return typ.Visitor[typ.Type]{
 			Alias: func(a *typ.Alias) typ.Type {

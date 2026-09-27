@@ -36,6 +36,13 @@ type narrowConfig struct {
 // This is the main entry point for the narrowing machinery. It sets up the
 // recursive traversal and delegates to [narrowTypeImpl] for the actual work.
 func narrowType(t typ.Type, cfg narrowConfig) typ.Type {
+	if t == nil {
+		return typ.Never
+	}
+	if narrowed, ok := narrowTypeLeaf(t, cfg); ok {
+		return narrowed
+	}
+
 	var recurse func(typ.Type) typ.Type
 	recurse = func(inner typ.Type) typ.Type {
 		return narrowTypeImpl(inner, cfg, recurse)
@@ -102,6 +109,16 @@ func narrowTypeImpl(t typ.Type, cfg narrowConfig, recurse func(typ.Type) typ.Typ
 			return cfg.handleLeaf(t)
 		},
 	})
+}
+
+func narrowTypeLeaf(t typ.Type, cfg narrowConfig) (typ.Type, bool) {
+	t = typ.UnwrapAnnotated(t)
+	switch t.(type) {
+	case *typ.Alias, *typ.Instantiated, *typ.Intersection, *typ.Optional, *typ.Union, *typ.Annotated:
+		return nil, false
+	default:
+		return cfg.handleLeaf(t), true
+	}
 }
 
 // RemoveNil removes nil from a type, producing the non-nullable subset.
