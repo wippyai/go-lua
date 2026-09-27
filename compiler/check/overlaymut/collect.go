@@ -45,44 +45,28 @@ func CollectFieldAssignments(
 		}
 	}
 
-	graph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
-		if info == nil {
+	eachMutationWrite(graph, nil, func(write mutationWrite) {
+		if write.target.BaseSymbol == 0 || write.field == "" {
 			return
 		}
-		sources := info.Sources
-		for i, target := range info.Targets {
-			var source ast.Expr
-			if i < len(sources) {
-				source = sources[i]
+		switch write.target.Kind {
+		case cfg.TargetField:
+			if len(write.path) != 0 {
+				return
 			}
-			var sym cfg.SymbolID
-			var fieldName string
-
-			switch target.Kind {
-			case cfg.TargetField:
-				if target.BaseSymbol != 0 && len(target.FieldPath) == 1 {
-					sym = target.BaseSymbol
-					fieldName = target.FieldPath[0]
-				}
-			case cfg.TargetIndex:
-				if target.BaseSymbol != 0 && target.Key != nil {
-					if strKey, ok := target.Key.(*ast.StringExpr); ok && strKey.Value != "" {
-						sym = target.BaseSymbol
-						fieldName = strKey.Value
-					}
-				}
+		case cfg.TargetIndex:
+			if _, ok := write.target.Key.(*ast.StringExpr); !ok {
+				return
 			}
-
-			if sym == 0 || fieldName == "" || filterSyms != nil && !filterSyms[sym] {
-				continue
-			}
-
-			var fieldType typ.Type
-			if source != nil && synth != nil {
-				fieldType = synth(source, p)
-			}
-			record(sym, fieldName, fieldType)
+		default:
+			return
 		}
+
+		var fieldType typ.Type
+		if write.source != nil && synth != nil {
+			fieldType = synth(write.source, write.point)
+		}
+		record(write.target.BaseSymbol, write.field, fieldType)
 	})
 	graph.EachFuncDef(func(p cfg.Point, info *cfg.FuncDefInfo) {
 		if info == nil || info.FuncExpr == nil || len(info.TargetPath.Segments) != 1 || info.TargetPath.Segments[0].Kind != constraint.SegmentField {
@@ -116,41 +100,27 @@ func CollectIndexerAssignments(
 		return result
 	}
 
-	graph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
-		if info == nil {
+	eachMutationWrite(graph, bindings, func(write mutationWrite) {
+		if write.target.Kind != cfg.TargetIndex || write.target.BaseSymbol == 0 {
 			return
 		}
-		sources := info.Sources
-		for i, target := range info.Targets {
-			var source ast.Expr
-			if i < len(sources) {
-				source = sources[i]
-			}
-			if target.Kind != cfg.TargetIndex {
-				continue
-			}
-			sym := target.BaseSymbol
-			if sym == 0 {
-				continue
-			}
-			if filterSyms != nil && !filterSyms[sym] {
-				continue
-			}
-
-			// Skip string literal keys (handled by field assignments)
-			if _, ok := target.Key.(*ast.StringExpr); ok {
-				continue
-			}
-
-			valType := assignedValueType(source, p, synth)
-			if evolved := evolvingIndexedAliasValue(graph, bindings, sym, p, source, synth); evolved != nil {
-				valType = evolved
-			}
-			result[sym] = append(result[sym], mutator.IndexerInfo{
-				KeyType: dynamicKeyType(target.Key, p, synth),
-				ValType: valType,
-			})
+		if filterSyms != nil && !filterSyms[write.target.BaseSymbol] {
+			return
 		}
+
+		// Skip string literal keys (handled by field assignments)
+		if _, ok := write.target.Key.(*ast.StringExpr); ok {
+			return
+		}
+
+		valType := assignedValueType(write.source, write.point, synth)
+		if evolved := evolvingIndexedAliasValue(graph, bindings, write.target.BaseSymbol, write.point, write.source, synth); evolved != nil {
+			valType = evolved
+		}
+		result[write.target.BaseSymbol] = append(result[write.target.BaseSymbol], mutator.IndexerInfo{
+			KeyType: dynamicKeyType(write.target.Key, write.point, synth),
+			ValType: valType,
+		})
 	})
 
 	return result
@@ -350,48 +320,78 @@ func CollectNestedFieldWrites(
 		set[key] = api.JoinFieldWrite(key, set[key], t)
 	}
 
-	graph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
-		if info == nil {
-			return
-		}
-		for i, target := range info.Targets {
-			var source ast.Expr
-			if i < len(info.Sources) {
-				source = info.Sources[i]
+	eachMutationWrite(graph, bindings, func(write mutationWrite) {
+		switch write.target.Kind {
+		case cfg.TargetField:
+			if len(write.path) == 0 || !targets[write.target.BaseSymbol] {
+				return
 			}
-			switch target.Kind {
-			case cfg.TargetField:
-				n := len(target.FieldPath)
-				if n < 2 || !targets[target.BaseSymbol] {
-					continue
+			add(write.target.BaseSymbol, api.NewFieldWriteKey(write.path, write.field), assignedValueType(write.source, write.point, synth))
+		case cfg.TargetIndex:
+			if write.pathSymbol == 0 || len(write.path) == 0 || !targets[write.pathSymbol] || write.target.Key == nil {
+				return
+			}
+			if key, ok := write.target.Key.(*ast.StringExpr); ok {
+				if key.Value != "" {
+					add(write.pathSymbol, api.NewFieldWriteKey(write.path, key.Value), assignedValueType(write.source, write.point, synth))
 				}
-				segments := make([]constraint.Segment, n-1)
-				for j, name := range target.FieldPath[:n-1] {
-					segments[j] = constraint.Segment{Kind: constraint.SegmentField, Name: name}
-				}
-				add(target.BaseSymbol, api.NewFieldWriteKey(segments, target.FieldPath[n-1]), assignedValueType(source, p, synth))
-			case cfg.TargetIndex:
-				if target.Base == nil || target.Key == nil {
-					continue
-				}
-				base := flowpath.FromExprWithBindings(target.Base, nil, bindings)
-				if len(base.Segments) == 0 || !targets[base.Symbol] {
-					continue
-				}
-				if strKey, ok := target.Key.(*ast.StringExpr); ok {
-					if strKey.Value != "" {
-						add(base.Symbol, api.NewFieldWriteKey(base.Segments, strKey.Value), assignedValueType(source, p, synth))
-					}
-					continue
-				}
-				if written := api.NewIndexerWrite(dynamicKeyType(target.Key, p, synth), assignedValueType(source, p, synth)); written != nil {
-					add(base.Symbol, api.NewFieldWriteKey(base.Segments, flow.IndexerWriteField), written)
-				}
+				return
+			}
+			if written := api.NewIndexerWrite(dynamicKeyType(write.target.Key, write.point, synth), assignedValueType(write.source, write.point, synth)); written != nil {
+				add(write.pathSymbol, api.NewFieldWriteKey(write.path, flow.IndexerWriteField), written)
 			}
 		}
 	})
 
 	return result
+}
+
+type mutationWrite struct {
+	point      cfg.Point
+	source     ast.Expr
+	target     cfg.AssignTarget
+	pathSymbol cfg.SymbolID
+	path       []constraint.Segment
+	field      string
+}
+
+// eachMutationWrite owns assignment target decoding and pairs each target with
+// the source expression in its assignment slot. Collectors project this fact
+// into their own result policies.
+func eachMutationWrite(graph *cfg.Graph, bindings *bind.BindingTable, visit func(mutationWrite)) {
+	if graph == nil || visit == nil {
+		return
+	}
+	graph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
+		if info == nil {
+			return
+		}
+		for i, assignmentTarget := range info.Targets {
+			write := mutationWrite{point: p, source: info.SourceAt(i), target: assignmentTarget}
+			switch assignmentTarget.Kind {
+			case cfg.TargetField:
+				if len(assignmentTarget.FieldPath) == 0 {
+					continue
+				}
+				write.field = assignmentTarget.FieldPath[len(assignmentTarget.FieldPath)-1]
+				write.path = make([]constraint.Segment, len(assignmentTarget.FieldPath)-1)
+				for i, field := range assignmentTarget.FieldPath[:len(assignmentTarget.FieldPath)-1] {
+					write.path[i] = constraint.Segment{Kind: constraint.SegmentField, Name: field}
+				}
+			case cfg.TargetIndex:
+				if assignmentTarget.Base != nil {
+					base := flowpath.FromExprWithBindings(assignmentTarget.Base, nil, bindings)
+					write.pathSymbol, write.path = base.Symbol, base.Segments
+				}
+				if key, ok := assignmentTarget.Key.(*ast.StringExpr); ok {
+					write.field = key.Value
+				}
+			default:
+				continue
+			}
+			visit(write)
+		}
+	})
 }
 
 // dynamicKeyType returns the type of the dynamic key of an index write at p.
