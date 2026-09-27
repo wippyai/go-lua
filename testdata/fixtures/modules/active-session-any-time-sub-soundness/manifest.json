@@ -1,12 +1,12 @@
 {
-  "description": "any-typed session timestamps are consistent with time.Time:sub under gradual any and rejected under strict any",
+  "description": "any-typed session timestamps are consistent with time.Time:sub under gradual any and rejected under strict mode",
   "packages": [
     "time"
   ],
   "check": {
     "modes": [
       "gradual",
-      "strict-any"
+      "strict"
     ]
   },
   "files": [

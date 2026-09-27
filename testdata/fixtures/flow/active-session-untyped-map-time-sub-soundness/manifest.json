@@ -1,12 +1,12 @@
 {
-  "description": "Iterating an untyped active_sessions map yields any-typed values: gradual any passes them to time.Time:sub, strict any rejects them",
+  "description": "Iterating an untyped active_sessions map yields any-typed values: gradual any passes them to time.Time:sub, strict mode rejects them",
   "packages": [
     "time"
   ],
   "check": {
     "modes": [
       "gradual",
-      "strict-any"
+      "strict"
     ]
   }
 }

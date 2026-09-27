@@ -18,7 +18,7 @@ func TestUnknownIsConsistentLikeAny(t *testing.T) {
 		if IsSubtype(typ.Unknown, super) {
 			t.Fatalf("unknown became a plain subtype of %v", super)
 		}
-		if StrictAny.Assignable(typ.Unknown, super) {
+		if Strict.Assignable(typ.Unknown, super) {
 			t.Fatalf("strict assignability accepted unknown for %v", super)
 		}
 		if !ImplicitUnknownFlow(typ.Unknown, super) {

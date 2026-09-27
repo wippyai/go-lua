@@ -48,11 +48,11 @@ func TestIsConsistentSubtype_KeepsStructureOutsideAny(t *testing.T) {
 	}
 }
 
-func TestAssignability_StrictAnyTreatsAnyAsUnknown(t *testing.T) {
-	if StrictAny.Assignable(typ.Any, typ.String) {
-		t.Error("strict any must not be assignable to string")
+func TestAssignability_StrictTreatsAnyAsUnknown(t *testing.T) {
+	if Strict.Assignable(typ.Any, typ.String) {
+		t.Error("strict mode must reject any as a string")
 	}
-	if StrictAny.Assignable(typ.Unknown, typ.String) {
+	if Strict.Assignable(typ.Unknown, typ.String) {
 		t.Error("strict unknown must not be assignable to string")
 	}
 	if !Gradual.Assignable(typ.Unknown, typ.String) {
@@ -61,7 +61,7 @@ func TestAssignability_StrictAnyTreatsAnyAsUnknown(t *testing.T) {
 	if !Gradual.Assignable(typ.Any, typ.String) {
 		t.Error("gradual any must be assignable to string")
 	}
-	if !StrictAny.Assignable(typ.String, typ.Any) {
+	if !Strict.Assignable(typ.String, typ.Any) {
 		t.Error("every type is assignable to any")
 	}
 }

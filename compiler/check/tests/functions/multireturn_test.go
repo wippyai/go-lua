@@ -98,7 +98,7 @@ func TestDeclaredVsInferredTypes(t *testing.T) {
 			`,
 			WantError: true,
 			Stdlib:    true,
-			Options:   check.Options{StrictAny: true},
+			Options:   check.Options{Strict: true},
 		},
 		{
 			Name: "function return type prevents narrow assignment of a union field",

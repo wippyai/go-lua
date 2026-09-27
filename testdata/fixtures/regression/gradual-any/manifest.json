@@ -1,6 +1,6 @@
 {
-  "description": "any is consistent with every type at use sites; under strict-any it must be narrowed like unknown",
+  "description": "any is consistent with every type at use sites; under strict mode it must be narrowed like unknown",
   "check": {
-    "modes": ["gradual", "strict-any"]
+    "modes": ["gradual", "strict"]
   }
 }
