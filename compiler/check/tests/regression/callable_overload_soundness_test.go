@@ -59,3 +59,20 @@ end
 		t.Fatalf("bad opener's nil return must survive the union call: %v", testutil.ErrorMessages(result.Errors))
 	}
 }
+
+// Mutable captured-state variant of kickside/platform/transfer/src/bundle_test.lua:11-23,137-139.
+func TestLiteralOverloadDoesNotAssumeCapturedState(t *testing.T) {
+	result := testutil.Check(`
+local active = true
+local function open(mode)
+    if mode == "w" and active then return { write = function() end } end
+    return nil
+end
+active = false
+local h = open("w")
+h:write()
+`, testutil.WithStdlib())
+	if len(result.Errors) != 1 || result.Errors[0].Position.Line != 9 || result.Errors[0].Message != "cannot call method on optional value without nil check" {
+		t.Fatalf("mutable captured state must retain the nil obligation: %v", testutil.ErrorMessages(result.Errors))
+	}
+}
