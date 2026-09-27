@@ -112,12 +112,6 @@ func NewBinderWithDeclHint(globals []string, declHint int) *Binder {
 	return b
 }
 
-// NewBinderWithStmtHint preserves the previous API surface; stmtHint is treated
-// as a declaration-density hint.
-func NewBinderWithStmtHint(globals []string, stmtHint int) *Binder {
-	return NewBinderWithDeclHint(globals, stmtHint)
-}
-
 // Bind performs complete name resolution on a function AST.
 //
 // This is the main entry point for the binding phase. It creates a binder

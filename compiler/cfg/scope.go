@@ -1,10 +1,6 @@
 package cfg
 
-import (
-	"sort"
-
-	basecfg "github.com/wippyai/go-lua/types/cfg"
-)
+import basecfg "github.com/wippyai/go-lua/types/cfg"
 
 // SymbolID is an alias for basecfg.SymbolID.
 type SymbolID = basecfg.SymbolID
@@ -248,47 +244,6 @@ func (s *SymbolMap) Get(name string) (basecfg.SymbolID, bool) {
 	}
 
 	return 0, false
-}
-
-// Range iterates over all symbols.
-func (s *SymbolMap) Range(fn func(name string, sym basecfg.SymbolID) bool) {
-	localNames := make([]string, 0, len(s.m))
-	for name := range s.m {
-		localNames = append(localNames, name)
-	}
-	sort.Strings(localNames)
-	for _, name := range localNames {
-		sym := s.m[name]
-		if !fn(name, sym) {
-			return
-		}
-	}
-
-	if s.globals != nil {
-		globalNames := make([]string, 0, len(s.globals))
-		for name := range s.globals {
-			if _, inLocal := s.m[name]; inLocal {
-				continue // local shadows global
-			}
-			globalNames = append(globalNames, name)
-		}
-		sort.Strings(globalNames)
-		for _, name := range globalNames {
-			sym := s.globals[name]
-			if _, inLocal := s.m[name]; inLocal {
-				continue // local shadows global
-			}
-
-			if !fn(name, sym) {
-				return
-			}
-		}
-	}
-}
-
-// ToMap returns the underlying map (without globals for pointer identity).
-func (s *SymbolMap) ToMap() map[string]basecfg.SymbolID {
-	return s.m
 }
 
 // Size returns the number of symbols in the map.
