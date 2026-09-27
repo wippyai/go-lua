@@ -21,6 +21,18 @@ func buildFunctionType(
 	spec SpecInfo,
 	refinement RefinementInfo,
 ) *Function {
+	paramsCopy := append([]Param(nil), params...)
+	returnsCopy := append([]Type(nil), returns...)
+	params, returns = paramsCopy, returnsCopy
+	if len(typeParams) > 0 {
+		for i := range params {
+			params[i].Type = bindTypeParams(params[i].Type, typeParams)
+		}
+		variadic = bindTypeParams(variadic, typeParams)
+		for i := range returns {
+			returns[i] = bindTypeParams(returns[i], typeParams)
+		}
+	}
 	h := uint64(kind.Function)
 	for _, tp := range typeParams {
 		h = internal.HashCombine(h, tp.Hash())
@@ -46,10 +58,6 @@ func buildFunctionType(
 
 	typeParamsCopy := make([]*TypeParam, len(typeParams))
 	copy(typeParamsCopy, typeParams)
-	paramsCopy := make([]Param, len(params))
-	copy(paramsCopy, params)
-	returnsCopy := make([]Type, len(returns))
-	copy(returnsCopy, returns)
 	softPrunable := softPruneParams(paramsCopy) || softPruneAny(variadic) || softPruneAny(returnsCopy...)
 
 	return &Function{

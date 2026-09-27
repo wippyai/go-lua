@@ -12,34 +12,23 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-// Substitute replaces type parameters with concrete types throughout a type.
-//
-// Used during generic instantiation to replace TypeParam references with
-// the corresponding type arguments. The subs map keys are type parameter names.
-func Substitute(t typ.Type, subs map[string]typ.Type) typ.Type {
-	if len(subs) == 0 {
-		return t
-	}
-	return typ.Rewrite(t, func(n typ.Type) (typ.Type, bool) {
-		if tp, ok := n.(*typ.TypeParam); ok {
-			if sub, ok := subs[tp.Name]; ok {
-				return sub, true
-			}
-		}
-		return nil, false
-	})
-}
-
 // Params replaces type parameters with corresponding type arguments.
 func Params(t typ.Type, params []*typ.TypeParam, args []typ.Type) typ.Type {
 	if len(params) != len(args) || len(params) == 0 {
 		return t
 	}
-	subs := make(map[string]typ.Type, len(params))
+	subs := make(map[*typ.TypeParam]typ.Type, len(params))
 	for i, p := range params {
-		subs[p.Name] = args[i]
+		subs[p] = args[i]
 	}
-	return Substitute(t, subs)
+	return typ.Rewrite(t, func(n typ.Type) (typ.Type, bool) {
+		if tp, ok := n.(*typ.TypeParam); ok {
+			if sub, ok := subs[tp]; ok {
+				return sub, true
+			}
+		}
+		return nil, false
+	})
 }
 
 // Self replaces Self type references with a concrete type.
