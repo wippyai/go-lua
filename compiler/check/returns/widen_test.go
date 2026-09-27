@@ -686,6 +686,24 @@ func TestJoinIterationFact_ArraysJoinByElement(t *testing.T) {
 	}
 }
 
+func TestJoinIterationFact_InstantiatedArgumentsResolveInvariantly(t *testing.T) {
+	param := typ.NewTypeParam("T", nil)
+	channel := typ.NewGeneric("Channel", []*typ.TypeParam{param}, typ.NewInterface("Channel", nil))
+	previous := typ.Instantiate(channel, typ.Unknown)
+	current := typ.Instantiate(channel, typ.Integer)
+	if got := joinIterationFact(previous, current); !typ.TypeEquals(got, current) {
+		t.Fatalf("captured channel element stayed unresolved: %s", got)
+	}
+	if got := joinIterationFact(current, previous); !typ.TypeEquals(got, current) {
+		t.Fatalf("unresolved current snapshot replaced resolved element: %s", got)
+	}
+
+	other := typ.NewGeneric("Other", []*typ.TypeParam{param}, typ.NewInterface("Other", nil))
+	if _, ok := joinIterationInstantiated(previous, typ.Instantiate(other, typ.Integer)); ok {
+		t.Fatal("different generic identities must not join positionally")
+	}
+}
+
 // Two snapshots of one class identity are successive approximations of the
 // same table: their join is one snapshot of that identity over the join of
 // their bodies, never a union of both snapshots.
