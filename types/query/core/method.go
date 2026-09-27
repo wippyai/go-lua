@@ -81,72 +81,16 @@ func methodViaIndex(meta typ.Type, name string, depth int) (typ.Type, bool) {
 // methodDepth recursively resolves method lookup with depth limiting.
 // Handles various type constructors and propagates through wrappers.
 func methodDepth(t typ.Type, name string, depth int) (typ.Type, bool) {
-	if stopDepth(t, depth) {
-		return nil, false
-	}
-	if top, ok := specialAccessType(t); ok {
-		return top, true
-	}
-
-	res := typ.Visit(t, typ.Visitor[fieldResult]{
-		TypeParam: func(tp *typ.TypeParam) fieldResult {
-			if tp.Constraint != nil {
-				mt, ok := methodDepth(tp.Constraint, name, depth+1)
-				return fieldResult{t: mt, ok: ok}
-			}
-			return fieldResult{}
+	resolver := namedMemberResolver[fieldResult]{
+		special: func(t typ.Type) (fieldResult, bool) {
+			mt, ok := specialAccessType(t)
+			return fieldResult{t: mt, ok: ok}, ok
 		},
-		Meta: func(m *typ.Meta) fieldResult {
-			// Meta types have a built-in :is method for type guards
-			if name == "is" {
-				return fieldResult{t: metaIsMethod(m.Of), ok: true}
-			}
-			return fieldResult{}
+		optional: func(o *typ.Optional, depth int, lookup namedMemberLookup[fieldResult]) (fieldResult, bool) {
+			return lookup(o.Inner, depth+1)
 		},
-		Record: func(r *typ.Record) fieldResult {
-			// Check if record has a field with function type (can be called as method)
-			if ft, ok := fieldDepth(r, name, depth+1); ok {
-				if unwrap.Function(ft) != nil {
-					return fieldResult{t: ft, ok: true}
-				}
-			}
-
-			if r.Metatable == nil {
-				if r.Open {
-					// Open record: allow unknown methods to be called.
-					return fieldResult{t: typ.Func().Variadic(typ.Any).Returns(typ.Any).Build(), ok: true}
-				}
-				return fieldResult{}
-			}
-			// Look for method in metatable's fields
-			if ft, ok := fieldDepth(r.Metatable, name, depth+1); ok {
-				return fieldResult{t: ft, ok: true}
-			}
-			// Check __index chain for inherited methods
-			if mt, ok := methodViaIndex(r.Metatable, name, depth+1); ok {
-				return fieldResult{t: mt, ok: true}
-			}
-			if r.Open {
-				// Open record: allow unknown methods even when metatable has no method.
-				return fieldResult{t: typ.Func().Variadic(typ.Any).Returns(typ.Any).Build(), ok: true}
-			}
-			return fieldResult{}
-		},
-		Interface: func(i *typ.Interface) fieldResult {
-			for _, m := range i.Methods {
-				if m.Name == name {
-					return fieldResult{t: m.Type, ok: true}
-				}
-			}
-
-			return fieldResult{}
-		},
-		Function: func(fn *typ.Function) fieldResult {
-			return fieldResult{}
-		},
-		Union: func(u *typ.Union) fieldResult {
+		union: func(u *typ.Union, depth int, lookup namedMemberLookup[fieldResult]) (fieldResult, bool) {
 			var result typ.Type
-
 			hasNil := false
 
 			for _, m := range u.Members {
@@ -156,65 +100,158 @@ func methodDepth(t typ.Type, name string, depth int) (typ.Type, bool) {
 					continue
 				}
 
-				mt, ok := methodDepth(m, name, depth+1)
+				mt, ok := lookup(m, depth+1)
 				if !ok {
-					return fieldResult{}
+					return fieldResult{}, false
 				}
 
 				if result == nil {
-					result = mt
-				} else if !result.Equals(mt) {
-					return fieldResult{}
+					result = mt.t
+				} else if !result.Equals(mt.t) {
+					return fieldResult{}, false
 				}
 			}
 			// If union was only nil members, no method found
 			if result == nil && hasNil {
-				return fieldResult{}
+				return fieldResult{}, false
 			}
 
-			return fieldResult{t: result, ok: result != nil}
+			return fieldResult{t: result, ok: result != nil}, result != nil
 		},
-		Intersection: func(in *typ.Intersection) fieldResult {
+		intersection: func(in *typ.Intersection, depth int, lookup namedMemberLookup[fieldResult]) (fieldResult, bool) {
 			for _, m := range in.Members {
-				if mt, ok := methodDepth(m, name, depth+1); ok {
-					return fieldResult{t: mt, ok: true}
+				if mt, ok := lookup(m, depth+1); ok {
+					return fieldResult{t: mt.t, ok: true}, true
 				}
 			}
 
-			return fieldResult{}
+			return fieldResult{}, false
 		},
-		Optional: func(o *typ.Optional) fieldResult {
-			mt, ok := methodDepth(o.Inner, name, depth+1)
-			return fieldResult{t: mt, ok: ok}
-		},
-		Recursive: func(rec *typ.Recursive) fieldResult {
-			if rec.Body == nil || rec.Body == rec {
-				return fieldResult{}
-			}
-			mt, ok := methodDepth(rec.Body, name, depth+1)
-			return fieldResult{t: mt, ok: ok}
-		},
-		Alias: func(a *typ.Alias) fieldResult {
-			mt, ok := methodDepth(a.Target, name, depth+1)
-			return fieldResult{t: mt, ok: ok}
-		},
-		Instantiated: func(inst *typ.Instantiated) fieldResult {
-			resolved, err := ResolveInstantiated(inst)
-			if err != nil {
-				return fieldResult{}
-			}
+		visit: func(t typ.Type, depth int, lookup namedMemberLookup[fieldResult]) (fieldResult, bool) {
+			result := typ.Visit(t, typ.Visitor[fieldResult]{
+				Meta: func(m *typ.Meta) fieldResult {
+					// Meta types have a built-in :is method for type guards
+					if name == "is" {
+						return fieldResult{t: metaIsMethod(m.Of), ok: true}
+					}
+					return fieldResult{}
+				},
+				Record: func(r *typ.Record) fieldResult {
+					// Check if record has a field with function type (can be called as method)
+					if ft, ok := fieldDepth(r, name, depth+1); ok {
+						if unwrap.Function(ft) != nil {
+							return fieldResult{t: ft, ok: true}
+						}
+					}
 
-			mt, ok := methodDepth(resolved, name, depth+1)
-			return fieldResult{t: mt, ok: ok}
+					if r.Metatable == nil {
+						if r.Open {
+							// Open record: allow unknown methods to be called.
+							return fieldResult{t: typ.Func().Variadic(typ.Any).Returns(typ.Any).Build(), ok: true}
+						}
+						return fieldResult{}
+					}
+					// Look for method in metatable's fields
+					if ft, ok := fieldDepth(r.Metatable, name, depth+1); ok {
+						return fieldResult{t: ft, ok: true}
+					}
+					// Check __index chain for inherited methods
+					if mt, ok := methodViaIndex(r.Metatable, name, depth+1); ok {
+						return fieldResult{t: mt, ok: true}
+					}
+					if r.Open {
+						// Open record: allow unknown methods even when metatable has no method.
+						return fieldResult{t: typ.Func().Variadic(typ.Any).Returns(typ.Any).Build(), ok: true}
+					}
+					return fieldResult{}
+				},
+				Interface: func(i *typ.Interface) fieldResult {
+					for _, m := range i.Methods {
+						if m.Name == name {
+							return fieldResult{t: m.Type, ok: true}
+						}
+					}
+
+					return fieldResult{}
+				},
+				Function: func(fn *typ.Function) fieldResult {
+					return fieldResult{}
+				},
+				Union: func(u *typ.Union) fieldResult {
+					var result typ.Type
+
+					hasNil := false
+
+					for _, m := range u.Members {
+						// Skip nil in union - nil | T should allow method calls on T
+						if m.Kind() == kind.Nil {
+							hasNil = true
+							continue
+						}
+
+						mt, ok := methodDepth(m, name, depth+1)
+						if !ok {
+							return fieldResult{}
+						}
+
+						if result == nil {
+							result = mt
+						} else if !result.Equals(mt) {
+							return fieldResult{}
+						}
+					}
+					// If union was only nil members, no method found
+					if result == nil && hasNil {
+						return fieldResult{}
+					}
+
+					return fieldResult{t: result, ok: result != nil}
+				},
+				Intersection: func(in *typ.Intersection) fieldResult {
+					for _, m := range in.Members {
+						if mt, ok := methodDepth(m, name, depth+1); ok {
+							return fieldResult{t: mt, ok: true}
+						}
+					}
+
+					return fieldResult{}
+				},
+				Optional: func(o *typ.Optional) fieldResult {
+					mt, ok := methodDepth(o.Inner, name, depth+1)
+					return fieldResult{t: mt, ok: ok}
+				},
+				Recursive: func(rec *typ.Recursive) fieldResult {
+					if rec.Body == nil || rec.Body == rec {
+						return fieldResult{}
+					}
+					mt, ok := methodDepth(rec.Body, name, depth+1)
+					return fieldResult{t: mt, ok: ok}
+				},
+				Alias: func(a *typ.Alias) fieldResult {
+					mt, ok := methodDepth(a.Target, name, depth+1)
+					return fieldResult{t: mt, ok: ok}
+				},
+				Instantiated: func(inst *typ.Instantiated) fieldResult {
+					resolved, err := ResolveInstantiated(inst)
+					if err != nil {
+						return fieldResult{}
+					}
+
+					mt, ok := methodDepth(resolved, name, depth+1)
+					return fieldResult{t: mt, ok: ok}
+				},
+				Ref: func(r *typ.Ref) fieldResult {
+					return fieldResult{}
+				},
+				Default: func(t typ.Type) fieldResult {
+					return fieldResult{}
+				},
+			})
+			return result, result.ok
 		},
-		Ref: func(r *typ.Ref) fieldResult {
-			return fieldResult{}
-		},
-		Default: func(t typ.Type) fieldResult {
-			return fieldResult{}
-		},
-	})
-	return res.t, res.ok
+	}
+	result, ok := resolver.lookup(t, depth)
+	return result.t, ok
 }
 
 // HasMethod returns true if a type has a method with the given name.
