@@ -2331,6 +2331,22 @@ func TestMapValueWidensIntoUnknown(t *testing.T) {
 	}
 }
 
+func TestCompleteRecordSatisfiesDeclaredMapComponent(t *testing.T) {
+	target := typ.NewRecord().Field("name", typ.String).MapComponent(typ.String, typ.Integer).SetDeclared(true).Build()
+	good := typ.NewRecord().Field("name", typ.String).Field("count", typ.Integer).SetComplete(true).Build()
+	badValue := typ.NewRecord().Field("name", typ.String).Field("count", typ.String).SetComplete(true).Build()
+	partial := typ.NewRecord().Field("name", typ.String).Field("count", typ.Integer).Build()
+	if !IsSubtype(good, target) {
+		t.Fatal("known extra field must satisfy the map value constraint; declared fields retain their own type")
+	}
+	if IsSubtype(badValue, target) {
+		t.Fatal("incompatible extra field must be rejected")
+	}
+	if IsSubtype(partial, target) {
+		t.Fatal("partial record may contain unseen incompatible fields")
+	}
+}
+
 // A value known only to be some table is a dynamic table: it may be used as
 // any table shape, and as nothing else.
 func TestBuiltinTableTopFlowsIntoTableShapes(t *testing.T) {

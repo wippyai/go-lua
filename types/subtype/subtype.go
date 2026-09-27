@@ -714,14 +714,23 @@ func (c *checker) checkRecord(sub, super *typ.Record, depth int) bool {
 
 	// Compare map components
 	if super.HasMapComponent() {
-		if !sub.HasMapComponent() {
+		// A complete record can satisfy a map component through its known
+		// fields. A partial record cannot: it may contain unseen keys.
+		if !sub.HasMapComponent() && !sub.Complete {
 			return false
 		}
-		if !c.check(sub.MapKey, super.MapKey, depth+1) {
-			return false
+		if sub.HasMapComponent() {
+			if !c.check(sub.MapKey, super.MapKey, depth+1) || !c.check(sub.MapValue, super.MapValue, depth+1) {
+				return false
+			}
 		}
-		if !c.check(sub.MapValue, super.MapValue, depth+1) {
-			return false
+		for _, field := range sub.Fields {
+			if super.GetField(field.Name) != nil {
+				continue // declared fields take precedence over the map component
+			}
+			if !c.check(typ.LiteralString(field.Name), super.MapKey, depth+1) || !c.check(field.Type, super.MapValue, depth+1) {
+				return false
+			}
 		}
 	}
 
