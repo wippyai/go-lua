@@ -244,7 +244,7 @@ func (d *Driver) runReturnInference(
 		refinementLookup = es.LookupRefinementBySym
 	}
 
-	summaries, funcTypes, diags := inferencer.ComputeForGraph(returninfer.RunContext{
+	summaries, callables, diags := inferencer.ComputeForGraph(returninfer.RunContext{
 		Env: phase.PhaseEnv{
 			Ctx:            sess.Context(),
 			Graph:          graph,
@@ -265,7 +265,9 @@ func (d *Driver) runReturnInference(
 	}
 	if key, ok := store.GraphKeyFor(graph, parent); ok {
 		store.UpdateInterprocFactsNext(key, func(facts *api.Facts) {
-			returns.MergeFunctionFactsIntoFacts(facts, summaries, nil, funcTypes)
+			for fn, fact := range callables {
+				returns.MergeCallable(facts, fn, fact)
+			}
 		})
 	}
 }

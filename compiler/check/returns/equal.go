@@ -8,13 +8,10 @@ import (
 
 // FactsEqual checks if two interproc fact bundles are equal.
 func FactsEqual(a, b api.Facts) bool {
-	if !FunctionFactsEqual(a.FunctionFacts, b.FunctionFacts) {
-		return false
-	}
 	if !symbolTypeVectorMapEqual(a.ParamHints, b.ParamHints) {
 		return false
 	}
-	if !LiteralSigsEqual(a.LiteralSigs, b.LiteralSigs) {
+	if !CallablesEqual(a.Callables, b.Callables) {
 		return false
 	}
 	if !symbolTypeMapEqual(a.CapturedTypes, b.CapturedTypes) {
@@ -32,38 +29,14 @@ func FactsEqual(a, b api.Facts) bool {
 	return true
 }
 
-// FunctionFactsEqual checks if two canonical function-fact maps are equal.
-func FunctionFactsEqual(a, b api.FunctionFacts) bool {
+// CallablesEqual checks facts keyed by function literal.
+func CallablesEqual(a, b api.Callables) bool {
 	if len(a) != len(b) {
 		return false
 	}
-	for _, sym := range cfg.SortedSymbolIDs(a) {
-		af := a[sym]
-		bf, ok := b[sym]
-		if !ok {
-			return false
-		}
-		if !ReturnTypesEqual(af.Summary, bf.Summary) {
-			return false
-		}
-		if !ReturnTypesEqual(af.Narrow, bf.Narrow) {
-			return false
-		}
-		if !typ.TypeEquals(af.Func, bf.Func) {
-			return false
-		}
-	}
-	return true
-}
-
-// LiteralSigsEqual checks if two literal signature maps are equal.
-func LiteralSigsEqual(a, b api.LiteralSigs) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for fn, sig := range a {
+	for fn, fact := range a {
 		other, ok := b[fn]
-		if !ok || !typ.TypeEquals(sig, other) {
+		if !ok || !typ.TypeEquals(fact.Sig, other.Sig) || !ReturnTypesEqual(fact.Summary, other.Summary) || !ReturnTypesEqual(fact.Narrow, other.Narrow) || !typ.TypeEquals(fact.Func, other.Func) {
 			return false
 		}
 	}

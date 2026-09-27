@@ -161,10 +161,8 @@ func (r *Runner) literalSignatureForFunction(store api.StoreView, graph *cfg.Gra
 	if parentScope == nil {
 		return nil
 	}
-	if sigs := store.GetLiteralSigsSnapshot(parentGraph, parentScope); len(sigs) > 0 {
-		if sig := sigs[fn]; sig != nil {
-			return sig
-		}
+	if sig := store.GetCallablesSnapshot(parentGraph, parentScope)[fn].Sig; sig != nil {
+		return sig
 	}
 	return nil
 }
@@ -174,20 +172,27 @@ func (r *Runner) literalSigProvider(store api.StoreView, graph *cfg.Graph, paren
 		return nil
 	}
 	var literalSigMap map[*ast.FunctionExpr]*typ.Function
-	if sigs := store.GetLiteralSigsSnapshot(graph, parent); len(sigs) > 0 {
-		literalSigMap = mergeLiteralSignatures(nil, sigs, true)
+	if callables := store.GetCallablesSnapshot(graph, parent); len(callables) > 0 {
+		literalSigMap = mergeLiteralSignatures(nil, callables, true)
 	}
 	if meta, ok := store.NestedMetaFor(graph.ID()); ok {
 		parentGraph := store.Graphs()[meta.ParentGraphID]
 		if parentGraph != nil {
 			parentScope := r.parentScopeForGraph(store, parentGraph)
 			if parentScope != nil {
-				if sigs := store.GetLiteralSigsSnapshot(parentGraph, parentScope); len(sigs) > 0 {
-					literalSigMap = mergeLiteralSignatures(literalSigMap, sigs, false)
+				if callables := store.GetCallablesSnapshot(parentGraph, parentScope); len(callables) > 0 {
+					literalSigMap = mergeLiteralSignatures(literalSigMap, callables, false)
 				}
 			}
 			if sigs := scratchLiteralSigs(store, parentGraph.ID()); len(sigs) > 0 {
-				literalSigMap = mergeLiteralSignatures(literalSigMap, sigs, false)
+				if literalSigMap == nil {
+					literalSigMap = make(map[*ast.FunctionExpr]*typ.Function, len(sigs))
+				}
+				for fn, sig := range sigs {
+					if fn != nil && sig != nil && literalSigMap[fn] == nil {
+						literalSigMap[fn] = sig
+					}
+				}
 			}
 		}
 	}
@@ -277,7 +282,7 @@ func (r *Runner) mergeCapturedParentFuncTypes(
 
 func mergeLiteralSignatures(
 	dst map[*ast.FunctionExpr]*typ.Function,
-	src map[*ast.FunctionExpr]*typ.Function,
+	src api.Callables,
 	overwrite bool,
 ) map[*ast.FunctionExpr]*typ.Function {
 	if len(src) == 0 {
@@ -286,7 +291,8 @@ func mergeLiteralSignatures(
 	if dst == nil {
 		dst = make(map[*ast.FunctionExpr]*typ.Function, len(src))
 	}
-	for fnExpr, sig := range src {
+	for fnExpr, fact := range src {
+		sig := fact.Sig
 		if fnExpr == nil || sig == nil {
 			continue
 		}

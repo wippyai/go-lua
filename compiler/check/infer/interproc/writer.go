@@ -46,12 +46,14 @@ func (w interprocFactWriter) writeLiteralSignatures(
 	w.store.StoreLiteralSigs(graph.ID(), sigs)
 	if key, ok := w.store.GraphKeyFor(graph, parent); ok {
 		w.store.UpdateInterprocFactsNext(key, func(facts *api.Facts) {
-			if facts.LiteralSigs == nil {
-				facts.LiteralSigs = make(api.LiteralSigs, len(sigs))
+			if facts.Callables == nil {
+				facts.Callables = make(api.Callables, len(sigs))
 			}
 			for fnExpr, sig := range sigs {
 				if fnExpr != nil && sig != nil {
-					facts.LiteralSigs[fnExpr] = sig
+					fact := facts.Callables[fnExpr]
+					fact.Sig = sig
+					facts.Callables[fnExpr] = fact
 				}
 			}
 		})

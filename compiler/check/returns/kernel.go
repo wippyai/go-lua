@@ -1,7 +1,7 @@
 package returns
 
 import (
-	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/types/typ"
 	typjoin "github.com/wippyai/go-lua/types/typ/join"
@@ -22,14 +22,6 @@ type ReconcileFunctionFactInput struct {
 
 // ReconcileFunctionFactOutput is the canonical reconciled state for one symbol.
 type ReconcileFunctionFactOutput struct {
-	Summary []typ.Type
-	Narrow  []typ.Type
-	Func    typ.Type
-}
-
-// FunctionFactCandidate captures incoming candidate data for one symbol's
-// function-related fact channels.
-type FunctionFactCandidate struct {
 	Summary []typ.Type
 	Narrow  []typ.Type
 	Func    typ.Type
@@ -101,17 +93,12 @@ func ReconcileFunctionFact(in ReconcileFunctionFactInput) ReconcileFunctionFactO
 	return out
 }
 
-// MergeFunctionFactIntoFacts reconciles and writes function-related facts for
-// one symbol into a facts bundle using canonical kernel policy.
-func MergeFunctionFactIntoFacts(facts *api.Facts, sym cfg.SymbolID, candidate FunctionFactCandidate) {
-	if facts == nil || sym == 0 {
+// MergeCallable reconciles one literal's facts without changing its contextual signature.
+func MergeCallable(facts *api.Facts, fn *ast.FunctionExpr, candidate api.FunctionFact) {
+	if facts == nil || fn == nil {
 		return
 	}
-	mergeFunctionFactIntoNormalizedFacts(facts, sym, candidate)
-}
-
-func mergeFunctionFactIntoNormalizedFacts(facts *api.Facts, sym cfg.SymbolID, candidate FunctionFactCandidate) {
-	existing := facts.FunctionFacts[sym]
+	existing := facts.Callables[fn]
 	reconciled := ReconcileFunctionFact(ReconcileFunctionFactInput{
 		ExistingSummary:  existing.Summary,
 		ExistingNarrow:   existing.Narrow,
@@ -120,42 +107,13 @@ func mergeFunctionFactIntoNormalizedFacts(facts *api.Facts, sym cfg.SymbolID, ca
 		CandidateNarrow:  candidate.Narrow,
 		CandidateFunc:    candidate.Func,
 	})
-	if facts.FunctionFacts == nil {
-		facts.FunctionFacts = make(api.FunctionFacts)
+	if facts.Callables == nil {
+		facts.Callables = make(api.Callables)
 	}
-	facts.FunctionFacts[sym] = api.FunctionFact{
+	facts.Callables[fn] = api.FunctionFact{
 		Summary: reconciled.Summary,
 		Narrow:  reconciled.Narrow,
 		Func:    reconciled.Func,
-	}
-}
-
-// MergeFunctionFactsIntoFacts merges full function-fact channel maps into facts
-// via the canonical single-symbol reconciliation path.
-func MergeFunctionFactsIntoFacts(
-	facts *api.Facts,
-	summaries api.ReturnSummaries,
-	narrows api.NarrowReturnSummaries,
-	funcs api.FuncTypes,
-) {
-	if facts == nil {
-		return
-	}
-	symbols := make(map[cfg.SymbolID]bool, len(summaries)+len(narrows)+len(funcs))
-	for sym := range summaries {
-		symbols[sym] = true
-	}
-	for sym := range narrows {
-		symbols[sym] = true
-	}
-	for sym := range funcs {
-		symbols[sym] = true
-	}
-	for _, sym := range cfg.SortedSymbolIDs(symbols) {
-		mergeFunctionFactIntoNormalizedFacts(facts, sym, FunctionFactCandidate{
-			Summary: summaries[sym],
-			Narrow:  narrows[sym],
-			Func:    funcs[sym],
-		})
+		Sig:     existing.Sig,
 	}
 }

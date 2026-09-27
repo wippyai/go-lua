@@ -3,29 +3,29 @@ package returns
 import (
 	"testing"
 
-	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-func TestMergeFunctionFactIntoFacts_InitialWrite(t *testing.T) {
+func TestMergeCallable_InitialWrite(t *testing.T) {
 	facts := &api.Facts{}
-	sym := cfg.SymbolID(11)
+	literal := &ast.FunctionExpr{}
 	fn := typ.Func().Returns(typ.String).Build()
 
-	MergeFunctionFactIntoFacts(facts, sym, FunctionFactCandidate{
+	MergeCallable(facts, literal, api.FunctionFact{
 		Summary: []typ.Type{typ.String},
 		Narrow:  []typ.Type{typ.String},
 		Func:    fn,
 	})
 
-	if got := facts.FunctionFacts[sym].Summary; !ReturnTypesEqual(got, []typ.Type{typ.String}) {
+	if got := facts.Callables[literal].Summary; !ReturnTypesEqual(got, []typ.Type{typ.String}) {
 		t.Fatalf("summary mismatch: got %v", got)
 	}
-	if got := facts.FunctionFacts[sym].Narrow; !ReturnTypesEqual(got, []typ.Type{typ.String}) {
+	if got := facts.Callables[literal].Narrow; !ReturnTypesEqual(got, []typ.Type{typ.String}) {
 		t.Fatalf("narrow mismatch: got %v", got)
 	}
-	if got := facts.FunctionFacts[sym].Func; !typ.TypeEquals(got, fn) {
+	if got := facts.Callables[literal].Func; !typ.TypeEquals(got, fn) {
 		t.Fatalf("func mismatch: got %v", got)
 	}
 }
@@ -48,25 +48,25 @@ func TestReconcileFunctionFact_IncomparableFlowReturnWins(t *testing.T) {
 	}
 }
 
-func TestMergeFunctionFactIntoFacts_MatchesKernelReconcile(t *testing.T) {
-	sym := cfg.SymbolID(17)
+func TestMergeCallable_MatchesKernelReconcile(t *testing.T) {
+	literal := &ast.FunctionExpr{}
 	existingFn := typ.Func().Returns(typ.Number).Build()
 	candidateFn := typ.Func().Returns(typ.String).Build()
 	facts := &api.Facts{
-		FunctionFacts: api.FunctionFacts{
-			sym: {
+		Callables: api.Callables{
+			literal: {
 				Summary: []typ.Type{typ.Number},
 				Narrow:  []typ.Type{typ.Number},
 				Func:    existingFn,
 			},
 		},
 	}
-	candidate := FunctionFactCandidate{
+	candidate := api.FunctionFact{
 		Summary: []typ.Type{typ.String},
 		Narrow:  []typ.Type{typ.String},
 		Func:    candidateFn,
 	}
-	existing := facts.FunctionFacts[sym]
+	existing := facts.Callables[literal]
 	expected := ReconcileFunctionFact(ReconcileFunctionFactInput{
 		ExistingSummary:  existing.Summary,
 		ExistingNarrow:   existing.Narrow,
@@ -76,46 +76,37 @@ func TestMergeFunctionFactIntoFacts_MatchesKernelReconcile(t *testing.T) {
 		CandidateFunc:    candidate.Func,
 	})
 
-	MergeFunctionFactIntoFacts(facts, sym, candidate)
+	MergeCallable(facts, literal, candidate)
 
-	if got := facts.FunctionFacts[sym].Summary; !ReturnTypesEqual(got, expected.Summary) {
+	if got := facts.Callables[literal].Summary; !ReturnTypesEqual(got, expected.Summary) {
 		t.Fatalf("summary mismatch: got %v want %v", got, expected.Summary)
 	}
-	if got := facts.FunctionFacts[sym].Narrow; !ReturnTypesEqual(got, expected.Narrow) {
+	if got := facts.Callables[literal].Narrow; !ReturnTypesEqual(got, expected.Narrow) {
 		t.Fatalf("narrow mismatch: got %v want %v", got, expected.Narrow)
 	}
-	if got := facts.FunctionFacts[sym].Func; !typ.TypeEquals(got, expected.Func) {
+	if got := facts.Callables[literal].Func; !typ.TypeEquals(got, expected.Func) {
 		t.Fatalf("func mismatch: got %v want %v", got, expected.Func)
 	}
 }
 
-func TestMergeFunctionFactsIntoFacts_BatchMerge(t *testing.T) {
-	symSummary := cfg.SymbolID(21)
-	symNarrow := cfg.SymbolID(22)
-	symFunc := cfg.SymbolID(23)
+func TestMergeCallable_IndependentLiterals(t *testing.T) {
+	litSummary := &ast.FunctionExpr{}
+	litNarrow := &ast.FunctionExpr{}
+	litFunc := &ast.FunctionExpr{}
 	facts := &api.Facts{}
 	funcType := typ.Func().Returns(typ.Boolean).Build()
 
-	MergeFunctionFactsIntoFacts(
-		facts,
-		api.ReturnSummaries{
-			symSummary: []typ.Type{typ.String},
-		},
-		api.NarrowReturnSummaries{
-			symNarrow: []typ.Type{typ.Number},
-		},
-		api.FuncTypes{
-			symFunc: funcType,
-		},
-	)
+	MergeCallable(facts, litSummary, api.FunctionFact{Summary: []typ.Type{typ.String}})
+	MergeCallable(facts, litNarrow, api.FunctionFact{Narrow: []typ.Type{typ.Number}})
+	MergeCallable(facts, litFunc, api.FunctionFact{Func: funcType})
 
-	if got := facts.FunctionFacts[symSummary].Summary; !ReturnTypesEqual(got, []typ.Type{typ.String}) {
+	if got := facts.Callables[litSummary].Summary; !ReturnTypesEqual(got, []typ.Type{typ.String}) {
 		t.Fatalf("summary mismatch: got %v", got)
 	}
-	if got := facts.FunctionFacts[symNarrow].Narrow; !ReturnTypesEqual(got, []typ.Type{typ.Number}) {
+	if got := facts.Callables[litNarrow].Narrow; !ReturnTypesEqual(got, []typ.Type{typ.Number}) {
 		t.Fatalf("narrow mismatch: got %v", got)
 	}
-	if got := facts.FunctionFacts[symFunc].Func; !typ.TypeEquals(got, funcType) {
+	if got := facts.Callables[litFunc].Func; !typ.TypeEquals(got, funcType) {
 		t.Fatalf("func mismatch: got %v", got)
 	}
 }

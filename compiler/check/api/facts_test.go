@@ -3,6 +3,7 @@ package api
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/typ"
@@ -10,14 +11,14 @@ import (
 
 func TestFacts_Zero(t *testing.T) {
 	f := Facts{}
-	if f.FunctionFacts != nil {
-		t.Error("zero Facts should have nil FunctionFacts")
+	if f.Callables != nil {
+		t.Error("zero Facts should have nil Callables")
 	}
 	if f.ParamHints != nil {
 		t.Error("zero Facts should have nil ParamHints")
 	}
-	if f.LiteralSigs != nil {
-		t.Error("zero Facts should have nil LiteralSigs")
+	if f.Callables != nil {
+		t.Error("zero Facts should have nil Callables")
 	}
 	if f.CapturedTypes != nil {
 		t.Error("zero Facts should have nil CapturedTypes")
@@ -161,8 +162,8 @@ func TestContainerMutationKey(t *testing.T) {
 
 func TestFacts_WithData(t *testing.T) {
 	f := Facts{
-		FunctionFacts: FunctionFacts{
-			4: {
+		Callables: Callables{
+			&ast.FunctionExpr{}: {
 				Summary: []typ.Type{typ.Boolean},
 				Narrow:  []typ.Type{typ.Boolean},
 				Func:    typ.Func().Returns(typ.Boolean).Build(),
@@ -173,7 +174,7 @@ func TestFacts_WithData(t *testing.T) {
 		},
 	}
 
-	if len(f.FunctionFacts) != 1 {
+	if len(f.Callables) != 1 {
 		t.Error("expected 1 function fact")
 	}
 	if len(f.ParamHints) != 1 {

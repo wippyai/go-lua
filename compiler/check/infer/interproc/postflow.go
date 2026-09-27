@@ -96,7 +96,7 @@ func StoreFactsFromResult(
 	}
 
 	writer.updateParentFactsForSymbol(fnSym, func(facts *api.Facts) {
-		returns.MergeFunctionFactIntoFacts(facts, fnSym, returns.FunctionFactCandidate{
+		returns.MergeCallable(facts, fn, api.FunctionFact{
 			Summary: summaryFromSnapshot,
 			Narrow:  narrowReturns,
 			Func:    fnType,

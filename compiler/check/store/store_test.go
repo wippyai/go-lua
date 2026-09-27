@@ -98,10 +98,11 @@ func TestWidenInterprocFacts_Empty(t *testing.T) {
 }
 
 func TestWidenInterprocFacts_OnlyPrev(t *testing.T) {
+	fn := &ast.FunctionExpr{}
 	prev := map[api.GraphKey]api.Facts{
 		{GraphID: 1}: {
-			FunctionFacts: api.FunctionFacts{
-				1: {Summary: []typ.Type{typ.String}},
+			Callables: api.Callables{
+				fn: {Summary: []typ.Type{typ.String}},
 			},
 		},
 	}
@@ -112,10 +113,11 @@ func TestWidenInterprocFacts_OnlyPrev(t *testing.T) {
 }
 
 func TestWidenInterprocFacts_OnlyNext(t *testing.T) {
+	fn := &ast.FunctionExpr{}
 	next := map[api.GraphKey]api.Facts{
 		{GraphID: 1}: {
-			FunctionFacts: api.FunctionFacts{
-				1: {Summary: []typ.Type{typ.Number}},
+			Callables: api.Callables{
+				fn: {Summary: []typ.Type{typ.Number}},
 			},
 		},
 	}
@@ -126,17 +128,18 @@ func TestWidenInterprocFacts_OnlyNext(t *testing.T) {
 }
 
 func TestWidenInterprocFacts_Merge(t *testing.T) {
+	fn := &ast.FunctionExpr{}
 	prev := map[api.GraphKey]api.Facts{
 		{GraphID: 1}: {
-			FunctionFacts: api.FunctionFacts{
-				1: {Summary: []typ.Type{typ.String}},
+			Callables: api.Callables{
+				fn: {Summary: []typ.Type{typ.String}},
 			},
 		},
 	}
 	next := map[api.GraphKey]api.Facts{
 		{GraphID: 2}: {
-			FunctionFacts: api.FunctionFacts{
-				1: {Summary: []typ.Type{typ.Number}},
+			Callables: api.Callables{
+				fn: {Summary: []typ.Type{typ.Number}},
 			},
 		},
 	}
@@ -147,46 +150,56 @@ func TestWidenInterprocFacts_Merge(t *testing.T) {
 }
 
 func TestReturnSummariesFromFacts_FallsBackToCanonical(t *testing.T) {
+	graph, fn := callableViewGraph(1)
 	facts := api.Facts{
-		FunctionFacts: api.FunctionFacts{
-			cfg.SymbolID(1): {
+		Callables: api.Callables{
+			fn: {
 				Summary: []typ.Type{typ.String},
 			},
 		},
 	}
-	got := returns.SummaryViewFromFacts(facts)
+	got := returns.SummaryViewFromFacts(graph, facts)
 	if len(got) != 1 || len(got[cfg.SymbolID(1)]) != 1 || got[cfg.SymbolID(1)][0] != typ.String {
 		t.Fatalf("unexpected summary view: %#v", got)
 	}
 }
 
 func TestNarrowReturnSummariesFromFacts_FallsBackToCanonical(t *testing.T) {
+	graph, fn := callableViewGraph(2)
 	facts := api.Facts{
-		FunctionFacts: api.FunctionFacts{
-			cfg.SymbolID(2): {
+		Callables: api.Callables{
+			fn: {
 				Narrow: []typ.Type{typ.Number},
 			},
 		},
 	}
-	got := returns.NarrowViewFromFacts(facts)
+	got := returns.NarrowViewFromFacts(graph, facts)
 	if len(got) != 1 || len(got[cfg.SymbolID(2)]) != 1 || got[cfg.SymbolID(2)][0] != typ.Number {
 		t.Fatalf("unexpected narrow view: %#v", got)
 	}
 }
 
 func TestLocalFuncTypesFromFacts_FallsBackToCanonical(t *testing.T) {
+	graph, literal := callableViewGraph(3)
 	fn := typ.Func().Returns(typ.Boolean).Build()
 	facts := api.Facts{
-		FunctionFacts: api.FunctionFacts{
-			cfg.SymbolID(3): {
+		Callables: api.Callables{
+			literal: {
 				Func: fn,
 			},
 		},
 	}
-	got := returns.FuncTypeViewFromFacts(facts)
+	got := returns.FuncTypeViewFromFacts(graph, facts)
 	if len(got) != 1 || !typ.TypeEquals(got[cfg.SymbolID(3)], fn) {
 		t.Fatalf("unexpected func type view: %#v", got)
 	}
+}
+
+func callableViewGraph(sym cfg.SymbolID) (*cfg.Graph, *ast.FunctionExpr) {
+	fn := &ast.FunctionExpr{ParList: &ast.ParList{}}
+	graph := cfg.Build(fn)
+	graph.Bindings().SetFuncLitSymbol(fn, sym)
+	return graph, fn
 }
 
 func TestSessionStore_Fields(t *testing.T) {
@@ -237,20 +250,21 @@ func TestIterationStore_Fields(t *testing.T) {
 
 func TestIterationScratch_Fields(t *testing.T) {
 	s := &IterationScratch{
-		LiteralSigsByGraphID: make(map[uint64]map[*ast.FunctionExpr]*typ.Function),
+		SigsByGraphID: make(map[uint64]map[*ast.FunctionExpr]*typ.Function),
 	}
-	if s.LiteralSigsByGraphID == nil {
-		t.Error("LiteralSigsByGraphID should be initialized")
+	if s.SigsByGraphID == nil {
+		t.Error("SigsByGraphID should be initialized")
 	}
 }
 
 func TestFixpointSwap_TracksChannelDiffsAndResetsNext(t *testing.T) {
 	s := NewSessionStore()
+	fn := &ast.FunctionExpr{}
 
 	s.InterprocNext.Refinements[1] = &constraint.FunctionRefinement{Terminates: true}
 	s.InterprocNext.Facts[api.GraphKey{GraphID: 7, ParentHash: 11}] = api.Facts{
-		FunctionFacts: api.FunctionFacts{
-			1: {Summary: []typ.Type{typ.String}},
+		Callables: api.Callables{
+			fn: {Summary: []typ.Type{typ.String}},
 		},
 	}
 	s.InterprocNext.ConstructorFields[3] = map[string]typ.Type{
@@ -302,7 +316,7 @@ func TestClearIterationChannels_InitializesMissingState(t *testing.T) {
 	if s.InterprocPrev == nil || s.InterprocNext == nil {
 		t.Fatal("expected interproc states to be initialized")
 	}
-	if s.Scratch.LiteralSigsByGraphID == nil {
+	if s.Scratch.SigsByGraphID == nil {
 		t.Fatal("expected scratch literal signatures map to be initialized")
 	}
 }

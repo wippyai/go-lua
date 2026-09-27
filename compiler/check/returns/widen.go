@@ -1,6 +1,7 @@
 package returns
 
 import (
+	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/internal"
@@ -17,28 +18,26 @@ import (
 func WidenFacts(prev, next api.Facts) api.Facts {
 	out := api.Facts{
 		ParamHints:         WidenParamHints(prev.ParamHints, next.ParamHints),
-		LiteralSigs:        WidenLiteralSigs(prev.LiteralSigs, next.LiteralSigs),
 		CapturedTypes:      WidenCapturedTypes(prev.CapturedTypes, next.CapturedTypes),
 		FieldWrites:        WidenFieldWrites(prev.FieldWrites, next.FieldWrites),
 		CapturedContainers: WidenCapturedContainerMutations(prev.CapturedContainers, next.CapturedContainers),
 		ConstructorFields:  WidenConstructorFields(prev.ConstructorFields, next.ConstructorFields),
 	}
-
-	symbols := make(map[cfg.SymbolID]bool, len(prev.FunctionFacts)+len(next.FunctionFacts))
-	for sym := range prev.FunctionFacts {
-		symbols[sym] = true
+	literals := make(map[*ast.FunctionExpr]bool, len(prev.Callables)+len(next.Callables))
+	for fn := range prev.Callables {
+		literals[fn] = true
 	}
-	for sym := range next.FunctionFacts {
-		symbols[sym] = true
+	for fn := range next.Callables {
+		literals[fn] = true
 	}
-	if len(symbols) == 0 {
+	if len(literals) == 0 {
 		return out
 	}
 
-	out.FunctionFacts = make(api.FunctionFacts, len(symbols))
-	for _, sym := range cfg.SortedSymbolIDs(symbols) {
-		prevFact := prev.FunctionFacts[sym]
-		nextFact := next.FunctionFacts[sym]
+	out.Callables = make(api.Callables, len(literals))
+	for fn := range literals {
+		prevFact := prev.Callables[fn]
+		nextFact := next.Callables[fn]
 		reconciled := ReconcileFunctionFact(ReconcileFunctionFactInput{
 			ExistingSummary:  prevFact.Summary,
 			ExistingNarrow:   prevFact.Narrow,
@@ -47,14 +46,18 @@ func WidenFacts(prev, next api.Facts) api.Facts {
 			CandidateNarrow:  nextFact.Narrow,
 			CandidateFunc:    nextFact.Func,
 		})
-		out.FunctionFacts[sym] = api.FunctionFact{
+		sig := nextFact.Sig
+		if next.Callables == nil {
+			sig = prevFact.Sig
+		} else if prev.Callables != nil {
+			sig = maybeWidenFunctionForConvergence(mergeLiteralSig(prevFact.Sig, sig))
+		}
+		out.Callables[fn] = api.FunctionFact{
 			Summary: widenReturnVectorForConvergence(reconciled.Summary),
 			Narrow:  widenReturnVectorForConvergence(reconciled.Narrow),
 			Func:    maybeWidenTypeForConvergence(reconciled.Func),
+			Sig:     sig,
 		}
-	}
-	if len(out.FunctionFacts) == 0 {
-		out.FunctionFacts = nil
 	}
 	return out
 }
@@ -892,31 +895,6 @@ func joinIterationRecords(a, b typ.Type) (typ.Type, bool) {
 
 func addIterationField(builder *typ.RecordBuilder, f typ.Field) {
 	builder.AddField(f)
-}
-
-// WidenLiteralSigs merges two literal signature maps.
-func WidenLiteralSigs(prev, next api.LiteralSigs) api.LiteralSigs {
-	if prev == nil && next == nil {
-		return nil
-	}
-	if prev == nil {
-		return next
-	}
-	if next == nil {
-		return prev
-	}
-	merged := make(api.LiteralSigs, len(prev)+len(next))
-	for fn, sig := range prev {
-		merged[fn] = maybeWidenFunctionForConvergence(sig)
-	}
-	for fn, sig := range next {
-		if existing := merged[fn]; existing != nil {
-			merged[fn] = maybeWidenFunctionForConvergence(mergeLiteralSig(existing, sig))
-		} else {
-			merged[fn] = maybeWidenFunctionForConvergence(sig)
-		}
-	}
-	return merged
 }
 
 func mergeLiteralSig(prev, next *typ.Function) *typ.Function {
