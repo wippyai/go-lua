@@ -107,12 +107,11 @@ func MergeFunctionFactIntoFacts(facts *api.Facts, sym cfg.SymbolID, candidate Fu
 	if facts == nil || sym == 0 {
 		return
 	}
-	NormalizeFunctionFactChannels(facts)
 	mergeFunctionFactIntoNormalizedFacts(facts, sym, candidate)
 }
 
 func mergeFunctionFactIntoNormalizedFacts(facts *api.Facts, sym cfg.SymbolID, candidate FunctionFactCandidate) {
-	existing := readFunctionFactFromFacts(facts, sym)
+	existing := facts.FunctionFacts[sym]
 	reconciled := ReconcileFunctionFact(ReconcileFunctionFactInput{
 		ExistingSummary:  existing.Summary,
 		ExistingNarrow:   existing.Narrow,
@@ -121,11 +120,14 @@ func mergeFunctionFactIntoNormalizedFacts(facts *api.Facts, sym cfg.SymbolID, ca
 		CandidateNarrow:  candidate.Narrow,
 		CandidateFunc:    candidate.Func,
 	})
-	writeFunctionFactToFacts(facts, sym, api.FunctionFact{
+	if facts.FunctionFacts == nil {
+		facts.FunctionFacts = make(api.FunctionFacts)
+	}
+	facts.FunctionFacts[sym] = api.FunctionFact{
 		Summary: reconciled.Summary,
 		Narrow:  reconciled.Narrow,
 		Func:    reconciled.Func,
-	})
+	}
 }
 
 // MergeFunctionFactsIntoFacts merges full function-fact channel maps into facts
@@ -139,8 +141,17 @@ func MergeFunctionFactsIntoFacts(
 	if facts == nil {
 		return
 	}
-	NormalizeFunctionFactChannels(facts)
-	for _, sym := range collectFunctionFactChannelSymbols(summaries, narrows, funcs, nil) {
+	symbols := make(map[cfg.SymbolID]bool, len(summaries)+len(narrows)+len(funcs))
+	for sym := range summaries {
+		symbols[sym] = true
+	}
+	for sym := range narrows {
+		symbols[sym] = true
+	}
+	for sym := range funcs {
+		symbols[sym] = true
+	}
+	for _, sym := range cfg.SortedSymbolIDs(symbols) {
 		mergeFunctionFactIntoNormalizedFacts(facts, sym, FunctionFactCandidate{
 			Summary: summaries[sym],
 			Narrow:  narrows[sym],

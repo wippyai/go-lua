@@ -34,8 +34,6 @@ type ParamHints = map[cfg.SymbolID][]typ.Type
 type FuncTypes = map[cfg.SymbolID]typ.Type
 
 // FunctionFact is the canonical function-related interproc fact for one symbol.
-// Legacy channels (ReturnSummaries/NarrowReturns/FuncTypes) are compatibility
-// views and should be derivable from this value.
 type FunctionFact struct {
 	Summary []typ.Type
 	Narrow  []typ.Type
@@ -90,14 +88,8 @@ type ConstructorFields = map[cfg.SymbolID]map[string]typ.Type
 // Facts bundles all interprocedural analysis results for a single function graph.
 // These facts are computed during analysis and stored per (graph, parent) pair.
 type Facts struct {
-	FunctionFacts FunctionFacts
-	// Compatibility mirror derived from FunctionFacts.
-	ReturnSummaries ReturnSummaries
-	// Compatibility mirror derived from FunctionFacts.
-	NarrowReturns NarrowReturnSummaries
-	ParamHints    ParamHints
-	// Compatibility mirror derived from FunctionFacts.
-	FuncTypes          FuncTypes
+	FunctionFacts      FunctionFacts
+	ParamHints         ParamHints
 	LiteralSigs        LiteralSigs
 	CapturedTypes      CapturedTypes
 	FieldWrites        FieldWrites
