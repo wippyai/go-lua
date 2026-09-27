@@ -3,10 +3,7 @@ package synth
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/check/api"
-	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/cfg"
-	"github.com/wippyai/go-lua/types/db"
-	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -38,27 +35,4 @@ type FieldAccessResult struct {
 type Synth interface {
 	api.Synth
 	ResolveFieldAccess(fullExpr *ast.AttrGetExpr, objType typ.Type, fieldName string, p cfg.Point) FieldAccessResult
-}
-
-// LiteralSynth provides synthesis capabilities for function literal extraction.
-//
-// Used during literal signature synthesis to resolve types of expressions
-// and build function signatures from function expressions. Limited interface
-// focused on the subset of Engine capabilities needed for literal processing.
-type LiteralSynth interface {
-	TypeOf(expr ast.Expr, p cfg.Point) typ.Type
-	SynthFunctionTypeWithExpected(fn *ast.FunctionExpr, sc *scope.State, expected *typ.Function) *typ.Function
-	Scopes() api.ScopeMap
-	Entry() cfg.Point
-}
-
-// SimpleSynth is a minimal synthesis interface for simple type queries.
-//
-// Provides the subset of synthesis capabilities needed by components that
-// only need basic type lookup without full flow-sensitive narrowing. Used
-// by hooks and checkers that perform localized type validation.
-type SimpleSynth interface {
-	TypeOf(expr ast.Expr, p cfg.Point) typ.Type
-	CallQuery() core.TypeOps
-	Context() *db.QueryContext
 }
