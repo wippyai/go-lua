@@ -144,7 +144,7 @@ func TestExpandValues_Empty(t *testing.T) {
 
 func TestNarrowTupleIndex_NotTuple(t *testing.T) {
 	s := newTestSynthesizer()
-	result := s.narrowTupleIndex(typ.String, "i", typ.Integer, 0, nil)
+	result := s.narrowTupleIndex(typ.String, &ast.IdentExpr{Value: "i"}, typ.Integer, 0, nil, nil)
 	if result != nil {
 		t.Fatal("expected nil for non-tuple")
 	}
@@ -153,7 +153,7 @@ func TestNarrowTupleIndex_NotTuple(t *testing.T) {
 func TestNarrowTupleIndex_NilNarrower(t *testing.T) {
 	s := newTestSynthesizer()
 	tuple := typ.NewTuple(typ.String, typ.Integer)
-	result := s.narrowTupleIndex(tuple, "i", typ.Integer, 0, nil)
+	result := s.narrowTupleIndex(tuple, &ast.IdentExpr{Value: "i"}, typ.Integer, 0, nil, nil)
 	if result != nil {
 		t.Fatal("expected nil without narrower")
 	}

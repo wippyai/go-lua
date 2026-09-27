@@ -23,17 +23,21 @@
 package extract
 
 import (
+	"math/big"
+
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/flow/numeric"
 	"github.com/wippyai/go-lua/types/io"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/numparse"
 	querycore "github.com/wippyai/go-lua/types/query/core"
+	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
@@ -126,7 +130,7 @@ skipNarrowedAttr:
 		keyType := recurse(key)
 		if it, ok := s.deps.Types.Index(s.deps.Ctx, objType, keyType); ok {
 			if narrower != nil {
-				if narrowedResult := s.narrowTupleIndex(objType, key.Value, it, p, narrower); narrowedResult != nil {
+				if narrowedResult := s.narrowTupleIndex(objType, key, it, p, narrower, recurse); narrowedResult != nil {
 					return narrowedResult
 				}
 				if narrowedResult := s.narrowArrayIndexByLenBound(it, ex.Object, key.Value, 0, p, sc, narrower); narrowedResult != nil {
@@ -180,6 +184,9 @@ skipNarrowedAttr:
 		keyType := recurse(ex.Key)
 		if it, ok := s.deps.Types.Index(s.deps.Ctx, objType, keyType); ok {
 			if narrower != nil {
+				if narrowedResult := s.narrowTupleIndex(objType, ex.Key, it, p, narrower, recurse); narrowedResult != nil {
+					return narrowedResult
+				}
 				// #t denotes a present last slot after a positive length
 				// assertion for the same version of t.
 				if length, ok := ex.Key.(*ast.UnaryLenOpExpr); ok && s.deps.Paths != nil {
@@ -271,8 +278,9 @@ func shouldPreferKeyOfIndex(t typ.Type) bool {
 	}
 }
 
-// narrowTupleIndex checks if a tuple index can be narrowed using integer bounds.
-func (s *Synthesizer) narrowTupleIndex(objType typ.Type, varName string, indexResult typ.Type, p cfg.Point, narrower api.FlowOps) typ.Type {
+// narrowTupleIndex removes the absent case only when every value of the index
+// expression lies within the tuple's one-based slots.
+func (s *Synthesizer) narrowTupleIndex(objType typ.Type, key ast.Expr, indexResult typ.Type, p cfg.Point, narrower api.FlowOps, recurse ExprSynth) typ.Type {
 	tuple, ok := unwrap.Alias(objType).(*typ.Tuple)
 	if !ok || len(tuple.Elements) == 0 {
 		return nil
@@ -282,13 +290,13 @@ func (s *Synthesizer) narrowTupleIndex(objType typ.Type, varName string, indexRe
 		return nil
 	}
 
-	lower, upper, hasBounds := narrower.BoundsAt(p, varName)
+	bounds, hasBounds := tupleIndexInterval(key, p, narrower, recurse)
 	if !hasBounds {
 		return nil
 	}
 
 	tupleLen := int64(len(tuple.Elements))
-	if lower >= 1 && upper <= tupleLen {
+	if bounds.Lower >= 1 && bounds.Upper <= tupleLen {
 		narrowed := narrow.RemoveNil(indexResult)
 		if !typ.IsNever(narrowed) {
 			return narrowed
@@ -296,6 +304,94 @@ func (s *Synthesizer) narrowTupleIndex(objType typ.Type, varName string, indexRe
 	}
 
 	return nil
+}
+
+// tupleIndexInterval evaluates only integer expressions that the numeric flow
+// solution can bound. Failed arithmetic or an unknown leaf leaves the index
+// optional; overflow must never wrap into a seemingly valid tuple slot.
+func tupleIndexInterval(expr ast.Expr, p cfg.Point, narrower api.FlowOps, recurse ExprSynth) (numeric.Interval, bool) {
+	if value, ok := intConstFromExpr(expr); ok {
+		return numeric.Interval{Lower: value, Upper: value}, true
+	}
+	switch e := expr.(type) {
+	case *ast.IdentExpr:
+		lower, upper, ok := narrower.BoundsAt(p, e.Value)
+		return numeric.Interval{Lower: lower, Upper: upper}, ok
+	case *ast.UnaryLenOpExpr:
+		if recurse != nil {
+			if tuple, ok := unwrap.Alias(recurse(e.Expr)).(*typ.Tuple); ok {
+				length := int64(len(tuple.Elements))
+				return numeric.Interval{Lower: length, Upper: length}, true
+			}
+		}
+	case *ast.UnaryMinusOpExpr:
+		value, ok := tupleIndexInterval(e.Expr, p, narrower, recurse)
+		if ok {
+			lower, lowOK := checkedIndexOp(0, value.Upper, "-")
+			upper, highOK := checkedIndexOp(0, value.Lower, "-")
+			return numeric.Interval{Lower: lower, Upper: upper}, lowOK && highOK
+		}
+	case *ast.ArithmeticOpExpr:
+		if e.Operator == "%" {
+			right, ok := tupleIndexInterval(e.Rhs, p, narrower, recurse)
+			if !ok || right.Lower != right.Upper || right.Lower <= 0 {
+				return numeric.Interval{}, false
+			}
+			_, bounded := tupleIndexInterval(e.Lhs, p, narrower, recurse)
+			if bounded || recurse != nil && subtype.IsSubtype(recurse(e.Lhs), typ.Integer) {
+				// Lua modulo by a positive integer lies in [0, k-1] for
+				// every integer dividend, even without finite input bounds.
+				return numeric.Interval{Lower: 0, Upper: right.Lower - 1}, true
+			}
+			return numeric.Interval{}, false
+		}
+		if e.Operator != "+" && e.Operator != "-" && e.Operator != "*" {
+			return numeric.Interval{}, false
+		}
+		left, leftOK := tupleIndexInterval(e.Lhs, p, narrower, recurse)
+		right, rightOK := tupleIndexInterval(e.Rhs, p, narrower, recurse)
+		if !leftOK || !rightOK {
+			return numeric.Interval{}, false
+		}
+		var pairs [][2]int64
+		switch e.Operator {
+		case "+":
+			pairs = [][2]int64{{left.Lower, right.Lower}, {left.Upper, right.Upper}}
+		case "-":
+			pairs = [][2]int64{{left.Lower, right.Upper}, {left.Upper, right.Lower}}
+		case "*":
+			pairs = [][2]int64{{left.Lower, right.Lower}, {left.Lower, right.Upper}, {left.Upper, right.Lower}, {left.Upper, right.Upper}}
+		}
+		var result numeric.Interval
+		for i, pair := range pairs {
+			value, ok := checkedIndexOp(pair[0], pair[1], e.Operator)
+			if !ok {
+				return numeric.Interval{}, false
+			}
+			if i == 0 || value < result.Lower {
+				result.Lower = value
+			}
+			if i == 0 || value > result.Upper {
+				result.Upper = value
+			}
+		}
+		return result, true
+	}
+	return numeric.Interval{}, false
+}
+
+func checkedIndexOp(a, b int64, op string) (int64, bool) {
+	value := big.NewInt(a)
+	other := big.NewInt(b)
+	switch op {
+	case "+":
+		value.Add(value, other)
+	case "-":
+		value.Sub(value, other)
+	case "*":
+		value.Mul(value, other)
+	}
+	return value.Int64(), value.IsInt64()
 }
 
 func (s *Synthesizer) narrowArrayIndexByLenBound(indexResult typ.Type, objExpr ast.Expr, varName string, offset int64, p cfg.Point, sc *scope.State, narrower api.FlowOps) typ.Type {
