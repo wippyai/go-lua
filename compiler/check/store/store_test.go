@@ -202,6 +202,42 @@ func callableViewGraph(sym cfg.SymbolID) (*cfg.Graph, *ast.FunctionExpr) {
 	return graph, fn
 }
 
+func TestFunctionFactViewUsesStableSnapshotUntilSwap(t *testing.T) {
+	graph, fn := callableViewGraph(42)
+	parent := scope.New()
+	s := NewSessionStore()
+	key, ok := s.GraphKeyFor(graph, parent)
+	if !ok {
+		t.Fatal("missing graph key")
+	}
+	s.InterprocPrev.Facts[key] = api.Facts{Callables: api.Callables{
+		fn: {Summary: []typ.Type{typ.String}},
+	}}
+	first := s.functionFactView(graph, parent)
+	if first.summaries[42][0] != typ.String {
+		t.Fatal("missing initial summary")
+	}
+	// A repeated read must reuse the fold while the stable snapshot is unchanged.
+	if got := s.functionFactView(graph, parent); got.definitions[42].Summary[0] != typ.String {
+		t.Fatal("missing cached definition")
+	}
+	if len(s.functionViews.views) != 1 {
+		t.Fatal("expected one cached graph view")
+	}
+	s.InterprocNext.Facts[key] = api.Facts{Callables: api.Callables{
+		fn: {Summary: []typ.Type{typ.Number}},
+	}}
+	if !s.FixpointSwap() {
+		t.Fatal("expected changed facts")
+	}
+	if len(s.functionViews.views) != 0 {
+		t.Fatal("cache survived facts swap")
+	}
+	if got := s.functionFactView(graph, parent); got.summaries[42][0] == typ.String {
+		t.Fatal("stale summary after swap")
+	}
+}
+
 func TestSessionStore_Fields(t *testing.T) {
 	s := &SessionStore{
 		Module: &ModuleStore{

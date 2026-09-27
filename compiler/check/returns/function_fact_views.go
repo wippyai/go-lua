@@ -64,6 +64,34 @@ func DefinitionView(graph *cfg.Graph, callables api.Callables) map[cfg.SymbolID]
 	return out
 }
 
+// ProjectFunctionFacts derives the three public channels from one reconciled view.
+func ProjectFunctionFacts(definitions map[cfg.SymbolID]api.FunctionFact) (api.ReturnSummaries, api.NarrowReturnSummaries, api.FuncTypes) {
+	var summaries api.ReturnSummaries
+	var narrows api.NarrowReturnSummaries
+	var funcs api.FuncTypes
+	for sym, fact := range definitions {
+		if len(fact.Summary) > 0 {
+			if summaries == nil {
+				summaries = make(api.ReturnSummaries)
+			}
+			summaries[sym] = fact.Summary
+		}
+		if len(fact.Narrow) > 0 {
+			if narrows == nil {
+				narrows = make(api.NarrowReturnSummaries)
+			}
+			narrows[sym] = fact.Narrow
+		}
+		if fact.Func != nil {
+			if funcs == nil {
+				funcs = make(api.FuncTypes)
+			}
+			funcs[sym] = fact.Func
+		}
+	}
+	return summaries, narrows, funcs
+}
+
 func SummaryViewFromFacts(graph *cfg.Graph, facts api.Facts) api.ReturnSummaries {
 	var out api.ReturnSummaries
 	for sym, fact := range DefinitionView(graph, facts.Callables) {
