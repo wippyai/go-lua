@@ -670,9 +670,13 @@ func coversFieldsAt(a, b typ.Type, visiting map[[2]typ.Type]bool) bool {
 	}
 	visiting[pair] = true
 	defer delete(visiting, pair)
-	for _, bm := range fieldCoverageMembers(b) {
+	bs := fieldCoverageMembers(b)
+	for bi := 0; bi < bs.len(); bi++ {
+		bm := bs.at(bi)
 		covered := false
-		for _, am := range fieldCoverageMembers(a) {
+		as := fieldCoverageMembers(a)
+		for ai := 0; ai < as.len(); ai++ {
+			am := as.at(ai)
 			if coversMemberFields(am, bm, visiting) {
 				covered = true
 				break
@@ -685,17 +689,82 @@ func coversFieldsAt(a, b typ.Type, visiting map[[2]typ.Type]bool) bool {
 	return true
 }
 
+type fieldCoverageSet struct {
+	single  typ.Type
+	members []typ.Type
+}
+
+func (s fieldCoverageSet) len() int {
+	if s.members != nil {
+		return len(s.members)
+	}
+	return 1
+}
+
+func (s fieldCoverageSet) at(i int) typ.Type {
+	if s.members != nil {
+		return s.members[i]
+	}
+	return s.single
+}
+
 // fieldCoverageMembers returns the non-nil members of t, aliases unwrapped.
-func fieldCoverageMembers(t typ.Type) []typ.Type {
+func fieldCoverageMembers(t typ.Type) fieldCoverageSet {
+	// Most values reaching this check are already non-nullable leaves. Keep
+	// those values inline instead of traversing them and allocating a slice.
+	plain := typ.UnwrapAnnotated(t)
+	switch v := plain.(type) {
+	case *typ.Optional:
+		inner := typ.UnwrapAnnotated(v.Inner)
+		if _, alias := inner.(*typ.Alias); !alias {
+			return fieldCoverageSet{single: inner}
+		}
+	case *typ.Union:
+		plainMembers := len(v.Members) > 0
+		for _, member := range v.Members {
+			if !plainMembers {
+				break
+			}
+			if _, annotated := member.(*typ.Annotated); annotated {
+				plainMembers = false
+				break
+			}
+			member = typ.UnwrapAnnotated(member)
+			if member == nil || member.Kind() == typ.Nil.Kind() {
+				plainMembers = false
+				break
+			}
+			switch member.(type) {
+			case *typ.Alias, *typ.Optional:
+				plainMembers = false
+			}
+			if !plainMembers {
+				break
+			}
+		}
+		if plainMembers {
+			return fieldCoverageSet{members: v.Members}
+		}
+	default:
+		switch plain.(type) {
+		case *typ.Alias, *typ.Instantiated, *typ.Intersection:
+			break
+		default:
+			if plain != nil && plain != typ.Nil {
+				return fieldCoverageSet{single: plain}
+			}
+		}
+	}
+
 	t = unwrap.Alias(narrow.RemoveNil(t))
 	if u, ok := t.(*typ.Union); ok {
 		members := make([]typ.Type, 0, len(u.Members))
 		for _, m := range u.Members {
 			members = append(members, unwrap.Alias(m))
 		}
-		return members
+		return fieldCoverageSet{members: members}
 	}
-	return []typ.Type{t}
+	return fieldCoverageSet{single: t}
 }
 
 func coversMemberFields(a, b typ.Type, visiting map[[2]typ.Type]bool) bool {
