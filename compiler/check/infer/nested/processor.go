@@ -319,6 +319,29 @@ func (p *Processor) processNestedFunction(
 	}
 
 	if nestedGraph != nil && nestedGraph.Bindings() != nil {
+		if parentResult != nil && parentResult.FlowSolution != nil {
+			unstable := make(map[cfg.SymbolID]bool)
+			if graph != nil {
+				graph.EachAssign(func(point cfg.Point, assignment *cfg.AssignInfo) {
+					if point <= info.NF.Point || assignment == nil {
+						return
+					}
+					for _, target := range assignment.Targets {
+						if target.Symbol != 0 {
+							unstable[target.Symbol] = true
+						}
+						if target.BaseSymbol != 0 {
+							unstable[target.BaseSymbol] = true
+						}
+					}
+				})
+			}
+			for sym, t := range capturedTypes {
+				if !unstable[sym] {
+					capturedTypes[sym] = captured.NarrowRecordFields(t, parentResult.FlowSolution, info.NF.Point, sym)
+				}
+			}
+		}
 		for _, sym := range nestedGraph.Bindings().CapturedSymbols(info.NF.Func) {
 			if bound := p.classSelf[sym]; bound != nil {
 				if capturedTypes == nil {
