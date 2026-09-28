@@ -64,6 +64,7 @@ func ConditionsFunc(fc *core.FlowContext, inputs *flow.Inputs) api.ConditionFrom
 
 // ExtractEdgeConstraints extracts type constraints from branch conditions.
 func ExtractEdgeConstraints(fc *core.FlowContext, inputs *flow.Inputs) {
+	validatedEnums := validatedEnumGuards(fc.Graph)
 	fc.Graph.EachBranch(func(p cfg.Point, info *cfg.BranchInfo) {
 		succs := fc.Graph.Successors(p)
 		if len(succs) < 2 {
@@ -79,6 +80,19 @@ func ExtractEdgeConstraints(fc *core.FlowContext, inputs *flow.Inputs) {
 		constraints := ce.ConstraintsFromBranch(info)
 		if info.Condition != nil {
 			constraints = ce.conditionsFromEvaluatedExpr(info.Condition)
+		}
+		if proof, ok := validatedEnums[info.Condition]; ok {
+			validatedPath := path.FromExprWithBindingsAt(proof.subject, ce.ConstResolver, fc.Graph.Bindings(), fc.Graph, p)
+			if validatedPath.Symbol != 0 {
+				if inputs.TypeKeys == nil {
+					inputs.TypeKeys = make(map[uint64]typ.Type)
+				}
+				hash := proof.values.Hash()
+				inputs.TypeKeys[hash] = proof.values
+				constraints.OnFalse = constraint.And(constraints.OnFalse, constraint.FromConstraints(constraint.HasType{
+					Path: validatedPath, Type: narrow.HashTypeKey(hash),
+				}))
+			}
 		}
 
 		// For generic for loops, add NotNil and KeyOf constraints for loop variables
