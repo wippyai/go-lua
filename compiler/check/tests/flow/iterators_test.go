@@ -160,8 +160,25 @@ func TestIterator_CustomIterator(t *testing.T) {
 					local val: number = v
 				end
 			`,
-			WantError: false,
+			WantError: true,
 			Stdlib:    true,
+		},
+		{
+			Name: "custom iterator with present values",
+			Code: `
+				local function iter(arr: {number}): (() -> (integer, number))
+					local i = 0
+					return function(): (integer, number)
+						i = i + 1
+						return i, arr[i] or 0
+					end
+				end
+				for i, v in iter({1, 2, 3}) do
+					local idx: integer = i
+					local val: number = v
+				end
+			`,
+			Stdlib: true,
 		},
 	}
 	testutil.RunCases(t, tests)

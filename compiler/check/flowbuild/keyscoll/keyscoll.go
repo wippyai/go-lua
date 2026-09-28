@@ -26,6 +26,11 @@ type KeysCollectorInfo struct {
 //	end
 //	return keys
 func DetectKeysCollector(fn *ast.FunctionExpr) *KeysCollectorInfo {
+	return DetectKeysCollectorWithBindings(fn, nil)
+}
+
+// DetectKeysCollectorWithBindings also rejects a module-reassigned pairs global.
+func DetectKeysCollectorWithBindings(fn *ast.FunctionExpr, moduleBindings *bind.BindingTable) *KeysCollectorInfo {
 	if fn == nil || fn.Stmts == nil || len(fn.Stmts) == 0 {
 		return nil
 	}
@@ -76,7 +81,7 @@ func DetectKeysCollector(fn *ast.FunctionExpr) *KeysCollectorInfo {
 				return
 			}
 			// Check if it's pairs(something)
-			if !isPairsCall(call) {
+			if !isPairsCall(call, bindings, moduleBindings) {
 				return
 			}
 			if len(call.Args) == 0 {
@@ -224,15 +229,30 @@ func DetectKeysCollector(fn *ast.FunctionExpr) *KeysCollectorInfo {
 	return &KeysCollectorInfo{ParamIndex: pairsParamIndex, ReturnIndex: keysReturnIndex}
 }
 
-func isPairsCall(call *ast.FuncCallExpr) bool {
+func isPairsCall(call *ast.FuncCallExpr, bindings, moduleBindings *bind.BindingTable) bool {
 	if call == nil || callsite.IsMethodLikeExpr(call) {
 		return false
 	}
 	ident, ok := call.Func.(*ast.IdentExpr)
-	if !ok {
+	if !ok || ident.Value != "pairs" || bindings == nil {
 		return false
 	}
-	return ident.Value == "pairs"
+	sym, ok := bindings.SymbolOf(ident)
+	if !ok || sym == 0 {
+		return false
+	}
+	kind, ok := bindings.Kind(sym)
+	if !ok || kind != cfg.SymbolGlobal || bindings.IsReassigned(sym) {
+		return false
+	}
+	if moduleBindings != nil {
+		for _, moduleSym := range moduleBindings.SymbolsByName("pairs") {
+			if moduleBindings.IsReassigned(moduleSym) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func isTableInsertCall(info *cfg.CallInfo) bool {
@@ -284,7 +304,7 @@ func BuildKeysCollectorDetector(graph *cfg.Graph, moduleBindings *bind.BindingTa
 				continue
 			}
 
-			info := DetectKeysCollector(fn)
+			info := DetectKeysCollectorWithBindings(fn, moduleBindings)
 			cache[calleeSym] = info
 			if info == nil {
 				continue

@@ -276,7 +276,7 @@ func (m *Manifest) LookupType(name string) (typ.Type, bool) {
 	if !ok {
 		return nil, false
 	}
-	return m.withDeclaredReturnConventions(resolveManifestLocalRefs(t, m.Types)), true
+	return resolveManifestLocalRefs(t, m.Types), true
 }
 
 // AllTypes returns a copy of all type definitions.
@@ -315,7 +315,7 @@ func (m *Manifest) AllGlobals() map[string]typ.Type {
 
 	result := make(map[string]typ.Type, len(m.Globals))
 	for k, v := range m.Globals {
-		result[k] = m.withDeclaredReturnConventions(v)
+		result[k] = v
 	}
 
 	return result
@@ -400,7 +400,7 @@ func (m *Manifest) EnrichedExport() typ.Type {
 	m.cacheMu.RUnlock()
 
 	resolvedExport := resolveManifestLocalRefs(m.Export, m.Types)
-	enriched := m.withDeclaredReturnConventions(resolvedExport)
+	enriched := resolvedExport
 	if resolvedExport != nil && len(m.Summaries) > 0 {
 		enriched = enrichTypeWithSummaries(enriched, m.Summaries)
 	}
@@ -454,29 +454,6 @@ func (m *Manifest) MarkDeclared() {
 		}
 		m.invalidateCaches()
 	})
-}
-
-func (m *Manifest) withDeclaredReturnConventions(t typ.Type) typ.Type {
-	if m == nil || m.BodyBacked || t == nil {
-		return t
-	}
-	enriched := t
-	// Rewrite visits a replaced node before its children. Repeat until
-	// nested declared methods in return and parameter types are visited.
-	for i := 0; i < typ.DefaultRecursionDepth; i++ {
-		next := typ.Rewrite(enriched, func(t typ.Type) (typ.Type, bool) {
-			if fn, ok := t.(*typ.Function); ok {
-				declared := contract.WithDeclaredErrorReturnConvention(fn)
-				return declared, declared != fn
-			}
-			return nil, false
-		})
-		if next == enriched {
-			break
-		}
-		enriched = next
-	}
-	return enriched
 }
 
 // resolveManifestLocalRefs resolves local typ.Ref nodes against manifest type

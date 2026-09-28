@@ -476,26 +476,7 @@ func ExtractIteratorSource(
 			return nil
 		}
 	} else {
-		ident, ok := call.Func.(*ast.IdentExpr)
-		if !ok || ident == nil {
-			return nil
-		}
-		if bindings != nil {
-			if sym, ok := bindings.SymbolOf(ident); ok && sym != 0 {
-				if symKind, ok := bindings.Kind(sym); ok && symKind != cfg.SymbolGlobal {
-					return nil
-				}
-			}
-		}
-		switch ident.Value {
-		case "ipairs":
-			iterKind = flow.IterateIndexed
-		case "pairs":
-			iterKind = flow.IterateKeyed
-		default:
-			return nil
-		}
-		idx = 0
+		return nil
 	}
 
 	if idx < 0 || idx >= len(call.Args) {

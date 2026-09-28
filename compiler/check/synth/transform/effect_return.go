@@ -103,11 +103,11 @@ func ApplyEffectTransform(fn *typ.Function, args []typ.Type, returnIdx int, retu
 	return finish(baseReturn)
 }
 
-// tableWithMetatable attaches meta as the metatable of a record table. A nil
-// or absent metatable leaves the table as it is; a pending metatable leaves
-// the result pending. Only records carry a metatable; other table shapes are
-// returned unchanged. A metatable whose record is reached through an alias or
-// a recursive type is attached as is, keeping its recursion identity.
+// tableWithMetatable attaches meta as the metatable of a record table. Nil
+// clears an existing metatable; an optional metatable preserves both possible
+// results. An absent argument leaves the table unchanged and a pending type
+// leaves the result pending. Only records carry a metatable; other table shapes
+// are returned unchanged. Aliased and recursive metatables keep their identity.
 func tableWithMetatable(table, meta typ.Type) typ.Type {
 	if table == nil {
 		return nil
@@ -116,11 +116,27 @@ func tableWithMetatable(table, meta typ.Type) typ.Type {
 	if !ok {
 		return table
 	}
-	if meta == nil || unwrap.IsNilType(meta) {
+	if meta == nil {
 		return table
 	}
-	if inner := unwrap.Optional(meta); inner != nil {
-		meta = inner
+	if unwrap.IsNilType(meta) {
+		return rec.WithMetatable(nil)
+	}
+	if optional, ok := unwrap.Alias(meta).(*typ.Optional); ok {
+		inner := optional.Inner
+		withMeta := tableWithMetatable(table, inner)
+		withoutMeta := rec.WithMetatable(nil)
+		if withMeta == nil || typ.IsUnresolved(withMeta) {
+			return withMeta
+		}
+		return typ.NewUnion(withMeta, withoutMeta)
+	}
+	if union, ok := unwrap.Alias(meta).(*typ.Union); ok {
+		members := make([]typ.Type, 0, len(union.Members))
+		for _, member := range union.Members {
+			members = append(members, tableWithMetatable(table, member))
+		}
+		return typ.NewUnion(members...)
 	}
 	if typ.IsUnresolved(meta) {
 		return typ.Unresolved

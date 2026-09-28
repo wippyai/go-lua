@@ -52,6 +52,7 @@ import (
 	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/kind"
+	querycore "github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
@@ -279,6 +280,18 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 					if inputs != nil && inputs.AnnotatedVars != nil && inputs.AnnotatedVars[sym] {
 						if dt, ok := inputs.DeclaredTypes[sym]; ok && dt != nil {
 							assignedType = dt
+							// An annotation constrains the signature, but does not erase
+							// contracts proved for the actual assigned function.
+							if declared, ok := unwrap.Alias(dt).(*typ.Function); ok {
+								if rhs := rhsType(); rhs != nil {
+									if bindings != nil && !bindings.IsReassigned(sym) && (fc.ModuleBindings == nil || !fc.ModuleBindings.IsReassigned(sym)) {
+										assignedType = querycore.PreserveFunctionContracts(declared, rhs)
+										overlayTypes[sym] = assignedType
+										specNarrowed[sym] = assignedType
+										inputs.DeclaredTypes[sym] = assignedType
+									}
+								}
+							}
 						}
 					} else if t, ok := resolverWithSpec(p, sym); ok && t != nil {
 						// A final resolved type is authoritative when it carries
@@ -437,7 +450,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 							if !ok || fn == nil {
 								continue
 							}
-							if info := keyscoll.DetectKeysCollector(fn); info != nil && info.ReturnIndex == retIndex {
+							if info := keyscoll.DetectKeysCollectorWithBindings(fn, fc.ModuleBindings); info != nil && info.ReturnIndex == retIndex {
 								tableSym = callsite.SymbolOrCreateFieldFromExpr(callsite.RuntimeArgAt(call, info.ParamIndex), bindings)
 								break
 							}
