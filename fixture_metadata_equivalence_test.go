@@ -3,6 +3,7 @@ package lua
 import (
 	"fmt"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -25,6 +26,7 @@ func TestFixtureManifestDiagnosticEquivalence(t *testing.T) {
 		}
 		for _, mode := range checkModes(suite) {
 			t.Run(suite.Name+"/"+mode, func(t *testing.T) {
+				t.Parallel()
 				files := resolveFiles(suite)
 				base := []testutil.Option{testutil.WithCheckOptions(checkOptionsFor(t, mode))}
 				if resolveStdlib(suite) {
@@ -75,12 +77,37 @@ func TestFixtureManifestDiagnosticEquivalence(t *testing.T) {
 	}
 }
 
+var recursiveDiagnosticID = regexp.MustCompile(`rec#[0-9]+`)
+
 func diagnosticKeys(ds []diag.Diagnostic) []string {
 	out := make([]string, len(ds))
+	// Recursive IDs come from a process-wide allocator. Alpha-rename them
+	// while retaining repeated/distinct identity across the diagnostics.
+	ids := make(map[string]string)
 	for i, d := range ds {
-		out[i] = fmt.Sprintf("%s:%d:%d:%v:%v:%s", d.Position.File, d.Position.Line, d.Position.Column, d.Severity, d.Code, d.Message)
+		message := recursiveDiagnosticID.ReplaceAllStringFunc(d.Message, func(id string) string {
+			if name, ok := ids[id]; ok {
+				return name
+			}
+			name := fmt.Sprintf("rec#%d", len(ids))
+			ids[id] = name
+			return name
+		})
+		out[i] = fmt.Sprintf("%s:%d:%d:%v:%v:%s", d.Position.File, d.Position.Line, d.Position.Column, d.Severity, d.Code, message)
 	}
 	return out
+}
+
+func TestDiagnosticKeysRecursiveIdentity(t *testing.T) {
+	keys := func(message string) []string {
+		return diagnosticKeys([]diag.Diagnostic{{Message: message}})
+	}
+	if !reflect.DeepEqual(keys("rec#10 | rec#20 | rec#10"), keys("rec#30 | rec#40 | rec#30")) {
+		t.Fatal("equivalent recursive identities differ")
+	}
+	if reflect.DeepEqual(keys("rec#10 | rec#10"), keys("rec#30 | rec#40")) {
+		t.Fatal("distinct recursive identities collapsed")
+	}
 }
 
 func TestImportedMetadataDiagnosticEquivalence(t *testing.T) {
