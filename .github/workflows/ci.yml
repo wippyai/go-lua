@@ -104,17 +104,17 @@ jobs:
       - name: Fuzz type decode
         env:
           GOCACHE: ${{ runner.temp }}/go-build
-        run: go test -fuzz=FuzzTypeDecodeToValidation -fuzztime=60s -timeout=120s
+        run: go test -run='^$' -fuzz=FuzzTypeDecodeToValidation -fuzztime=60s -timeout=120s
 
       - name: Fuzz Lua source types
         env:
           GOCACHE: ${{ runner.temp }}/go-build
-        run: go test -fuzz=FuzzLuaTypeValidation -fuzztime=60s -timeout=120s
+        run: go test -run='^$' -fuzz=FuzzLuaTypeValidation -fuzztime=60s -timeout=120s
 
       - name: Fuzz Lua with manifest
         env:
           GOCACHE: ${{ runner.temp }}/go-build
-        run: go test -fuzz=FuzzLuaWithManifestTypes -fuzztime=60s -timeout=120s
+        run: go test -run='^$' -fuzz=FuzzLuaWithManifestTypes -fuzztime=60s -timeout=120s
 
   bench:
     name: Benchmarks
@@ -133,7 +133,7 @@ jobs:
       - name: Run benchmarks
         env:
           GOCACHE: ${{ runner.temp }}/go-build
-        run: go test -bench="Benchmark(Validate|Is)" -benchmem -count=1 -timeout=60s | tee bench.txt
+        run: go test -run='^$' -bench="Benchmark(Validate|Is)" -benchmem -count=1 -timeout=60s | tee bench.txt
 
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4
