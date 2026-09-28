@@ -103,6 +103,16 @@ func TestIndexDynamicRecordKeyWithOpaqueMapAlternative(t *testing.T) {
 	}
 }
 
+func TestIndexDynamicOpenRecordKeyIncludesUnlistedFields(t *testing.T) {
+	record := typ.NewRecord().Field("filename", typ.LiteralString("known.txt")).SetOpen(true).Build()
+	for _, key := range []typ.Type{typ.String, typ.Unknown} {
+		got, ok := Index(record, key)
+		if !ok || !typ.IsUnknown(got) {
+			t.Errorf("dynamic key %s on open record = %v, %v; want unknown", key, got, ok)
+		}
+	}
+}
+
 func TestIndex_FiniteNumericMapWithGeneralNumber(t *testing.T) {
 	budget := typ.NewMap(typ.NewUnion(typ.LiteralInt(1), typ.LiteralInt(2)), typ.String)
 	result, ok := Index(budget, typ.Number)
