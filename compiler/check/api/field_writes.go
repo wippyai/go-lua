@@ -85,7 +85,7 @@ func JoinFieldWrite(key FieldWriteKey, prev, next typ.Type) typ.Type {
 		pm, pok := prev.(*typ.Map)
 		nm, nok := next.(*typ.Map)
 		if pok && nok {
-			return typ.NewMap(typ.JoinPreferNonSoft(pm.Key, nm.Key), typ.JoinPreferNonSoft(pm.Value, nm.Value))
+			return pm.WithTypes(typ.JoinPreferNonSoft(pm.Key, nm.Key), typ.JoinPreferNonSoft(pm.Value, nm.Value))
 		}
 	}
 	return typ.NewUnion(prev, next)

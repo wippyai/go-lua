@@ -132,14 +132,10 @@ func mergeFieldsIntoSelfType(selfType typ.Type, fields map[string]typ.Type) typ.
 
 	switch v := selfType.(type) {
 	case *typ.Record:
-		builder := typ.NewRecord().SetDeclared(v.Declared).SetComplete(v.Complete)
-		if v.Open {
-			builder.SetOpen(true)
-		}
+		builder := v.Builder()
 
 		existingFields := make(map[string]bool)
 		for _, f := range v.Fields {
-			builder.AddField(f)
 			existingFields[f.Name] = true
 		}
 
@@ -149,12 +145,6 @@ func mergeFieldsIntoSelfType(selfType typ.Type, fields map[string]typ.Type) typ.
 			}
 		}
 
-		if v.Metatable != nil {
-			builder.Metatable(v.Metatable)
-		}
-		if v.HasMapComponent() {
-			builder.MapComponent(v.MapKey, v.MapValue)
-		}
 		return builder.Build()
 
 	case *typ.Interface:

@@ -71,13 +71,13 @@ func markDeclaredDepth(t Type, memo map[Type]Type, depth int) Type {
 			},
 			Array: func(a *Array) Type {
 				elem := markDeclaredDepth(a.Element, memo, depth+1)
-				return replaceOrKeep(t, elem == a.Element, func() Type { return NewArray(elem) })
+				return replaceOrKeep(t, elem == a.Element, func() Type { return a.WithElement(elem) })
 			},
 			Map: func(m *Map) Type {
 				keyType := markDeclaredDepth(m.Key, memo, depth+1)
 				valueType := markDeclaredDepth(m.Value, memo, depth+1)
 				return replaceOrKeep(t, keyType == m.Key && valueType == m.Value, func() Type {
-					return NewMap(keyType, valueType)
+					return m.WithTypes(keyType, valueType)
 				})
 			},
 			Tuple: func(tup *Tuple) Type {
@@ -120,8 +120,7 @@ func markDeclaredDepth(t Type, memo map[Type]Type, depth int) Type {
 				if !changed {
 					return marked
 				}
-				return buildRecordTypeWithFlags(fields, metatable, mapKey, mapValue,
-					marked.Open, true, true, marked.MapInferredPresence, marked.MapExplicitNilWrite, marked.Complete)
+				return marked.WithChildren(fields, metatable, mapKey, mapValue)
 			},
 			Alias: func(a *Alias) Type {
 				target := markDeclaredDepth(a.Target, memo, depth+1)
@@ -373,7 +372,7 @@ func rewriteDepth(t Type, fn func(Type) (Type, bool), guard internal.RecursionGu
 			out = t
 			break
 		}
-		out = NewArray(elem)
+		out = tt.WithElement(elem)
 	case *Map:
 		keyType := rewriteDepth(tt.Key, fn, next, memo)
 		valueType := rewriteDepth(tt.Value, fn, next, memo)
@@ -381,7 +380,7 @@ func rewriteDepth(t Type, fn func(Type) (Type, bool), guard internal.RecursionGu
 			out = t
 			break
 		}
-		out = NewMap(keyType, valueType)
+		out = tt.WithTypes(keyType, valueType)
 	case *Tuple:
 		var elems []Type
 		for i, e := range tt.Elements {
@@ -606,5 +605,5 @@ func rewriteRecord(v *Record, orig Type, fn func(Type) (Type, bool), guard inter
 	if fields != nil {
 		fieldsSrc = fields
 	}
-	return buildRecordType(fieldsSrc, metatable, mapKey, mapValue, v.Open, v.Complete, true)
+	return v.WithChildren(fieldsSrc, metatable, mapKey, mapValue)
 }

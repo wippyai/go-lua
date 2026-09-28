@@ -131,7 +131,7 @@ func widenForInferenceDepth(t typ.Type, depth int) typ.Type {
 				return t
 			}
 
-			return typ.NewArray(elem)
+			return a.WithElement(elem)
 		},
 		Map: func(m *typ.Map) typ.Type {
 			key := widenForInferenceDepth(m.Key, depth+1)
@@ -141,32 +141,25 @@ func widenForInferenceDepth(t typ.Type, depth int) typ.Type {
 				return t
 			}
 
-			return typ.NewMap(key, val)
+			return m.WithTypes(key, val)
 		},
 		Record: func(r *typ.Record) typ.Type {
-			builder := typ.NewRecord().SetDeclared(r.Declared).SetComplete(r.Complete)
-			if r.Open {
-				builder.SetOpen(true)
-			}
-
-			for _, f := range r.Fields {
+			fields := make([]typ.Field, len(r.Fields))
+			for i, f := range r.Fields {
 				fieldType := widenForInferenceDepth(f.Type, depth+1)
 				f.Type = fieldType
-				builder.AddField(f)
+				fields[i] = f
 			}
-
+			metatable := r.Metatable
 			if r.Metatable != nil {
-				builder.Metatable(widenForInferenceDepth(r.Metatable, depth+1))
+				metatable = widenForInferenceDepth(r.Metatable, depth+1)
 			}
-
+			key, value := r.MapKey, r.MapValue
 			if r.HasMapComponent() {
-				builder.MapComponent(
-					widenForInferenceDepth(r.MapKey, depth+1),
-					widenForInferenceDepth(r.MapValue, depth+1),
-				)
+				key = widenForInferenceDepth(key, depth+1)
+				value = widenForInferenceDepth(value, depth+1)
 			}
-
-			return builder.Build()
+			return r.WithChildren(fields, metatable, key, value)
 		},
 		Function: func(fn *typ.Function) typ.Type {
 			// Preserve generic signatures as-is to avoid detaching type-param

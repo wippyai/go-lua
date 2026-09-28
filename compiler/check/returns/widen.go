@@ -427,13 +427,7 @@ func joinParamHintIteration(previous, current typ.Type) typ.Type {
 	if !aOK || !bOK || !rOK {
 		return joined
 	}
-	builder := typ.NewRecord().SetOpen(r.Open).SetComplete(r.Complete).SetDeclared(a.Declared && b.Declared)
-	if r.Metatable != nil {
-		builder.Metatable(r.Metatable)
-	}
-	if r.HasMapComponent() {
-		builder.MapComponent(r.MapKey, r.MapValue)
-	}
+	builder := r.BuilderEmptyFields().SetDeclared(a.Declared && b.Declared)
 	changed := false
 	for _, field := range r.Fields {
 		if old := a.GetField(field.Name); old != nil {
@@ -603,13 +597,19 @@ func joinIterationMaps(a, b typ.Type) (typ.Type, bool) {
 	}
 	key := joinIterationFactAt(am.Key, bm.Key, true)
 	value := joinIterationFactAt(am.Value, bm.Value, true)
-	if typ.TypeEquals(key, am.Key) && typ.TypeEquals(value, am.Value) {
+	inferred := am.InferredPresence && bm.InferredPresence
+	explicitNil := am.ExplicitNilWrite || bm.ExplicitNilWrite
+	if typ.TypeEquals(key, am.Key) && typ.TypeEquals(value, am.Value) && am.InferredPresence == inferred && am.ExplicitNilWrite == explicitNil {
 		return a, true
 	}
-	if typ.TypeEquals(key, bm.Key) && typ.TypeEquals(value, bm.Value) {
+	if typ.TypeEquals(key, bm.Key) && typ.TypeEquals(value, bm.Value) && bm.InferredPresence == inferred && bm.ExplicitNilWrite == explicitNil {
 		return b, true
 	}
-	return typ.NewMap(key, value), true
+	merged := am.WithTypes(key, value).WithInferredPresence(inferred)
+	if explicitNil {
+		merged = merged.WithExplicitNilWrite()
+	}
+	return merged, true
 }
 
 // Instantiations of one generic describe the same captured value across
@@ -827,13 +827,19 @@ func joinIterationArrays(a, b typ.Type) (typ.Type, bool) {
 		return nil, false
 	}
 	elem := joinIterationFactAt(arrA.Element, arrB.Element, true)
+	inferred := arrA.InferredPresence && arrB.InferredPresence
+	explicitNil := arrA.ExplicitNilWrite || arrB.ExplicitNilWrite
 	switch {
-	case typ.TypeEquals(elem, arrA.Element):
+	case typ.TypeEquals(elem, arrA.Element) && arrA.InferredPresence == inferred && arrA.ExplicitNilWrite == explicitNil:
 		return a, true
-	case typ.TypeEquals(elem, arrB.Element):
+	case typ.TypeEquals(elem, arrB.Element) && arrB.InferredPresence == inferred && arrB.ExplicitNilWrite == explicitNil:
 		return b, true
 	}
-	return typ.NewArray(elem), true
+	merged := arrA.WithElement(elem).WithInferredPresence(inferred)
+	if explicitNil {
+		merged = merged.WithExplicitNilWrite()
+	}
+	return merged, true
 }
 
 // joinIterationOptionals joins two optional record or function facts, or one
@@ -952,7 +958,7 @@ func joinIterationRecords(a, b typ.Type) (typ.Type, bool) {
 		value := joinIterationFactAt(ar.MapValue, br.MapValue, true)
 		sameAsA = sameAsA && key == ar.MapKey && value == ar.MapValue
 		sameAsB = sameAsB && key == br.MapKey && value == br.MapValue
-		builder.MapComponent(key, value)
+		builder.MapComponentWithFlags(key, value, ar.MapInferredPresence && br.MapInferredPresence, ar.MapExplicitNilWrite || br.MapExplicitNilWrite)
 	}
 	for _, fa := range ar.Fields {
 		field := fa

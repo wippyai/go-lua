@@ -1,6 +1,7 @@
 package testutil
 
 import (
+	"os"
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/check"
@@ -39,8 +40,25 @@ func WithManifest(path string, manifest *io.Manifest) Option {
 		if c.Manifests == nil {
 			c.Manifests = make(map[string]*io.Manifest)
 		}
-		c.Manifests[path] = manifest
+		c.Manifests[path] = testManifest(manifest)
 	}
+}
+
+// testManifest exercises the import boundary through the cache format when
+// the module test suite is run with WIPPY_TEST_MANIFEST_ROUNDTRIP=1.
+func testManifest(manifest *io.Manifest) *io.Manifest {
+	if manifest == nil || os.Getenv("WIPPY_TEST_MANIFEST_ROUNDTRIP") != "1" {
+		return manifest
+	}
+	data, err := manifest.Encode()
+	if err != nil {
+		panic(err)
+	}
+	decoded, err := io.DecodeManifest(data)
+	if err != nil {
+		panic(err)
+	}
+	return decoded
 }
 
 // WithCheckOptions sets the type-checking semantics.
@@ -248,7 +266,7 @@ func WithModule(name string, mod *ModuleResult) Option {
 			if cfg.Manifests == nil {
 				cfg.Manifests = make(map[string]*io.Manifest)
 			}
-			cfg.Manifests[name] = mod.Manifest
+			cfg.Manifests[name] = testManifest(mod.Manifest)
 		}
 	}
 }

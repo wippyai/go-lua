@@ -191,11 +191,18 @@ func CoalesceMaps(types []typ.Type) []typ.Type {
 
 	key := maps[0].Key
 	val := maps[0].Value
+	inferred, explicitNil := maps[0].InferredPresence, maps[0].ExplicitNilWrite
 	for i := 1; i < len(maps); i++ {
 		key = Types(key, maps[i].Key)
 		val = Types(val, maps[i].Value)
+		inferred = inferred && maps[i].InferredPresence
+		explicitNil = explicitNil || maps[i].ExplicitNilWrite
 	}
-	rest = append(rest, typ.NewMap(key, val))
+	merged := maps[0].WithTypes(key, val).WithInferredPresence(inferred)
+	if explicitNil {
+		merged = merged.WithExplicitNilWrite()
+	}
+	rest = append(rest, merged)
 	return rest
 }
 
@@ -231,16 +238,7 @@ func CoalesceRecordOpenness(types []typ.Type) []typ.Type {
 			result = append(result, t)
 			continue
 		}
-		builder := typ.NewRecord().SetOpen(true).SetDeclared(r.Declared)
-		for _, f := range r.Fields {
-			builder.AddField(f)
-		}
-		if r.Metatable != nil {
-			builder.Metatable(r.Metatable)
-		}
-		if r.HasMapComponent() {
-			builder.MapComponent(r.MapKey, r.MapValue)
-		}
+		builder := r.Builder().SetOpen(true)
 		result = append(result, builder.Build())
 	}
 	return result
@@ -339,6 +337,7 @@ func CoalesceRecordMapComponents(types []typ.Type) []typ.Type {
 
 			// Merge map components
 			var mapKey, mapValue typ.Type
+			mapInferred, mapExplicit := true, false
 			for _, r := range g.records {
 				if !r.HasMapComponent() {
 					continue
@@ -350,6 +349,8 @@ func CoalesceRecordMapComponents(types []typ.Type) []typ.Type {
 					mapKey = Types(mapKey, r.MapKey)
 					mapValue = Types(mapValue, r.MapValue)
 				}
+				mapInferred = mapInferred && r.MapInferredPresence
+				mapExplicit = mapExplicit || r.MapExplicitNilWrite
 			}
 			// Use the first record as the template. The merged shape is
 			// declared only when every contributing record is.
@@ -364,18 +365,9 @@ func CoalesceRecordMapComponents(types []typ.Type) []typ.Type {
 					complete = false
 				}
 			}
-			builder := typ.NewRecord().SetDeclared(allDeclared).SetComplete(complete)
-			if template.Open {
-				builder.SetOpen(true)
-			}
-			for _, f := range template.Fields {
-				builder.AddField(f)
-			}
-			if template.Metatable != nil {
-				builder.Metatable(template.Metatable)
-			}
+			builder := template.Builder().SetDeclared(allDeclared).SetComplete(complete)
 			if mapKey != nil && mapValue != nil {
-				builder.MapComponent(mapKey, mapValue)
+				builder.MapComponentWithFlags(mapKey, mapValue, mapInferred, mapExplicit)
 			}
 			merged := builder.Build()
 

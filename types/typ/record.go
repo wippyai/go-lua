@@ -80,6 +80,38 @@ func NewRecord() *RecordBuilder {
 	return &RecordBuilder{}
 }
 
+// Builder copies every semantic property of r for a metadata-preserving rebuild.
+func (r *Record) Builder() *RecordBuilder {
+	return &RecordBuilder{
+		fields: append([]Field(nil), r.Fields...), metatable: r.Metatable,
+		mapKey: r.MapKey, mapValue: r.MapValue,
+		mapInferredPresence: r.MapInferredPresence,
+		mapExplicitNilWrite: r.MapExplicitNilWrite,
+		open:                r.Open, complete: r.Complete, declared: r.Declared,
+	}
+}
+
+// BuilderEmptyFields keeps record metadata while allowing callers to rebuild fields.
+func (r *Record) BuilderEmptyFields() *RecordBuilder {
+	b := r.Builder()
+	b.fields = nil
+	return b
+}
+
+// WithChildren replaces child types while retaining all metadata of r and its fields.
+func (r *Record) WithChildren(fields []Field, metatable, mapKey, mapValue Type) *Record {
+	b := r.Builder()
+	b.fields = append([]Field(nil), fields...)
+	b.metatable, b.mapKey, b.mapValue = metatable, mapKey, mapValue
+	return b.Build()
+}
+
+func (r *Record) WithComplete(complete bool) *Record {
+	b := r.Builder()
+	b.complete = complete
+	return b.Build()
+}
+
 // Field adds a required field.
 func (b *RecordBuilder) Field(name string, t Type) *RecordBuilder {
 	b.fields = append(b.fields, Field{Name: name, Type: t})
@@ -180,7 +212,7 @@ func (b *RecordBuilder) Build() *Record {
 
 // WithMetatable returns r with meta as its metatable and everything else kept.
 func (r *Record) WithMetatable(meta Type) *Record {
-	return buildRecordTypeWithFlags(r.Fields, meta, r.MapKey, r.MapValue, r.Open, r.Declared, true, r.MapInferredPresence, r.MapExplicitNilWrite, r.Complete)
+	return r.WithChildren(r.Fields, meta, r.MapKey, r.MapValue)
 }
 
 // WithDeclared returns r with its declaration provenance set to declared.
@@ -189,7 +221,9 @@ func (r *Record) WithDeclared(declared bool) *Record {
 	if r.Declared == declared {
 		return r
 	}
-	return buildRecordTypeWithFlags(r.Fields, r.Metatable, r.MapKey, r.MapValue, r.Open, declared, true, r.MapInferredPresence, r.MapExplicitNilWrite, r.Complete)
+	b := r.Builder()
+	b.declared = declared
+	return b.Build()
 }
 
 // WithField returns r with f replacing the field of the same name, or added
@@ -208,7 +242,7 @@ func (r *Record) WithField(f Field) *Record {
 	if !replaced {
 		fields = append(fields, f)
 	}
-	return buildRecordTypeWithFlags(fields, r.Metatable, r.MapKey, r.MapValue, r.Open, r.Declared, replaced, r.MapInferredPresence, r.MapExplicitNilWrite, r.Complete)
+	return r.WithChildren(fields, r.Metatable, r.MapKey, r.MapValue)
 }
 
 func (r *Record) Kind() kind.Kind { return kind.Record }
@@ -328,7 +362,7 @@ func PartialView(t Type) Type {
 		if !v.Complete {
 			return t
 		}
-		return buildRecordTypeWithFlags(v.Fields, v.Metatable, v.MapKey, v.MapValue, v.Open, v.Declared, true, v.MapInferredPresence, v.MapExplicitNilWrite, false)
+		return v.WithComplete(false)
 	case *Alias:
 		target := PartialView(v.Target)
 		if target == v.Target {
@@ -365,7 +399,7 @@ func PartialViewDeep(t Type) Type {
 	}
 	return Rewrite(t, func(node Type) (Type, bool) {
 		if r, ok := node.(*Record); ok && r.Complete {
-			return PartialViewDeep(buildRecordTypeWithFlags(r.Fields, r.Metatable, r.MapKey, r.MapValue, r.Open, r.Declared, true, r.MapInferredPresence, r.MapExplicitNilWrite, false)), true
+			return PartialViewDeep(r.WithComplete(false)), true
 		}
 		return nil, false
 	})

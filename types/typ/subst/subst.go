@@ -171,14 +171,14 @@ func expandInstantiatedCore(t typ.Type, orig typ.Type, guard internal.RecursionG
 		if elem == v.Element {
 			return orig
 		}
-		return typ.NewArray(elem)
+		return v.WithElement(elem)
 	case *typ.Map:
 		key := expandInstantiatedGuard(v.Key, guard, memo)
 		value := expandInstantiatedGuard(v.Value, guard, memo)
 		if key == v.Key && value == v.Value {
 			return orig
 		}
-		return typ.NewMap(key, value)
+		return v.WithTypes(key, value)
 	case *typ.Tuple:
 		var elems []typ.Type
 		for i, e := range v.Elements {
@@ -321,24 +321,11 @@ func expandInstantiatedCore(t typ.Type, orig typ.Type, guard internal.RecursionG
 			return orig
 		}
 
-		builder := typ.NewRecord().SetDeclared(v.Declared).SetComplete(v.Complete)
-		if v.Open {
-			builder.SetOpen(true)
-		}
 		fieldsSrc := v.Fields
 		if fields != nil {
 			fieldsSrc = fields
 		}
-		for _, f := range fieldsSrc {
-			builder.AddField(f)
-		}
-		if metatable != nil {
-			builder = builder.Metatable(metatable)
-		}
-		if mapKey != nil && mapValue != nil {
-			builder = builder.MapComponent(mapKey, mapValue)
-		}
-		return builder.Build()
+		return v.WithChildren(fieldsSrc, metatable, mapKey, mapValue)
 	case *typ.Alias:
 		target := expandInstantiatedGuard(v.Target, guard, memo)
 		if target == v.Target {

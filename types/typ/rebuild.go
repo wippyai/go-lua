@@ -73,16 +73,6 @@ func buildFunctionType(
 	}
 }
 
-func buildRecordType(fields []Field, metatable, mapKey, mapValue Type, open, complete bool, assumeSorted bool) *Record {
-	return buildRecordTypeWithFlags(fields, metatable, mapKey, mapValue, open, false, assumeSorted, false, false, complete)
-}
-
-// buildRecordTypeDeclared rebuilds a record keeping the declared provenance
-// and complete bits.
-func buildRecordTypeDeclared(fields []Field, metatable, mapKey, mapValue Type, open, declared, complete bool, assumeSorted bool) *Record {
-	return buildRecordTypeWithFlags(fields, metatable, mapKey, mapValue, open, declared, assumeSorted, false, false, complete)
-}
-
 func buildRecordTypeWithFlags(fields []Field, metatable, mapKey, mapValue Type, open, declared bool, assumeSorted, inferred, explicitNil, complete bool) *Record {
 	sorted := make([]Field, len(fields))
 	copy(sorted, fields)

@@ -1035,20 +1035,13 @@ func (s *Solution) mergeFieldsAt(baseType typ.Type, prefix string, depth int) ty
 			builder := typ.NewRecord().SetOpen(true)
 			builder.MapComponentWithFlags(m.Key, m.Value, m.InferredPresence, m.ExplicitNilWrite)
 			for _, f := range fields {
-				if f.Optional {
-					builder.OptField(f.Name, f.Type)
-				} else {
-					builder.Field(f.Name, f.Type)
-				}
+				builder.AddField(typ.Field{Name: f.Name, Type: f.Type, Optional: f.Optional})
 			}
 			return builder.Build()
 		},
 		Record: func(r *typ.Record) typ.Type {
 			// Build merged record: existing fields + new fields
-			builder := typ.NewRecord().SetDeclared(r.Declared).SetComplete(r.Complete)
-			if r.Open {
-				builder.SetOpen(true)
-			}
+			builder := r.BuilderEmptyFields()
 			type pendingField struct {
 				t        typ.Type
 				optional bool
@@ -1101,23 +1094,13 @@ func (s *Solution) mergeFieldsAt(baseType typ.Type, prefix string, depth int) ty
 					builder.Field(name, field.t)
 				}
 			}
-			if r.Metatable != nil {
-				builder.Metatable(r.Metatable)
-			}
-			if r.HasMapComponent() {
-				builder.MapComponentWithFlags(r.MapKey, r.MapValue, r.MapInferredPresence, r.MapExplicitNilWrite)
-			}
 			return builder.Build()
 		},
 		Default: func(t typ.Type) typ.Type {
 			// Base is not a record or map; create one with just the field assignments
 			builder := typ.NewRecord().SetOpen(true)
 			for _, f := range fields {
-				if f.Optional {
-					builder.OptField(f.Name, f.Type)
-				} else {
-					builder.Field(f.Name, f.Type)
-				}
+				builder.AddField(typ.Field{Name: f.Name, Type: f.Type, Optional: f.Optional})
 			}
 			return builder.Build()
 		},

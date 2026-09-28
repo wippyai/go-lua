@@ -577,17 +577,8 @@ func buildRecordWithMap(template *typ.Record, mapKey, mapValue typ.Type) *typ.Re
 	if template == nil {
 		return nil
 	}
-	builder := typ.NewRecord().SetComplete(template.Complete)
-	if template.Open {
-		builder.SetOpen(true)
-	}
-	for _, f := range template.Fields {
-		builder.Field(f.Name, f.Type)
-	}
-	if template.Metatable != nil {
-		builder.Metatable(template.Metatable)
-	}
-	builder.MapComponent(mapKey, mapValue)
+	builder := template.Builder()
+	builder.MapComponentWithFlags(mapKey, mapValue, template.MapInferredPresence, template.MapExplicitNilWrite)
 	return builder.Build()
 }
 
@@ -597,7 +588,7 @@ func reconcileSoftAnnotatedInference(baseType, inferredType typ.Type) typ.Type {
 		case *typ.Map:
 			mergedKey := typ.JoinPreferNonSoft(baseMap.Key, inferred.Key)
 			mergedVal := typ.JoinPreferNonSoft(baseMap.Value, inferred.Value)
-			return typ.NewMap(mergedKey, mergedVal)
+			return inferred.WithTypes(mergedKey, mergedVal)
 		case *typ.Record:
 			if inferred.HasMapComponent() {
 				mergedKey := typ.JoinPreferNonSoft(baseMap.Key, inferred.MapKey)

@@ -19,8 +19,9 @@ const maxCollectionLen = 1 << 20
 const maxStringLen = 16 << 20
 
 type typeReader struct {
-	r   *bytes.Reader
-	err error
+	r       *bytes.Reader
+	err     error
+	version byte // zero means current standalone type encoding
 
 	recursive map[uint64]*typ.Recursive
 	depth     int
@@ -267,7 +268,18 @@ func (r *typeReader) readType() typ.Type {
 		if r.err != nil {
 			return nil
 		}
-		return typ.NewArray(elem)
+		a := typ.NewArray(elem)
+		if r.version == 13 {
+			return a
+		}
+		inferred, explicitNil := r.readBool(), r.readBool()
+		if inferred {
+			a = a.WithInferredPresence(true)
+		}
+		if explicitNil {
+			a = a.WithExplicitNilWrite()
+		}
+		return a
 
 	case kind.Map:
 		key := r.readTypeNonNil()
@@ -277,7 +289,18 @@ func (r *typeReader) readType() typ.Type {
 			return nil
 		}
 
-		return typ.NewMap(key, value)
+		m := typ.NewMap(key, value)
+		if r.version == 13 {
+			return m
+		}
+		inferred, explicitNil := r.readBool(), r.readBool()
+		if inferred {
+			m = m.WithInferredPresence(true)
+		}
+		if explicitNil {
+			m = m.WithExplicitNilWrite()
+		}
+		return m
 
 	case kind.Record:
 		fieldCount := r.readUint32()
@@ -298,16 +321,11 @@ func (r *typeReader) readType() typ.Type {
 			optional := r.readBool()
 			readonly := r.readBool()
 
-			switch {
-			case readonly && optional:
-				rb.OptReadonlyField(name, fType)
-			case readonly:
-				rb.ReadonlyField(name, fType)
-			case optional:
-				rb.OptField(name, fType)
-			default:
-				rb.Field(name, fType)
+			inferred := false
+			if r.version != 13 {
+				inferred = r.readBool()
 			}
+			rb.AddField(typ.Field{Name: name, Type: fType, Optional: optional, Readonly: readonly, InferredPresence: inferred})
 		}
 
 		if r.readBool() {
@@ -326,7 +344,14 @@ func (r *typeReader) readType() typ.Type {
 			if r.err != nil {
 				return nil
 			}
-			rb.MapComponent(key, value)
+			if r.version == 13 {
+				rb.MapComponent(key, value)
+			} else {
+				rb.MapComponentWithFlags(key, value, r.readBool(), r.readBool())
+			}
+		}
+		if r.version != 13 {
+			rb.SetComplete(r.readBool())
 		}
 
 		return rb.Build()

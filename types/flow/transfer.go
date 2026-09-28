@@ -1429,7 +1429,7 @@ func widenContainerElementType(containerType typ.Type, valueType typ.Type) typ.T
 			if typ.TypeEquals(oldElem, newElem) {
 				return containerType
 			}
-			return typ.NewArray(newElem)
+			return arr.WithElement(newElem)
 		},
 		Map: func(m *typ.Map) typ.Type {
 			// Handle map types (widen value type)
@@ -1437,7 +1437,7 @@ func widenContainerElementType(containerType typ.Type, valueType typ.Type) typ.T
 			if typ.TypeEquals(m.Value, newVal) {
 				return containerType
 			}
-			return typ.NewMap(m.Key, newVal)
+			return m.WithTypes(m.Key, newVal)
 		},
 		Union: func(u *typ.Union) typ.Type {
 			// Handle unions containing containers
@@ -1498,7 +1498,7 @@ func WidenArrayElementType(arrayType typ.Type, elementType typ.Type, joinFn func
 			return typ.NewAlias(a.Name, widened)
 		},
 		Array: func(arr *typ.Array) typ.Type {
-			return typ.NewArray(joinFn(arr.Element, elementType))
+			return arr.WithElement(joinFn(arr.Element, elementType))
 		},
 		Record: func(rec *typ.Record) typ.Type {
 			if len(rec.Fields) == 0 {
@@ -1511,7 +1511,7 @@ func WidenArrayElementType(arrayType typ.Type, elementType typ.Type, joinFn func
 			found := false
 			for _, m := range u.Members {
 				if arr, ok := m.(*typ.Array); ok && !found {
-					updated = append(updated, typ.NewArray(joinFn(arr.Element, elementType)))
+					updated = append(updated, arr.WithElement(joinFn(arr.Element, elementType)))
 					found = true
 				} else {
 					updated = append(updated, m)
@@ -1566,7 +1566,7 @@ func WidenMapValueArray(mapType typ.Type, keyType, elementType typ.Type) typ.Typ
 			if typ.TypeEquals(m.Key, newKey) && typ.TypeEquals(m.Value, newVal) {
 				return mapType
 			}
-			return typ.NewMap(newKey, newVal)
+			return m.WithTypes(newKey, newVal)
 		},
 		Record: func(r *typ.Record) typ.Type {
 			if len(r.Fields) == 0 {
@@ -1584,7 +1584,7 @@ func WidenMapValueArray(mapType typ.Type, keyType, elementType typ.Type) typ.Typ
 					if newVal == nil {
 						updated = append(updated, m)
 					} else {
-						updated = append(updated, typ.NewMap(newKey, newVal))
+						updated = append(updated, mp.WithTypes(newKey, newVal))
 					}
 					found = true
 				} else {
@@ -1688,13 +1688,13 @@ func widenIndexedField(t typ.Type, field string, value typ.Type) typ.Type {
 		if updated == nil || typ.TypeEquals(updated, v.Value) {
 			return t
 		}
-		return typ.NewMap(v.Key, updated)
+		return v.WithTypes(v.Key, updated)
 	case *typ.Array:
 		updated := applyFieldWrite(v.Element, field, value, false)
 		if updated == nil || typ.TypeEquals(updated, v.Element) {
 			return t
 		}
-		return typ.NewArray(updated)
+		return v.WithElement(updated)
 	case *typ.Record:
 		if !v.HasMapComponent() {
 			return nil
@@ -1945,16 +1945,7 @@ func rebuildRecordWithMapComponent(rec *typ.Record, mapKey, mapVal typ.Type) typ
 }
 
 func rebuildRecordWithMapComponentFlags(rec *typ.Record, mapKey, mapVal typ.Type, inferred, explicitNil bool) typ.Type {
-	builder := typ.NewRecord().SetDeclared(rec.Declared).SetComplete(rec.Complete)
-	if rec.Open {
-		builder.SetOpen(true)
-	}
-	for _, f := range rec.Fields {
-		builder.AddField(f)
-	}
-	if rec.Metatable != nil {
-		builder.Metatable(rec.Metatable)
-	}
+	builder := rec.Builder()
 	builder.MapComponentWithFlags(mapKey, mapVal, inferred, explicitNil)
 	return builder.Build()
 }

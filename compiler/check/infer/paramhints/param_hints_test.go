@@ -112,6 +112,19 @@ func TestWidenParamHintType_RecordBecomesOpen(t *testing.T) {
 	}
 }
 
+func TestWidenParamHintType_CompleteRecordBecomesPartial(t *testing.T) {
+	for _, open := range []bool{false, true} {
+		rec := typ.NewRecord().SetOpen(open).SetComplete(true).SetDeclared(true).
+			AddField(typ.Field{Name: "present", Type: typ.Number, Optional: true, Readonly: true, InferredPresence: true}).
+			MapComponentWithFlags(typ.String, typ.Number, true, true).Build()
+		got := WidenParamHintType(rec)
+		want := rec.Builder().SetOpen(true).SetComplete(false).Build()
+		if !typ.TypeEquals(got, want) {
+			t.Fatalf("open=%v: expected partial hint retaining other metadata, got %#v", open, got)
+		}
+	}
+}
+
 func TestBuildParamHintSigView_NilInputs(t *testing.T) {
 	result := BuildParamHintSigView(nil, nil, nil, nil)
 	if result != nil {
