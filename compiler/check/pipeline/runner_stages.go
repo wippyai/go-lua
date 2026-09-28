@@ -118,7 +118,7 @@ func (r *Runner) appendFieldWriteEffects(
 		graph,
 		bindings,
 		store.GetFieldWritesSnapshot(graph, parent),
-		returns.StoreFieldWriteSource{Store: store, Bindings: bindings},
+		&returns.StoreFieldWriteSource{Store: store, Bindings: bindings},
 	)
 	extractOut.Inputs.FieldWriteEffects = append(extractOut.Inputs.FieldWriteEffects, effects...)
 	extractOut.Inputs.FieldWriteEffects = append(extractOut.Inputs.FieldWriteEffects,
