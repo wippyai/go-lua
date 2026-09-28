@@ -128,6 +128,9 @@ func indexDepth(t, keyType typ.Type, depth int) (typ.Type, bool) {
 		},
 		Record: func(r *typ.Record) indexResult {
 			if len(r.Fields) == 0 && !r.HasMapComponent() {
+				if !r.Complete {
+					return indexResult{t: typ.Unknown, ok: true}
+				}
 				return indexResult{t: typ.Nil, ok: true}
 			}
 			if keyType == nil {

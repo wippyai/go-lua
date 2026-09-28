@@ -68,7 +68,8 @@ func TestIndex(t *testing.T) {
 		{"record with generic string key", rec, typ.String, true, func(t typ.Type) bool {
 			return ContainsNil(t)
 		}},
-		{"empty record with string", typ.NewRecord().Build(), typ.String, true, func(t typ.Type) bool { return t == typ.Nil }},
+		{"complete empty record with string", typ.NewRecord().SetComplete(true).Build(), typ.String, true, func(t typ.Type) bool { return t == typ.Nil }},
+		{"open empty record with string", typ.NewRecord().SetOpen(true).Build(), typ.String, true, func(t typ.Type) bool { return t == typ.Unknown }},
 		{"builtin table marker", typ.NewInterface("table", nil), typ.String, true, func(t typ.Type) bool { return t == typ.Any }},
 		{"any type", typ.Any, typ.String, true, func(t typ.Type) bool { return t == typ.Any }},
 		{"unknown type", typ.Unknown, typ.String, true, func(t typ.Type) bool { return t == typ.Unknown }},

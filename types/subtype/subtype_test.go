@@ -181,6 +181,23 @@ func TestIntersectionSub(t *testing.T) {
 	}
 }
 
+func TestNilFieldSatisfiesOptionalSchemaProperty(t *testing.T) {
+	actual := typ.NewRecord().Field("class", typ.Nil).Build()
+	expected := typ.NewRecord().SetOpen(true).OptField("class", typ.String).Build()
+	if !IsSubtype(actual, expected) {
+		t.Fatalf("Lua nil field is absent and should satisfy optional property: %v <: %v", actual, expected)
+	}
+	containerActual := typ.NewRecord().Field("filters", actual).Build()
+	containerExpected := typ.NewRecord().SetOpen(true).OptField("filters", expected).Build()
+	if !IsSubtype(containerActual, containerExpected) {
+		t.Fatalf("nested Lua nil field should satisfy optional properties: %v <: %v", containerActual, containerExpected)
+	}
+	required := typ.NewRecord().SetOpen(true).Field("class", typ.String).Build()
+	if IsSubtype(actual, required) {
+		t.Fatal("nil field cannot satisfy a required string property")
+	}
+}
+
 func TestFunction(t *testing.T) {
 	// (string) -> number
 	f1 := typ.Func().Param("x", typ.String).Returns(typ.Number).Build()

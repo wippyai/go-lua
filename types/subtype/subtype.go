@@ -1032,6 +1032,11 @@ func (c *checker) canWidenRecordTo(narrow, wide *typ.Record, depth int) bool {
 		if nf == nil {
 			continue
 		}
+		// A nil-valued Lua table key is absent. Widening a fresh nested record
+		// may add an optional property later, just as it may add a missing one.
+		if unwrap.IsNilType(nf.Type) && (wf.Optional || unwrap.IsOptionalLike(wf.Type)) {
+			continue
+		}
 		// Forward direction must hold (already checked by main subtype check)
 		// Check if reverse direction can be satisfied by widening
 		if !c.check(wf.Type, nf.Type, depth+1) && !c.canWidenTo(nf.Type, wf.Type, depth+1) {
