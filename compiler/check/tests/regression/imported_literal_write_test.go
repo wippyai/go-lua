@@ -53,9 +53,14 @@ func TestImportedSingletonFieldWidensThroughAliasAndEscape(t *testing.T) {
 
 func TestNilValuedExtraFieldSatisfiesMap(t *testing.T) {
 	for _, strict := range []bool{false, true} {
-		result := testutil.Check(`local function f(x: {[string]: integer}) end; f({extra=nil})`, testutil.WithCheckOptions(check.Options{Strict: strict}))
-		if result.HasError() {
-			t.Errorf("strict=%v: %v", strict, testutil.ErrorMessages(result.Errors))
+		for _, source := range []string{
+			`local function f(x: {[string]: integer}) end; f({extra=nil})`,
+			`local function f(x: {[string]: integer}) end; local extra: integer? = 1; f({extra=extra})`,
+		} {
+			result := testutil.Check(source, testutil.WithCheckOptions(check.Options{Strict: strict}))
+			if result.HasError() {
+				t.Errorf("strict=%v source=%s: %v", strict, source, testutil.ErrorMessages(result.Errors))
+			}
 		}
 	}
 }
