@@ -131,6 +131,7 @@ jobs:
           cache: true
 
       - name: Run benchmarks
+        shell: bash
         env:
           GOCACHE: ${{ runner.temp }}/go-build
         run: go test -run='^$' -bench="Benchmark(Validate|Is)" -benchmem -count=1 -timeout=60s | tee bench.txt
