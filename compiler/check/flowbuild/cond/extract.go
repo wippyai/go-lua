@@ -64,7 +64,7 @@ func ConditionsFunc(fc *core.FlowContext, inputs *flow.Inputs) api.ConditionFrom
 
 // ExtractEdgeConstraints extracts type constraints from branch conditions.
 func ExtractEdgeConstraints(fc *core.FlowContext, inputs *flow.Inputs) {
-	validatedEnums := validatedEnumGuards(fc.Graph)
+	validatedEnums := validatedEnumGuards(fc)
 	fc.Graph.EachBranch(func(p cfg.Point, info *cfg.BranchInfo) {
 		succs := fc.Graph.Successors(p)
 		if len(succs) < 2 {
@@ -95,17 +95,14 @@ func ExtractEdgeConstraints(fc *core.FlowContext, inputs *flow.Inputs) {
 			}
 		}
 
-		// For generic for loops, add NotNil and KeyOf constraints for loop variables
+		// Lua continues a generic loop only when its first (control) result is
+		// present. Later iterator results may still be nil inside the body.
 		if node := fc.Graph.CFG().Node(p); node != nil && len(node.LoopLocals) > 0 {
 			var loopConstraints []constraint.Constraint
-			for _, sym := range node.LoopLocals {
-				if sym != 0 {
-					root := fc.Graph.NameOf(sym)
-					loopPath := path.WithVersion(constraint.Path{Root: root, Symbol: sym}, fc.Graph, p)
-					loopConstraints = append(loopConstraints, constraint.NotNil{
-						Path: loopPath,
-					})
-				}
+			if sym := node.LoopLocals[0]; sym != 0 {
+				root := fc.Graph.NameOf(sym)
+				loopPath := path.WithVersion(constraint.Path{Root: root, Symbol: sym}, fc.Graph, p)
+				loopConstraints = append(loopConstraints, constraint.NotNil{Path: loopPath})
 			}
 
 			// For keyed iterators (pairs), emit KeyOf constraint for the key variable
@@ -116,6 +113,15 @@ func ExtractEdgeConstraints(fc *core.FlowContext, inputs *flow.Inputs) {
 						assignInfo.IterExprs, node.LoopPreheader,
 						fc.Derived.Synth, fc.Derived.SymResolver, ce.ConstResolver, bindings,
 					)
+					// Indexed/keyed iterator contracts guarantee a present value
+					// while the loop continues. Custom iterators have no such rule.
+					if iterSource != nil && len(node.LoopLocals) > 1 {
+						if sym := node.LoopLocals[1]; sym != 0 {
+							valuePath := path.WithVersion(constraint.Path{Root: fc.Graph.NameOf(sym), Symbol: sym}, fc.Graph, p)
+							loopConstraints = append(loopConstraints, constraint.NotNil{Path: valuePath})
+						}
+					}
+
 					if iterSource != nil && iterSource.Kind == flow.IterateKeyed && len(node.LoopLocals) > 0 {
 						keySym := node.LoopLocals[0]
 						if keySym != 0 {

@@ -59,7 +59,7 @@ func RunNarrow(input NarrowInput) NarrowOutput {
 	engine := createNarrowedEngine(input.PhaseEnv, input.Scope.Scopes, input.Solve.Solution, narrowingCtx, input.Extract.Conditions)
 
 	fnEffect := InferRefinement(input.Graph, input.Solve.Solution, input.Extract.Params, input.Extract.ReturnType)
-	fnEffect = EnrichWithKeysCollector(fnEffect, input.Fn)
+	fnEffect = EnrichWithKeysCollector(fnEffect, input.Fn, input.ModuleBindings)
 
 	return NarrowOutput{
 		Facts:      narrowingCtx.Types(),

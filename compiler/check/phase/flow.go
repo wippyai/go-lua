@@ -2,6 +2,7 @@ package phase
 
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild"
@@ -173,12 +174,16 @@ func ExtractParams(fn *ast.FunctionExpr, paramTypes map[cfg.SymbolID]typ.Type, g
 // EnrichWithKeysCollector detects if a function is a "keys collector"
 // (returns keys of a parameter) and adds KeyOf constraint to OnReturn.
 // This enables cross-module key-provenance tracking.
-func EnrichWithKeysCollector(eff *constraint.FunctionRefinement, fn *ast.FunctionExpr) *constraint.FunctionRefinement {
+func EnrichWithKeysCollector(eff *constraint.FunctionRefinement, fn *ast.FunctionExpr, moduleBindings ...*bind.BindingTable) *constraint.FunctionRefinement {
 	if fn == nil {
 		return eff
 	}
 
-	info := keyscoll.DetectKeysCollector(fn)
+	var module *bind.BindingTable
+	if len(moduleBindings) > 0 {
+		module = moduleBindings[0]
+	}
+	info := keyscoll.DetectKeysCollectorWithBindings(fn, module)
 	if info == nil {
 		return eff
 	}

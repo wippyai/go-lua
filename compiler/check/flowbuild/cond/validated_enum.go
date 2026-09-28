@@ -3,6 +3,9 @@ package cond
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/flowbuild/core"
+	"github.com/wippyai/go-lua/types/contract"
+	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -16,10 +19,11 @@ type enumProof struct {
 	values  typ.Type
 }
 
-func validatedEnumGuards(graph *cfg.Graph) map[ast.Expr]enumProof {
-	if graph == nil || graph.Func() == nil || graph.Bindings() == nil {
+func validatedEnumGuards(fc *core.FlowContext) map[ast.Expr]enumProof {
+	if fc == nil || fc.Graph == nil || fc.Derived == nil || fc.Derived.Synth == nil || fc.Graph.Func() == nil || fc.Graph.Bindings() == nil {
 		return nil
 	}
+	graph := fc.Graph
 	fn := graph.Func()
 	var proofs map[ast.Expr]enumProof
 	for i := 0; i+3 < len(fn.Stmts); i++ {
@@ -63,13 +67,7 @@ func validatedEnumGuards(graph *cfg.Graph) map[ast.Expr]enumProof {
 		if !ok || iterCall.Method != "" || len(iterCall.Args) != 1 || !namedIdent(iterCall.Func, "ipairs") || !namedIdent(iterCall.Args[0], listDecl.Names[0]) {
 			continue
 		}
-		iterIdent := iterCall.Func.(*ast.IdentExpr)
-		iterSym, ok := graph.Bindings().SymbolOf(iterIdent)
-		if !ok {
-			continue
-		}
-		iterKind, ok := graph.SymbolKind(iterSym)
-		if !ok || iterKind != cfg.SymbolGlobal {
+		if !hasIndexedIteratorContract(fc, loop, iterCall) {
 			continue
 		}
 		match, ok := loop.Stmts[0].(*ast.IfStmt)
@@ -119,6 +117,21 @@ func validatedEnumGuards(graph *cfg.Graph) map[ast.Expr]enumProof {
 		proofs[guard.Condition] = enumProof{subject: subject, values: typ.NewUnion(members...)}
 	}
 	return proofs
+}
+
+func hasIndexedIteratorContract(fc *core.FlowContext, loop *ast.GenericForStmt, call *ast.FuncCallExpr) bool {
+	proved := false
+	fc.Graph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
+		if proved || info == nil || info.Stmt != loop {
+			return
+		}
+		spec := contract.ExtractSpec(fc.Derived.Synth(call.Func, p))
+		if spec != nil {
+			iter := spec.GetIterator()
+			proved = iter != nil && iter.Kind == effect.IterateIndexed
+		}
+	})
+	return proved
 }
 
 func namedIdent(expr ast.Expr, name string) bool {
