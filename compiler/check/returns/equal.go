@@ -3,6 +3,7 @@ package returns
 import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -36,11 +37,21 @@ func CallablesEqual(a, b api.Callables) bool {
 	}
 	for fn, fact := range a {
 		other, ok := b[fn]
-		if !ok || !typ.TypeEquals(fact.Sig, other.Sig) || !ReturnTypesEqual(fact.Summary, other.Summary) || !ReturnTypesEqual(fact.Narrow, other.Narrow) || !typ.TypeEquals(fact.Func, other.Func) {
+		if !ok || !callableTypeEqual(fact.Sig, other.Sig) || !ReturnTypesEqual(fact.Summary, other.Summary) || !ReturnTypesEqual(fact.Narrow, other.Narrow) || !callableTypeEqual(fact.Func, other.Func) {
 			return false
 		}
 	}
 	return true
+}
+
+// Structural type equality deliberately ignores callable contracts, but a
+// newly inferred contract changes how callers narrow the function's results.
+func callableTypeEqual(a, b typ.Type) bool {
+	if !typ.TypeEquals(a, b) {
+		return false
+	}
+	left, right := contract.ExtractSpec(a), contract.ExtractSpec(b)
+	return left.Equals(right)
 }
 
 func symbolTypeVectorMapEqual(a map[cfg.SymbolID][]typ.Type, b map[cfg.SymbolID][]typ.Type) bool {

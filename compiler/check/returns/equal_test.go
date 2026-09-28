@@ -6,6 +6,8 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/types/contract"
+	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -48,6 +50,18 @@ func TestFactsEqual_DifferentReturnSummaries(t *testing.T) {
 	}
 	if FactsEqual(a, b) {
 		t.Error("facts with different return summaries should not be equal")
+	}
+}
+
+func TestFactsEqual_DetectsNewCallableReturnCorrelation(t *testing.T) {
+	fn := &ast.FunctionExpr{}
+	plain := typ.Func().Returns(typ.NewOptional(typ.String), typ.NewOptional(typ.String)).Build()
+	correlated := typ.Func().Returns(typ.NewOptional(typ.String), typ.NewOptional(typ.String)).
+		Spec(contract.NewSpec().WithEffects(effect.ErrorReturn{ValueIndex: 0, ErrorIndex: 1})).Build()
+	before := api.Facts{Callables: api.Callables{fn: {Func: plain}}}
+	after := api.Facts{Callables: api.Callables{fn: {Func: correlated}}}
+	if FactsEqual(before, after) {
+		t.Fatal("new return correlation must trigger another interprocedural round")
 	}
 }
 
