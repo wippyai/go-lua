@@ -380,7 +380,7 @@ func TestProjectionOverUnionKeepsUnknownMember(t *testing.T) {
 		{
 			name: "record indexed by string key with unknown field",
 			got:  func() (typ.Type, bool) { return Index(untyped, typ.String) },
-			want: typ.NewOptional(typ.Unknown),
+			want: typ.Unknown,
 		},
 	}
 

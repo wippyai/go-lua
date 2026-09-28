@@ -55,7 +55,7 @@ func indexDepth(t, keyType typ.Type, depth int) (typ.Type, bool) {
 				if a.Element == nil {
 					return indexResult{t: typ.Nil, ok: true}
 				}
-				if a.ExplicitNilWrite {
+				if !a.InferredPresence || a.ExplicitNilWrite {
 					return indexResult{t: typ.NewOptional(a.Element), ok: true}
 				}
 				return indexResult{t: a.Element, ok: true}

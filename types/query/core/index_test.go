@@ -24,8 +24,9 @@ func TestIndex(t *testing.T) {
 		checker func(typ.Type) bool
 	}{
 		{"nil type", nil, typ.Integer, false, nil},
-		{"array with integer key", arr, typ.Integer, true, func(t typ.Type) bool { return t == typ.String }},
-		{"array with number key", arr, typ.Number, true, func(t typ.Type) bool { return t == typ.String }},
+		{"array with integer key", arr, typ.Integer, true, func(t typ.Type) bool { return typ.TypeEquals(t, typ.NewOptional(typ.String)) }},
+		{"array with number key", arr, typ.Number, true, func(t typ.Type) bool { return typ.TypeEquals(t, typ.NewOptional(typ.String)) }},
+		{"inferred array with integer key", typ.NewInferredArray(typ.String), typ.Integer, true, func(t typ.Type) bool { return t == typ.String }},
 		{"array with string key", arr, typ.String, false, nil},
 		{"array with unknown key placeholder", arr, typ.Unknown, true, func(t typ.Type) bool {
 			_, ok := t.(*typ.Optional)
@@ -336,8 +337,8 @@ func TestIndexAlias(t *testing.T) {
 			t.Error("expected to index alias")
 		}
 
-		if result != typ.Number {
-			t.Errorf("expected number, got %v", result)
+		if !typ.TypeEquals(result, typ.NewOptional(typ.Number)) {
+			t.Errorf("expected number?, got %v", result)
 		}
 	})
 }

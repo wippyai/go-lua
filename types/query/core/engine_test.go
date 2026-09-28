@@ -67,8 +67,8 @@ func TestEngine_Index_Array(t *testing.T) {
 	if !ok {
 		t.Fatal("Index should succeed for array")
 	}
-	if elemType != typ.String {
-		t.Errorf("got %v, want string", elemType)
+	if !typ.TypeEquals(elemType, typ.NewOptional(typ.String)) {
+		t.Errorf("got %v, want string?", elemType)
 	}
 }
 
