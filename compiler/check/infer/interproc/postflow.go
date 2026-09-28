@@ -154,7 +154,7 @@ func storeWriteEffectsFromResult(
 		targets,
 		result.NarrowSynth.TypeOf,
 		store.GetFieldWritesSnapshot(result.Graph, graphParent),
-		returns.StoreFieldWriteSource{Store: store, Bindings: bindings},
+		&returns.StoreFieldWriteSource{Store: store, Bindings: bindings},
 	)
 	if len(fields) > 0 {
 		writer.updateParentFactsForSymbol(fnSym, func(facts *api.Facts) {

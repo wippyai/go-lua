@@ -23,7 +23,7 @@ func (r *Runner) importedTruthyCallbackWrites(store api.StoreView, graph *cfg.Gr
 	}
 	aliases := modules.MergeAliases(store.ModuleAliases(), modules.CollectAliases(graph))
 	idom, _ := analysis.ComputeDominators(graph.CFG())
-	source := returns.StoreFieldWriteSource{Store: store, Bindings: bindings}
+	source := &returns.StoreFieldWriteSource{Store: store, Bindings: bindings}
 	var effects []flow.FieldWriteEffect
 	graph.EachAssign(func(p cfg.Point, assign *cfg.AssignInfo) {
 		for _, expr := range assign.Sources {

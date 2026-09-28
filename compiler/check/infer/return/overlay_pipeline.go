@@ -6,7 +6,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/assign"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/mutator"
-	"github.com/wippyai/go-lua/compiler/check/flowbuild/resolve"
 	"github.com/wippyai/go-lua/compiler/check/infer/paramhints"
 	"github.com/wippyai/go-lua/compiler/check/overlaymut"
 	"github.com/wippyai/go-lua/compiler/check/phase"
@@ -676,20 +675,7 @@ func (i *Inferencer) applyFieldMutations(ctx *returnInferenceContext, stage *ove
 	}
 	fieldAssignments := assign.CollectFieldAssignments(stage.fnGraph, stage.enrichedSynthAdapter, nil)
 
-	nestedBindings := stage.fnGraph.Bindings()
-	if nestedBindings == nil {
-		nestedBindings = i.store.ModuleBindings()
-	}
-	var capturedByCallee api.FieldWrites
-	if i.store != nil {
-		capturedParent := api.ParentScopeForGraph(i.store, stage.fnGraph.ID(), ctx.info.DefScope)
-		capturedByCallee = i.store.GetFieldWritesSnapshot(stage.fnGraph, capturedParent)
-	}
-	calleeTypeResolver := func(info *cfg.CallInfo, p cfg.Point) typ.Type {
-		return resolve.CalleeType(info, p, stage.enrichedSynthAdapter, nil, nil, stage.fnGraph, nestedBindings, i.store.ModuleBindings())
-	}
 	writes := overlaymut.FieldWriteSets(fieldAssignments)
-	overlaymut.MergeFieldWriteSets(writes, returns.CollectCalledNestedFieldAssignments(stage.fnGraph, nestedBindings, capturedByCallee, calleeTypeResolver))
 
 	overlaymut.ApplyFieldWritesToOverlay(stage.finalOverlay, writes)
 }
@@ -763,6 +749,17 @@ func (i *Inferencer) extractForReturn(
 		Scope:     scopeOut,
 		Callables: i.scratchCallables(ctx),
 	})
+	if extractOut.Inputs != nil && i.store != nil {
+		bindings := fnGraph.Bindings()
+		if bindings == nil {
+			bindings = i.store.ModuleBindings()
+		}
+		parent := api.ParentScopeForGraph(i.store, fnGraph.ID(), ctx.info.DefScope)
+		extractOut.Inputs.FieldWriteEffects = append(extractOut.Inputs.FieldWriteEffects,
+			returns.CollectFieldWriteEffects(fnGraph, bindings,
+				i.store.GetFieldWritesSnapshot(fnGraph, parent),
+				&returns.StoreFieldWriteSource{Store: i.store, Bindings: bindings})...)
+	}
 	return phaseEnv, scopeOut, extractOut
 }
 
