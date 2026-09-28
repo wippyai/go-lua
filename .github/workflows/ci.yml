@@ -40,7 +40,7 @@ jobs:
   test:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
@@ -60,12 +60,16 @@ jobs:
           GOCACHE: ${{ runner.temp }}/go-build
         # The fixture suite checks the full application corpus and now needs
         # several minutes to finish on CI runners.
-        run: go test -timeout 15m ./...
+        run: go test -timeout 25m ./...
 
   race:
-    name: Race Tests
+    name: Race Tests (${{ matrix.shard }})
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [other, ac, dg, hj, k, lr, sz]
     steps:
       - name: Check out code
         uses: actions/checkout@v6
@@ -80,9 +84,8 @@ jobs:
         env:
           GOCACHE: ${{ runner.temp }}/go-build
           GORACE: "halt_on_error=1"
-        # The fixture suite checks large applications; race instrumentation
-        # takes longer than the normal test budget even when every check converges.
-        run: go test -race -timeout 30m ./...
+        # Each shard checks disjoint fixtures; "other" runs every non-fixture test.
+        run: bash .github/scripts/race-shard.sh "${{ matrix.shard }}"
 
   fuzz:
     name: Fuzz
