@@ -355,17 +355,17 @@ func TypesOverlap(a, b typ.Type) bool {
 	return subtype.IsSubtype(a, b) || subtype.IsSubtype(b, a)
 }
 
-// ExcludeType removes union members that overlap with the excluded type.
+// ExcludeType removes union members fully covered by the excluded type.
 //
 // For discriminated union narrowing, this operation removes variants that
 // match a specific type after a negative type check.
 //
 // # Behavior by Type
 //
-//   - Union: Removes members that overlap with excluded; returns remaining.
-//   - Optional<T>: If T overlaps with excluded, returns nil; else unchanged.
+//   - Union: Removes members fully covered by excluded; returns remaining.
+//   - Optional<T>: Removes T when fully covered; keeps nil unless excluded.
 //   - Placeholder (Any, Unknown): Returns unchanged (cannot narrow).
-//   - Other: Returns Never if overlaps with excluded; else unchanged.
+//   - Other: Returns Never when fully covered; else unchanged.
 //
 // # Examples
 //
@@ -390,7 +390,7 @@ func ExcludeType(t typ.Type, excluded typ.Type) typ.Type {
 		handleUnion: func(u *typ.Union, _ func(typ.Type) typ.Type) typ.Type {
 			var kept []typ.Type
 			for _, m := range u.Members {
-				if !TypesOverlap(m, excluded) {
+				if !subtype.IsSubtype(m, excluded) {
 					kept = append(kept, m)
 				}
 			}
@@ -409,7 +409,7 @@ func ExcludeType(t typ.Type, excluded typ.Type) typ.Type {
 			if t.Kind().IsPlaceholder() {
 				return t
 			}
-			if TypesOverlap(t, excluded) {
+			if subtype.IsSubtype(t, excluded) {
 				return typ.Never
 			}
 			return t

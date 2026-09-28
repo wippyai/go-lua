@@ -234,6 +234,17 @@ func TestExcludeType_NonUnion_NoOverlap(t *testing.T) {
 	}
 }
 
+func TestExcludeType_BroadStringMinusLiteral(t *testing.T) {
+	// A broad string may still be any string other than the excluded literal.
+	if got := narrow.ExcludeType(typ.String, typ.LiteralString("")); !typ.TypeEquals(got, typ.String) {
+		t.Fatalf("string minus empty literal = %v, want string", got)
+	}
+	optional := typ.NewOptional(typ.String)
+	if got := narrow.ExcludeType(optional, typ.LiteralString("")); !typ.TypeEquals(got, optional) {
+		t.Fatalf("string? minus empty literal = %v, want string?", got)
+	}
+}
+
 func TestExcludeType_Any_PreservesAny(t *testing.T) {
 	// ExcludeType(any, T) should return any unchanged
 	// because we cannot narrow 'any' by excluding a specific type
