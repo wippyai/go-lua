@@ -77,16 +77,19 @@ type Condition struct {
 	// Each inner slice is a conjunction of constraints that must all hold.
 	// The condition is satisfied if ANY disjunct is fully satisfied.
 	Disjuncts [][]Constraint
+	// normalized records that the disjuncts have already passed contradiction
+	// elimination. Literal conditions from external decoders leave this false.
+	normalized bool
 }
 
 // TrueCondition returns a condition that imposes no constraints.
 func TrueCondition() Condition {
-	return Condition{Disjuncts: [][]Constraint{{}}}
+	return Condition{Disjuncts: [][]Constraint{{}}, normalized: true}
 }
 
 // FalseCondition returns an unsatisfiable condition.
 func FalseCondition() Condition {
-	return Condition{}
+	return Condition{normalized: true}
 }
 
 // FromConstraints builds a condition with a single conjunction.
@@ -98,7 +101,7 @@ func FromConstraints(items ...Constraint) Condition {
 	if conjunctionImpossible(conj) {
 		return FalseCondition()
 	}
-	return Condition{Disjuncts: [][]Constraint{conj}}
+	return Condition{Disjuncts: [][]Constraint{conj}, normalized: true}
 }
 
 // FromDisjuncts builds a condition from multiple conjunctions.
@@ -222,7 +225,7 @@ func And(a, b Condition) Condition {
 		if conjunctionImpossible(merged) {
 			return FalseCondition()
 		}
-		return Condition{Disjuncts: [][]Constraint{merged}}
+		return Condition{Disjuncts: [][]Constraint{merged}, normalized: true}
 	}
 
 	if len(a.Disjuncts)*len(b.Disjuncts) > DefaultMaxDisjuncts {
@@ -262,6 +265,10 @@ func And(a, b Condition) Condition {
 
 // Or returns the disjunction of two conditions.
 func Or(a, b Condition) Condition {
+	return orWithWork(a, b, nil)
+}
+
+func orWithWork(a, b Condition, impossibilityChecks *int) Condition {
 	if a.IsFalse() {
 		return b
 	}
@@ -281,10 +288,10 @@ func Or(a, b Condition) Condition {
 		if len(common) == 0 {
 			return TrueCondition()
 		}
-		return Condition{Disjuncts: [][]Constraint{common}}
+		return Condition{Disjuncts: [][]Constraint{common}, normalized: true}
 	}
 
-	return normalizeCondition(Condition{Disjuncts: out})
+	return normalizeConditionWithWork(Condition{Disjuncts: out, normalized: a.normalized && b.normalized}, impossibilityChecks)
 }
 
 // Not negates a condition using De Morgan's laws.
@@ -869,17 +876,25 @@ func conjunctionImpossible(items []Constraint) bool {
 }
 
 func normalizeCondition(c Condition) Condition {
+	return normalizeConditionWithWork(c, nil)
+}
+
+func normalizeConditionWithWork(c Condition, impossibilityChecks *int) Condition {
 	// Impossible nil/truthy combinations are generated when relational facts
 	// meet a guard. Drop those paths before joins can dilute narrowing.
-	if len(c.Disjuncts) > 0 {
+	if !c.normalized && len(c.Disjuncts) > 0 {
 		kept := make([][]Constraint, 0, len(c.Disjuncts))
 		for _, d := range c.Disjuncts {
+			if impossibilityChecks != nil {
+				(*impossibilityChecks)++
+			}
 			if !conjunctionImpossible(d) {
 				kept = append(kept, d)
 			}
 		}
 		c.Disjuncts = kept
 	}
+	c.normalized = true
 	n := len(c.Disjuncts)
 	if n == 0 {
 		return c
@@ -952,7 +967,7 @@ func normalizeCondition(c Condition) Condition {
 		if len(must) == 0 {
 			return TrueCondition()
 		}
-		return Condition{Disjuncts: [][]Constraint{must}}
+		return Condition{Disjuncts: [][]Constraint{must}, normalized: true}
 	}
 
 	// Extract final disjuncts
@@ -965,7 +980,7 @@ func normalizeCondition(c Condition) Condition {
 	*withHashPtr = withHash[:0]
 	disjunctPool.Put(withHashPtr)
 
-	return Condition{Disjuncts: result}
+	return Condition{Disjuncts: result, normalized: true}
 }
 
 func conjunctionSubsumes(a, b []Constraint) bool {

@@ -1,6 +1,7 @@
 package constraint
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/wippyai/go-lua/types/narrow"
@@ -128,6 +129,31 @@ func TestCondition_AndOr(t *testing.T) {
 	}
 	if len(or.MustConstraints()) != 0 {
 		t.Errorf("A OR B should have no must constraints, got %d", len(or.MustConstraints()))
+	}
+}
+
+func TestOrIncrementalImpossibilityWork(t *testing.T) {
+	const branches = 24
+	condition := FalseCondition()
+	checks := 0
+	for i := range branches {
+		branch := FromConstraints(Truthy{Path: Path{Root: fmt.Sprintf("branch%d", i)}})
+		condition = orWithWork(condition, branch, &checks)
+	}
+	if condition.NumDisjuncts() != branches {
+		t.Fatalf("got %d branches, want %d", condition.NumDisjuncts(), branches)
+	}
+	if checks > branches*2 {
+		t.Fatalf("checked %d existing conjunctions for %d branches; want linear work", checks, branches)
+	}
+}
+
+func TestOrChecksLiteralConditionContradictions(t *testing.T) {
+	path := Path{Root: "value"}
+	raw := Condition{Disjuncts: [][]Constraint{{IsNil{Path: path}, Truthy{Path: path}}}}
+	got := Or(raw, FromConstraints(NotNil{Path: Path{Root: "other"}}))
+	if got.NumDisjuncts() != 1 || !got.Equals(FromConstraints(NotNil{Path: Path{Root: "other"}})) {
+		t.Fatalf("literal contradictory branch survived: %v", got)
 	}
 }
 
