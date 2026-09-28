@@ -53,10 +53,21 @@ func (s *Synthesizer) keyTypeAt(p cfg.Point, narrower api.FlowOps) func(ast.Expr
 func (s *Synthesizer) synthAttrGetCore(ex *ast.AttrGetExpr, p cfg.Point, sc *scope.State, narrower api.FlowOps, recurse ExprSynth) typ.Type {
 	objType := recurse(ex.Object)
 	var manifestPath string
+	var importedSymbol compcfg.SymbolID
 	if ident, ok := ex.Object.(*ast.IdentExpr); ok && s.deps.Manifests != nil && s.deps.CheckCtx != nil {
 		if bindings := s.deps.CheckCtx.Bindings(); bindings != nil {
 			if sym, ok := bindings.SymbolOf(ident); ok && sym != 0 {
-				manifestPath = s.deps.CheckCtx.ModuleAlias(sym)
+				if graph, ok := s.deps.CheckCtx.Graph().(*compcfg.Graph); ok {
+					graph.EachAliasSymbol(sym, func(candidate compcfg.SymbolID) bool {
+						if module := s.deps.CheckCtx.ModuleAlias(candidate); module != "" {
+							manifestPath, importedSymbol = module, candidate
+							return true
+						}
+						return false
+					})
+				} else {
+					manifestPath, importedSymbol = s.deps.CheckCtx.ModuleAlias(sym), sym
+				}
 			}
 		}
 	}
@@ -75,7 +86,7 @@ func (s *Synthesizer) synthAttrGetCore(ex *ast.AttrGetExpr, p cfg.Point, sc *sco
 				if typ.IsUnknown(unwrap.Alias(narrowed)) && typ.IsAny(unwrap.Alias(objType)) {
 					goto skipNarrowedAttr
 				}
-				if key, ok := ex.Key.(*ast.StringExpr); ok && manifestPath != "" && importedFieldWritten(s.deps.CheckCtx, ex.Object, key.Value) {
+				if key, ok := ex.Key.(*ast.StringExpr); ok && manifestPath != "" && importedFieldWritten(s.deps.CheckCtx, importedSymbol, key.Value) {
 					return widenImportedLiteral(narrowed)
 				}
 				return narrowed
@@ -90,7 +101,7 @@ skipNarrowedAttr:
 		if ft, ok := s.deps.Types.Field(s.deps.Ctx, objType, key.Value); ok {
 			if manifestPath != "" {
 				ft = enrichWithManifest(s.deps.Manifests, ft, manifestPath, key.Value)
-				if importedFieldWritten(s.deps.CheckCtx, ex.Object, key.Value) {
+				if importedFieldWritten(s.deps.CheckCtx, importedSymbol, key.Value) {
 					ft = widenImportedLiteral(ft)
 				}
 			}
@@ -224,13 +235,8 @@ skipNarrowedAttr:
 // A writable imported field cannot remain a singleton after a write in the
 // current function. Conservatively include writes on every CFG path, including
 // loop back-edges, when resolving a literal carried by an imported manifest.
-func importedFieldWritten(env api.BaseEnv, object ast.Expr, field string) bool {
-	ident, ok := object.(*ast.IdentExpr)
-	if !ok || env == nil || env.Bindings() == nil {
-		return false
-	}
-	sym, ok := env.Bindings().SymbolOf(ident)
-	if !ok || sym == 0 {
+func importedFieldWritten(env api.BaseEnv, sym compcfg.SymbolID, field string) bool {
+	if env == nil || env.Bindings() == nil || sym == 0 {
 		return false
 	}
 	graph, ok := env.Graph().(*compcfg.Graph)

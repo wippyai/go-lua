@@ -35,6 +35,7 @@ func TestImportedSingletonFieldWidensThroughAliasAndEscape(t *testing.T) {
 	}
 	for _, source := range []string{
 		`local names = require("names"); local alias = names; alias.NAME = "second"; local value: "first" = names.NAME`,
+		`local names = require("names"); local alias = names; names.NAME = "second"; local value: "first" = alias.NAME`,
 		`local names = require("names"); local alias = names; local other = alias; other.NAME = "second"; local value: "first" = names.NAME`,
 		`local names = require("names"); local function sink(x: any) end; sink(names); local value: "first" = names.NAME`,
 		`local names = require("names"); local holder = {names}; holder[1].NAME = "second"; local value: "first" = names.NAME`,
