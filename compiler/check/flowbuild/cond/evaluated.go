@@ -277,10 +277,12 @@ func (ce *ConditionExtractor) evaluatedReceiverFacts(expr ast.Expr) constraint.C
 			visit(e.Expr)
 		case *ast.UnaryLenOpExpr:
 			visit(e.Expr)
-			// Lua raises on #nil. Reaching either result of a completed
-			// length comparison proves the operand was present.
-			if p := ce.pathFromExpr(e.Expr); ce.canRetainPath(p) {
-				facts = append(facts, constraint.NotNil{Path: p})
+			// A local read remains the value that was measured. A field read may
+			// change while __len runs, so do not retain a path fact for it.
+			if _, local := e.Expr.(*ast.IdentExpr); local {
+				if p := ce.pathFromExpr(e.Expr); ce.canRetainPath(p) {
+					facts = append(facts, constraint.NotNil{Path: p})
+				}
 			}
 		case *ast.UnaryBNotOpExpr:
 			visit(e.Expr)
