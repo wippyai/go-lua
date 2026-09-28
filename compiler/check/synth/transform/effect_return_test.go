@@ -88,7 +88,7 @@ func TestApplyEffectTransform_WithMetatableAndErrorReturn(t *testing.T) {
 		t.Fatalf("expected optional transformed table, got %v", got)
 	}
 	record, ok := optional.Inner.(*typ.Record)
-	if !ok || record.Metatable != meta || len(record.Fields) != 1 || record.Fields[0].Name != "name" || !typ.TypeEquals(record.Fields[0].Type, typ.String) {
+	if !ok || record.Metatable != meta || !typ.TypeEquals(record.WithMetatable(nil), table) {
 		t.Fatalf("expected original fields and attached metatable, got %v", optional.Inner)
 	}
 }
