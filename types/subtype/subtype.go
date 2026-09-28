@@ -1270,10 +1270,11 @@ func (c *checker) checkRecordToInterface(sub *typ.Record, super *typ.Interface, 
 			return false
 		}
 
-		// The field type must be a subtype of the method type.
-		// For Self type in method signature, we substitute with the record.
+		// Resolve Self on both sides against the implementing record. Record
+		// method fields can contain Self just as interface methods can.
+		fieldType := subst.Self(field.Type, sub)
 		methodType := subst.Self(method.Type, sub)
-		if !c.check(field.Type, methodType, depth+1) {
+		if !c.check(fieldType, methodType, depth+1) {
 			return false
 		}
 	}

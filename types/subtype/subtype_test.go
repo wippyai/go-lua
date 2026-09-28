@@ -1744,6 +1744,18 @@ func TestRecordToInterfaceWithSelf(t *testing.T) {
 	}
 }
 
+func TestRecursiveRecordImplementsSelfInterface(t *testing.T) {
+	rec := typ.NewRecursive("Wrapper", func(self typ.Type) typ.Type {
+		return typ.NewRecord().Field("with_actor", typ.Func().Param("self", typ.Self).Param("actor", typ.Any).Returns(self).Build()).Build()
+	})
+	iface := typ.NewInterface("WrapperInterface", []typ.Method{
+		{Name: "with_actor", Type: typ.Func().Param("self", typ.Self).Param("actor", typ.Any).Returns(typ.Self).Build()},
+	})
+	if !IsSubtype(rec, iface) {
+		t.Fatal("recursive wrapper should implement its Self-returning interface")
+	}
+}
+
 // Interface nil handling via the checkInterface method is already tested
 // through the main check function's nil handling.
 
