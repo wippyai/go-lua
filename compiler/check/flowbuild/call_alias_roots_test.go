@@ -5,10 +5,13 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	fbcore "github.com/wippyai/go-lua/compiler/check/flowbuild/core"
 	"github.com/wippyai/go-lua/compiler/parse"
+	"github.com/wippyai/go-lua/types/effect"
+	"github.com/wippyai/go-lua/types/typ"
 )
 
-func TestBuiltinTypeCallDoesNotEscapeArgument(t *testing.T) {
+func TestBorrowOnlyCallDoesNotEscapeArgument(t *testing.T) {
 	for _, tt := range []struct {
 		name    string
 		source  string
@@ -23,7 +26,12 @@ func TestBuiltinTypeCallDoesNotEscapeArgument(t *testing.T) {
 				t.Fatal(err)
 			}
 			graph := cfg.Build(&ast.FunctionExpr{ParList: &ast.ParList{HasVargs: true}, Stmts: stmts}, "type")
-			roots := collectCallAliasRoots(graph)
+			fnType := typ.Func().Param("value", typ.Any)
+			if !tt.escapes {
+				fnType.Effects(effect.BorrowsOnly())
+			}
+			fc := &fbcore.FlowContext{Graph: graph, Derived: &fbcore.Derived{Synth: func(ast.Expr, cfg.Point) typ.Type { return fnType.Build() }}}
+			roots := collectCallAliasRoots(fc)
 			found := false
 			graph.EachCallSite(func(p cfg.Point, call *cfg.CallInfo) {
 				if call == nil || len(call.ArgSymbols) == 0 || call.ArgSymbols[0] == 0 {
