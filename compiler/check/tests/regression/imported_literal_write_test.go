@@ -17,6 +17,7 @@ func TestImportedSingletonFieldWidensWhenWritten(t *testing.T) {
 		errorExpected bool
 	}{
 		{`local names = require("names"); local value: "first" = names.NAME`, false},
+		{`local names = require("names"); local alias = names; local value: "first" = names.NAME`, false},
 		{`local names = require("names"); names.NAME = "second"; local value: "first" = names.NAME`, true},
 	} {
 		result := testutil.Check(tt.source, testutil.WithStdlib(), testutil.WithManifest("names", exported.Manifest))
