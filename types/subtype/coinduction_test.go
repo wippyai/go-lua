@@ -126,7 +126,7 @@ func TestCoinductiveCycleAcceptsMutuallyRecursiveMethodTables(t *testing.T) {
 // reached along exponentially many paths. Each pair is decided once.
 func TestSharedSubtermsAreDecidedOnce(t *testing.T) {
 	const levels = 40
-	var sub, super typ.Type = typ.String, typ.String
+	sub, super := typ.String, typ.String
 	for i := 0; i < levels; i++ {
 		sub = typ.NewRecord().Field("left", sub).Field("right", sub).Build()
 		super = typ.NewRecord().Field("left", super).Field("right", super).Build()

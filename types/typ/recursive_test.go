@@ -772,7 +772,8 @@ func TestRecursiveHashReflectsReplacedBody(t *testing.T) {
 	if rec.Hash() == provisional {
 		t.Fatal("hash must reflect the replaced body")
 	}
-	if rec.Hash() != rec.Hash() {
+	first := rec.Hash()
+	if rec.Hash() != first {
 		t.Fatal("hash must be deterministic")
 	}
 }

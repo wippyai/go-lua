@@ -70,6 +70,29 @@ func TestApplyEffectTransform_ErrorReturnNeedsErrorSlot(t *testing.T) {
 	}
 }
 
+func TestApplyEffectTransform_WithMetatableAndErrorReturn(t *testing.T) {
+	table := typ.NewRecord().Field("name", typ.String).Build()
+	meta := typ.NewRecord().Field("__index", typ.String).Build()
+	spec := contract.NewSpec().WithEffects(
+		effect.Return{ReturnIndex: 0, Transform: effect.WithMetatable{
+			Table:     effect.ParamRef{Index: 0},
+			Metatable: effect.ParamRef{Index: 1},
+		}},
+		effect.ErrorReturn{ValueIndex: 0, ErrorIndex: 1},
+	)
+	fn := typ.Func().Returns(typ.Any, typ.NewOptional(typ.LuaError)).Spec(spec).Build()
+
+	got := ApplyEffectTransform(fn, []typ.Type{table, meta}, 0, fn.Returns)
+	optional, ok := got.(*typ.Optional)
+	if !ok {
+		t.Fatalf("expected optional transformed table, got %v", got)
+	}
+	record, ok := optional.Inner.(*typ.Record)
+	if !ok || record.Metatable != meta || !typ.TypeEquals(record.Fields[0].Type, table.Fields[0].Type) {
+		t.Fatalf("expected original fields and attached metatable, got %v", optional.Inner)
+	}
+}
+
 func TestBuildSelectResultUnion_ResolvesNegativeCasesIndex(t *testing.T) {
 	chParam := typ.NewTypeParam("Ch", typ.Any)
 	valParam := typ.NewTypeParam("T", typ.Any)

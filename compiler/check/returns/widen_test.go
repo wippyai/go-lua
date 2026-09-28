@@ -622,7 +622,7 @@ func TestJoinParamHint_UnknownYieldsToHintWithPlaceholderMembers(t *testing.T) {
 // current = node` after n fixpoint steps; the first step saw the name as
 // unresolved.
 func linkedNodeApproximation(n int) typ.Type {
-	var parent typ.Type = typ.Nil
+	parent := typ.Nil
 	name := typ.Unknown
 	var node *typ.Record
 	for i := 0; i <= n; i++ {
