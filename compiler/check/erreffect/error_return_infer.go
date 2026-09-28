@@ -384,6 +384,17 @@ func allCallableAlternativesHaveTruthyErrorReturn(t typ.Type, valueIdx, errorIdx
 		}
 		return true
 	}
+	if intersection, ok := typ.UnwrapAnnotated(t).(*typ.Intersection); ok {
+		if len(intersection.Members) == 0 {
+			return false
+		}
+		for _, member := range intersection.Members {
+			if !allCallableAlternativesHaveErrorReturn(member, valueIdx, errorIdx) {
+				return false
+			}
+		}
+		return true
+	}
 	spec := contract.ExtractSpec(t)
 	if spec == nil {
 		return false
@@ -403,10 +414,16 @@ func forwardsErrorReturn(exprs []ast.Expr, synth api.BaseSynth, p cfg.Point, val
 		return false
 	}
 	call, ok := exprs[0].(*ast.FuncCallExpr)
-	if !ok || call.AdjustRet || call.Func == nil {
+	if !ok || call.AdjustRet {
 		return false
 	}
-	return allCallableAlternativesHaveErrorReturn(synth.TypeOf(call.Func, p), valueIdx, errorIdx)
+	var t typ.Type
+	if call.Func != nil {
+		t = synth.TypeOf(call.Func, p)
+	} else if call.Receiver != nil && call.Method != "" {
+		t, _ = core.Method(synth.TypeOf(call.Receiver, p), call.Method)
+	}
+	return allCallableAlternativesHaveErrorReturn(t, valueIdx, errorIdx)
 }
 
 func allCallableAlternativesHaveErrorReturn(t typ.Type, valueIdx, errorIdx int) bool {
