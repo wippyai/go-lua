@@ -375,6 +375,7 @@ const (
 	returnTypeStringUnpackValue = 7
 	returnTypeSelectCaseOfParam = 8
 	returnTypeSelectResultCases = 9
+	returnTypeTypeValueOf       = 11 // 10 is reserved for WithMetatable
 )
 
 func writeReturnType(w Writer, rt ReturnType) error {
@@ -409,6 +410,12 @@ func writeReturnType(w Writer, rt ReturnType) error {
 		},
 		SameAs: func(v SameAs) error {
 			if err := w.WriteByte(returnTypeSameAs); err != nil {
+				return err
+			}
+			return w.WriteInt32(int32(v.Source.Index))
+		},
+		TypeValueOf: func(v TypeValueOf) error {
+			if err := w.WriteByte(returnTypeTypeValueOf); err != nil {
 				return err
 			}
 			return w.WriteInt32(int32(v.Source.Index))
@@ -490,6 +497,12 @@ func readReturnType(r Reader) (ReturnType, error) {
 		}
 
 		return SameAs{Source: ParamRef{Index: int(idx)}}, nil
+	case returnTypeTypeValueOf:
+		idx, err := r.ReadInt32()
+		if err != nil {
+			return nil, err
+		}
+		return TypeValueOf{Source: ParamRef{Index: int(idx)}}, nil
 	case returnTypeDeepElementOf:
 		idx, err := r.ReadInt32()
 		if err != nil {

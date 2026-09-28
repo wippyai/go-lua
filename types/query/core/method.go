@@ -99,7 +99,7 @@ func methodDepth(t typ.Type, name string, depth int) (typ.Type, bool) {
 		Meta: func(m *typ.Meta) fieldResult {
 			// Meta types have a built-in :is method for type guards
 			if name == "is" {
-				return fieldResult{t: metaIsMethod(m.Of), ok: true}
+				return fieldResult{t: metaIsMethod(m), ok: true}
 			}
 			return fieldResult{}
 		},
@@ -416,7 +416,8 @@ func HasMetamethod(t typ.Type, name string) bool {
 // Meta types (reified type values) have a built-in :is method for runtime
 // type guards: value:is(Type) returns (value|nil, err?).
 // Signature: (value: any) -> (T?, LuaError?)
-func metaIsMethod(of typ.Type) *typ.Function {
+func metaIsMethod(meta typ.Type) *typ.Function {
+	of := TypeValueOf(meta)
 	if of == nil {
 		of = typ.Any
 	}
@@ -425,4 +426,13 @@ func metaIsMethod(of typ.Type) *typ.Function {
 		Returns(typ.NewOptional(of), typ.NewOptional(typ.LuaError)).
 		Effects(effect.WithTypeValueMethod()).
 		Build()
+}
+
+// TypeValueOf extracts the represented type from a Meta<T> value, including
+// transparent aliases. It is shared by type-value methods and call effects.
+func TypeValueOf(value typ.Type) typ.Type {
+	if meta, ok := unwrap.Alias(value).(*typ.Meta); ok {
+		return meta.Of
+	}
+	return nil
 }
