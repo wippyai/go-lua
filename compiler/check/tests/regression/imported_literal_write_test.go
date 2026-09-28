@@ -1,6 +1,7 @@
 package regression
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/check"
@@ -35,14 +36,15 @@ func TestImportedSingletonFieldWidensThroughAliasAndEscape(t *testing.T) {
 	for _, source := range []string{
 		`local names = require("names"); local alias = names; alias.NAME = "second"; local value: "first" = names.NAME`,
 		`local names = require("names"); local alias = names; local other = alias; other.NAME = "second"; local value: "first" = names.NAME`,
-		`local names = require("names"); local function mutate(x) x.NAME = "second" end; mutate(names); local value: "first" = names.NAME`,
+		`local names = require("names"); local function sink(x: any) end; sink(names); local value: "first" = names.NAME`,
 		`local names = require("names"); local holder = {names}; holder[1].NAME = "second"; local value: "first" = names.NAME`,
 		`local names = require("names"); local function mutate() names.NAME = "second" end; mutate(); local value: "first" = names.NAME`,
 	} {
 		for _, strict := range []bool{false, true} {
 			result := testutil.Check(source, testutil.WithStdlib(), testutil.WithManifest("names", exported.Manifest), testutil.WithCheckOptions(check.Options{Strict: strict}))
-			if !result.HasError() {
-				t.Errorf("strict=%v expected diagnostic for %s", strict, source)
+			messages := strings.Join(testutil.ErrorMessages(result.Errors), "; ")
+			if !strings.Contains(messages, `cannot assign string to "first"`) {
+				t.Errorf("strict=%v expected singleton assignment diagnostic for %s, got %s", strict, source, messages)
 			}
 		}
 	}
