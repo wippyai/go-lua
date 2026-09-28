@@ -236,6 +236,18 @@ func TestArray(t *testing.T) {
 	}
 }
 
+func TestNilTableFieldSatisfiesOptionalDestination(t *testing.T) {
+	actual := typ.NewRecord().Field("namespace", typ.Nil).Build()
+	optional := typ.NewRecord().OptField("namespace", typ.String).Build()
+	if !IsSubtype(actual, optional) {
+		t.Fatal("nil table field is absent and satisfies an optional field")
+	}
+	required := typ.NewRecord().Field("namespace", typ.String).Build()
+	if IsSubtype(actual, required) {
+		t.Fatal("nil table field cannot satisfy a required string field")
+	}
+}
+
 func TestMap(t *testing.T) {
 	mapStrNum := typ.NewMap(typ.String, typ.Number)
 	mapStrInt := typ.NewMap(typ.String, typ.Integer)
@@ -2328,6 +2340,36 @@ func TestMapValueWidensIntoUnknown(t *testing.T) {
 	}
 	if IsSubtype(typ.NewMap(typ.String, typ.Unknown), typ.NewMap(typ.String, typ.Integer)) {
 		t.Fatal("{[string]: unknown} must not subtype {[string]: integer}")
+	}
+}
+
+func TestCompleteRecordSatisfiesDeclaredMapComponent(t *testing.T) {
+	target := typ.NewRecord().Field("name", typ.String).MapComponent(typ.String, typ.Integer).SetDeclared(true).Build()
+	good := typ.NewRecord().Field("name", typ.String).Field("count", typ.Integer).SetComplete(true).Build()
+	badValue := typ.NewRecord().Field("name", typ.String).Field("count", typ.String).SetComplete(true).Build()
+	partial := typ.NewRecord().Field("name", typ.String).Field("count", typ.Integer).Build()
+	if !IsSubtype(good, target) {
+		t.Fatal("known extra field must satisfy the map value constraint; declared fields retain their own type")
+	}
+	if IsSubtype(badValue, target) {
+		t.Fatal("incompatible extra field must be rejected")
+	}
+	if IsSubtype(partial, target) {
+		t.Fatal("partial record may contain unseen incompatible fields")
+	}
+}
+
+func TestCompleteRecordMapIgnoresNilExtraFields(t *testing.T) {
+	target := typ.NewMap(typ.String, typ.Integer)
+	for _, fieldType := range []typ.Type{typ.Nil, typ.NewOptional(typ.Integer), typ.NewUnion(typ.Nil, typ.Integer)} {
+		record := typ.NewRecord().Field("extra", fieldType).SetComplete(true).Build()
+		if !IsSubtype(record, target) {
+			t.Errorf("%s should satisfy integer map after nil entries are removed", fieldType)
+		}
+	}
+	bad := typ.NewRecord().Field("extra", typ.NewOptional(typ.String)).SetComplete(true).Build()
+	if IsSubtype(bad, target) {
+		t.Fatal("non-nil string must not satisfy integer map")
 	}
 }
 

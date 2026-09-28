@@ -264,6 +264,14 @@ func (ce *ConditionExtractor) evaluatedReceiverFacts(expr ast.Expr) constraint.C
 					}
 				}
 			}
+		case *ast.UnaryLenOpExpr:
+			// A local read remains the value that was measured. A field read may
+			// change while __len runs, so do not retain a path fact for it.
+			if _, local := e.Expr.(*ast.IdentExpr); local {
+				if p := ce.pathFromExpr(e.Expr); ce.canRetainPath(p) {
+					facts = append(facts, constraint.NotNil{Path: p})
+				}
+			}
 		}
 	}
 	visit(expr)

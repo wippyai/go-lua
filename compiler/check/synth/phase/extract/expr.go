@@ -26,6 +26,8 @@ import (
 	"math/big"
 
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/bind"
+	compcfg "github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
@@ -50,6 +52,25 @@ func (s *Synthesizer) keyTypeAt(p cfg.Point, narrower api.FlowOps) func(ast.Expr
 // synthAttrGetCore synthesizes type for attribute access using the shared core.
 func (s *Synthesizer) synthAttrGetCore(ex *ast.AttrGetExpr, p cfg.Point, sc *scope.State, narrower api.FlowOps, recurse ExprSynth) typ.Type {
 	objType := recurse(ex.Object)
+	var manifestPath string
+	var importedSymbol compcfg.SymbolID
+	if ident, ok := ex.Object.(*ast.IdentExpr); ok && s.deps.Manifests != nil && s.deps.CheckCtx != nil {
+		if bindings := s.deps.CheckCtx.Bindings(); bindings != nil {
+			if sym, ok := bindings.SymbolOf(ident); ok && sym != 0 {
+				if graph, ok := s.deps.CheckCtx.Graph().(*compcfg.Graph); ok {
+					graph.EachAliasSymbol(sym, func(candidate compcfg.SymbolID) bool {
+						if module := s.deps.CheckCtx.ModuleAlias(candidate); module != "" {
+							manifestPath, importedSymbol = module, candidate
+							return true
+						}
+						return false
+					})
+				} else {
+					manifestPath, importedSymbol = s.deps.CheckCtx.ModuleAlias(sym), sym
+				}
+			}
+		}
+	}
 
 	if narrower != nil && s.deps.Paths != nil {
 		path := s.deps.Paths(p, ex, sc, recurse)
@@ -65,6 +86,9 @@ func (s *Synthesizer) synthAttrGetCore(ex *ast.AttrGetExpr, p cfg.Point, sc *sco
 				if typ.IsUnknown(unwrap.Alias(narrowed)) && typ.IsAny(unwrap.Alias(objType)) {
 					goto skipNarrowedAttr
 				}
+				if key, ok := ex.Key.(*ast.StringExpr); ok && manifestPath != "" && importedFieldWritten(s.deps.CheckCtx, importedSymbol, key.Value) {
+					return widenImportedLiteral(narrowed)
+				}
 				return narrowed
 			}
 		}
@@ -72,20 +96,14 @@ func (s *Synthesizer) synthAttrGetCore(ex *ast.AttrGetExpr, p cfg.Point, sc *sco
 
 skipNarrowedAttr:
 
-	var manifestPath string
-	if ident, ok := ex.Object.(*ast.IdentExpr); ok && s.deps.Manifests != nil && s.deps.CheckCtx != nil {
-		if bindings := s.deps.CheckCtx.Bindings(); bindings != nil {
-			if sym, ok := bindings.SymbolOf(ident); ok && sym != 0 {
-				manifestPath = s.deps.CheckCtx.ModuleAlias(sym)
-			}
-		}
-	}
-
 	switch key := ex.Key.(type) {
 	case *ast.StringExpr:
 		if ft, ok := s.deps.Types.Field(s.deps.Ctx, objType, key.Value); ok {
 			if manifestPath != "" {
 				ft = enrichWithManifest(s.deps.Manifests, ft, manifestPath, key.Value)
+				if importedFieldWritten(s.deps.CheckCtx, importedSymbol, key.Value) {
+					ft = widenImportedLiteral(ft)
+				}
 			}
 			if specialized := s.stableLocalFunctionValueType(ex, p, sc, ft, nil); specialized != nil {
 				return specialized
@@ -212,6 +230,144 @@ skipNarrowedAttr:
 	}
 
 	return typ.Unknown
+}
+
+// A writable imported field cannot remain a singleton after a write in the
+// current function. Conservatively include writes on every CFG path, including
+// loop back-edges, when resolving a literal carried by an imported manifest.
+func importedFieldWritten(env api.BaseEnv, sym compcfg.SymbolID, field string) bool {
+	if env == nil || env.Bindings() == nil || sym == 0 {
+		return false
+	}
+	graph, ok := env.Graph().(*compcfg.Graph)
+	if !ok || graph == nil {
+		return false
+	}
+	return ImportedFieldMayChange(graph, env.Bindings(), sym, field)
+}
+
+// ImportedFieldMayChange reports writes through stable aliases and escapes of
+// an imported table. Escapes conservatively invalidate every singleton field.
+func ImportedFieldMayChange(graph *compcfg.Graph, bindings *bind.BindingTable, sym compcfg.SymbolID, field string) bool {
+	// DirectAliasSymbol is computed from the whole graph and follows stable
+	// local alias chains. A write through any such alias reaches the import.
+	aliases := make(map[compcfg.SymbolID]bool)
+	for candidate := range graph.AllSymbolIDs() {
+		graph.EachAliasSymbol(candidate, func(source compcfg.SymbolID) bool {
+			if source == sym {
+				aliases[candidate] = true
+			}
+			return false
+		})
+	}
+	aliases[sym] = true
+	written := false
+	graph.EachAssign(func(_ compcfg.Point, info *compcfg.AssignInfo) {
+		if written || info == nil {
+			return
+		}
+		for _, target := range info.Targets {
+			if !aliases[target.BaseSymbol] {
+				continue
+			}
+			if target.Kind == compcfg.TargetField && len(target.FieldPath) > 0 && target.FieldPath[0] == field {
+				written = true
+				return
+			}
+			if target.Kind == compcfg.TargetIndex {
+				if key, ok := target.Key.(*ast.StringExpr); !ok || key.Value == field {
+					written = true
+					return
+				}
+			}
+		}
+		// A local direct alias stays tracked above. Any other assignment
+		// containing the table lets an untracked reference retain it.
+		info.EachTargetSource(func(_ int, target compcfg.AssignTarget, source ast.Expr) {
+			if written || !importedAliasInValue(source, bindings, aliases) {
+				return
+			}
+			if target.Kind != compcfg.TargetIdent || !aliases[target.Symbol] || graph.DirectAliasSymbol(target.Symbol) == 0 {
+				written = true
+			}
+		})
+	})
+	graph.EachCallSite(func(_ compcfg.Point, call *compcfg.CallInfo) {
+		if written || call == nil {
+			return
+		}
+		if importedAliasInValue(call.Receiver, bindings, aliases) {
+			written = true
+			return
+		}
+		for _, arg := range call.Args {
+			if importedAliasInValue(arg, bindings, aliases) {
+				written = true
+				return
+			}
+		}
+	})
+	graph.EachReturn(func(_ compcfg.Point, ret *compcfg.ReturnInfo) {
+		if written || ret == nil {
+			return
+		}
+		for _, expr := range ret.Exprs {
+			if importedAliasInValue(expr, bindings, aliases) {
+				written = true
+				return
+			}
+		}
+	})
+	// A closure can retain the table and mutate it outside this graph.
+	for _, nested := range graph.NestedFunctions() {
+		if nested.Func == nil {
+			continue
+		}
+		for _, captured := range bindings.CapturedSymbols(nested.Func) {
+			if aliases[captured] {
+				return true
+			}
+		}
+	}
+	return written
+}
+
+func importedAliasInValue(expr ast.Expr, bindings *bind.BindingTable, aliases map[compcfg.SymbolID]bool) bool {
+	switch e := expr.(type) {
+	case *ast.IdentExpr:
+		sym, ok := bindings.SymbolOf(e)
+		return ok && aliases[sym]
+	case *ast.TableExpr:
+		for _, f := range e.Fields {
+			if f != nil && (importedAliasInValue(f.Key, bindings, aliases) || importedAliasInValue(f.Value, bindings, aliases)) {
+				return true
+			}
+		}
+	case *ast.CastExpr:
+		return importedAliasInValue(e.Expr, bindings, aliases)
+	case *ast.NonNilAssertExpr:
+		return importedAliasInValue(e.Expr, bindings, aliases)
+	}
+	return false
+}
+
+func widenImportedLiteral(t typ.Type) typ.Type {
+	lit, ok := typ.UnwrapAnnotated(t).(*typ.Literal)
+	if !ok {
+		return t
+	}
+	switch lit.Base {
+	case kind.String:
+		return typ.String
+	case kind.Integer:
+		return typ.Integer
+	case kind.Number:
+		return typ.Number
+	case kind.Boolean:
+		return typ.Boolean
+	default:
+		return typ.Unknown
+	}
 }
 
 func (s *Synthesizer) indexFromKeyOf(objType typ.Type, objExpr ast.Expr, key *ast.IdentExpr, p cfg.Point, sc *scope.State, narrower api.FlowOps) typ.Type {

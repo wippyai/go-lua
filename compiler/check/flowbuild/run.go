@@ -184,6 +184,9 @@ func Run(fc *fbcore.FlowContext) *flow.Inputs {
 }
 
 func collectCallAliasRoots(fc *fbcore.FlowContext) map[cfg.Point][]cfg.SymbolID {
+	if fc == nil {
+		return nil
+	}
 	graph := fc.Graph
 	if graph == nil || graph.Bindings() == nil {
 		return nil

@@ -680,6 +680,11 @@ func (c *checker) checkRecord(sub, super *typ.Record, depth int) bool {
 
 			continue
 		}
+		// Assigning nil to a Lua table key removes that key. A nil-valued
+		// field therefore satisfies a destination that permits absence.
+		if (sf.Optional || unwrap.IsOptionalLike(sf.Type)) && unwrap.IsNilType(subField.Type) {
+			continue
+		}
 
 		if sf.Readonly {
 			// Readonly in super: covariant check is sound (no writes through supertype)
@@ -714,18 +719,59 @@ func (c *checker) checkRecord(sub, super *typ.Record, depth int) bool {
 
 	// Compare map components
 	if super.HasMapComponent() {
-		if !sub.HasMapComponent() {
+		// A complete record can satisfy a map component through its known
+		// fields. A partial record cannot: it may contain unseen keys.
+		if !sub.HasMapComponent() && !sub.Complete {
 			return false
 		}
-		if !c.check(sub.MapKey, super.MapKey, depth+1) {
-			return false
+		if sub.HasMapComponent() {
+			if !c.check(sub.MapKey, super.MapKey, depth+1) || !c.check(sub.MapValue, super.MapValue, depth+1) {
+				return false
+			}
 		}
-		if !c.check(sub.MapValue, super.MapValue, depth+1) {
-			return false
+		for _, field := range sub.Fields {
+			if super.GetField(field.Name) != nil {
+				continue // declared fields take precedence over the map component
+			}
+			// Lua removes nil-valued entries from a table. Only values that
+			// can actually remain in the map need to satisfy its value type.
+			value := mapFieldPresentType(field.Type)
+			if typ.IsNever(value) {
+				continue
+			}
+			if !c.check(typ.LiteralString(field.Name), super.MapKey, depth+1) || !c.check(value, super.MapValue, depth+1) {
+				return false
+			}
 		}
 	}
 
 	return true
+}
+
+// mapFieldPresentType describes values left in a Lua table after nil deletes
+// the entry. It only strips nil at the field's outermost level.
+func mapFieldPresentType(t typ.Type) typ.Type {
+	t = unwrap.Alias(t)
+	if unwrap.IsNilType(t) {
+		return typ.Never
+	}
+	switch v := t.(type) {
+	case *typ.Optional:
+		return v.Inner
+	case *typ.Union:
+		members := make([]typ.Type, 0, len(v.Members))
+		for _, member := range v.Members {
+			present := mapFieldPresentType(member)
+			if !typ.IsNever(present) {
+				members = append(members, present)
+			}
+		}
+		if len(members) == 0 {
+			return typ.Never
+		}
+		return typ.NewUnion(members...)
+	}
+	return t
 }
 
 // recordFieldOrInherited returns r's own field name, or the field a read of
@@ -1108,12 +1154,16 @@ func (c *checker) checkRecordToMap(sub *typ.Record, super *typ.Map, depth int) b
 	}
 
 	for _, f := range sub.Fields {
+		value := mapFieldPresentType(f.Type)
+		if typ.IsNever(value) {
+			continue
+		}
 		keyType := typ.LiteralString(f.Name)
 		if !c.check(keyType, super.Key, depth+1) {
 			return false
 		}
 
-		if !c.check(f.Type, super.Value, depth+1) {
+		if !c.check(value, super.Value, depth+1) {
 			return false
 		}
 	}

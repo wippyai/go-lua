@@ -34,7 +34,9 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/path"
+	"github.com/wippyai/go-lua/compiler/check/modules"
 	"github.com/wippyai/go-lua/compiler/check/scope"
+	"github.com/wippyai/go-lua/compiler/check/synth/phase/extract"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/diag"
 	"github.com/wippyai/go-lua/types/flow"
@@ -51,6 +53,7 @@ func CheckAssignments(graph *cfg.Graph, scopes map[cfg.Point]*scope.State, narro
 	}
 
 	mode := core.AssignabilityOf(narrowSynth.Context())
+	moduleAliases := modules.CollectAliases(graph)
 	annotated := make(map[cfg.SymbolID]typ.Type)
 	assigned := make(map[cfg.SymbolID]bool)
 	graph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
@@ -169,7 +172,11 @@ func CheckAssignments(graph *cfg.Graph, scopes map[cfg.Point]*scope.State, narro
 				sourcePath := extractSourcePath(source, graph, p)
 				if !sourcePath.IsEmpty() {
 					if narrowed := flowQ.NarrowedTypeAt(p, sourcePath); !typ.IsAbsentOrUnknown(narrowed) {
-						valueType = preferPreciseSourcePathType(valueType, narrowed)
+						// Flow may still carry the manifest singleton after the
+						// imported table is mutated through an alias or escapes.
+						if !staleImportedFieldFact(source, graph, moduleAliases) {
+							valueType = preferPreciseSourcePathType(valueType, narrowed)
+						}
 					}
 				}
 			}
@@ -256,6 +263,34 @@ func CheckAssignments(graph *cfg.Graph, scopes map[cfg.Point]*scope.State, narro
 	})
 
 	return diags
+}
+
+func staleImportedFieldFact(source ast.Expr, graph *cfg.Graph, aliases map[cfg.SymbolID]string) bool {
+	attr, ok := source.(*ast.AttrGetExpr)
+	if !ok {
+		return false
+	}
+	ident, ok := attr.Object.(*ast.IdentExpr)
+	if !ok {
+		return false
+	}
+	key, ok := attr.Key.(*ast.StringExpr)
+	if !ok {
+		return false
+	}
+	sym, ok := graph.Bindings().SymbolOf(ident)
+	if !ok {
+		return false
+	}
+	var imported cfg.SymbolID
+	graph.EachAliasSymbol(sym, func(candidate cfg.SymbolID) bool {
+		if aliases[candidate] != "" {
+			imported = candidate
+			return true
+		}
+		return false
+	})
+	return imported != 0 && extract.ImportedFieldMayChange(graph, graph.Bindings(), imported, key.Value)
 }
 
 func preferPreciseSourcePathType(current, narrowed typ.Type) typ.Type {

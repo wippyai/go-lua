@@ -74,6 +74,11 @@ func acceptsArity(fn *typ.Function, argCount int) bool {
 // value set of the projection is unbounded and Unknown absorbs the join.
 // Any still dominates, and a nil-bearing alternative keeps the result optional.
 func joinProjections(types ...typ.Type) typ.Type {
+	for _, projected := range types {
+		if projected != nil && typ.IsAny(typ.UnwrapAnnotated(projected)) {
+			return typ.Any
+		}
+	}
 	joined := typ.NewUnion(types...)
 	if typ.IsAny(joined) {
 		return joined
