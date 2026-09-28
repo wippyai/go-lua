@@ -82,6 +82,7 @@ func mustFieldTransfersWithCalls(graph *cfg.Graph, bindings *bind.BindingTable, 
 	// Each event records whether the field is present after the assignment.
 	sites := make(map[fieldWriteSite]map[cfg.Point]bool)
 	unknownCalls := make(map[cfg.Point]map[cfg.SymbolID]bool)
+	possibleWrites := make(map[fieldWriteSite]map[cfg.Point]bool)
 	graph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
 		if info == nil {
 			return
@@ -143,23 +144,75 @@ func mustFieldTransfersWithCalls(graph *cfg.Graph, bindings *bind.BindingTable, 
 			for i, sym := range params {
 				paramIndex[sym] = i
 			}
-			for written, present := range writes {
-				target := written.Target
-				mapped := target
+			mapTarget := func(target cfg.SymbolID) cfg.SymbolID {
 				if idx, isParam := paramIndex[target]; isParam {
 					path := flowpath.FromExprWithBindings(checkcallsite.RuntimeArgAt(info, idx), nil, bindings)
 					if path.Symbol == 0 || len(path.Segments) != 0 {
-						continue
+						return 0
 					}
-					mapped = path.Symbol
-				} else if len(instance.captures) != 0 {
-					if captured := instance.captures[target]; captured != 0 {
-						mapped = captured
-					} else {
-						continue
+					return stableAliasRoot(graph, path.Symbol)
+				}
+				if len(instance.captures) != 0 {
+					return stableAliasRoot(graph, instance.captures[target])
+				}
+				return stableAliasRoot(graph, target)
+			}
+			if source.mayCallUnknown(callee, make(map[cfg.SymbolID]bool)) {
+				if unknownCalls[p] == nil {
+					unknownCalls[p] = make(map[cfg.SymbolID]bool)
+				}
+				for _, target := range params {
+					if mapped := mapTarget(target); mapped != 0 {
+						unknownCalls[p][mapped] = true
 					}
 				}
-				mapped = stableAliasRoot(graph, mapped)
+				if ref := source.Store.FunctionRefBySym(callee); ref != nil && ref.Func != nil {
+					for _, target := range source.Bindings.CapturedSymbols(ref.Func) {
+						if mapped := mapTarget(target); mapped != 0 {
+							unknownCalls[p][mapped] = true
+						}
+					}
+				}
+				for _, arg := range info.Args {
+					path := flowpath.FromExprWithBindings(arg, nil, bindings)
+					if path.Symbol == 0 {
+						continue
+					}
+					for target := range source.FieldWritesOf(path.Symbol) {
+						unknownCalls[p][stableAliasRoot(graph, target)] = true
+					}
+					closure := source.factoryInstances(graph, bindings)[path.Symbol]
+					if closure.function == 0 {
+						continue
+					}
+					for _, captured := range closure.captures {
+						if captured != 0 {
+							unknownCalls[p][stableAliasRoot(graph, captured)] = true
+						}
+					}
+				}
+			}
+			// A callee's possible write can destroy an earlier guarantee even
+			// when its branches have no common final transfer. Keep this per
+			// field so unrelated fields retain their guarantees.
+			for target, set := range source.fieldWritesOf(callee, make(map[cfg.SymbolID]bool)) {
+				mapped := mapTarget(target)
+				if mapped == 0 {
+					continue
+				}
+				for key := range set {
+					site := fieldWriteSite{Target: mapped, Key: key}
+					if possibleWrites[site] == nil {
+						possibleWrites[site] = make(map[cfg.Point]bool)
+					}
+					possibleWrites[site][p] = true
+				}
+			}
+			for written, present := range writes {
+				mapped := mapTarget(written.Target)
+				if mapped == 0 {
+					continue
+				}
 				if !guaranteed {
 					if !present {
 						if unknownCalls[p] == nil {
@@ -180,6 +233,14 @@ func mustFieldTransfersWithCalls(graph *cfg.Graph, bindings *bind.BindingTable, 
 	var must map[fieldWriteSite]bool
 	for site, events := range sites {
 		var havoc map[cfg.Point]bool
+		for p := range possibleWrites[site] {
+			if _, guaranteed := events[p]; !guaranteed {
+				if havoc == nil {
+					havoc = make(map[cfg.Point]bool)
+				}
+				havoc[p] = true
+			}
+		}
 		for p, targets := range unknownCalls {
 			if targets[site.Target] {
 				if havoc == nil {

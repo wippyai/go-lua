@@ -50,6 +50,7 @@ func TestCalledInitializerReturnPresence(t *testing.T) {
 		{"removed_after_call", `initialize(); obj.method = nil`, false},
 		{"removed_inside_initializer", `local function clear() obj.method = nil end; initialize(); clear()`, false},
 		{"conditional_clear_after_initializer", `local function clear() obj.method = nil end; initialize(); local _ = flag and clear()`, false},
+		{"callee_may_clear_after_initializer", `local function clear() if flag then obj.method = nil end end; initialize(); clear()`, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -95,6 +96,8 @@ func TestComposedFieldWriteReturnPresence(t *testing.T) {
 		{"capture_cell_read_at_call", `local obj = {}; local old = obj; local function write() obj.method = function() return 1 end end; obj = {}; write(); return obj`, true},
 		{"capture_rebind_leaves_old_object", `local obj = {}; local old = obj; local function write() obj.method = function() return 1 end end; obj = {}; write(); return old`, false},
 		{"unknown_callback", `local obj = {}; local function write() obj.method = function() return 1 end end; write(); callback(obj); return obj`, false},
+		{"nested_unknown_callback", `local obj = {}; local function write() obj.method = function() return 1 end end; local function invoke(cb) cb(obj) end; write(); invoke(callback); return obj`, false},
+		{"nested_escaping_writer_callback", `local obj = {}; local function write() obj.method = function() return 1 end end; local function invoke(cb) callback(cb) end; write(); invoke(write); return obj`, false},
 		{"write_after_unknown_callback", `local obj = {}; local function write() obj.method = function() return 1 end end; callback(obj); write(); return obj`, true},
 		{"short_circuit_unknown_callback", `local obj = {}; local function write() obj.method = function() return 1 end end; write(); local _ = flag and callback(obj); return obj`, false},
 		{"branch_unknown_callback", `local obj = {}; local function write() obj.method = function() return 1 end end; write(); if flag and callback(obj) then end; return obj`, false},

@@ -295,6 +295,42 @@ func (s *StoreFieldWriteSource) graphWithin(child, ancestor uint64) bool {
 	return false
 }
 
+// mayCallUnknown follows resolved local calls to find callbacks whose effects
+// cannot be summarized. The visited set cuts recursive edges without treating
+// an unresolved summary as an empty effect.
+func (s *StoreFieldWriteSource) mayCallUnknown(fn cfg.SymbolID, visited map[cfg.SymbolID]bool) bool {
+	if s.Store == nil || fn == 0 || visited[fn] {
+		return false
+	}
+	visited[fn] = true
+	ref := s.Store.FunctionRefBySym(fn)
+	if ref == nil {
+		return true
+	}
+	graph := s.Store.Graphs()[ref.GraphID]
+	if graph == nil {
+		return true
+	}
+	bindings := graph.Bindings()
+	if bindings == nil {
+		bindings = s.Bindings
+	}
+	if bindings == nil {
+		return true
+	}
+	unknown := false
+	checkcallsite.EachCallSiteWithNested(graph, bindings, func(_ cfg.Point, info *cfg.CallInfo) {
+		if unknown {
+			return
+		}
+		instance := s.resolvedCall(graph, bindings, info)
+		if instance.function == 0 || s.mayCallUnknown(instance.function, visited) {
+			unknown = true
+		}
+	})
+	return unknown
+}
+
 // CollectFieldWrites computes the fields the function of graph may write
 // through targets, its captured variables and parameters: field assignments
 // in its body, into the target tables and the tables they reach by static
