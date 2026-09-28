@@ -296,6 +296,10 @@ func ImportedFieldMayChange(graph *compcfg.Graph, bindings *bind.BindingTable, s
 		if written || call == nil {
 			return
 		}
+		if importedAliasInValue(call.Receiver, bindings, aliases) {
+			written = true
+			return
+		}
 		for _, arg := range call.Args {
 			if importedAliasInValue(arg, bindings, aliases) {
 				written = true

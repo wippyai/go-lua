@@ -29,7 +29,7 @@ func TestImportedSingletonFieldWidensWhenWritten(t *testing.T) {
 }
 
 func TestImportedSingletonFieldWidensThroughAliasAndEscape(t *testing.T) {
-	exported := testutil.CheckAndExport(`return { NAME = "first" }`, "names", testutil.WithStdlib())
+	exported := testutil.CheckAndExport(`return { NAME = "first", touch = function(self) end }`, "names", testutil.WithStdlib())
 	if exported.HasError() {
 		t.Fatalf("export: %v", testutil.ErrorMessages(exported.Errors))
 	}
@@ -38,6 +38,7 @@ func TestImportedSingletonFieldWidensThroughAliasAndEscape(t *testing.T) {
 		`local names = require("names"); local alias = names; names.NAME = "second"; local value: "first" = alias.NAME`,
 		`local names = require("names"); local alias = names; local other = alias; other.NAME = "second"; local value: "first" = names.NAME`,
 		`local names = require("names"); local function sink(x: any) end; sink(names); local value: "first" = names.NAME`,
+		`local names = require("names"); names:touch(); local value: "first" = names.NAME`,
 		`local names = require("names"); local holder = {names}; holder[1].NAME = "second"; local value: "first" = names.NAME`,
 		`local names = require("names"); local function mutate() names.NAME = "second" end; mutate(); local value: "first" = names.NAME`,
 	} {
