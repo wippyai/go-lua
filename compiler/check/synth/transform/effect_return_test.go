@@ -23,6 +23,31 @@ func TestApplyEffectTransform_ErrorReturnOptionalizes(t *testing.T) {
 	}
 }
 
+func TestApplyEffectTransform_TypeValueOf(t *testing.T) {
+	user := typ.NewRecord().Field("name", typ.String).Build()
+	row := effect.Row{Labels: []effect.Label{
+		effect.Return{ReturnIndex: 0, Transform: effect.TypeValueOf{Source: effect.ParamRef{Index: 1}}},
+		effect.ErrorReturn{ValueIndex: 0, ErrorIndex: 1},
+	}}
+	fn := typ.Func().Returns(typ.Any, typ.NewOptional(typ.LuaError)).Spec(contract.NewSpec().WithEffectRow(row)).Build()
+	for _, tc := range []struct {
+		name string
+		args []typ.Type
+		want typ.Type
+	}{
+		{"meta argument", []typ.Type{typ.String, typ.NewMeta(user)}, typ.NewOptional(user)},
+		{"absent argument", []typ.Type{typ.String}, typ.Any},
+		{"non meta argument", []typ.Type{typ.String, typ.String}, typ.Any},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ApplyEffectTransform(fn, tc.args, 0, fn.Returns)
+			if !typ.TypeEquals(got, tc.want) {
+				t.Fatalf("got %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestApplyEffectTransform_ErrorReturnNeedsErrorSlot(t *testing.T) {
 	spec := contract.NewSpec().WithEffects(effect.ErrorReturn{ValueIndex: 0, ErrorIndex: 1})
 	fn := typ.Func().Returns(typ.String, typ.NewOptional(typ.String)).Spec(spec).Build()
