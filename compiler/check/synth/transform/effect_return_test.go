@@ -23,6 +23,54 @@ func TestApplyEffectTransform_ErrorReturnOptionalizes(t *testing.T) {
 	}
 }
 
+func TestApplyEffectTransform_TypeValueOf(t *testing.T) {
+	user := typ.NewRecord().Field("name", typ.String).Build()
+	row := effect.Row{Labels: []effect.Label{
+		effect.Return{ReturnIndex: 0, Transform: effect.TypeValueOf{Source: effect.ParamRef{Index: 1}}},
+		effect.ErrorReturn{ValueIndex: 0, ErrorIndex: 1},
+	}}
+	fn := typ.Func().Returns(typ.Any, typ.NewOptional(typ.LuaError)).Spec(contract.NewSpec().WithEffectRow(row)).Build()
+	for _, tc := range []struct {
+		name string
+		args []typ.Type
+		want typ.Type
+	}{
+		{"meta argument", []typ.Type{typ.String, typ.NewMeta(user)}, typ.NewOptional(user)},
+		{"absent argument", []typ.Type{typ.String}, typ.Any},
+		{"non meta argument", []typ.Type{typ.String, typ.String}, typ.Any},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := ApplyEffectTransform(fn, tc.args, 0, fn.Returns[0])
+			if !typ.TypeEquals(got, tc.want) {
+				t.Fatalf("got %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestApplyEffectTransform_WithMetatableAndErrorReturn(t *testing.T) {
+	table := typ.NewRecord().Field("name", typ.String).Build()
+	meta := typ.NewRecord().Field("__index", typ.String).Build()
+	spec := contract.NewSpec().WithEffects(
+		effect.Return{ReturnIndex: 0, Transform: effect.WithMetatable{
+			Table:     effect.ParamRef{Index: 0},
+			Metatable: effect.ParamRef{Index: 1},
+		}},
+		effect.ErrorReturn{ValueIndex: 0, ErrorIndex: 1},
+	)
+	fn := typ.Func().Returns(typ.Any, typ.NewOptional(typ.LuaError)).Spec(spec).Build()
+
+	got := ApplyEffectTransform(fn, []typ.Type{table, meta}, 0, fn.Returns[0])
+	optional, ok := got.(*typ.Optional)
+	if !ok {
+		t.Fatalf("expected optional transformed table, got %v", got)
+	}
+	record, ok := optional.Inner.(*typ.Record)
+	if !ok || record.Metatable != meta || !typ.TypeEquals(record, table) {
+		t.Fatalf("expected original fields and attached metatable, got %v", optional.Inner)
+	}
+}
+
 func TestBuildSelectResultUnion_ResolvesNegativeCasesIndex(t *testing.T) {
 	chParam := typ.NewTypeParam("Ch", typ.Any)
 	valParam := typ.NewTypeParam("T", typ.Any)

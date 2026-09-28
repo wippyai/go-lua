@@ -281,6 +281,9 @@ func (r ReturnLength) Equals(other Label) bool {
 //   - SameAs: Returns the exact type of a parameter (identity).
 //     assert(v) -> typeof(v)
 //
+//   - TypeValueOf: Returns the type represented by a Meta<T> parameter.
+//     decode(s, User) -> User
+//
 //   - CallbackReturn: Returns what a callback parameter returns.
 //     table.sort(t, cmp) where cmp returns boolean -> boolean
 //
@@ -386,6 +389,16 @@ type SameAs struct {
 func (SameAs) returnType() {}
 func (s SameAs) String() string {
 	return fmt.Sprintf("same(%s)", s.Source)
+}
+
+// TypeValueOf returns the type represented by a Meta<T> parameter.
+type TypeValueOf struct {
+	Source ParamRef
+}
+
+func (TypeValueOf) returnType() {}
+func (t TypeValueOf) String() string {
+	return fmt.Sprintf("type_value(%s)", t.Source)
 }
 
 // DeepElementOf recursively extracts non-array leaf types.
@@ -798,6 +811,12 @@ func returnTypeEquals(a, b ReturnType) bool {
 		},
 		SameAs: func(av SameAs) bool {
 			if bv, ok := b.(SameAs); ok {
+				return av.Source.Index == bv.Source.Index
+			}
+			return false
+		},
+		TypeValueOf: func(av TypeValueOf) bool {
+			if bv, ok := b.(TypeValueOf); ok {
 				return av.Source.Index == bv.Source.Index
 			}
 			return false
