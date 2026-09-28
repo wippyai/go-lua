@@ -1,6 +1,31 @@
 package typ
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/wippyai/go-lua/types/kind"
+)
+
+type countedFinalLeaf struct{ visits int }
+
+func (l *countedFinalLeaf) Kind() kind.Kind        { l.visits++; return kind.String }
+func (*countedFinalLeaf) String() string           { return "string" }
+func (*countedFinalLeaf) Hash() uint64             { return 1 }
+func (l *countedFinalLeaf) Equals(other Type) bool { return l == other }
+
+func TestIsFinalSharedTypeGraphVisitsEachNodeOnce(t *testing.T) {
+	leaf := &countedFinalLeaf{}
+	var graph Type = leaf
+	for range 18 {
+		graph = &Tuple{Elements: []Type{graph, graph}}
+	}
+	if !IsFinal(graph) {
+		t.Fatal("shared final graph reported pending")
+	}
+	if leaf.visits > 2 {
+		t.Fatalf("shared leaf visited %d times; want at most one traversal", leaf.visits)
+	}
+}
 
 func TestUnresolvedSurvivesUnionUntilFinalization(t *testing.T) {
 	for _, other := range []Type{Any, Unknown, String} {
