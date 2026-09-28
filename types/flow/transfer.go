@@ -22,6 +22,7 @@ import (
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 // processPointReturnChangedKeys processes all type-changing operations at a CFG point.
@@ -772,6 +773,11 @@ func (s *Solution) mapElementTypeAt(p cfg.Point, src *MapElementSource) typ.Type
 	}
 	if mapType == nil {
 		return nil
+	}
+	// A dynamic key may reach an unlisted value in an incomplete record.
+	// Decomposing only its listed fields would give an unsoundly narrow result.
+	if record, ok := unwrap.Alias(mapType).(*typ.Record); ok && !record.Complete && !record.HasMapComponent() {
+		return typ.Unknown
 	}
 
 	if valueType := s.inputs.Decomposer.ValueType(mapType); valueType != nil {
