@@ -285,6 +285,7 @@ type ReturnTypeVisitor[R any] struct {
 	CallbackReturn        func(CallbackReturn) R
 	ArrayOfCallbackReturn func(ArrayOfCallbackReturn) R
 	SameAs                func(SameAs) R
+	TypeValueOf           func(TypeValueOf) R
 	DeepElementOf         func(DeepElementOf) R
 	StringUnpackValue     func(StringUnpackValue) R
 	SelectCaseOfParam     func(SelectCaseOfParam) R
@@ -334,6 +335,14 @@ func VisitReturnType[R any](t ReturnType, v ReturnTypeVisitor[R]) R {
 	case *SameAs:
 		if v.SameAs != nil {
 			return v.SameAs(*tt)
+		}
+	case TypeValueOf:
+		if v.TypeValueOf != nil {
+			return v.TypeValueOf(tt)
+		}
+	case *TypeValueOf:
+		if v.TypeValueOf != nil {
+			return v.TypeValueOf(*tt)
 		}
 	case DeepElementOf:
 		if v.DeepElementOf != nil {
