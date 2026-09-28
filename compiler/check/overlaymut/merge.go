@@ -76,16 +76,13 @@ func mergeFields(baseType typ.Type, fields map[string]typ.Type) typ.Type {
 	switch v := baseType.(type) {
 	case *typ.Map:
 		builder := typ.NewRecord().SetOpen(true)
-		builder.MapComponent(v.Key, v.Value)
+		builder.MapComponentWithFlags(v.Key, v.Value, v.InferredPresence, v.ExplicitNilWrite)
 		for _, name := range fieldNames {
 			builder.Field(name, fields[name])
 		}
 		return builder.Build()
 	case *typ.Record:
-		builder := typ.NewRecord().SetDeclared(v.Declared).SetComplete(v.Complete)
-		if v.Open {
-			builder.SetOpen(true)
-		}
+		builder := v.BuilderEmptyFields()
 		existing := make(map[string]bool)
 		for _, f := range v.Fields {
 			fieldType := f.Type
@@ -94,19 +91,14 @@ func mergeFields(baseType typ.Type, fields map[string]typ.Type) typ.Type {
 				// the join of the initializer type and the written types.
 				fieldType = typ.JoinPreferNonSoft(fieldType, written)
 			}
-			builder.Field(f.Name, fieldType)
+			f.Type = fieldType
+			builder.AddField(f)
 			existing[f.Name] = true
 		}
 		for _, name := range fieldNames {
 			if !existing[name] {
 				builder.Field(name, fields[name])
 			}
-		}
-		if v.Metatable != nil {
-			builder.Metatable(v.Metatable)
-		}
-		if v.HasMapComponent() {
-			builder.MapComponent(v.MapKey, v.MapValue)
 		}
 		return builder.Build()
 	default:
@@ -197,22 +189,13 @@ func mergeMapComponent(baseType, keyType, valType typ.Type) typ.Type {
 	case *typ.Map:
 		newKey := typ.JoinPreferNonSoft(v.Key, keyType)
 		newVal := typ.JoinPreferNonSoft(v.Value, valType)
-		return typ.NewMap(newKey, newVal)
+		return v.WithTypes(newKey, newVal)
 	case *typ.Record:
-		builder := typ.NewRecord().SetDeclared(v.Declared).SetComplete(v.Complete)
-		if v.Open {
-			builder.SetOpen(true)
-		}
-		for _, f := range v.Fields {
-			builder.Field(f.Name, f.Type)
-		}
-		if v.Metatable != nil {
-			builder.Metatable(v.Metatable)
-		}
+		builder := v.Builder()
 		if v.HasMapComponent() {
 			newKey := typ.JoinPreferNonSoft(v.MapKey, keyType)
 			newVal := typ.JoinPreferNonSoft(v.MapValue, valType)
-			builder.MapComponent(newKey, newVal)
+			builder.MapComponentWithFlags(newKey, newVal, v.MapInferredPresence, v.MapExplicitNilWrite)
 		} else {
 			existingKey := querycore.KeyType(v)
 			if existingKey == nil {
@@ -482,21 +465,12 @@ func overwriteStructuredIndexNonDynamic(baseType typ.Type, elemType typ.Type) ty
 		}
 		return typ.NewAlias(t.Name, updated)
 	case *typ.Array:
-		return typ.NewArray(elemType)
+		return t.WithElement(elemType)
 	case *typ.Map:
-		return typ.NewMap(t.Key, elemType)
+		return t.WithTypes(t.Key, elemType)
 	case *typ.Record:
-		builder := typ.NewRecord().SetComplete(t.Complete)
-		if t.Open {
-			builder.SetOpen(true)
-		}
-		for _, f := range t.Fields {
-			builder.AddField(f)
-		}
-		if t.Metatable != nil {
-			builder.Metatable(t.Metatable)
-		}
-		builder.MapComponent(typ.Integer, elemType)
+		builder := t.Builder()
+		builder.MapComponentWithFlags(typ.Integer, elemType, t.MapInferredPresence, t.MapExplicitNilWrite)
 		return builder.Build()
 	default:
 		return typ.NewMap(typ.Integer, elemType)

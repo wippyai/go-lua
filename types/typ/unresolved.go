@@ -236,7 +236,7 @@ func resolvePendingNode(current, evidence Type, seen map[resolvePair]Type) Type 
 		if elem == a.Element {
 			return current
 		}
-		return NewArray(elem)
+		return a.WithElement(elem)
 	case *Map:
 		b, ok := evidence.(*Map)
 		if !ok {
@@ -246,7 +246,7 @@ func resolvePendingNode(current, evidence Type, seen map[resolvePair]Type) Type 
 		if key == a.Key && value == a.Value {
 			return current
 		}
-		return NewMap(key, value)
+		return a.WithTypes(key, value)
 	case *Tuple:
 		b, ok := evidence.(*Tuple)
 		if !ok {
@@ -285,7 +285,7 @@ func resolvePendingNode(current, evidence Type, seen map[resolvePair]Type) Type 
 		if !changed {
 			return current
 		}
-		return buildRecordTypeDeclared(fields, a.Metatable, key, value, a.Open, a.Declared, a.Complete, true)
+		return a.WithChildren(fields, a.Metatable, key, value)
 	case *Union:
 		// Union members are separate paths. This API has no source identity
 		// with which to pair them to evidence, even when their kinds match.

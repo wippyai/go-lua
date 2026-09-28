@@ -116,15 +116,12 @@ func WidenParamHintType(t typ.Type) typ.Type {
 			return typ.NewUnion(members...)
 		}
 	case *typ.Record:
-		builder := typ.NewRecord()
+		builder := v.BuilderEmptyFields().SetOpen(true)
 		changed := false
 		if !v.Open {
 			// Call-site table literals should not over-constrain unannotated params.
 			// Widen record hints to open records so optional field probes remain valid.
-			builder.SetOpen(true)
 			changed = true
-		} else {
-			builder.SetOpen(true)
 		}
 		for _, f := range v.Fields {
 			ft := WidenParamHintType(f.Type)
@@ -140,10 +137,7 @@ func WidenParamHintType(t typ.Type) typ.Type {
 			if k != v.MapKey || val != v.MapValue {
 				changed = true
 			}
-			builder.MapComponent(k, val)
-		}
-		if v.Metatable != nil {
-			builder.Metatable(v.Metatable)
+			builder.MapComponentWithFlags(k, val, v.MapInferredPresence, v.MapExplicitNilWrite)
 		}
 		if changed {
 			return builder.Build()

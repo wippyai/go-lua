@@ -67,20 +67,7 @@ func EnrichExportWithEffects(export typ.Type, rootName string, effectsBySym map[
 		if !changed {
 			return export
 		}
-		builder := typ.NewRecord().SetDeclared(v.Declared).SetComplete(v.Complete)
-		if v.Open {
-			builder.SetOpen(true)
-		}
-		if v.HasMapComponent() {
-			builder.MapComponent(v.MapKey, v.MapValue)
-		}
-		if v.Metatable != nil {
-			builder.Metatable(v.Metatable)
-		}
-		for _, f := range fields {
-			builder = appendRecordField(builder, f)
-		}
-		return builder.Build()
+		return v.WithChildren(fields, v.Metatable, v.MapKey, v.MapValue)
 	case *typ.Interface:
 		changed := false
 		methods := make([]typ.Method, len(v.Methods))

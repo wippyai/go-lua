@@ -14,8 +14,9 @@ import (
 )
 
 type typeWriter struct {
-	w   io.Writer
-	err error
+	w       io.Writer
+	err     error
+	version byte // 13 emits the previous manifest format; zero is current
 
 	recursiveIDs    map[*typ.Recursive]uint64
 	nextRecursiveID uint64
@@ -185,6 +186,10 @@ func (w *typeWriter) writeTypeData(t typ.Type) {
 				return struct{}{}
 			}
 			w.writeType(v.Element)
+			if w.version != 13 {
+				w.writeBool(v.InferredPresence)
+				w.writeBool(v.ExplicitNilWrite)
+			}
 			return struct{}{}
 		},
 		Map: func(v *typ.Map) struct{} {
@@ -194,6 +199,10 @@ func (w *typeWriter) writeTypeData(t typ.Type) {
 			}
 			w.writeType(v.Key)
 			w.writeType(v.Value)
+			if w.version != 13 {
+				w.writeBool(v.InferredPresence)
+				w.writeBool(v.ExplicitNilWrite)
+			}
 			return struct{}{}
 		},
 		Record: func(v *typ.Record) struct{} {
@@ -207,6 +216,9 @@ func (w *typeWriter) writeTypeData(t typ.Type) {
 				w.writeType(f.Type)
 				w.writeBool(f.Optional)
 				w.writeBool(f.Readonly)
+				if w.version != 13 {
+					w.writeBool(f.InferredPresence)
+				}
 			}
 
 			w.writeBool(v.Metatable != nil)
@@ -224,6 +236,13 @@ func (w *typeWriter) writeTypeData(t typ.Type) {
 				}
 				w.writeType(v.MapKey)
 				w.writeType(v.MapValue)
+				if w.version != 13 {
+					w.writeBool(v.MapInferredPresence)
+					w.writeBool(v.MapExplicitNilWrite)
+				}
+			}
+			if w.version != 13 {
+				w.writeBool(v.Complete)
 			}
 			return struct{}{}
 		},

@@ -85,18 +85,13 @@ func BindRecursiveSnapshotWithFields(identity *Recursive, body Type, selfFields 
 		body = old.Body
 	}
 	if record, ok := body.(*Record); ok && len(selfFields) > 0 {
-		builder := NewRecord().SetOpen(record.Open).SetComplete(record.Complete).SetDeclared(record.Declared)
+		builder := record.Builder()
+		builder.fields = nil
 		for _, field := range record.Fields {
 			if selfFields[field.Name] {
 				field.Type = self
 			}
 			builder.AddField(field)
-		}
-		if record.Metatable != nil {
-			builder.Metatable(record.Metatable)
-		}
-		if record.HasMapComponent() {
-			builder.MapComponentWithFlags(record.MapKey, record.MapValue, record.MapInferredPresence, record.MapExplicitNilWrite)
 		}
 		body = builder.Build()
 	}

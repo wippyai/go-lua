@@ -16,7 +16,7 @@ import (
 // Manifest file format constants.
 const (
 	manifestMagic   = 0x4D414E49 // "MANI" - identifies valid manifest files
-	manifestVersion = 13         // v13: record declared-vs-inferred provenance bit
+	manifestVersion = 14         // v14: semantic presence and completeness metadata
 )
 
 // Manifest decoding errors.
@@ -788,11 +788,15 @@ func canonicalSummaryName(name string) string {
 
 // Encode serializes manifest to binary.
 func (m *Manifest) Encode() ([]byte, error) {
+	return m.encodeVersion(manifestVersion)
+}
+
+func (m *Manifest) encodeVersion(version byte) ([]byte, error) {
 	var buf bytes.Buffer
-	w := &manifestWriter{typeWriter: &typeWriter{w: &buf}}
+	w := &manifestWriter{typeWriter: &typeWriter{w: &buf, version: version}}
 
 	w.writeUint32(manifestMagic)
-	w.writeByte(manifestVersion)
+	w.writeByte(version)
 	w.writeUint64(m.Version)
 	w.writeString(m.Path)
 	w.writeBool(m.BodyBacked)
@@ -884,9 +888,11 @@ func DecodeManifest(data []byte) (*Manifest, error) {
 		return nil, ErrInvalidManifest
 	}
 
-	if r.readByte() != manifestVersion {
+	version := r.readByte()
+	if version != manifestVersion && version != 13 {
 		return nil, ErrVersionMismatch
 	}
+	r.typeReader.version = version
 
 	m := &Manifest{
 		Version:   r.readUint64(),

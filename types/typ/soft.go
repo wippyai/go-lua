@@ -262,7 +262,7 @@ func pruneSoftUnionMembersMemo(
 			out = t
 			break
 		}
-		out = NewArray(elem)
+		out = node.WithElement(elem)
 	case *Map:
 		key := pruneSoftUnionMembersMemo(node.Key, next, memo, visiting, softMemo)
 		val := pruneSoftUnionMembersMemo(node.Value, next, memo, visiting, softMemo)
@@ -270,7 +270,7 @@ func pruneSoftUnionMembersMemo(
 			out = t
 			break
 		}
-		out = NewMap(key, val)
+		out = node.WithTypes(key, val)
 	case *Tuple:
 		var elems []Type
 		for i, e := range node.Elements {
@@ -455,7 +455,7 @@ func pruneSoftRecord(
 	if fields != nil {
 		fieldsSrc = fields
 	}
-	return buildRecordTypeDeclared(fieldsSrc, metatable, mapKey, mapValue, r.Open, r.Declared, r.Complete, true)
+	return r.WithChildren(fieldsSrc, metatable, mapKey, mapValue)
 }
 
 func isSoftWithMemo(t Type, policy SoftPolicy, memo map[Type]bool) bool {

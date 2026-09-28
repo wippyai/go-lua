@@ -771,7 +771,7 @@ func applyInferSubst(t typ.Type, s InferSubstitution, visited map[int]bool, memo
 				return t
 			}
 
-			return typ.NewArray(elem)
+			return a.WithElement(elem)
 		},
 		Map: func(m *typ.Map) typ.Type {
 			key := applyInferSubst(m.Key, s, visited, memo, depth+1)
@@ -781,7 +781,7 @@ func applyInferSubst(t typ.Type, s InferSubstitution, visited map[int]bool, memo
 				return t
 			}
 
-			return typ.NewMap(key, value)
+			return m.WithTypes(key, value)
 		},
 		Record: func(r *typ.Record) typ.Type {
 			changed := false
@@ -801,22 +801,7 @@ func applyInferSubst(t typ.Type, s InferSubstitution, visited map[int]bool, memo
 				return t
 			}
 
-			rb := typ.NewRecord().SetDeclared(r.Declared)
-
-			for _, f := range fields {
-				if f.Readonly {
-					rb.ReadonlyField(f.Name, f.Type)
-				} else if f.Optional {
-					rb.OptField(f.Name, f.Type)
-				} else {
-					rb.Field(f.Name, f.Type)
-				}
-			}
-
-			rec := rb.Build()
-			rec.Metatable = r.Metatable
-
-			return rec
+			return r.WithChildren(fields, r.Metatable, r.MapKey, r.MapValue)
 		},
 		Alias: func(a *typ.Alias) typ.Type {
 			target := applyInferSubst(a.Target, s, visited, memo, depth+1)

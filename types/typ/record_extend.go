@@ -37,10 +37,8 @@ func extendRecordWithField(base Type, field string, fieldType Type) Type {
 		return base
 	}
 
-	builder := NewRecord().SetDeclared(rec.Declared).SetComplete(rec.Complete)
-	if rec.Open {
-		builder.SetOpen(true)
-	}
+	builder := rec.Builder()
+	builder.fields = nil
 	added := false
 	for _, f := range rec.Fields {
 		if f.Name == field {
@@ -52,12 +50,6 @@ func extendRecordWithField(base Type, field string, fieldType Type) Type {
 	}
 	if !added {
 		addField(builder)
-	}
-	if rec.Metatable != nil {
-		builder.Metatable(rec.Metatable)
-	}
-	if rec.HasMapComponent() {
-		builder.MapComponent(rec.MapKey, rec.MapValue)
 	}
 	return builder.Build()
 }
