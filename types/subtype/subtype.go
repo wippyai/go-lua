@@ -1154,12 +1154,16 @@ func (c *checker) checkRecordToMap(sub *typ.Record, super *typ.Map, depth int) b
 	}
 
 	for _, f := range sub.Fields {
+		value := mapFieldPresentType(f.Type)
+		if typ.IsNever(value) {
+			continue
+		}
 		keyType := typ.LiteralString(f.Name)
 		if !c.check(keyType, super.Key, depth+1) {
 			return false
 		}
 
-		if !c.check(f.Type, super.Value, depth+1) {
+		if !c.check(value, super.Value, depth+1) {
 			return false
 		}
 	}
