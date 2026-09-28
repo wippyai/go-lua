@@ -123,6 +123,11 @@ func (f *Function) WithParams(params []Param) *Function {
 	return buildFunctionType(f.TypeParams, params, f.Variadic, f.Returns, f.Effects, f.Spec, f.Refinement)
 }
 
+// WithSpec returns the same signature with the supplied behavioral contract.
+func (f *Function) WithSpec(spec SpecInfo) *Function {
+	return buildFunctionType(f.TypeParams, f.Params, f.Variadic, f.Returns, f.Effects, spec, f.Refinement)
+}
+
 func (f *Function) Kind() kind.Kind { return kind.Function }
 
 func (f *Function) String() string {

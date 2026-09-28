@@ -4,13 +4,15 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
+	"github.com/wippyai/go-lua/types/contract"
+	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/io"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
 func TestDeclaredErrorReturnGuardPersistsPastLengthGuard(t *testing.T) {
 	crypto := io.NewManifest("crypto")
-	crypto.SetExport(typ.NewRecord().Field("random", typ.NewRecord().Field("bytes", typ.Func().Param("count", typ.Integer).Returns(typ.NewOptional(typ.String), typ.NewOptional(typ.String)).Build()).Build()).Build())
+	crypto.SetExport(typ.NewRecord().Field("random", typ.NewRecord().Field("bytes", typ.Func().Param("count", typ.Integer).Returns(typ.NewOptional(typ.String), typ.NewOptional(typ.String)).Spec(contract.NewSpec().WithEffects(effect.ErrorReturn{ValueIndex: 0, ErrorIndex: 1})).Build()).Build()).Build())
 	env := io.NewManifest("env")
 	env.SetExport(typ.NewRecord().Field("get", typ.Func().Param("name", typ.String).Returns(typ.NewOptional(typ.String)).Build()).Field("set", typ.Func().Param("name", typ.String).Param("key", typ.String).Returns(typ.Boolean, typ.NewOptional(typ.String)).Build()).Build())
 	source := `
@@ -52,6 +54,6 @@ return { run = run }
 `
 	result := testutil.Check(source, testutil.WithStdlib(), testutil.WithManifest("crypto", crypto), testutil.WithManifest("env", env))
 	if result.HasError() {
-		t.Fatalf("declared error return should narrow through the length guard: %v", testutil.ErrorMessages(result.Diagnostics))
+		t.Fatalf("explicit error return should narrow through the length guard: %v", testutil.ErrorMessages(result.Diagnostics))
 	}
 }

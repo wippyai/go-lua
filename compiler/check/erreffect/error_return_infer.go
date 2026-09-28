@@ -26,6 +26,9 @@ func AttachInferredErrorReturnSpec(
 	if fn == nil || graph == nil || synth == nil {
 		return fn
 	}
+	// Return relations from an earlier fixpoint round are provisional. Rebuild
+	// them from this round's solved paths so a disproved relation cannot linger.
+	fn = withoutReturnRelations(fn)
 	base := synth.Narrow()
 	if base == nil {
 		base = synth
@@ -75,6 +78,26 @@ func AttachInferredErrorReturnSpec(
 		}
 	}
 	return fn
+}
+
+func withoutReturnRelations(fn *typ.Function) *typ.Function {
+	spec := contract.ExtractSpec(fn)
+	if spec == nil {
+		return fn
+	}
+	clean := spec.Effects.Without(func(label effect.Label) bool {
+		switch label.(type) {
+		case effect.ErrorReturn, effect.CorrelatedReturn, effect.GuardedReturnType:
+			return true
+		}
+		return false
+	})
+	if len(clean.Labels) == len(spec.Effects.Labels) {
+		return fn
+	}
+	clone := *spec
+	clone.Effects = clean
+	return cloneFunctionWithSpec(fn, &clone)
 }
 
 // StrictTruthyReturnTargetType proves that every truthy guard return has the
@@ -242,13 +265,10 @@ func HasStrictInverseReturnPattern(
 		if solution != nil && solution.IsPointDead(p) {
 			return
 		}
-		// A reachable implicit return yields nil in both slots, so it blocks
-		// a universal inverse relation. Pre-flow inference keeps its older
-		// two-witness requirement because it has no liveness solution.
+		// A reachable implicit return yields nil in both slots and cannot
+		// establish an inverse relation, including during pre-flow inference.
 		if len(info.Exprs) == 0 && info.Stmt == nil {
-			if solution != nil {
-				incompatible = true
-			}
+			incompatible = true
 			return
 		}
 		if forwardsErrorReturn(info.Exprs, synth, p, valueIdx, errorIdx) {
@@ -389,7 +409,7 @@ func allCallableAlternativesHaveTruthyErrorReturn(t typ.Type, valueIdx, errorIdx
 			return false
 		}
 		for _, member := range intersection.Members {
-			if !allCallableAlternativesHaveErrorReturn(member, valueIdx, errorIdx) {
+			if !allCallableAlternativesHaveTruthyErrorReturn(member, valueIdx, errorIdx) {
 				return false
 			}
 		}

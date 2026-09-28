@@ -286,7 +286,7 @@ func (s *Synthesizer) synthExprCore(expr ast.Expr, sc *scope.State, p cfg.Point,
 	case *ast.UnaryBNotOpExpr:
 		return typ.Integer
 	case *ast.CastExpr:
-		return s.ResolveType(ex.Type, sc)
+		return core.PreserveFunctionContracts(s.ResolveType(ex.Type, sc), recurse(ex.Expr))
 	case *ast.NonNilAssertExpr:
 		inner := recurse(ex.Expr)
 		return narrow.RemoveNil(inner)

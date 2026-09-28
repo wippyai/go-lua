@@ -28,7 +28,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/synth/phase/core"
 	typecfg "github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
-	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/io"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/narrow"
@@ -588,7 +587,7 @@ func (r *Resolver) resolveFunction(te *ast.FunctionTypeExpr, sc *scope.State, de
 		}
 	}
 
-	return contract.WithDeclaredErrorReturnConvention(builder.Build())
+	return builder.Build()
 }
 
 func (r *Resolver) buildAssertEffect(paramIdx int, narrowTo ast.TypeExpr, sc *scope.State, depth int) *constraint.FunctionRefinement {

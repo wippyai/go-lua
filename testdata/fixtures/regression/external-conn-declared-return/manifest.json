@@ -1,1 +1,1 @@
-{"description":"Real kickside.phantombuster.traits:get_tool external Conn result guarded by its error.","files":["transport.lua","main.lua"],"check":{"errors":0}}
+{"description":"Real kickside.phantombuster.traits:get_tool external Conn result guarded by its error. Optional return slots alone do not prove value/error correlation; guarded uses must be rejected.","files":["transport.lua","main.lua"],"check":{"errors":1}}
