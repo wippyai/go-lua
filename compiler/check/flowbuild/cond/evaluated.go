@@ -277,6 +277,11 @@ func (ce *ConditionExtractor) evaluatedReceiverFacts(expr ast.Expr) constraint.C
 			visit(e.Expr)
 		case *ast.UnaryLenOpExpr:
 			visit(e.Expr)
+			// Lua raises on #nil. Reaching either result of a completed
+			// length comparison proves the operand was present.
+			if p := ce.pathFromExpr(e.Expr); ce.canRetainPath(p) {
+				facts = append(facts, constraint.NotNil{Path: p})
+			}
 		case *ast.UnaryBNotOpExpr:
 			visit(e.Expr)
 		case *ast.CastExpr:
