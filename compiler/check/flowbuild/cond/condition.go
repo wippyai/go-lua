@@ -905,9 +905,10 @@ func exprContainsTypeCheck(expr ast.Expr, paramName, kindName string) bool {
 		}
 		var lhs, rhs ast.Expr
 		ast.WalkExprChildren(e, func(child ast.Expr, index int) {
-			if index == 0 {
+			switch index {
+			case 0:
 				lhs = child
-			} else if index == 1 {
+			case 1:
 				rhs = child
 			}
 		})

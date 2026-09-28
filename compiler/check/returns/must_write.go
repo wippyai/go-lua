@@ -319,10 +319,6 @@ func isAppendIndexOfBase(key ast.Expr, base constraint.Path, graph *cfg.Graph) b
 	return !lengthPath.IsEmpty() && lengthPath.Equal(base)
 }
 
-func mayExitWithoutField(graph *cfg.Graph, events map[cfg.Point]bool) bool {
-	return mayExitWithField(graph, events, nil, false, false)
-}
-
 func mayExitWithField(graph *cfg.Graph, events map[cfg.Point]bool, havoc map[cfg.Point]bool, initiallyPresent, observed bool) bool {
 	type state struct {
 		point   cfg.Point

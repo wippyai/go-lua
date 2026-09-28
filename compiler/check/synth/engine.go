@@ -212,7 +212,7 @@ func (e *Engine) MultiTypeOf(expr ast.Expr, p cfg.Point) []typ.Type {
 // If more values are available than needed, truncates to needed.
 func (e *Engine) ExpandValues(exprs []ast.Expr, needed int, p cfg.Point) []typ.Type {
 	if e.IsNarrowing() {
-		return e.Synthesizer.ExpandValuesUsing(exprs, needed,
+		return e.ExpandValuesUsing(exprs, needed,
 			func(expr ast.Expr) typ.Type { return e.TypeOf(expr, p) },
 			func(expr ast.Expr) []typ.Type { return e.MultiTypeOf(expr, p) },
 			e.deps.ScopeAt(p),

@@ -260,7 +260,7 @@ func (s *StoreFieldWriteSource) mustTransferOf(fn cfg.SymbolID) map[fieldWriteSi
 				return
 			}
 			for _, target := range info.Targets {
-				if target.Kind == cfg.TargetIdent && protected[target.Symbol] && !(info.IsLocal && len(info.Sources) == 0) {
+				if target.Kind == cfg.TargetIdent && protected[target.Symbol] && (!info.IsLocal || len(info.Sources) != 0) {
 					for site := range result {
 						if site.Target == target.Symbol {
 							delete(result, site)

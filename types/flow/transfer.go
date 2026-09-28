@@ -1332,7 +1332,7 @@ func applyFieldWrite(t typ.Type, field string, valueType typ.Type, definite bool
 			joined := join.Types(existing.Type, valueType)
 			_, nilable := typ.SplitNilableFieldType(valueType)
 			nilable = nilable || valueType == typ.Nil
-			if typ.TypeEquals(existing.Type, joined) && !(nilable && existing.InferredPresence) {
+			if typ.TypeEquals(existing.Type, joined) && (!nilable || !existing.InferredPresence) {
 				return v
 			}
 			widened := *existing

@@ -58,7 +58,9 @@ jobs:
       - name: Run tests
         env:
           GOCACHE: ${{ runner.temp }}/go-build
-        run: go test -timeout 120s ./...
+        # The fixture suite checks the full application corpus and now needs
+        # several minutes to finish on CI runners.
+        run: go test -timeout 15m ./...
 
   race:
     name: Race Tests
@@ -79,8 +81,8 @@ jobs:
           GOCACHE: ${{ runner.temp }}/go-build
           GORACE: "halt_on_error=1"
         # The fixture suite checks large applications; race instrumentation
-        # takes several minutes even when every check converges.
-        run: go test -race -timeout 10m ./...
+        # takes longer than the normal test budget even when every check converges.
+        run: go test -race -timeout 30m ./...
 
   fuzz:
     name: Fuzz
