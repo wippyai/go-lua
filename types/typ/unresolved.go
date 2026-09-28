@@ -1,6 +1,14 @@
 package typ
 
-import "github.com/wippyai/go-lua/types/kind"
+import (
+	"sync"
+
+	"github.com/wippyai/go-lua/types/kind"
+)
+
+var finalitySeenPool = sync.Pool{
+	New: func() any { return make(map[Type]bool, 64) },
+}
 
 // IsUnresolved reports an inference hole, distinct from a dynamic value.
 func IsUnresolved(t Type) bool {
@@ -22,13 +30,20 @@ func IsFinal(t Type) bool {
 		return true
 	}
 	var state finalityState
-	return state.visit(t)
+	final := state.visit(t)
+	if state.seen != nil {
+		clear(state.seen)
+		finalitySeenPool.Put(state.seen)
+	}
+	return final
 }
 
 type finalityState struct {
-	path  [32]Type
-	depth int
-	seen  map[Type]bool
+	// A finality walk is an AND over reachable nodes. Keep completed nodes as
+	// well as ancestors so shared subgraphs are checked only once.
+	visited [32]Type
+	count   int
+	seen    map[Type]bool
 }
 
 func (s *finalityState) visit(t Type) bool {
@@ -41,24 +56,22 @@ func (s *finalityState) visit(t Type) bool {
 		}
 		s.seen[t] = true
 	} else {
-		for i := 0; i < s.depth; i++ {
-			if s.path[i] == t {
+		for i := 0; i < s.count; i++ {
+			if s.visited[i] == t {
 				return true
 			}
 		}
-		if s.depth == len(s.path) {
-			s.seen = make(map[Type]bool, s.depth+1)
-			for _, ancestor := range s.path {
-				s.seen[ancestor] = true
+		if s.count == len(s.visited) {
+			s.seen = finalitySeenPool.Get().(map[Type]bool)
+			for _, visited := range s.visited {
+				s.seen[visited] = true
 			}
 			s.seen[t] = true
 		} else {
-			s.path[s.depth] = t
+			s.visited[s.count] = t
+			s.count++
 		}
 	}
-	depth := s.depth
-	s.depth++
-	defer func() { s.depth = depth }()
 
 	switch v := t.(type) {
 	case *Annotated:
