@@ -26,13 +26,15 @@ type FieldWriteSource interface {
 
 // StoreFieldWriteSource composes local call writes over the stable snapshot.
 type StoreFieldWriteSource struct {
-	Store         api.StoreView
-	Bindings      *bind.BindingTable
-	visiting      map[cfg.SymbolID]bool
-	mustCache     map[cfg.SymbolID]map[cfg.SymbolID]map[api.FieldWriteKey]bool
-	transferCache map[cfg.SymbolID]map[fieldWriteSite]bool
-	writeCache    map[cfg.SymbolID]map[cfg.SymbolID]api.FieldWriteSet
-	instances     map[uint64]map[cfg.SymbolID]localCallInstance
+	Store             api.StoreView
+	Bindings          *bind.BindingTable
+	visiting          map[cfg.SymbolID]bool
+	mustCache         map[cfg.SymbolID]map[cfg.SymbolID]map[api.FieldWriteKey]bool
+	transferCache     map[cfg.SymbolID]map[fieldWriteSite]bool
+	writeCache        map[cfg.SymbolID]map[cfg.SymbolID]api.FieldWriteSet
+	instances         map[uint64]map[cfg.SymbolID]localCallInstance
+	unstableCallables map[cfg.SymbolID]bool
+	callablesScanned  bool
 }
 
 // FieldWritesOf returns writes published by the interprocedural snapshot.
@@ -249,26 +251,48 @@ func (s *StoreFieldWriteSource) mustTransferOf(fn cfg.SymbolID) map[fieldWriteSi
 			protected[sym] = true
 		}
 	}
-	graph.EachAssign(func(_ cfg.Point, info *cfg.AssignInfo) {
-		if info == nil {
-			return
+	for graphID, body := range s.Store.Graphs() {
+		if body == nil || !s.graphWithin(graphID, graph.ID()) {
+			continue
 		}
-		for _, target := range info.Targets {
-			if target.Kind == cfg.TargetIdent && protected[target.Symbol] && !(info.IsLocal && len(info.Sources) == 0) {
-				for site := range result {
-					if site.Target == target.Symbol {
-						delete(result, site)
+		body.EachAssign(func(_ cfg.Point, info *cfg.AssignInfo) {
+			if info == nil {
+				return
+			}
+			for _, target := range info.Targets {
+				if target.Kind == cfg.TargetIdent && protected[target.Symbol] && !(info.IsLocal && len(info.Sources) == 0) {
+					for site := range result {
+						if site.Target == target.Symbol {
+							delete(result, site)
+						}
 					}
 				}
 			}
-		}
-	})
+		})
+	}
 	delete(s.visiting, fn)
 	if s.transferCache == nil {
 		s.transferCache = make(map[cfg.SymbolID]map[fieldWriteSite]bool)
 	}
 	s.transferCache[fn] = result
 	return result
+}
+
+func (s *StoreFieldWriteSource) graphWithin(child, ancestor uint64) bool {
+	if child == ancestor {
+		return true
+	}
+	for depth := 0; depth < 64 && child != 0; depth++ {
+		meta, ok := s.Store.NestedMetaFor(child)
+		if !ok || meta.ParentGraphID == child {
+			return false
+		}
+		child = meta.ParentGraphID
+		if child == ancestor {
+			return true
+		}
+	}
+	return false
 }
 
 // CollectFieldWrites computes the fields the function of graph may write

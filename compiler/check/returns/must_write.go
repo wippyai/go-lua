@@ -109,9 +109,7 @@ func mustFieldTransfersWithCalls(graph *cfg.Graph, bindings *bind.BindingTable, 
 	})
 	if source != nil && bindings != nil {
 		checkcallsite.EachCallSiteWithNested(graph, bindings, func(p cfg.Point, info *cfg.CallInfo) {
-			if !CallEvaluatedAtPoint(graph, p, info) {
-				return
-			}
+			guaranteed := CallEvaluatedAtPoint(graph, p, info)
 			instance := source.resolvedCall(graph, bindings, info)
 			if instance.function == 0 {
 				// An unresolved call can mutate a table passed to it, or invoke
@@ -162,6 +160,15 @@ func mustFieldTransfersWithCalls(graph *cfg.Graph, bindings *bind.BindingTable, 
 					}
 				}
 				mapped = stableAliasRoot(graph, mapped)
+				if !guaranteed {
+					if !present {
+						if unknownCalls[p] == nil {
+							unknownCalls[p] = make(map[cfg.SymbolID]bool)
+						}
+						unknownCalls[p][mapped] = true
+					}
+					continue
+				}
 				site := fieldWriteSite{Target: mapped, Key: written.Key}
 				if sites[site] == nil {
 					sites[site] = make(map[cfg.Point]bool)

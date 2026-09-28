@@ -49,6 +49,7 @@ func TestCalledInitializerReturnPresence(t *testing.T) {
 		{"both_branches", `if flag then initialize() else initialize() end`, true},
 		{"removed_after_call", `initialize(); obj.method = nil`, false},
 		{"removed_inside_initializer", `local function clear() obj.method = nil end; initialize(); clear()`, false},
+		{"conditional_clear_after_initializer", `local function clear() obj.method = nil end; initialize(); local _ = flag and clear()`, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -86,12 +87,17 @@ func TestComposedFieldWriteReturnPresence(t *testing.T) {
 		{"alias_observes_write", `local obj = {}; local alias = obj; local function write() obj.method = function() return 1 end end; write(); return alias`, true},
 		{"write_through_alias", `local obj = {}; local alias = obj; local function write() alias.method = function() return 1 end end; write(); return obj`, true},
 		{"parameter_alias_observes_write", `local obj = {}; local function write(target) local alias = target; alias.method = function() return 1 end end; write(obj); return obj`, true},
+		{"reassigned_callee", `local obj = {}; local function write() obj.method = function() return 1 end end; local function other() end; write = other; write(); return obj`, false},
+		{"captured_callee_reassigned", `local obj = {}; local function write() obj.method = function() return 1 end end; local function swap() write = function() end end; swap(); write(); return obj`, false},
 		{"parameter_rebinding", `local obj = {}; local function write(target) target = {}; target.method = function() return 1 end end; write(obj); return obj`, false},
+		{"nested_parameter_rebinding", `local obj = {}; local function write(target) local function swap() target = {} end; swap(); target.method = function() return 1 end end; write(obj); return obj`, false},
 		{"capture_rebinding", `local obj = {}; local original = obj; local function write() obj = {}; obj.method = function() return 1 end end; write(); return original`, false},
 		{"capture_cell_read_at_call", `local obj = {}; local old = obj; local function write() obj.method = function() return 1 end end; obj = {}; write(); return obj`, true},
 		{"capture_rebind_leaves_old_object", `local obj = {}; local old = obj; local function write() obj.method = function() return 1 end end; obj = {}; write(); return old`, false},
 		{"unknown_callback", `local obj = {}; local function write() obj.method = function() return 1 end end; write(); callback(obj); return obj`, false},
 		{"write_after_unknown_callback", `local obj = {}; local function write() obj.method = function() return 1 end end; callback(obj); write(); return obj`, true},
+		{"short_circuit_unknown_callback", `local obj = {}; local function write() obj.method = function() return 1 end end; write(); local _ = flag and callback(obj); return obj`, false},
+		{"branch_unknown_callback", `local obj = {}; local function write() obj.method = function() return 1 end end; write(); if flag and callback(obj) then end; return obj`, false},
 		{"escaping_writer_callback", `local obj = {}; local function write() obj.method = function() return 1 end end; write(); callback(write); return obj`, false},
 		{"recursion", `local obj = {}; local function write(n) if n > 0 then write(n - 1) end end; write(1); return obj`, false},
 		{"recursion_with_base_write", `local obj = {}; local function write(n) if n > 0 then write(n - 1) end; obj.method = function() return 1 end end; write(1); return obj`, true},
@@ -102,7 +108,7 @@ func TestComposedFieldWriteReturnPresence(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			mod := testutil.CheckAndExport(`
-local function make(callback: (any) -> ())
+local function make(callback: (any) -> (), flag: boolean)
   `+tc.body+`
 end
 return { new = make }

@@ -22,6 +22,9 @@ func (s *StoreFieldWriteSource) resolvedCall(graph *cfg.Graph, bindings *bind.Bi
 	var found localCallInstance
 	for _, sym := range candidates {
 		if s.Store.FunctionRefBySym(sym) != nil {
+			if !s.stableCallableBinding(sym) {
+				return localCallInstance{}
+			}
 			if found.function != 0 && found.function != sym {
 				return localCallInstance{}
 			}
@@ -71,7 +74,7 @@ func (s *StoreFieldWriteSource) factoryInstances(graph *cfg.Graph, bindings *bin
 			return
 		}
 		factory := s.Store.FunctionRefBySym(candidates[0])
-		if factory == nil {
+		if factory == nil || !s.stableCallableBinding(candidates[0]) {
 			return
 		}
 		body := s.Store.Graphs()[factory.GraphID]
@@ -100,11 +103,40 @@ func (s *StoreFieldWriteSource) factoryInstances(graph *cfg.Graph, bindings *bin
 				continue
 			}
 			closure := s.Store.FunctionRefBySym(returned[idx])
-			if closure == nil || closure.ParentGraphID != body.ID() {
+			if closure == nil || closure.ParentGraphID != body.ID() || !s.stableCallableBinding(returned[idx]) {
 				continue
 			}
 			result[target.Symbol] = localCallInstance{function: returned[idx], captures: captures}
 		}
 	})
 	return result
+}
+
+func (s *StoreFieldWriteSource) stableCallableBinding(sym cfg.SymbolID) bool {
+	if s == nil || s.Store == nil || sym == 0 {
+		return false
+	}
+	if s.Store.FunctionRefBySym(sym) == nil {
+		return false
+	}
+	if !s.callablesScanned {
+		s.unstableCallables = make(map[cfg.SymbolID]bool)
+		for _, graph := range s.Store.Graphs() {
+			if graph == nil {
+				continue
+			}
+			graph.EachAssign(func(_ cfg.Point, info *cfg.AssignInfo) {
+				if info == nil || info.IsLocal {
+					return
+				}
+				for _, target := range info.Targets {
+					if target.Kind == cfg.TargetIdent && target.Symbol != 0 {
+						s.unstableCallables[target.Symbol] = true
+					}
+				}
+			})
+		}
+		s.callablesScanned = true
+	}
+	return !s.unstableCallables[sym]
 }

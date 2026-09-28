@@ -6,31 +6,65 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 )
 
-// EachCallSiteWithNested calls fn for each call site of graph and for each
-// call expression nested in a call site's arguments, in source order. Nested
-// calls report the point of their enclosing call site.
+// EachCallSiteWithNested visits call sites and calls nested in their arguments,
+// assignment sources, and return expressions. Nested calls report the point
+// of their enclosing expression.
 func EachCallSiteWithNested(graph *cfg.Graph, bindings *bind.BindingTable, fn func(cfg.Point, *cfg.CallInfo)) {
 	if graph == nil || fn == nil {
 		return
+	}
+	seen := make(map[cfg.Point]map[*ast.FuncCallExpr]bool)
+	emit := func(p cfg.Point, info *cfg.CallInfo) {
+		if info == nil || info.Call == nil {
+			return
+		}
+		if seen[p] == nil {
+			seen[p] = make(map[*ast.FuncCallExpr]bool)
+		}
+		if seen[p][info.Call] {
+			return
+		}
+		seen[p][info.Call] = true
+		fn(p, info)
+	}
+	visitExpr := func(p cfg.Point, expr ast.Expr) {
+		var nested nestedCalls
+		collectNestedFuncCalls(expr, &nested)
+		for _, call := range nested.calls {
+			info := graph.CallSiteAt(p, call)
+			if info == nil {
+				info = callInfoFromExpr(call, bindings)
+			}
+			emit(p, info)
+		}
 	}
 	graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
 		if info == nil {
 			return
 		}
-		fn(p, info)
+		emit(p, info)
 
-		var nested nestedCalls
 		for _, arg := range info.Args {
-			collectNestedFuncCalls(arg, &nested)
+			visitExpr(p, arg)
 		}
-		for _, call := range nested.calls {
-			nestedInfo := graph.CallSiteAt(p, call)
-			if nestedInfo == nil {
-				nestedInfo = callInfoFromExpr(call, bindings)
+	})
+	graph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
+		if info != nil {
+			for _, expr := range info.Sources {
+				visitExpr(p, expr)
 			}
-			if nestedInfo != nil {
-				fn(p, nestedInfo)
+		}
+	})
+	graph.EachReturn(func(p cfg.Point, info *cfg.ReturnInfo) {
+		if info != nil {
+			for _, expr := range info.Exprs {
+				visitExpr(p, expr)
 			}
+		}
+	})
+	graph.EachBranch(func(p cfg.Point, info *cfg.BranchInfo) {
+		if info != nil {
+			visitExpr(p, info.Condition)
 		}
 	})
 }
