@@ -27,6 +27,25 @@ func TestIsFinalSharedTypeGraphVisitsEachNodeOnce(t *testing.T) {
 	}
 }
 
+func TestIsFinalRechecksChangedRecursiveBody(t *testing.T) {
+	rec := NewRecursivePlaceholder("node")
+	var graph Type = rec
+	for range 40 {
+		graph = &Tuple{Elements: []Type{graph, String}}
+	}
+	if IsFinal(graph) {
+		t.Fatal("unbound recursive body reported final")
+	}
+	rec.SetBody(String)
+	if !IsFinal(graph) {
+		t.Fatal("bound recursive body reported pending")
+	}
+	rec.SetBody(Unresolved)
+	if IsFinal(graph) {
+		t.Fatal("changed recursive body reported final")
+	}
+}
+
 func TestUnresolvedSurvivesUnionUntilFinalization(t *testing.T) {
 	for _, other := range []Type{Any, Unknown, String} {
 		got, ok := NewUnion(Unresolved, other).(*Union)

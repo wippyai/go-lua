@@ -1,6 +1,14 @@
 package typ
 
-import "github.com/wippyai/go-lua/types/kind"
+import (
+	"sync"
+
+	"github.com/wippyai/go-lua/types/kind"
+)
+
+var finalitySeenPool = sync.Pool{
+	New: func() any { return make(map[Type]bool, 64) },
+}
 
 // IsUnresolved reports an inference hole, distinct from a dynamic value.
 func IsUnresolved(t Type) bool {
@@ -22,7 +30,12 @@ func IsFinal(t Type) bool {
 		return true
 	}
 	var state finalityState
-	return state.visit(t)
+	final := state.visit(t)
+	if state.seen != nil {
+		clear(state.seen)
+		finalitySeenPool.Put(state.seen)
+	}
+	return final
 }
 
 type finalityState struct {
@@ -49,7 +62,7 @@ func (s *finalityState) visit(t Type) bool {
 			}
 		}
 		if s.count == len(s.visited) {
-			s.seen = make(map[Type]bool, s.count+1)
+			s.seen = finalitySeenPool.Get().(map[Type]bool)
 			for _, visited := range s.visited {
 				s.seen[visited] = true
 			}
