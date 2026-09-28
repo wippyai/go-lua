@@ -103,12 +103,14 @@ func TestIndexDynamicRecordKeyWithOpaqueMapAlternative(t *testing.T) {
 	}
 }
 
-func TestIndexDynamicOpenRecordKeyIncludesUnlistedFields(t *testing.T) {
-	record := typ.NewRecord().Field("filename", typ.LiteralString("known.txt")).SetOpen(true).Build()
-	for _, key := range []typ.Type{typ.String, typ.Unknown} {
-		got, ok := Index(record, key)
-		if !ok || !typ.IsUnknown(got) {
-			t.Errorf("dynamic key %s on open record = %v, %v; want unknown", key, got, ok)
+func TestIndexDynamicIncompleteRecordKeyIncludesUnlistedFields(t *testing.T) {
+	for _, open := range []bool{false, true} {
+		record := typ.NewRecord().Field("filename", typ.LiteralString("known.txt")).SetOpen(open).Build()
+		for _, key := range []typ.Type{typ.String, typ.Unknown} {
+			got, ok := Index(record, key)
+			if !ok || !typ.IsUnknown(got) {
+				t.Errorf("dynamic key %s on incomplete record (open=%v) = %v, %v; want unknown", key, open, got, ok)
+			}
 		}
 	}
 }

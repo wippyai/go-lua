@@ -133,10 +133,10 @@ func indexDepth(t, keyType typ.Type, depth int) (typ.Type, bool) {
 			if keyType == nil {
 				return indexResult{}
 			}
-			// An open record without a map component describes only its
+			// An incomplete record without a map component describes only its
 			// listed fields. A broad key can reach an unlisted value whose
 			// type is unknown, even when the listed fields are precise.
-			if r.Open && !r.Complete && !r.HasMapComponent() && (keyType.Kind() == kind.String || keyType.Kind().IsPlaceholder()) {
+			if !r.Complete && !r.HasMapComponent() && (keyType.Kind() == kind.String || keyType.Kind().IsPlaceholder()) {
 				return indexResult{t: typ.Unknown, ok: true}
 			}
 			if keySet, ok := exactStringKeyDomain(keyType, depth+1); ok {
