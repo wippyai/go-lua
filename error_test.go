@@ -917,3 +917,41 @@ func TestPcallError_StringConcat(t *testing.T) {
 		t.Errorf("result = %q, should contain 'pcall error'", result.String())
 	}
 }
+
+// A raised *Error stays reachable through the ApiError that reports it, so
+// callers classify it with errors.As instead of the error text.
+func TestApiError_UnwrapsRaisedError(t *testing.T) {
+	L := NewState()
+	defer L.Close()
+
+	raised := NewError("invalid input").WithKind(Invalid)
+	L.SetGlobal("fail", L.NewFunction(func(L *LState) int {
+		L.Error(raised, 0)
+		return 0
+	}))
+
+	err := L.DoString(`fail()`)
+	var apiErr *ApiError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("error %T is not an *ApiError", err)
+	}
+	var luaErr *Error
+	if !errors.As(err, &luaErr) {
+		t.Fatalf("raised *Error is not reachable from %T", err)
+	}
+	if luaErr.Kind() != Invalid {
+		t.Errorf("Kind() = %v, want %v", luaErr.Kind(), Invalid)
+	}
+
+	err = L.DoString(`error("plain")`)
+	if errors.As(err, &luaErr) {
+		t.Errorf("string raise unwrapped to *Error %v", luaErr)
+	}
+}
+
+func TestApiError_UnwrapsCause(t *testing.T) {
+	cause := errors.New("read failed")
+	if err := newApiErrorE(ApiErrorFile, cause); !errors.Is(err, cause) {
+		t.Errorf("cause is not reachable from %v", err)
+	}
+}
