@@ -36,8 +36,8 @@ func TestIndexArray(t *testing.T) {
 		t.Error("Index on string[] with integer should return string")
 	}
 
-	if !typ.TypeEquals(et, typ.NewOptional(typ.String)) {
-		t.Errorf("expected string?, got %v", et)
+	if et != typ.String {
+		t.Errorf("expected string, got %v", et)
 	}
 }
 
