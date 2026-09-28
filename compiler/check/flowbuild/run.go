@@ -190,6 +190,12 @@ func collectCallAliasRoots(graph *cfg.Graph) map[cfg.Point][]cfg.SymbolID {
 	byPoint := make(map[cfg.Point]map[cfg.SymbolID]bool)
 	record := func(p cfg.Point, expr ast.Expr) {
 		visitCalls(expr, func(call *ast.FuncCallExpr) {
+			// The builtin type() only observes its argument. Passing a table
+			// to it cannot let a write invalidate field refinements made by
+			// the same branch condition.
+			if isUnreassignedBuiltinTypeCall(call, bindings) {
+				return
+			}
 			roots := byPoint[p]
 			if roots == nil {
 				roots = make(map[cfg.SymbolID]bool)
@@ -236,6 +242,22 @@ func collectCallAliasRoots(graph *cfg.Graph) map[cfg.Point][]cfg.SymbolID {
 		slices.Sort(result[p])
 	}
 	return result
+}
+
+func isUnreassignedBuiltinTypeCall(call *ast.FuncCallExpr, bindings *bind.BindingTable) bool {
+	if call == nil || bindings == nil || call.Receiver != nil {
+		return false
+	}
+	ident, ok := call.Func.(*ast.IdentExpr)
+	if !ok || ident.Value != "type" {
+		return false
+	}
+	sym, ok := bindings.SymbolOf(ident)
+	if !ok || sym == 0 || bindings.IsReassigned(sym) {
+		return false
+	}
+	kind, ok := bindings.Kind(sym)
+	return ok && kind == cfg.SymbolGlobal
 }
 
 func visitCalls(expr ast.Expr, visit func(*ast.FuncCallExpr)) {
