@@ -390,15 +390,19 @@ func PartialView(t Type) Type {
 	return t
 }
 
-// PartialViewDeep marks every complete record reachable in t partial: the
-// tables t describes are written by code outside the view, as a module export
-// is written by its importers.
+// PartialViewDeep marks complete records reachable in t partial, except an
+// inferred closed empty record, which remains exact until a write adds fields.
 func PartialViewDeep(t Type) Type {
 	if t == nil {
 		return nil
 	}
 	return Rewrite(t, func(node Type) (Type, bool) {
 		if r, ok := node.(*Record); ok && r.Complete {
+			// An empty inferred literal has no known fields to invalidate.
+			// Retain its exact shape so an absent imported field reads as nil.
+			if !r.Declared && !r.Open && len(r.Fields) == 0 && !r.HasMapComponent() {
+				return nil, false
+			}
 			return PartialViewDeep(r.WithComplete(false)), true
 		}
 		return nil, false
