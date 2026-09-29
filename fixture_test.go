@@ -46,6 +46,13 @@ func TestFixtures(t *testing.T) {
 	}
 }
 
+// TestFixturesFixpointReplay compares final facts and diagnostics with the
+// original full schedule for every fixture and every supported checking mode.
+func TestFixturesFixpointReplay(t *testing.T) {
+	t.Setenv("WIPPY_FIXPOINT_ASSERT", "1")
+	TestFixtures(t)
+}
+
 func BenchmarkFixtures(b *testing.B) {
 	suites, err := discoverFixtures("testdata/fixtures")
 	if err != nil {
