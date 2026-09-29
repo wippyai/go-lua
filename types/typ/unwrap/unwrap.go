@@ -191,39 +191,47 @@ func Function(t typ.Type) *typ.Function {
 }
 
 func unwrapFunctionDepth(t typ.Type, guard internal.RecursionGuard) *typ.Function {
-	return typ.VisitWithGuard(t, guard, nil, func(next internal.RecursionGuard) typ.Visitor[*typ.Function] {
-		return typ.Visitor[*typ.Function]{
-			Function: func(fn *typ.Function) *typ.Function {
-				return fn
-			},
-			Intersection: func(in *typ.Intersection) *typ.Function {
-				if len(in.Members) == 0 {
-					return nil
-				}
-				for _, member := range in.Members {
-					if unwrapFunctionDepth(member, next) == nil {
-						return nil
-					}
-				}
-				return typ.GeneralMember(in)
-			},
-			Optional: func(o *typ.Optional) *typ.Function {
-				return unwrapFunctionDepth(o.Inner, next)
-			},
-			Recursive: func(rec *typ.Recursive) *typ.Function {
-				if rec.Body == nil || rec.Body == rec {
-					return nil
-				}
-				return unwrapFunctionDepth(rec.Body, next)
-			},
-			Alias: func(a *typ.Alias) *typ.Function {
-				return unwrapFunctionDepth(a.UnaliasedTarget(), next)
-			},
-			Default: func(t typ.Type) *typ.Function {
-				return nil
-			},
+	if t == nil {
+		return nil
+	}
+	next, ok := guard.Enter(t)
+	if !ok {
+		return nil
+	}
+	// Match Visit's transparent-wrapper handling without allocating a visitor
+	// and its captured recursion guard on every function lookup.
+	for {
+		ann, ok := t.(*typ.Annotated)
+		if !ok || ann.Inner == nil || ann.Inner == t {
+			break
 		}
-	})
+		t = ann.Inner
+	}
+	switch v := t.(type) {
+	case *typ.Function:
+		return v
+	case *typ.Intersection:
+		if len(v.Members) == 0 {
+			return nil
+		}
+		for _, member := range v.Members {
+			if unwrapFunctionDepth(member, next) == nil {
+				return nil
+			}
+		}
+		return typ.GeneralMember(v)
+	case *typ.Optional:
+		return unwrapFunctionDepth(v.Inner, next)
+	case *typ.Recursive:
+		if v.Body == nil || v.Body == v {
+			return nil
+		}
+		return unwrapFunctionDepth(v.Body, next)
+	case *typ.Alias:
+		return unwrapFunctionDepth(v.UnaliasedTarget(), next)
+	default:
+		return nil
+	}
 }
 
 // Record extracts a Record type, unwrapping Alias and Optional.
