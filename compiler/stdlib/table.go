@@ -24,13 +24,12 @@ var tableInsertSpec = contract.NewSpec().
 var tableMethods = typ.NewRecord().
 	Field("remove", func() typ.Type {
 		elem := typ.NewTypeParam("T", nil)
-		return typ.Func().
-			TypeParam("T", nil).
-			Param("list", typ.NewArray(elem)).
-			OptParam("pos", typ.Integer).
-			Returns(typ.NewOptional(elem)).
-			Effects(effect.Mutates(0, effect.Unchanged{})).
-			Build()
+		return typ.NewIntersection(
+			typ.Func().TypeParam("T", nil).Param("list", typ.NewArray(elem)).
+				Returns(typ.NewOptional(elem)).Effects(effect.Mutates(0, effect.Unchanged{})).Build(),
+			typ.Func().TypeParam("T", nil).Param("list", typ.NewArray(elem)).Param("pos", typ.Integer).
+				Returns(typ.NewOptional(elem)).Effects(effect.Mutates(0, effect.Unchanged{})).Build(),
+		)
 	}()).
 	Field("concat", typ.Func().
 		Param("list", typ.Any).
@@ -53,13 +52,12 @@ var tableMethods = typ.NewRecord().
 			Returns(tp).
 			Build()
 	}()).
-	Field("insert", typ.Func().
-		Param("list", typ.Any).
-		Param("pos_or_value", typ.Any).
-		OptParam("value", typ.Any).
-		Effects(effect.StoresParam(-1, 0)).
-		Spec(tableInsertSpec).
-		Build()).
+	Field("insert", typ.NewIntersection(
+		typ.Func().Param("list", typ.Any).Param("value", typ.Any).
+			Effects(effect.StoresParam(-1, 0)).Spec(tableInsertSpec).Build(),
+		typ.Func().Param("list", typ.Any).Param("pos", typ.Integer).Param("value", typ.Any).
+			Effects(effect.StoresParam(-1, 0)).Spec(tableInsertSpec).Build(),
+	)).
 	Field("move", typ.Func().
 		Param("a1", typ.Any).
 		Param("f", typ.Integer).
@@ -72,11 +70,12 @@ var tableMethods = typ.NewRecord().
 		Variadic(typ.Any).
 		Returns(typ.Any).
 		Build()).
-	Field("sort", typ.Func().
-		Param("list", typ.Any).
-		OptParam("comp", typ.Any).
-		Effects(effect.Mutates(0, effect.Unchanged{})).
-		Build()).
+	Field("sort", typ.NewIntersection(
+		typ.Func().Param("list", typ.Any).Effects(effect.Mutates(0, effect.Unchanged{})).Build(),
+		typ.Func().Param("list", typ.Any).
+			Param("comp", typ.Func().Param("a", typ.Any).Param("b", typ.Any).Returns(typ.Boolean).Build()).
+			Effects(effect.Mutates(0, effect.Unchanged{})).Build(),
+	)).
 	Field("unpack", typ.Func().
 		Param("list", typ.Any).
 		OptParam("i", typ.Integer).

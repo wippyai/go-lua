@@ -70,11 +70,13 @@ type CallDef struct {
 	// ones no parameter receives are dropped, as Lua drops them. Zero means every
 	// value in Args is written explicitly.
 	ExplicitArgs int
-	TypeArgs     []typ.Type   // Explicit type arguments for generic calls
-	IsMethod     bool         // True if this is a method call (obj:method)
-	Receiver     typ.Type     // Receiver type for method calls
-	MethodName   string       // Method name for method calls
-	Query        core.TypeOps // Method/field resolver
+	// IsOverload restricts a zero-parameter overload to its declared arity.
+	IsOverload bool
+	TypeArgs   []typ.Type   // Explicit type arguments for generic calls
+	IsMethod   bool         // True if this is a method call (obj:method)
+	Receiver   typ.Type     // Receiver type for method calls
+	MethodName string       // Method name for method calls
+	Query      core.TypeOps // Method/field resolver
 	// ForceMethodReceiver consumes receiver as first runtime argument even when
 	// function shape alone does not imply explicit self.
 	ForceMethodReceiver bool
@@ -260,7 +262,7 @@ func inferAndCall(ctx *db.QueryContext, fn *typ.Function, def CallDef, isMethod 
 
 	instantiated := InstantiateFunction(fn, typeArgs)
 
-	return callFunction(ctx, def.Query, instantiated, def.Args, def.ExplicitArgs, receiver, isMethod, def.ForceMethodReceiver, errors)
+	return callFunction(ctx, def.Query, instantiated, def.Args, def.ExplicitArgs, def.IsOverload, receiver, isMethod, def.ForceMethodReceiver, errors)
 }
 
 // InferCall performs the first phase of call synthesis: callee resolution,
@@ -459,7 +461,7 @@ func inferUnion(ctx *db.QueryContext, u *typ.Union, def CallDef, isMethod bool, 
 		}
 
 		expectedArgs, expectedVariadic := computeExpectedArgs(ctx, def.Query, instantiated, isMethod, receiver, def.ForceMethodReceiver)
-		candidateResult := callFunction(ctx, def.Query, instantiated, def.Args, def.ExplicitArgs, receiver, isMethod, def.ForceMethodReceiver, nil)
+		candidateResult := callFunction(ctx, def.Query, instantiated, def.Args, def.ExplicitArgs, def.IsOverload, receiver, isMethod, def.ForceMethodReceiver, nil)
 		if !hasHardErrors(candidateResult.Errors) {
 			candidates = append(candidates, unionCallCandidate{
 				fn:       fn,
@@ -656,7 +658,7 @@ func FinishCall(ctx *db.QueryContext, def CallDef, infer InferResult) CallResult
 		if fn == nil {
 			return singleValueCallResult(typ.Unknown, infer.Errors)
 		}
-		return callFunction(ctx, def.Query, fn, def.Args, def.ExplicitArgs, infer.Receiver, infer.IsMethod, infer.ForceMethodReceiver, infer.Errors)
+		return callFunction(ctx, def.Query, fn, def.Args, def.ExplicitArgs, def.IsOverload, infer.Receiver, infer.IsMethod, infer.ForceMethodReceiver, infer.Errors)
 	}
 
 	return singleValueCallResult(typ.Unknown, infer.Errors)
@@ -762,9 +764,17 @@ func callIntersection(ctx *db.QueryContext, query core.TypeOps, inter *typ.Inter
 		if literalMismatch {
 			continue
 		}
-		result := callFunction(ctx, query, fn, args, explicit, receiver, isMethod, forceMethodReceiver, seedErrors)
+		var result CallResult
+		if len(fn.TypeParams) > 0 {
+			result = inferAndCall(ctx, fn, CallDef{Args: args, ExplicitArgs: explicit, IsOverload: true, Query: query, ForceMethodReceiver: forceMethodReceiver}, isMethod, receiver, seedErrors)
+		} else {
+			result = callFunction(ctx, query, fn, args, explicit, true, receiver, isMethod, forceMethodReceiver, seedErrors)
+		}
 		if hasHardErrors(result.Errors[len(seedErrors):]) {
-			if rejected == nil {
+			// When no overload accepts the call, report the type error from an
+			// arity-compatible overload before an unrelated arity error.
+			if rejected == nil || hasCallErrorKind(rejected.Errors[len(baseErrors):], ErrWrongArity) &&
+				!hasCallErrorKind(result.Errors[len(seedErrors):], ErrWrongArity) {
 				rejected = &result
 			}
 			continue
@@ -828,7 +838,7 @@ func callUnionWithGenericInference(ctx *db.QueryContext, u *typ.Union, def CallD
 		seedErrors := append([]CallError(nil), baseErrors...)
 		var result CallResult
 		if len(fn.TypeParams) == 0 {
-			result = callFunction(ctx, def.Query, fn, def.Args, def.ExplicitArgs, receiver, isMethod, forceMethodReceiver, seedErrors)
+			result = callFunction(ctx, def.Query, fn, def.Args, def.ExplicitArgs, def.IsOverload, receiver, isMethod, forceMethodReceiver, seedErrors)
 		} else {
 			result = inferAndCall(ctx, fn, def, isMethod, receiver, seedErrors)
 		}
@@ -912,7 +922,7 @@ func methodConsumesReceiverSimple(fn *typ.Function, receiver typ.Type, isMethod 
 	return hasExplicitSelfSimple(fn, receiver)
 }
 
-func callFunction(ctx *db.QueryContext, query core.TypeOps, fn *typ.Function, args []typ.Type, explicit int, receiver typ.Type, isMethod bool, forceMethodReceiver bool, errors []CallError) CallResult {
+func callFunction(ctx *db.QueryContext, query core.TypeOps, fn *typ.Function, args []typ.Type, explicit int, isOverload bool, receiver typ.Type, isMethod bool, forceMethodReceiver bool, errors []CallError) CallResult {
 	if fn == nil {
 		return singleValueCallResult(typ.Unknown, append(errors, CallError{Kind: ErrNotCallable, Message: "nil function"}))
 	}
@@ -937,7 +947,7 @@ func callFunction(ctx *db.QueryContext, query core.TypeOps, fn *typ.Function, ar
 	argCount := len(args) + receiverSlots
 
 	minArgs := typ.MinRequiredArgs(fn)
-	allowExtraArgs := len(fn.Params) == 0 && !hasVariadic
+	allowExtraArgs := len(fn.Params) == 0 && !hasVariadic && !isOverload
 
 	if argCount < minArgs {
 		errors = append(errors, CallError{
@@ -1003,7 +1013,11 @@ func callFunction(ctx *db.QueryContext, query core.TypeOps, fn *typ.Function, ar
 		}
 
 		if expectedType != nil && arg != nil {
-			if !isAssignableCheck(ctx, query, arg, expectedType) {
+			compatibleType := expectedType
+			if paramIdx < len(fn.Params) && typ.ParamMayBeAbsent(fn.Params[paramIdx]) {
+				compatibleType = typ.NewOptional(expectedType)
+			}
+			if !isAssignableCheck(ctx, query, arg, compatibleType) {
 				errors = append(errors, CallError{
 					Kind:    ErrTypeMismatch,
 					Message: fmt.Sprintf("argument %d: expected %s, got %s", i+1, typ.FormatShort(expectedType), typ.FormatShort(arg)),
@@ -1112,6 +1126,15 @@ func hasHardErrors(errors []CallError) bool {
 		}
 	}
 
+	return false
+}
+
+func hasCallErrorKind(errors []CallError, kind CallErrorKind) bool {
+	for _, err := range errors {
+		if err.Kind == kind {
+			return true
+		}
+	}
 	return false
 }
 
