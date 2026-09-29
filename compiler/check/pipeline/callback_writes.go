@@ -54,7 +54,7 @@ func (r *Runner) importedTruthyCallbackWrites(store api.StoreView, graph *cfg.Gr
 				writes := source.FieldWritesOf(callbackSym)
 				must := source.MustWritesOf(callbackSym)
 				for _, target := range cfg.SortedSymbolIDs(writes) {
-					if !graph.AllSymbolIDs()[target] {
+					if !graph.HasSymbolID(target) {
 						continue
 					}
 					for _, key := range api.SortedFieldWriteKeys(writes[target]) {

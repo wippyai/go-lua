@@ -28,11 +28,12 @@ func (r *Runner) importedModuleCallWrites(store api.StoreView, graph *cfg.Graph,
 			(store.ModuleBindings() == nil || !store.ModuleBindings().IsReassigned(sym))
 	}
 	aliasTargets := make(map[string][]cfg.SymbolID)
-	for sym := range graph.AllSymbolIDs() {
+	graph.EachSymbolID(func(sym cfg.SymbolID) bool {
 		if stableAlias(sym) {
 			aliasTargets[aliases[sym]] = append(aliasTargets[aliases[sym]], sym)
 		}
-	}
+		return false
+	})
 	var effects []flow.FieldWriteEffect
 	graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
 		if info == nil || !returns.CallEvaluatedAtPoint(graph, p, info) {

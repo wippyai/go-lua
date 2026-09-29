@@ -252,14 +252,15 @@ func ImportedFieldMayChange(graph *compcfg.Graph, bindings *bind.BindingTable, s
 	// DirectAliasSymbol is computed from the whole graph and follows stable
 	// local alias chains. A write through any such alias reaches the import.
 	aliases := make(map[compcfg.SymbolID]bool)
-	for candidate := range graph.AllSymbolIDs() {
+	graph.EachSymbolID(func(candidate compcfg.SymbolID) bool {
 		graph.EachAliasSymbol(candidate, func(source compcfg.SymbolID) bool {
 			if source == sym {
 				aliases[candidate] = true
 			}
 			return false
 		})
-	}
+		return false
+	})
 	aliases[sym] = true
 	written := false
 	graph.EachAssign(func(_ compcfg.Point, info *compcfg.AssignInfo) {

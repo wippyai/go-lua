@@ -45,7 +45,6 @@ func CollectCalledNestedFieldAssignments(
 	}
 
 	// Gather all symbols known in the parent graph (avoid per-point merges).
-	parentSymbols := parent.AllSymbolIDs()
 
 	// Find which local functions are called in the parent graph.
 	trackedCallees := make(map[cfg.SymbolID]bool, len(capturedByCallee))
@@ -65,7 +64,7 @@ func CollectCalledNestedFieldAssignments(
 	for _, sym := range cfg.SortedSymbolIDs(calledSyms) {
 		nestedWrites := make(map[cfg.SymbolID]api.FieldWriteSet)
 		for _, baseSym := range cfg.SortedSymbolIDs(capturedByCallee[sym]) {
-			if parentSymbols[baseSym] {
+			if parent.HasSymbolID(baseSym) {
 				nestedWrites[baseSym] = capturedByCallee[sym][baseSym]
 			}
 		}
@@ -91,7 +90,6 @@ func CollectCalledNestedContainerMutatorAssignments(
 		return nil
 	}
 
-	parentSymbols := parent.AllSymbolIDs()
 	trackedCallees := make(map[cfg.SymbolID]bool, len(capturedByCallee))
 	for calleeSym := range capturedByCallee {
 		trackedCallees[calleeSym] = true
@@ -117,7 +115,7 @@ func CollectCalledNestedContainerMutatorAssignments(
 			}
 			for _, targetSym := range cfg.SortedSymbolIDs(nestedMutations) {
 				mutations := nestedMutations[targetSym]
-				if !parentSymbols[targetSym] {
+				if !parent.HasSymbolID(targetSym) {
 					continue
 				}
 				root := resolve.RootNameFromGraphAndBindings(parent, bindings, targetSym, "")

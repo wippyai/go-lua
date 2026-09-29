@@ -352,11 +352,12 @@ func CollectFieldWrites(
 	for target := range targets {
 		trackedTargets[target] = true
 	}
-	for sym := range graph.AllSymbolIDs() {
+	graph.EachSymbolID(func(sym cfg.SymbolID) bool {
 		if targets[stableAliasRoot(graph, sym)] {
 			trackedTargets[sym] = true
 		}
-	}
+		return false
+	})
 	add := func(target cfg.SymbolID, key api.FieldWriteKey, t typ.Type) {
 		target = stableAliasRoot(graph, target)
 		if !targets[target] {
@@ -413,10 +414,9 @@ func CollectFieldWriteEffects(
 	if graph == nil || source == nil {
 		return nil
 	}
-	symbols := graph.AllSymbolIDs()
 	var effects []flow.FieldWriteEffect
 	emit := func(p cfg.Point, target constraint.Path, key api.FieldWriteKey, t typ.Type, definite bool) {
-		if !symbols[target.Symbol] {
+		if !graph.HasSymbolID(target.Symbol) {
 			return
 		}
 		segments := append(append([]constraint.Segment(nil), target.Segments...), key.Segments()...)
