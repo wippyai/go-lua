@@ -903,22 +903,28 @@ func matchDepth(pattern, concrete typ.Type, cs *InferSet, variance subtype.Varia
 				matchDepth(p.Key, typ.Integer, cs, keyVar, depth+1)
 				matchDepth(p.Value, c.Element, cs, valVar, depth+1)
 			} else if c, ok := concrete.(*typ.Tuple); ok {
-				// A tuple is a map from integer keys to its elements.
+				// A tuple is a map from integer keys to the join of its elements.
 				keyVar := subtype.CombineVariance(variance, subtype.Invariant)
 				valVar := subtype.CombineVariance(variance, subtype.Invariant)
 
 				matchDepth(p.Key, typ.Integer, cs, keyVar, depth+1)
-				for _, elem := range c.Elements {
-					matchDepth(p.Value, elem, cs, valVar, depth+1)
-				}
+				matchDepth(p.Value, typ.JoinAllPreferNonSoft(c.Elements), cs, valVar, depth+1)
 			} else if c, ok := concrete.(*typ.Record); ok {
+				// A record is a map from its field names to the join of its
+				// field types.
 				keyVar := subtype.CombineVariance(variance, subtype.Invariant)
 				valVar := subtype.CombineVariance(variance, subtype.Invariant)
 
-				for _, f := range c.Fields {
-					keyType := typ.LiteralString(f.Name)
-					matchDepth(p.Key, keyType, cs, keyVar, depth+1)
-					matchDepth(p.Value, f.Type, cs, valVar, depth+1)
+				if len(c.Fields) > 0 {
+					keys := make([]typ.Type, len(c.Fields))
+					values := make([]typ.Type, len(c.Fields))
+					for i, f := range c.Fields {
+						keys[i] = typ.LiteralString(f.Name)
+						values[i] = f.Type
+					}
+
+					matchDepth(p.Key, typ.JoinAllPreferNonSoft(keys), cs, keyVar, depth+1)
+					matchDepth(p.Value, typ.JoinAllPreferNonSoft(values), cs, valVar, depth+1)
 				}
 			} else if c, ok := concrete.(*typ.Intersection); ok {
 				// Match map pattern against intersection by matching with first map member

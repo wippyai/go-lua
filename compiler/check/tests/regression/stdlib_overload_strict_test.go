@@ -216,7 +216,40 @@ local function f(m: {[integer]: number})
 	table.sort(m, function(a: string, b: string): boolean return a < b end)
 end
 `, "unsatisfiable bounds: number is not subtype of never"},
+		{"literal list of records with differing fields", `
+local entries = {
+	{ id = "a:explicit", kind = "function.lua", meta = { type = "bootloader", order = 10 } },
+	{ id = "b:default", kind = "function.lua", meta = { type = "bootloader" } },
+}
+table.sort(entries, function(a, b)
+	local a_order = a.meta and a.meta.order or 999
+	local b_order = b.meta and b.meta.order or 999
+	if a_order ~= b_order then return a_order < b_order end
+	return a.id < b.id
+end)
+`, ""},
+		{"literal list of numbers and strings", `
+local items = { 1, "two", 3 }
+table.sort(items, function(a, b) return tostring(a) < tostring(b) end)
+`, ""},
+		{"literal list of numbers and strings with number comparator", `
+local items = { 1, "two", 3 }
+table.sort(items, function(a: number, b: number): boolean return a < b end)
+`, "unsatisfiable bounds: integer | string is not subtype of"},
 	} {
 		t.Run(tt.name, func(t *testing.T) { checkBothModes(t, tt.code, tt.want) })
 	}
+}
+
+// A record is a map from its field names to the join of its field types.
+func TestGenericMapParamFromRecord(t *testing.T) {
+	checkBothModes(t, `
+local function values<V>(t: {[string]: V}): {V}
+	local out: {V} = {}
+	for _, v in pairs(t) do out[#out + 1] = v end
+	return out
+end
+local vs = values({ a = 1, b = "x" })
+local s: string = vs[1]
+`, "cannot assign integer | string to string")
 }

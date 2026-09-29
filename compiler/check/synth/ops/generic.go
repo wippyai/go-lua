@@ -138,21 +138,6 @@ func normalizeArgForGenericInference(expected, arg typ.Type) typ.Type {
 		return arg
 	}
 
-	joinElems := func(elems []typ.Type) typ.Type {
-		var joined typ.Type
-		for _, elem := range elems {
-			if elem == nil {
-				continue
-			}
-			if joined == nil {
-				joined = elem
-			} else {
-				joined = typ.JoinPreferNonSoft(joined, elem)
-			}
-		}
-		return joined
-	}
-
 	var collectElems func(t typ.Type, out *[]typ.Type) bool
 	collectElems = func(t typ.Type, out *[]typ.Type) bool {
 		if t == nil {
@@ -191,11 +176,7 @@ func normalizeArgForGenericInference(expected, arg typ.Type) typ.Type {
 	if !collectElems(arg, &elems) {
 		return arg
 	}
-	elemType := joinElems(elems)
-	if elemType == nil {
-		return arg
-	}
-	return typ.NewArray(elemType)
+	return typ.NewArray(typ.JoinAllPreferNonSoft(elems))
 }
 
 // InstantiateFunction creates a concrete function type by substituting type arguments.
