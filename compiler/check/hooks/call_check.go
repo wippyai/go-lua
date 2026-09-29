@@ -125,9 +125,9 @@ func checkSingleCall(
 	)
 
 	def := ops.CallDef{
-		Args:         args,
-		ExplicitArgs: len(info.Args),
-		Query:        query,
+		Args:     args.Types,
+		OpenTail: args.OpenTail,
+		Query:    query,
 	}
 
 	if callsite.IsMethodCallInfo(info) {
@@ -206,8 +206,12 @@ func callErrorsToDiags(errors []ops.CallError, info *cfg.CallInfo, sourceName st
 		if !span.Valid() && info.Receiver != nil {
 			span = ast.SpanOf(info.Receiver)
 		}
-		if err.ArgIdx > 0 && err.ArgIdx <= len(info.Args) {
-			arg := info.Args[err.ArgIdx-1]
+		if err.ArgIdx > 0 && len(info.Args) > 0 {
+			argIdx := err.ArgIdx - 1
+			if argIdx >= len(info.Args) {
+				argIdx = len(info.Args) - 1
+			}
+			arg := info.Args[argIdx]
 			pos = diag.Position{File: sourceName, Line: arg.Line(), Column: arg.Column()}
 			span = ast.SpanOf(arg)
 			if pos.Line == 0 {

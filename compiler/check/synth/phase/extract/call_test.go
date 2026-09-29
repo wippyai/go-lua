@@ -6,7 +6,9 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
+	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/db"
+	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -98,8 +100,31 @@ func TestSynthArgs(t *testing.T) {
 	}
 
 	args := synthArgs(exprs, recurse, func(ex ast.Expr) []typ.Type { return []typ.Type{recurse(ex)} })
-	if len(args) != 2 {
-		t.Fatalf("got %d args, want 2", len(args))
+	if len(args.Types) != 2 || args.OpenTail {
+		t.Fatalf("got %+v, want two fixed args", args)
+	}
+}
+
+func TestExpandedArgsFeedTypeValueAndErrorReturnEffects(t *testing.T) {
+	user := typ.NewRecord().Field("name", typ.String).Build()
+	fn := typ.Func().
+		Param("str", typ.String).
+		OptParam("target", typ.NewMeta(typ.Any)).
+		Returns(typ.Any, typ.NewOptional(typ.LuaError)).
+		Spec(contract.NewSpec().WithEffects(
+			effect.Return{ReturnIndex: 0, Transform: effect.TypeValueOf{Source: effect.ParamRef{Index: 1}}},
+			effect.ErrorReturn{ValueIndex: 0, ErrorIndex: 1},
+		)).Build()
+	args := synthArgs([]ast.Expr{&ast.FuncCallExpr{}},
+		func(ast.Expr) typ.Type { return fn },
+		func(ast.Expr) []typ.Type { return []typ.Type{typ.String, typ.NewMeta(user)} },
+	)
+	if args.OpenTail || len(args.Types) != 2 {
+		t.Fatalf("expected fixed expanded pair, got %+v", args)
+	}
+	returns := newTestSynthesizer().applyPostCallTransforms(fn, args.Types, fn.Returns)
+	if !typ.TypeEquals(returns[0], typ.NewOptional(user)) {
+		t.Fatalf("expected transformed optional user from expanded target, got %v", returns[0])
 	}
 }
 

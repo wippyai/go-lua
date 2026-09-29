@@ -1,0 +1,1 @@
+{"description":"Trailing multi-return calls are checked at each receiving parameter","check":{"expected_errors":[{"file":"main.lua","line":35,"contains":"too many arguments"}]}}

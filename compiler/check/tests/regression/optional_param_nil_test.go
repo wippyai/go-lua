@@ -22,6 +22,19 @@ assert(true, n)
 	}
 }
 
+func TestOptionalParametersAcceptExpandedNil(t *testing.T) {
+	result := testutil.Check(`
+local function pair(): (boolean, string?) return true, nil end
+assert(pair())
+local function bad(): (boolean, number?) return true, 42 end
+assert(bad())
+`, testutil.WithStdlib())
+	messages := testutil.ErrorMessages(result.Diagnostics)
+	if len(messages) != 1 || !strings.Contains(messages[0], "argument 2:") || !strings.Contains(messages[0], "got number?") {
+		t.Fatalf("expected only the incompatible non-nil message to fail, got %v", messages)
+	}
+}
+
 func TestHostAritySensitiveParameters(t *testing.T) {
 	for _, tt := range []struct {
 		code string

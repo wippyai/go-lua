@@ -166,8 +166,8 @@ func (s *Synthesizer) synthCallCoreWithCaptureTypes(
 
 	def := ops.CallDef{
 		Callee:         calleeType,
-		Args:           args,
-		ExplicitArgs:   len(ex.Args),
+		Args:           args.Types,
+		OpenTail:       args.OpenTail,
 		TypeArgs:       typeArgs,
 		Query:          s.GetCallQuery(),
 		ExpectedReturn: expected,
@@ -183,9 +183,9 @@ func (s *Synthesizer) synthCallCoreWithCaptureTypes(
 	result := pipeline.Run()
 
 	returns := unwrapCallResult(result)
-	returns = s.applyPostCallTransforms(calleeType, args, returns)
+	returns = s.applyPostCallTransforms(calleeType, args.Types, returns)
 
-	specOverride := s.specReturnOverride(calleeType, ex.Args, args)
+	specOverride := s.specReturnOverride(calleeType, ex.Args, args.Types)
 	return intercept.ApplyOverride(returns, specOverride)
 }
 
@@ -263,8 +263,8 @@ func (s *Synthesizer) synthMethodCall(ex *ast.FuncCallExpr, p cfg.Point, sc *sco
 		IsMethod:            true,
 		Receiver:            recvType,
 		MethodName:          ex.Method,
-		Args:                args,
-		ExplicitArgs:        len(ex.Args),
+		Args:                args.Types,
+		OpenTail:            args.OpenTail,
 		Query:               s.GetCallQuery(),
 		ExpectedReturn:      expected,
 		ForceMethodReceiver: s.forceMethodReceiverAtPoint(p, ex),
@@ -276,8 +276,8 @@ func (s *Synthesizer) synthMethodCall(ex *ast.FuncCallExpr, p cfg.Point, sc *sco
 	}
 	result := pipeline.Run()
 	returns := unwrapCallResult(result)
-	returns = s.applyPostCallTransforms(calleeType, args, returns)
-	specOverride := s.specReturnOverride(calleeType, ex.Args, args)
+	returns = s.applyPostCallTransforms(calleeType, args.Types, returns)
+	specOverride := s.specReturnOverride(calleeType, ex.Args, args.Types)
 	return intercept.ApplyOverride(returns, specOverride)
 }
 
@@ -323,7 +323,7 @@ func (s *Synthesizer) buildInterceptChain(sc *scope.State) *intercept.Chain {
 }
 
 // synthArgs synthesizes types for argument expressions.
-func synthArgs(exprs []ast.Expr, recurse ExprSynth, multi func(ast.Expr) []typ.Type) []typ.Type {
+func synthArgs(exprs []ast.Expr, recurse ExprSynth, multi func(ast.Expr) []typ.Type) callsite.Arguments {
 	return callsite.ArgumentTypes(exprs, func(arg ast.Expr) typ.Type { return recurse(arg) }, multi)
 }
 
