@@ -57,6 +57,7 @@ type functionProfile struct {
 	GraphID             uint64      `json:"graph_id"`
 	Line                int         `json:"line"`
 	Analyses            int         `json:"analyses"`
+	Skipped             int         `json:"skipped"`
 	SameOwnFacts        int         `json:"same_own_facts"`
 	SameInterprocOutput int         `json:"same_interproc_output"`
 	ReturnNS            int64       `json:"returns_ns"`
@@ -100,6 +101,12 @@ func (p *fixpointProfile) begin(id uint64, line, round int, parentHash uint64, s
 		f.previousParent = parentHash
 		f.previousOwnFacts = current
 		f.previousOwnSeen = seen
+	}
+}
+
+func (p *fixpointProfile) skipped(id uint64, line int) {
+	if p != nil {
+		p.function(id, line).Skipped++
 	}
 }
 

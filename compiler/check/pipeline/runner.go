@@ -25,6 +25,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/modules"
 	"github.com/wippyai/go-lua/compiler/check/phase"
 	"github.com/wippyai/go-lua/compiler/check/scope"
+	storepkg "github.com/wippyai/go-lua/compiler/check/store"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/io"
 	"github.com/wippyai/go-lua/types/narrow"
@@ -77,6 +78,11 @@ func (r *Runner) Run(ctx *db.QueryContext, key api.FuncKey) *api.FuncResult {
 	store := api.StoreFrom(ctx)
 	if store == nil {
 		return nil
+	}
+	if concrete, ok := store.(*storepkg.SessionStore); ok && r.manifests != nil {
+		local := *r
+		local.manifests = trackedManifests{ManifestQuerier: r.manifests, store: concrete}
+		r = &local
 	}
 	withPhase := func(_ api.Phase, fn func()) { fn() }
 	if phaser, ok := store.(interface{ WithPhase(api.Phase, func()) }); ok {

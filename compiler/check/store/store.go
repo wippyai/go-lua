@@ -42,7 +42,11 @@ type SessionStore struct {
 
 	// lastSwapDiffs records which channels changed during the most recent FixpointSwap.
 	// Stored per-session to avoid cross-session contamination.
-	lastSwapDiffs []string
+	lastSwapDiffs   []string
+	factVersions    map[FactKey]uint64
+	nextFactVersion uint64
+	activeFactReads FactReadSet
+	scratchObserved map[uint64]map[*ast.FunctionExpr]*typ.Function
 
 	phase api.Phase
 }
@@ -51,6 +55,186 @@ type classSelfKey struct {
 	graphID  uint64
 	symbol   cfg.SymbolID
 	receiver bool
+}
+
+// FactKey identifies one stable snapshot entry read by a function analysis.
+// A graph's interprocedural bundle is one structural fact; refinements and
+// constructor fields are keyed by their owning symbol.
+type FactKey struct {
+	Channel uint8
+	Graph   api.GraphKey
+	Symbol  cfg.SymbolID
+	Path    string
+}
+
+const (
+	factInterproc uint8 = iota + 1
+	factRefinement
+	factConstructor
+	factScratch
+	factCallables
+	factParamHints
+	factCapturedTypes
+	factFieldWrites
+	factCapturedContainers
+	factConstructorBundle
+	factParentGraph
+	factManifest
+)
+
+type FactReadSet map[FactKey]uint64
+
+// BeginFactReads starts recording snapshot reads for one phase-runner call.
+func (s *SessionStore) BeginFactReads() {
+	s.activeFactReads = make(FactReadSet)
+}
+
+// EndFactReads returns all versions observed during a phase-runner call.
+func (s *SessionStore) EndFactReads() FactReadSet {
+	reads := s.activeFactReads
+	s.activeFactReads = nil
+	return reads
+}
+
+func (s *SessionStore) recordFactRead(key FactKey) {
+	if s.activeFactReads != nil {
+		s.activeFactReads[key] = s.factVersions[key]
+	}
+}
+
+// RecordManifestRead records an immutable module manifest input. Manifests are
+// supplied by the caller for one Check and are never written by fixpoint rounds.
+func (s *SessionStore) RecordManifestRead(path string) {
+	s.recordFactRead(FactKey{Channel: factManifest, Path: path})
+}
+
+func (s *SessionStore) FactsUnchanged(reads FactReadSet) bool {
+	for key, version := range reads {
+		if key.Channel == factScratch {
+			s.refreshScratchVersion(key.Graph.GraphID)
+		}
+		if s.factVersions[key] != version {
+			return false
+		}
+	}
+	return true
+}
+
+func sameScratchSigs(a, b map[*ast.FunctionExpr]*typ.Function) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for fn, sig := range a {
+		other, ok := b[fn]
+		if !ok || !typ.TypeEquals(sig, other) {
+			return false
+		}
+	}
+	return true
+}
+
+func (s *SessionStore) refreshScratchVersion(graphID uint64) {
+	var current map[*ast.FunctionExpr]*typ.Function
+	if s.Scratch != nil {
+		current = s.Scratch.SigsByGraphID[graphID]
+	}
+	previous := s.scratchObserved[graphID]
+	if sameScratchSigs(previous, current) {
+		return
+	}
+	if s.scratchObserved == nil {
+		s.scratchObserved = make(map[uint64]map[*ast.FunctionExpr]*typ.Function)
+	}
+	copyOf := make(map[*ast.FunctionExpr]*typ.Function, len(current))
+	for fn, sig := range current {
+		copyOf[fn] = sig
+	}
+	s.scratchObserved[graphID] = copyOf
+	s.bumpFact(FactKey{Channel: factScratch, Graph: api.GraphKey{GraphID: graphID}})
+}
+
+func (s *SessionStore) bumpFact(key FactKey) {
+	if s.factVersions == nil {
+		s.factVersions = make(map[FactKey]uint64)
+	}
+	s.nextFactVersion++
+	s.factVersions[key] = s.nextFactVersion
+}
+
+func (s *SessionStore) versionChangedFacts(old, next *InterprocState) {
+	for key, value := range next.Facts {
+		s.versionGraphFact(key, old.Facts[key], value)
+	}
+	for key := range old.Facts {
+		if _, ok := next.Facts[key]; !ok {
+			s.versionGraphFact(key, old.Facts[key], api.Facts{})
+		}
+	}
+	for sym, value := range next.Refinements {
+		if !effectsEqual(old.Refinements[sym], value) {
+			s.bumpFact(FactKey{Channel: factRefinement, Symbol: sym})
+		}
+	}
+	for sym := range old.Refinements {
+		if _, ok := next.Refinements[sym]; !ok {
+			s.bumpFact(FactKey{Channel: factRefinement, Symbol: sym})
+		}
+	}
+	for sym, fields := range next.ConstructorFields {
+		prior := old.ConstructorFields[sym]
+		if !constructorFieldMapEqual(prior, fields) {
+			s.bumpFact(FactKey{Channel: factConstructor, Symbol: sym})
+		}
+	}
+	for sym := range old.ConstructorFields {
+		if _, ok := next.ConstructorFields[sym]; !ok {
+			s.bumpFact(FactKey{Channel: factConstructor, Symbol: sym})
+		}
+	}
+}
+
+func (s *SessionStore) versionGraphFact(key api.GraphKey, prior, value api.Facts) {
+	if returns.FactsEqual(prior, value) {
+		return
+	}
+	s.bumpFact(FactKey{Channel: factInterproc, Graph: key})
+	for _, channel := range []uint8{factCallables, factParamHints, factCapturedTypes, factFieldWrites, factCapturedContainers, factConstructorBundle} {
+		if !graphFactChannelEqual(channel, prior, value) {
+			s.bumpFact(FactKey{Channel: channel, Graph: key})
+		}
+	}
+}
+
+func graphFactChannelEqual(channel uint8, a, b api.Facts) bool {
+	switch channel {
+	case factCallables:
+		return returns.CallablesEqual(a.Callables, b.Callables)
+	case factParamHints:
+		return returns.FactsEqual(api.Facts{ParamHints: a.ParamHints}, api.Facts{ParamHints: b.ParamHints})
+	case factCapturedTypes:
+		return returns.FactsEqual(api.Facts{CapturedTypes: a.CapturedTypes}, api.Facts{CapturedTypes: b.CapturedTypes})
+	case factFieldWrites:
+		return returns.FieldWritesEqual(a.FieldWrites, b.FieldWrites)
+	case factCapturedContainers:
+		return returns.CapturedContainerMutationsEqual(a.CapturedContainers, b.CapturedContainers)
+	case factConstructorBundle:
+		return returns.ConstructorFieldsEqual(a.ConstructorFields, b.ConstructorFields)
+	default:
+		return false
+	}
+}
+
+func constructorFieldMapEqual(a, b map[string]typ.Type) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for key, value := range a {
+		other, ok := b[key]
+		if !ok || !typ.TypeEquals(value, other) {
+			return false
+		}
+	}
+	return true
 }
 
 // ReuseClassIdentitiesForDebug gives a replay run the original recursion
@@ -496,7 +680,12 @@ func (s *SessionStore) swapInterprocChannels() []string {
 // RETURN VALUE: Returns true if any channel changed, signaling another iteration
 // is needed. Returns false when all channels stabilize (fixpoint reached).
 func (s *SessionStore) FixpointSwap() bool {
+	// Facts widen while the other two channels replace their previous values.
+	// Compare the actual post-swap values, rather than the pending writes.
+	old := s.InterprocPrev
+	before := &InterprocState{Facts: old.Facts, Refinements: old.Refinements, ConstructorFields: old.ConstructorFields}
 	diffs := s.swapInterprocChannels()
+	s.versionChangedFacts(before, s.InterprocPrev)
 	for _, channel := range diffs {
 		if channel == "InterprocFacts" {
 			s.functionViews = functionViewCache{}
@@ -548,6 +737,7 @@ func (s *SessionStore) BumpRevision() {
 // LookupRefinementBySym returns the refinement for a function by its SymbolID.
 // Reads from the stable interproc refinement snapshot for order-independent analysis.
 func (s *SessionStore) LookupRefinementBySym(sym cfg.SymbolID) *constraint.FunctionRefinement {
+	s.recordFactRead(FactKey{Channel: factRefinement, Symbol: sym})
 	if sym == 0 {
 		return nil
 	}
@@ -615,6 +805,9 @@ func (s *SessionStore) StoreConstructorFields(classSym cfg.SymbolID, fields map[
 
 // LookupConstructorFields returns constructor fields from the stable snapshot.
 func (s *SessionStore) LookupConstructorFields(classSym cfg.SymbolID) map[string]typ.Type {
+	if s != nil {
+		s.recordFactRead(FactKey{Channel: factConstructor, Symbol: classSym})
+	}
 	if s == nil || classSym == 0 {
 		return nil
 	}
@@ -641,6 +834,10 @@ func (s *SessionStore) ClearIterationChannels() {
 	s.resetScratch()
 	s.Iteration.Revision = 0
 	s.lastSwapDiffs = nil
+	s.factVersions = nil
+	s.nextFactVersion = 0
+	s.activeFactReads = nil
+	s.scratchObserved = nil
 }
 
 // RefinementStore returns a view over the stable interproc refinement snapshot.
@@ -648,7 +845,7 @@ func (s *SessionStore) RefinementStore() api.RefinementStore {
 	if s == nil || s.InterprocPrev == nil {
 		return &snapshotRefinementStore{refinements: nil}
 	}
-	return &snapshotRefinementStore{refinements: s.InterprocPrev.Refinements}
+	return &snapshotRefinementStore{refinements: s.InterprocPrev.Refinements, owner: s}
 }
 
 // ModuleBindings returns the module binding table.
@@ -881,6 +1078,9 @@ func (s *SessionStore) SetGraphParentHash(graphID, parentHash uint64) {
 	if s == nil || graphID == 0 {
 		return
 	}
+	if s.GraphParentHash[graphID] != parentHash {
+		s.bumpFact(FactKey{Channel: factParentGraph, Graph: api.GraphKey{GraphID: graphID}})
+	}
 	s.GraphParentHash[graphID] = parentHash
 }
 
@@ -889,6 +1089,7 @@ func (s *SessionStore) GraphParentHashOf(graphID uint64) uint64 {
 	if s == nil || graphID == 0 {
 		return 0
 	}
+	s.recordFactRead(FactKey{Channel: factParentGraph, Graph: api.GraphKey{GraphID: graphID}})
 	return s.GraphParentHash[graphID]
 }
 
@@ -959,6 +1160,10 @@ func (s *SessionStore) GetInterprocFactsSnapshot(
 	graph *cfg.Graph,
 	parent *scope.State,
 ) api.Facts {
+	return s.readGraphFacts(graph, parent, factInterproc)
+}
+
+func (s *SessionStore) readGraphFacts(graph *cfg.Graph, parent *scope.State, channel uint8) api.Facts {
 	if s == nil || s.InterprocPrev == nil || s.InterprocPrev.Facts == nil || graph == nil || parent == nil {
 		return api.Facts{}
 	}
@@ -966,6 +1171,7 @@ func (s *SessionStore) GetInterprocFactsSnapshot(
 	if !ok {
 		return api.Facts{}
 	}
+	s.recordFactRead(FactKey{Channel: channel, Graph: key})
 	return s.InterprocPrev.Facts[key]
 }
 
@@ -988,6 +1194,7 @@ func (s *SessionStore) functionFactView(graph *cfg.Graph, parent *scope.State) f
 	if !ok {
 		return functionView{}
 	}
+	s.recordFactRead(FactKey{Channel: factCallables, Graph: key})
 	if s.functionViews.snapshot != s.InterprocPrev {
 		s.functionViews = functionViewCache{snapshot: s.InterprocPrev}
 	}
@@ -1016,7 +1223,7 @@ func (s *SessionStore) GetParamHintsSnapshot(
 	parent *scope.State,
 ) map[cfg.SymbolID][]typ.Type {
 	s.requirePhase(api.PhaseScopeCompute)
-	return s.GetInterprocFactsSnapshot(graph, parent).ParamHints
+	return s.readGraphFacts(graph, parent, factParamHints).ParamHints
 }
 
 // GetReturnSummariesSnapshot returns return summaries from the stable interproc snapshot.
@@ -1052,7 +1259,7 @@ func (s *SessionStore) GetCallablesSnapshot(
 	parent *scope.State,
 ) api.Callables {
 	s.requirePhase(api.PhaseScopeCompute, api.PhaseNarrowing)
-	return s.GetInterprocFactsSnapshot(graph, parent).Callables
+	return s.readGraphFacts(graph, parent, factCallables).Callables
 }
 
 // GetCapturedTypesSnapshot returns captured variable types from the stable interproc snapshot.
@@ -1061,7 +1268,7 @@ func (s *SessionStore) GetCapturedTypesSnapshot(
 	parent *scope.State,
 ) api.CapturedTypes {
 	s.requirePhase(api.PhaseScopeCompute)
-	return s.GetInterprocFactsSnapshot(graph, parent).CapturedTypes
+	return s.readGraphFacts(graph, parent, factCapturedTypes).CapturedTypes
 }
 
 // StoreLiteralSigs records literal signatures for the current iteration.
@@ -1082,6 +1289,10 @@ func (s *SessionStore) StoreLiteralSigs(graphID uint64, sigs map[*ast.FunctionEx
 // This is an iteration-local cache used to avoid re-synthesizing literal signatures
 // for nested functions within the same fixpoint cycle.
 func (s *SessionStore) ScratchLiteralSigs(graphID uint64) map[*ast.FunctionExpr]*typ.Function {
+	if s != nil && s.activeFactReads != nil {
+		s.refreshScratchVersion(graphID)
+		s.recordFactRead(FactKey{Channel: factScratch, Graph: api.GraphKey{GraphID: graphID}})
+	}
 	if s == nil || s.Scratch == nil || s.Scratch.SigsByGraphID == nil {
 		return nil
 	}
@@ -1094,7 +1305,7 @@ func (s *SessionStore) GetFieldWritesSnapshot(
 	parent *scope.State,
 ) api.FieldWrites {
 	s.requirePhase(api.PhaseScopeCompute, api.PhaseNarrowing)
-	return s.GetInterprocFactsSnapshot(graph, parent).FieldWrites
+	return s.readGraphFacts(graph, parent, factFieldWrites).FieldWrites
 }
 
 // GetCapturedContainerMutationsSnapshot returns captured container mutations from the stable interproc snapshot.
@@ -1103,15 +1314,19 @@ func (s *SessionStore) GetCapturedContainerMutationsSnapshot(
 	parent *scope.State,
 ) api.CapturedContainerMutations {
 	s.requirePhase(api.PhaseScopeCompute, api.PhaseNarrowing)
-	return s.GetInterprocFactsSnapshot(graph, parent).CapturedContainers
+	return s.readGraphFacts(graph, parent, factCapturedContainers).CapturedContainers
 }
 
 // snapshotRefinementStore implements api.RefinementStore using the stable snapshot.
 type snapshotRefinementStore struct {
 	refinements map[cfg.SymbolID]*constraint.FunctionRefinement
+	owner       *SessionStore
 }
 
 func (o *snapshotRefinementStore) LookupRefinementBySym(sym cfg.SymbolID) *constraint.FunctionRefinement {
+	if o != nil && o.owner != nil {
+		o.owner.recordFactRead(FactKey{Channel: factRefinement, Symbol: sym})
+	}
 	if o == nil || sym == 0 {
 		return nil
 	}

@@ -32,6 +32,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/phase"
 	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/compiler/check/scope"
+	storepkg "github.com/wippyai/go-lua/compiler/check/store"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/diag"
@@ -54,11 +55,18 @@ type Config struct {
 	FuncResultQ         *db.Query[api.FuncKey, *api.FuncResult]
 	Profile             *FixpointProfile
 	DisableLeafFastPath bool
+	DisableWorklist     bool
 }
 
 // Driver executes the fixpoint loop and function analysis.
 type Driver struct {
-	cfg Config
+	cfg     Config
+	results map[api.GraphKey]cachedAnalysis
+}
+
+type cachedAnalysis struct {
+	result *api.FuncResult
+	reads  storepkg.FactReadSet
 }
 
 // New creates a driver with the provided configuration.
@@ -122,6 +130,7 @@ func (d *Driver) RunPrepared(sess api.AnalysisSession, fn *ast.FunctionExpr) {
 
 func (d *Driver) runFixpoint(sess api.AnalysisSession, fn *ast.FunctionExpr, parent *scope.State) {
 	rounds := d.roundBudget(sess.StoreHandle())
+	d.results = make(map[api.GraphKey]cachedAnalysis)
 
 	converged := false
 	for iter := 0; iter < rounds; iter++ {
@@ -187,15 +196,31 @@ func (d *Driver) checkFunctionFixpoint(sess api.AnalysisSession, fn *ast.Functio
 
 	store := sess.StoreHandle()
 	parentHash := d.registerParentScope(store, graph.ID(), parent)
-	if d.cfg.Profile != nil && store != nil {
-		d.cfg.Profile.begin(graph.ID(), fn.Line(), int(store.Revision()), parentHash, store)
-	}
 
 	phaseStart := d.cfg.Profile.start()
 	d.runReturnInference(sess, graph, parent, store)
 	d.cfg.Profile.mark(graph.ID(), "returns", phaseStart)
 
-	result := d.loadFunctionResult(sess, graph.ID(), parentHash, store)
+	key := api.GraphKey{GraphID: graph.ID(), ParentHash: parentHash}
+	tracked, canTrack := store.(*storepkg.SessionStore)
+	previous, hasPrevious := d.results[key]
+	var result *api.FuncResult
+	if !d.cfg.DisableWorklist && canTrack && hasPrevious && tracked.FactsUnchanged(previous.reads) {
+		result = previous.result
+		d.cfg.Profile.skipped(graph.ID(), fn.Line())
+	} else {
+		if d.cfg.Profile != nil && store != nil {
+			d.cfg.Profile.begin(graph.ID(), fn.Line(), int(store.Revision()), parentHash, store)
+		}
+		if canTrack {
+			tracked.BeginFactReads()
+		}
+		result = d.loadFunctionResult(sess, graph.ID(), parentHash, store)
+		if canTrack {
+			reads := tracked.EndFactReads()
+			d.results[key] = cachedAnalysis{result: result, reads: reads}
+		}
+	}
 	if result == nil {
 		return
 	}

@@ -152,6 +152,7 @@ type Checker struct {
 	maxScopeDepth             int
 	emitScopeDepthDiagnostics bool
 	disableLeafFastPath       bool
+	disableWorklist           bool
 }
 
 // NewChecker creates a new Checker instance with the given database, dependencies, and options.
@@ -213,6 +214,7 @@ func (c *Checker) newPipeline() *pipeline.Driver {
 		FuncResultQ:         funcResultQ,
 		Profile:             profile,
 		DisableLeafFastPath: c.disableLeafFastPath,
+		DisableWorklist:     c.disableWorklist || len(c.computePasses) > 0,
 	})
 }
 
@@ -343,6 +345,7 @@ func (c *Checker) Check(source, name string) *Session {
 	if os.Getenv("WIPPY_FIXPOINT_ASSERT") == "1" {
 		reference := *c
 		reference.disableLeafFastPath = true
+		reference.disableWorklist = true
 		assertFixpointMatches(sess, reference.checkPrepared(sess))
 	}
 	return sess
