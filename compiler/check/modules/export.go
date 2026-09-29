@@ -39,6 +39,12 @@ func ExportType(result *api.FuncResult, refinementsBySym map[cfg.SymbolID]*const
 		if valueType == nil {
 			valueType = typ.Nil
 		}
+		// A directly returned empty constructor cannot receive a later write
+		// within this module. Local empty tables remain open while their fields
+		// are accumulated by flow and must-write summaries.
+		if literal, ok := info.Exprs[0].(*ast.TableExpr); ok && len(literal.Fields) == 0 {
+			valueType = typ.NewRecord().SetComplete(true).Build()
+		}
 
 		// Track the root name for export path-based summaries (e.g., return M).
 		if ident, ok := info.Exprs[0].(*ast.IdentExpr); ok && ident != nil {
