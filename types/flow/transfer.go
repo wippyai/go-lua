@@ -908,7 +908,7 @@ func (s *Solution) processIndexerAssignmentReturnKey(p cfg.Point, ia IndexerAssi
 		}
 		return widenWithIndexer(t, keyType, valueType, s.inferredIndexedOrigin(iaPath))
 	})
-	if newType == nil || typ.TypeEquals(currentType, newType) {
+	if newType == nil {
 		return ""
 	}
 	// A refinable annotation such as {any} lets writes refine the table within
@@ -917,9 +917,7 @@ func (s *Solution) processIndexerAssignmentReturnKey(p cfg.Point, ia IndexerAssi
 	if s.inputs.RefinableAnnotatedVars[ia.Symbol] && !fromEmpty && !subtype.IsSubtype(newType, declared) {
 		return ""
 	}
-
-	s.setValue(string(pathKey), newType)
-	return string(pathKey)
+	return s.storeWrittenTableType(pathKey, newType)
 }
 
 // A dynamic map entry can hold the same table as a local value path. Later
@@ -950,9 +948,8 @@ func (s *Solution) refreshIndexedValueAliases(p cfg.Point, mutated IndexerAssign
 		updated := typ.WriteInto(current, func(t typ.Type) typ.Type {
 			return widenWithIndexer(t, keyType, valueType, s.inferredIndexedOrigin(target))
 		})
-		if updated != nil && !typ.TypeEquals(current, updated) {
-			s.setValue(string(key), updated)
-			changed = append(changed, string(key))
+		if changedKey := s.storeWrittenTableType(key, updated); changedKey != "" {
+			changed = append(changed, changedKey)
 		}
 	}
 	return changed
@@ -1141,13 +1138,7 @@ func (s *Solution) processTableMutatorAssignmentReturnKey(p cfg.Point, tm TableM
 	} else {
 		newType = WidenArrayElementType(currentType, valueType, joinInsertedArrayElement)
 	}
-
-	if newType == nil || typ.TypeEquals(currentType, newType) {
-		return ""
-	}
-
-	s.setValue(string(pathKey), newType)
-	return string(pathKey)
+	return s.storeWrittenTableType(pathKey, newType)
 }
 
 // joinInsertedArrayElement keeps an explicit dynamic value written by a
@@ -1219,6 +1210,19 @@ func (s *Solution) processContainerMutatorAssignmentReturnKey(p cfg.Point, cm Co
 
 	s.setValue(string(pathKey), newType)
 	return string(pathKey)
+}
+
+// storeWrittenTableType records t as the table's value at key, the version a
+// write defines. The write defines that version even when it leaves the table
+// type unchanged, so the comparison is with the value stored at key rather
+// than the predecessor type the write started from. It returns key when the
+// stored value changes, or an empty string.
+func (s *Solution) storeWrittenTableType(key constraint.PathKey, t typ.Type) string {
+	if t == nil || typ.TypeEquals(s.values[string(key)], t) {
+		return ""
+	}
+	s.setValue(string(key), t)
+	return string(key)
 }
 
 // writtenTableTypeAt returns the current type of the table at path, whose key
@@ -1299,12 +1303,7 @@ func (s *Solution) processFieldWriteEffectReturnKey(p cfg.Point, fw FieldWriteEf
 			return applyFieldWrite(t, fw.Field, subtype.WidenForInference(fw.Type), fw.Definite)
 		})
 	}
-	if newType == nil || typ.TypeEquals(currentType, newType) {
-		return ""
-	}
-
-	s.setValue(string(pathKey), newType)
-	return string(pathKey)
+	return s.storeWrittenTableType(pathKey, newType)
 }
 
 // applyFieldWrite writes field into the record members of t. A definite write
