@@ -60,7 +60,27 @@ jobs:
           GOCACHE: ${{ runner.temp }}/go-build
         # The fixture suite checks the full application corpus and now needs
         # several minutes to finish on CI runners.
-        run: go test -timeout 25m ./...
+        # The fixpoint replay oracle runs in its own job below.
+        run: go test -timeout 25m -skip '^TestFixturesFixpointReplay$' ./...
+
+  replay:
+    name: Fixpoint replay
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.23.x"
+          cache: true
+
+      - name: Replay every fixture against the original fixpoint schedule
+        env:
+          GOCACHE: ${{ runner.temp }}/go-build
+        run: go test -timeout 30m -run '^TestFixturesFixpointReplay$' .
 
   race:
     name: Race Tests (${{ matrix.shard }})

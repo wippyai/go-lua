@@ -14,7 +14,8 @@ case "${1:-}" in
       fi
     done
 
-    go test -race -timeout 30m -skip '^TestFixtures$' ./...
+    # The fixpoint replay oracle runs in its own non-race CI job.
+    go test -race -timeout 30m -skip '^(TestFixtures|TestFixturesFixpointReplay)$' ./...
 
     categories=()
     for path in testdata/fixtures/*/; do
