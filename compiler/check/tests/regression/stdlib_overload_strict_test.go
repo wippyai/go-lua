@@ -118,3 +118,50 @@ end
 		t.Run(tt.name, func(t *testing.T) { checkBothModes(t, tt.code, "") })
 	}
 }
+
+// An any element is consistent with a typed comparator in gradual mode; strict
+// mode treats it as unknown, which the comparator cannot accept.
+func TestSortTypedComparatorOnAnyList(t *testing.T) {
+	checkModes(t, `
+local function f(list: { any })
+	table.sort(list, function(a: string, b: string): boolean return a < b end)
+end
+`, "", "argument 2:")
+}
+
+func TestSortComparatorMatchesElementType(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		code string
+		want string
+	}{
+		{"typed record comparator", `
+type Map = { name: string }
+local function f(list: { Map })
+	table.sort(list, function(a: Map, b: Map): boolean return a.name < b.name end)
+end
+`, ""},
+		{"untyped comparator", `
+local list = { 3, 1, 2 }
+table.sort(list, function(a, b) return a < b end)
+`, ""},
+		{"string comparator", `
+local function f(list: { string })
+	table.sort(list, function(a: string, b: string): boolean return a < b end)
+	table.sort(list)
+end
+`, ""},
+		{"any list untyped comparator", `
+local function f(list: { any })
+	table.sort(list, function(a, b) return a.order < b.order end)
+end
+`, ""},
+		{"mismatched comparator", `
+local function f(list: { number })
+	table.sort(list, function(a: string, b: string): boolean return a < b end)
+end
+`, "unsatisfiable bounds: number is not subtype of never"},
+	} {
+		t.Run(tt.name, func(t *testing.T) { checkBothModes(t, tt.code, tt.want) })
+	}
+}

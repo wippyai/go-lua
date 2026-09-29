@@ -135,3 +135,33 @@ func TestInferSubstitutionApply(t *testing.T) {
 		t.Errorf("expected array of string, got %v", arr.Element)
 	}
 }
+
+// any is consistent with every bound; the call check that follows
+// instantiation applies the assignability mode to the any-typed argument.
+func TestInferSetAnyLowerBoundIsConsistent(t *testing.T) {
+	cs := constraint.NewInferSet()
+	tv := typ.NewTypeVar(1)
+
+	constraint.MatchContra(typ.NewArray(tv), typ.NewArray(typ.Any), cs)
+	cs.AddSubtype(tv, typ.String)
+
+	solution, err := cs.Solve()
+	if err != nil {
+		t.Fatalf("Solve failed: %v", err)
+	}
+	if !typ.IsAny(solution[1]) {
+		t.Errorf("expected any, got %v", solution[1])
+	}
+}
+
+func TestInferSetConcreteBoundsConflict(t *testing.T) {
+	cs := constraint.NewInferSet()
+	tv := typ.NewTypeVar(1)
+
+	constraint.MatchContra(typ.NewArray(tv), typ.NewArray(typ.Number), cs)
+	cs.AddSubtype(tv, typ.String)
+
+	if _, err := cs.Solve(); err == nil {
+		t.Fatal("expected number and string bounds to conflict")
+	}
+}

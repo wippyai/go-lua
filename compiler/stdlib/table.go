@@ -70,12 +70,16 @@ var tableMethods = typ.NewRecord().
 		Variadic(typ.Any).
 		Returns(typ.Any).
 		Build()).
-	Field("sort", typ.NewIntersection(
-		typ.Func().Param("list", typ.Any).Effects(effect.Mutates(0, effect.Unchanged{})).Build(),
-		typ.Func().Param("list", typ.Any).
-			Param("comp", typ.Func().Param("a", typ.Any).Param("b", typ.Any).Returns(typ.Boolean).Build()).
-			Effects(effect.Mutates(0, effect.Unchanged{})).Build(),
-	)).
+	Field("sort", func() typ.Type {
+		elem := typ.NewTypeParam("T", nil)
+		return typ.NewIntersection(
+			typ.Func().TypeParam("T", nil).Param("list", typ.NewArray(elem)).
+				Effects(effect.Mutates(0, effect.Unchanged{})).Build(),
+			typ.Func().TypeParam("T", nil).Param("list", typ.NewArray(elem)).
+				Param("comp", typ.Func().Param("a", elem).Param("b", elem).Returns(typ.Boolean).Build()).
+				Effects(effect.Mutates(0, effect.Unchanged{})).Build(),
+		)
+	}()).
 	Field("unpack", typ.Func().
 		Param("list", typ.Any).
 		OptParam("i", typ.Integer).

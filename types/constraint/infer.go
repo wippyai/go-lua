@@ -506,7 +506,9 @@ func (b *Bounds) Solve() (typ.Type, error) {
 
 	lower = subtype.Widen(lower)
 
-	if !typ.IsNever(lower) && !typ.IsAny(upper) {
+	// any is consistent with every bound in either position. The call check
+	// after instantiation applies the assignability mode to the any value.
+	if !typ.IsNever(lower) && !typ.IsAny(lower) && !typ.IsAny(upper) {
 		if !containsTypeVar(lower) && !containsTypeVar(upper) {
 			if !subtype.IsSubtype(lower, upper) {
 				return nil, &BoundsError{Lower: lower, Upper: upper}
