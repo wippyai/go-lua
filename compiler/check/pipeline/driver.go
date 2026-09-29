@@ -32,6 +32,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/phase"
 	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/compiler/check/scope"
+	storepkg "github.com/wippyai/go-lua/compiler/check/store"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/diag"
@@ -48,15 +49,24 @@ type Config struct {
 	Manifests   *db.DB
 	// MaxIterations is the minimum round budget of a chunk; chunks whose
 	// structure needs more rounds get more (see roundBudget).
-	MaxIterations int
-	MaxScopeDepth int
-	EmitScopeDiag bool
-	FuncResultQ   *db.Query[api.FuncKey, *api.FuncResult]
+	MaxIterations       int
+	MaxScopeDepth       int
+	EmitScopeDiag       bool
+	FuncResultQ         *db.Query[api.FuncKey, *api.FuncResult]
+	Profile             *FixpointProfile
+	DisableLeafFastPath bool
+	DisableWorklist     bool
 }
 
 // Driver executes the fixpoint loop and function analysis.
 type Driver struct {
-	cfg Config
+	cfg     Config
+	results map[api.GraphKey]cachedAnalysis
+}
+
+type cachedAnalysis struct {
+	result *api.FuncResult
+	reads  storepkg.FactReadSet
 }
 
 // New creates a driver with the provided configuration.
@@ -100,18 +110,42 @@ func (d *Driver) Run(sess api.AnalysisSession, chunk []ast.Stmt) {
 	d.runFixpoint(sess, fn, d.cfg.Stdlib)
 }
 
+// RunPrepared is used by the opt-in fixture assertion. The caller supplies
+// the original AST, bindings, and CFG hierarchy in a fresh iteration store so
+// symbol and graph identities are exactly the same for both schedules.
+func (d *Driver) RunPrepared(sess api.AnalysisSession, fn *ast.FunctionExpr) {
+	if sess == nil || fn == nil {
+		return
+	}
+	sess.SetRootFuncNode(fn)
+	store := sess.StoreHandle()
+	if store != nil {
+		if root := sess.GetOrBuildCFG(fn); root != nil && d.cfg.Stdlib != nil {
+			store.SetGraphParentHash(root.ID(), d.cfg.Stdlib.Hash())
+		}
+		store.SeedFunctionRefinements(structuralTerminators(store, d.cfg.GlobalTypes))
+	}
+	d.runFixpoint(sess, fn, d.cfg.Stdlib)
+}
+
 func (d *Driver) runFixpoint(sess api.AnalysisSession, fn *ast.FunctionExpr, parent *scope.State) {
 	rounds := d.roundBudget(sess.StoreHandle())
+	d.results = make(map[api.GraphKey]cachedAnalysis)
 
 	converged := false
 	for iter := 0; iter < rounds; iter++ {
+		if d.cfg.Profile != nil {
+			d.cfg.Profile.rounds = iter + 1
+		}
 		d.prepareIterationState(sess)
 		d.checkFunctionFixpoint(sess, fn, parent)
+		d.cfg.Profile.roundOutput(sess.StoreHandle())
 		if d.advanceFixpoint(sess.StoreHandle()) {
 			converged = true
 			break
 		}
 	}
+	d.cfg.Profile.report(sess.Source())
 
 	if !converged {
 		store := sess.StoreHandle()
@@ -163,9 +197,30 @@ func (d *Driver) checkFunctionFixpoint(sess api.AnalysisSession, fn *ast.Functio
 	store := sess.StoreHandle()
 	parentHash := d.registerParentScope(store, graph.ID(), parent)
 
+	phaseStart := d.cfg.Profile.start()
 	d.runReturnInference(sess, graph, parent, store)
+	d.cfg.Profile.mark(graph.ID(), "returns", phaseStart)
 
-	result := d.loadFunctionResult(sess, graph.ID(), parentHash, store)
+	key := api.GraphKey{GraphID: graph.ID(), ParentHash: parentHash}
+	tracked, canTrack := store.(*storepkg.SessionStore)
+	previous, hasPrevious := d.results[key]
+	var result *api.FuncResult
+	if !d.cfg.DisableWorklist && canTrack && hasPrevious && tracked.FactsUnchanged(previous.reads) {
+		result = previous.result
+		d.cfg.Profile.skipped(graph.ID(), fn.Line())
+	} else {
+		if d.cfg.Profile != nil && store != nil {
+			d.cfg.Profile.begin(graph.ID(), fn.Line(), int(store.Revision()), parentHash, store)
+		}
+		if canTrack {
+			tracked.BeginFactReads()
+		}
+		result = d.loadFunctionResult(sess, graph.ID(), parentHash, store)
+		if canTrack {
+			reads := tracked.EndFactReads()
+			d.results[key] = cachedAnalysis{result: result, reads: reads}
+		}
+	}
 	if result == nil {
 		return
 	}
@@ -182,7 +237,9 @@ func (d *Driver) checkFunctionFixpoint(sess api.AnalysisSession, fn *ast.Functio
 		}
 	}
 	d.storeFunctionRefinement(store, result, funcSym)
+	phaseStart = d.cfg.Profile.start()
 	interprocinfer.StoreFactsFromResult(store, fn, result, parent)
+	d.cfg.Profile.mark(graph.ID(), "postflow", phaseStart)
 	d.processNestedFunctions(sess, store, graph, results, result)
 }
 
@@ -227,16 +284,29 @@ func (d *Driver) runReturnInference(
 	if store == nil || graph == nil {
 		return
 	}
+	// Graphs without local functions or type definitions cannot produce preflow
+	// summaries. Avoid preparing aliases and effect lookups for them.
+	if !d.cfg.DisableLeafFastPath && !returninfer.HasReturnInferenceWork(graph) {
+		return
+	}
 
+	var onSCC func([]cfg.SymbolID, int)
+	if d.cfg.Profile != nil {
+		onSCC = func(scc []cfg.SymbolID, iterations int) {
+			d.cfg.Profile.scc(graph.ID(), store.Revision(), scc, iterations)
+		}
+	}
 	inferencer := returninfer.New(returninfer.Config{
-		Types:         d.cfg.Types,
-		GlobalTypes:   d.cfg.GlobalTypes,
-		Manifests:     d.cfg.Manifests,
-		Stdlib:        d.cfg.Stdlib,
-		Store:         store,
-		Graphs:        sess,
-		SourceName:    sess.Source(),
-		MaxIterations: returns.MaxReturnSummaryIterations,
+		Types:               d.cfg.Types,
+		GlobalTypes:         d.cfg.GlobalTypes,
+		Manifests:           d.cfg.Manifests,
+		Stdlib:              d.cfg.Stdlib,
+		Store:               store,
+		Graphs:              sess,
+		SourceName:          sess.Source(),
+		MaxIterations:       returns.MaxReturnSummaryIterations,
+		DisableLeafFastPath: d.cfg.DisableLeafFastPath,
+		OnSCC:               onSCC,
 	})
 
 	var refinementLookup constraint.RefinementLookupBySym

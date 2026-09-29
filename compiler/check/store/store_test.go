@@ -339,6 +339,69 @@ func TestFixpointSwap_TracksChannelDiffsAndResetsNext(t *testing.T) {
 	}
 }
 
+func TestFactVersionsChangeOnlyWithStructuralValues(t *testing.T) {
+	s := NewSessionStore()
+	key := api.GraphKey{GraphID: 7, ParentHash: 11}
+	factKey := FactKey{Channel: factInterproc, Graph: key}
+	s.InterprocNext.Facts[key] = api.Facts{CapturedTypes: api.CapturedTypes{1: typ.String}}
+	s.FixpointSwap()
+	s.BeginFactReads()
+	s.recordFactRead(factKey)
+	reads := s.EndFactReads()
+	if !s.FactsUnchanged(reads) {
+		t.Fatal("fresh read should match its snapshot")
+	}
+	s.InterprocNext.Facts[key] = api.Facts{CapturedTypes: api.CapturedTypes{1: typ.String}}
+	s.FixpointSwap()
+	if !s.FactsUnchanged(reads) {
+		t.Fatal("equal fact must keep its version")
+	}
+	s.InterprocNext.Facts[key] = api.Facts{CapturedTypes: api.CapturedTypes{1: typ.Number}}
+	s.FixpointSwap()
+	if s.FactsUnchanged(reads) {
+		t.Fatal("changed fact must invalidate its readers")
+	}
+}
+
+func TestGraphFactChannelVersionsAreIndependent(t *testing.T) {
+	s := NewSessionStore()
+	key := api.GraphKey{GraphID: 7, ParentHash: 11}
+	s.InterprocNext.Facts[key] = api.Facts{CapturedTypes: api.CapturedTypes{1: typ.String}}
+	s.FixpointSwap()
+	s.BeginFactReads()
+	s.recordFactRead(FactKey{Channel: factCapturedTypes, Graph: key})
+	s.recordFactRead(FactKey{Channel: factCallables, Graph: key})
+	reads := s.EndFactReads()
+	s.InterprocNext.Facts[key] = api.Facts{CapturedTypes: api.CapturedTypes{1: typ.Number}}
+	s.FixpointSwap()
+	if s.FactsUnchanged(reads) {
+		t.Fatal("captured type reader must be invalidated")
+	}
+	delete(reads, FactKey{Channel: factCapturedTypes, Graph: key})
+	if !s.FactsUnchanged(reads) {
+		t.Fatal("callable reader must survive unrelated captured type change")
+	}
+}
+
+func TestScratchSignatureVersionTracksCurrentRoundValue(t *testing.T) {
+	s := NewSessionStore()
+	fn := &ast.FunctionExpr{}
+	s.StoreLiteralSigs(9, map[*ast.FunctionExpr]*typ.Function{fn: typ.Func().Returns(typ.String).Build()})
+	s.BeginFactReads()
+	s.ScratchLiteralSigs(9)
+	reads := s.EndFactReads()
+	s.resetScratch()
+	s.StoreLiteralSigs(9, map[*ast.FunctionExpr]*typ.Function{fn: typ.Func().Returns(typ.String).Build()})
+	if !s.FactsUnchanged(reads) {
+		t.Fatal("equal current-round signatures must preserve the read version")
+	}
+	s.resetScratch()
+	s.StoreLiteralSigs(9, map[*ast.FunctionExpr]*typ.Function{fn: typ.Func().Returns(typ.Number).Build()})
+	if s.FactsUnchanged(reads) {
+		t.Fatal("changed current-round signatures must invalidate the reader")
+	}
+}
+
 func TestClearIterationChannels_InitializesMissingState(t *testing.T) {
 	s := &SessionStore{}
 	s.ClearIterationChannels()

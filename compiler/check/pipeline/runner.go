@@ -25,6 +25,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/modules"
 	"github.com/wippyai/go-lua/compiler/check/phase"
 	"github.com/wippyai/go-lua/compiler/check/scope"
+	storepkg "github.com/wippyai/go-lua/compiler/check/store"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/io"
 	"github.com/wippyai/go-lua/types/narrow"
@@ -42,6 +43,7 @@ type RunnerConfig struct {
 	MaxScopeDepth int
 
 	ComputePasses []api.ComputePass
+	Profile       *FixpointProfile
 }
 
 // Runner executes the phase pipeline for a single function.
@@ -54,6 +56,7 @@ type Runner struct {
 	resolver      narrow.Resolver
 	maxScopeDepth int
 	computePasses []api.ComputePass
+	profile       *FixpointProfile
 }
 
 // NewRunner returns a configured pipeline runner.
@@ -66,6 +69,7 @@ func NewRunner(cfg RunnerConfig) *Runner {
 		resolver:      cfg.Resolver,
 		maxScopeDepth: cfg.MaxScopeDepth,
 		computePasses: cfg.ComputePasses,
+		profile:       cfg.Profile,
 	}
 }
 
@@ -74,6 +78,11 @@ func (r *Runner) Run(ctx *db.QueryContext, key api.FuncKey) *api.FuncResult {
 	store := api.StoreFrom(ctx)
 	if store == nil {
 		return nil
+	}
+	if concrete, ok := store.(*storepkg.SessionStore); ok && r.manifests != nil {
+		local := *r
+		local.manifests = trackedManifests{ManifestQuerier: r.manifests, store: concrete}
+		r = &local
 	}
 	withPhase := func(_ api.Phase, fn func()) { fn() }
 	if phaser, ok := store.(interface{ WithPhase(api.Phase, func()) }); ok {
@@ -114,6 +123,7 @@ func (r *Runner) Run(ctx *db.QueryContext, key api.FuncKey) *api.FuncResult {
 		RefinementStore: effectStoreFrom(store),
 	}
 	paramHintSigs := paramhints.BuildParamHintSigView(store, graph, parent, r.stdlib)
+	phaseStart := r.profile.start()
 	synthSig := r.resolveSynthesizedSignature(env, store, graph, fn, parent, paramHintSigs)
 
 	// Canonical local function types for this graph (stable snapshot).
@@ -170,14 +180,18 @@ func (r *Runner) Run(ctx *db.QueryContext, key api.FuncKey) *api.FuncResult {
 	})
 	r.appendCapturedMutatorAssignments(store, graph, parent, env, scopeOut, literalOut, callables, &extractOut)
 	r.appendFieldWriteEffects(store, graph, parent, &extractOut)
+	r.profile.mark(graph.ID(), "synth", phaseStart)
 
 	// Phase C: Solve flow system.
+	phaseStart = r.profile.start()
 	solveOut := phase.RunSolve(phase.FlowSolveInput{
 		PhaseEnv: env,
 		Extract:  extractOut,
 		Resolver: r.resolver,
 	})
+	r.profile.mark(graph.ID(), "flow", phaseStart)
 	// Phase D: Narrowing and effect inference.
+	phaseStart = r.profile.start()
 	var narrowOut phase.NarrowOutput
 	withPhase(api.PhaseNarrowing, func() {
 		narrowOut = phase.RunNarrow(phase.NarrowInput{
@@ -190,6 +204,7 @@ func (r *Runner) Run(ctx *db.QueryContext, key api.FuncKey) *api.FuncResult {
 			Callables:    callables,
 		})
 	})
+	r.profile.mark(graph.ID(), "narrow", phaseStart)
 
 	extras := r.runComputePasses(graph, scopeOut.Scopes)
 

@@ -60,28 +60,32 @@ import (
 
 // Config holds dependencies for return inference.
 type Config struct {
-	Types         core.TypeOps
-	GlobalTypes   map[string]typ.Type
-	Manifests     io.ManifestQuerier
-	Stdlib        *scope.State
-	Store         api.StoreView
-	Graphs        api.GraphProvider
-	SourceName    string
-	MaxIterations int
+	Types               core.TypeOps
+	GlobalTypes         map[string]typ.Type
+	Manifests           io.ManifestQuerier
+	Stdlib              *scope.State
+	Store               api.StoreView
+	Graphs              api.GraphProvider
+	SourceName          string
+	MaxIterations       int
+	DisableLeafFastPath bool
+	OnSCC               func([]cfg.SymbolID, int)
 }
 
 // Inferencer computes pre-flow return summaries for local functions.
 type Inferencer struct {
-	specMemo       map[specMemoKey][]typ.Type
-	parentDeclared flow.DeclaredTypes
-	types          core.TypeOps
-	globalTypes    map[string]typ.Type
-	manifests      io.ManifestQuerier
-	stdlib         *scope.State
-	store          api.StoreView
-	graphs         api.GraphProvider
-	sourceName     string
-	maxIterations  int
+	specMemo            map[specMemoKey][]typ.Type
+	parentDeclared      flow.DeclaredTypes
+	types               core.TypeOps
+	globalTypes         map[string]typ.Type
+	manifests           io.ManifestQuerier
+	stdlib              *scope.State
+	store               api.StoreView
+	graphs              api.GraphProvider
+	sourceName          string
+	maxIterations       int
+	disableLeafFastPath bool
+	onSCC               func([]cfg.SymbolID, int)
 }
 
 // New creates a configured return inferencer.
@@ -91,14 +95,16 @@ func New(cfg Config) *Inferencer {
 		maxIter = 10
 	}
 	return &Inferencer{
-		types:         cfg.Types,
-		globalTypes:   cfg.GlobalTypes,
-		manifests:     cfg.Manifests,
-		stdlib:        cfg.Stdlib,
-		store:         cfg.Store,
-		graphs:        cfg.Graphs,
-		sourceName:    cfg.SourceName,
-		maxIterations: maxIter,
+		types:               cfg.Types,
+		globalTypes:         cfg.GlobalTypes,
+		manifests:           cfg.Manifests,
+		stdlib:              cfg.Stdlib,
+		store:               cfg.Store,
+		graphs:              cfg.Graphs,
+		sourceName:          cfg.SourceName,
+		maxIterations:       maxIter,
+		disableLeafFastPath: cfg.DisableLeafFastPath,
+		onSCC:               cfg.OnSCC,
 	}
 }
 
@@ -171,6 +177,11 @@ func (i *Inferencer) ComputeForGraph(
 		return nil, nil, nil
 	}
 	i.specMemo = nil
+	// A graph without local functions or type definitions has no pre-flow
+	// return-inference work. Leaf functions visit this path on every round.
+	if !i.disableLeafFastPath && !HasReturnInferenceWork(graph) {
+		return nil, nil, nil
+	}
 
 	parentScope := api.ParentScopeForGraph(i.store, graph.ID(), parent)
 
@@ -219,6 +230,23 @@ func (i *Inferencer) ComputeForGraph(
 	summaries, cases, diags := i.computeReturnSummariesForGroup(run, parentScope.GroupHash(), localFuncs, seed)
 	funcTypes := i.buildLocalFuncTypes(localFuncs, summaries, cases, engine, parentScope)
 	return summaries, funcTypes, diags
+}
+
+// HasReturnInferenceWork includes type definitions: resolving one may create
+// recursive type identities consumed by subsequent phases even when there are
+// no local function summaries to infer.
+func HasReturnInferenceWork(graph *cfg.Graph) bool {
+	if graph == nil {
+		return false
+	}
+	hasWork := false
+	graph.EachLocalFunction(func(_ cfg.Point, _ cfg.SymbolID, _ *ast.FunctionExpr) {
+		hasWork = true
+	})
+	graph.EachTypeDef(func(_ cfg.Point, _ *cfg.TypeDefInfo) {
+		hasWork = true
+	})
+	return hasWork
 }
 
 func (i *Inferencer) buildLocalFuncTypes(
