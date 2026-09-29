@@ -53,6 +53,19 @@ type classSelfKey struct {
 	receiver bool
 }
 
+// ReuseClassIdentitiesForDebug gives a replay run the original recursion
+// identities while retaining its own per-round snapshots. It is used only by
+// the opt-in fixpoint assertion, whose two schedules share one CFG hierarchy.
+func (s *SessionStore) ReuseClassIdentitiesForDebug(original *SessionStore) {
+	if s == nil || original == nil || len(original.classSelfIdentities) == 0 {
+		return
+	}
+	s.classSelfIdentities = make(map[classSelfKey]*typ.Recursive, len(original.classSelfIdentities))
+	for key, identity := range original.classSelfIdentities {
+		s.classSelfIdentities[key] = identity
+	}
+}
+
 type functionView struct {
 	definitions map[cfg.SymbolID]api.FunctionFact
 	summaries   api.ReturnSummaries

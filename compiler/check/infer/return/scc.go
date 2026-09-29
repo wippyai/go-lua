@@ -29,8 +29,14 @@ func (i *Inferencer) iterateSCCFixpoint(
 		next, changed := i.runSCCIteration(run, scc, localFuncs, summaries)
 		applySCCIterationUpdates(summaries, scc, next)
 		if !changed {
+			if i.onSCC != nil {
+				i.onSCC(scc, iter+1)
+			}
 			return true
 		}
+	}
+	if i.onSCC != nil {
+		i.onSCC(scc, i.maxIterations)
 	}
 	return false
 }

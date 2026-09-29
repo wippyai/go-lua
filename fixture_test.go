@@ -1,8 +1,22 @@
 package lua
 
-import "testing"
+import (
+	"fmt"
+	"os"
+	"runtime"
+	"testing"
+)
 
 func TestFixtures(t *testing.T) {
+	if os.Getenv("WIPPY_FIXTURE_MEM") == "1" {
+		var before runtime.MemStats
+		runtime.ReadMemStats(&before)
+		defer func() {
+			var after runtime.MemStats
+			runtime.ReadMemStats(&after)
+			fmt.Printf("FIXTURE_TOTAL_ALLOC_BYTES=%d\n", after.TotalAlloc-before.TotalAlloc)
+		}()
+	}
 	suites, err := discoverFixtures("testdata/fixtures")
 	if err != nil {
 		t.Fatalf("discovering fixtures: %v", err)
