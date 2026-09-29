@@ -13,11 +13,23 @@ import (
 
 // InferTypeArgsWithExpectedAndMode performs bidirectional inference with optional
 // forced receiver consumption for method calls.
+//
+// The expected return type is context: it settles type arguments together with
+// the arguments, and gives way when it contradicts them, so the call has the
+// type its arguments determine and the use site reports the mismatch.
 func InferTypeArgsWithExpectedAndMode(fn *typ.Function, args []typ.Type, isMethod bool, receiver typ.Type, expectedReturn typ.Type, forceMethodReceiver bool) ([]typ.Type, error) {
 	if fn == nil || len(fn.TypeParams) == 0 {
 		return nil, nil
 	}
+	if expectedReturn != nil {
+		if result, err := inferTypeArgs(fn, args, isMethod, receiver, expectedReturn, forceMethodReceiver); err == nil {
+			return result, nil
+		}
+	}
+	return inferTypeArgs(fn, args, isMethod, receiver, nil, forceMethodReceiver)
+}
 
+func inferTypeArgs(fn *typ.Function, args []typ.Type, isMethod bool, receiver typ.Type, expectedReturn typ.Type, forceMethodReceiver bool) ([]typ.Type, error) {
 	typeVars := make([]typ.Type, len(fn.TypeParams))
 	for i := range fn.TypeParams {
 		typeVars[i] = typ.NewTypeVar(i + 1)
@@ -105,9 +117,10 @@ func InferTypeArgsWithExpectedAndMode(fn *typ.Function, args []typ.Type, isMetho
 		}
 	}
 
-	// Validate that inferred type arguments satisfy their constraints
+	// Validate that inferred type arguments satisfy their constraints. A type
+	// argument with pending evidence is validated once its evidence is final.
 	for i, tp := range fn.TypeParams {
-		if tp.Constraint != nil && !typ.IsAbsentOrUnknown(result[i]) && !typ.IsAny(result[i]) {
+		if tp.Constraint != nil && typ.IsFinal(result[i]) && !typ.IsUnknown(result[i]) && !typ.IsAny(result[i]) {
 			if !subtype.IsSubtype(result[i], tp.Constraint) {
 				return nil, fmt.Errorf("infer: type argument %s does not satisfy constraint %s", result[i], tp.Constraint)
 			}

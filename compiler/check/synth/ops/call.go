@@ -135,7 +135,8 @@ type InferResult struct {
 	// TypeArgs contains the type arguments (explicit or inferred).
 	TypeArgs []typ.Type
 
-	// Instantiated is the function after generic instantiation (nil if not generic).
+	// Instantiated is the function to call: the callee itself when it is not
+	// generic, its instance when type arguments are known, nil when inference fails.
 	Instantiated *typ.Function
 
 	// Function is the base function (before or after instantiation).
@@ -653,10 +654,9 @@ func FinishCall(ctx *db.QueryContext, def CallDef, infer InferResult) CallResult
 		return callIntersection(ctx, def.Query, infer.Callee.(*typ.Intersection), def.Args, def.OpenTail, def.Written, infer.Receiver, infer.IsMethod, infer.ForceMethodReceiver, infer.Errors)
 
 	case InferKindFunction:
+		// Without an instance, type argument inference failed and reported
+		// why; the generic signature's own parameters never reach the caller.
 		fn := infer.Instantiated
-		if fn == nil {
-			fn = infer.Function
-		}
 		if fn == nil {
 			return singleValueCallResult(typ.Unknown, infer.Errors)
 		}
