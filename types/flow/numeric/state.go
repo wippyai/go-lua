@@ -87,12 +87,15 @@ var (
 // NewState creates an empty (top) numeric state.
 func NewState() *State {
 	return &State{
-		bounds:      make(map[constraint.PathKey]Interval),
-		modular:     make(map[constraint.PathKey]ModResidue),
-		relations:   make(map[relationKey]int64),
-		lenRefs:     make(map[constraint.PathKey]lenRefBound),
-		lengthLower: make(map[constraint.PathKey]int64),
-		lengthExact: make(map[constraint.PathKey]int64),
+		// These maps are exposed by the read-only Bounds and Modular views.
+		bounds:  make(map[constraint.PathKey]Interval),
+		modular: make(map[constraint.PathKey]ModResidue),
+	}
+}
+
+func ensureFactMap[K comparable, V any](m *map[K]V) {
+	if *m == nil {
+		*m = make(map[K]V)
 	}
 }
 
@@ -223,6 +226,7 @@ func Join(a, b *State) *State {
 	for _, k := range sortedRelationKeys(a.relations) {
 		av := a.relations[k]
 		if bv, ok := b.relations[k]; ok {
+			ensureFactMap(&result.relations)
 			result.relations[k] = maxInt64(av, bv)
 		}
 	}
@@ -231,16 +235,19 @@ func Join(a, b *State) *State {
 	for _, v := range constraint.SortedPathKeys(a.lenRefs) {
 		ref := a.lenRefs[v]
 		if bref, ok := b.lenRefs[v]; ok && ref == bref {
+			ensureFactMap(&result.lenRefs)
 			result.lenRefs[v] = ref
 		}
 	}
 	for k, lower := range a.lengthLower {
 		if other, ok := b.lengthLower[k]; ok {
+			ensureFactMap(&result.lengthLower)
 			result.lengthLower[k] = min(lower, other)
 		}
 	}
 	for k, exact := range a.lengthExact {
 		if other, ok := b.lengthExact[k]; ok && other == exact {
+			ensureFactMap(&result.lengthExact)
 			result.lengthExact[k] = exact
 		}
 	}
@@ -367,6 +374,7 @@ func (s *State) ApplyConstraintWithResolver(c constraint.NumericConstraint, reso
 		LenGeConst: func(nc constraint.LenGeConst) struct{} {
 			key := resolve(nc.Array)
 			if key != "" && nc.C > s.lengthLower[key] {
+				ensureFactMap(&s.lengthLower)
 				s.lengthLower[key] = nc.C
 			}
 			return struct{}{}
@@ -374,6 +382,7 @@ func (s *State) ApplyConstraintWithResolver(c constraint.NumericConstraint, reso
 		LenEqConst: func(nc constraint.LenEqConst) struct{} {
 			key := resolve(nc.Array)
 			if key != "" {
+				ensureFactMap(&s.lengthExact)
 				s.lengthExact[key] = nc.C
 			}
 			return struct{}{}
@@ -391,6 +400,7 @@ func (s *State) applyLeWithConst(x, y constraint.PathKey, c int64) {
 	if old, ok := s.relations[key]; ok {
 		s.relations[key] = minInt64(old, c)
 	} else {
+		ensureFactMap(&s.relations)
 		s.relations[key] = c
 	}
 }
@@ -405,6 +415,7 @@ func (s *State) applyLt(x, y constraint.PathKey) {
 	if old, ok := s.relations[key]; ok {
 		s.relations[key] = minInt64(old, -1)
 	} else {
+		ensureFactMap(&s.relations)
 		s.relations[key] = -1
 	}
 }
@@ -423,6 +434,7 @@ func (s *State) applyGe(x, y constraint.PathKey) {
 	if old, ok := s.relations[key]; ok {
 		s.relations[key] = minInt64(old, 0)
 	} else {
+		ensureFactMap(&s.relations)
 		s.relations[key] = 0
 	}
 }
@@ -437,6 +449,7 @@ func (s *State) applyGt(x, y constraint.PathKey) {
 	if old, ok := s.relations[key]; ok {
 		s.relations[key] = minInt64(old, -1)
 	} else {
+		ensureFactMap(&s.relations)
 		s.relations[key] = -1
 	}
 }
@@ -516,6 +529,7 @@ func (s *State) ApplyLeLenOfWithOffset(v, arr constraint.PathKey, offset int64) 
 }
 
 func (s *State) applyLeLenOf(v, arr constraint.PathKey, offset int64) {
+	ensureFactMap(&s.lenRefs)
 	s.lenRefs[v] = lenRefBound{Array: arr, Offset: offset}
 }
 
@@ -895,6 +909,7 @@ func (s *State) Rekey(remap map[constraint.PathKey]constraint.PathKey) *State {
 
 	// Remap relations (both X and Y)
 	for _, rel := range sortedRelationKeys(s.relations) {
+		ensureFactMap(&result.relations)
 		c := s.relations[rel]
 		newX := rel.X
 		newY := rel.Y
@@ -909,6 +924,7 @@ func (s *State) Rekey(remap map[constraint.PathKey]constraint.PathKey) *State {
 
 	// Remap length references (both variable and array keys)
 	for _, k := range constraint.SortedPathKeys(s.lenRefs) {
+		ensureFactMap(&result.lenRefs)
 		ref := s.lenRefs[k]
 		newK := k
 		newArr := ref.Array
@@ -922,12 +938,14 @@ func (s *State) Rekey(remap map[constraint.PathKey]constraint.PathKey) *State {
 		result.lenRefs[newK] = ref
 	}
 	for k, lower := range s.lengthLower {
+		ensureFactMap(&result.lengthLower)
 		if mapped, ok := remap[k]; ok {
 			k = mapped
 		}
 		result.lengthLower[k] = lower
 	}
 	for k, exact := range s.lengthExact {
+		ensureFactMap(&result.lengthExact)
 		if mapped, ok := remap[k]; ok {
 			k = mapped
 		}
