@@ -9,9 +9,13 @@ import (
 
 // Arguments is the runtime value sequence of a Lua call. OpenTail means the
 // last expression can yield further values whose count and types are unknown.
+// Written counts the positions produced by the written expressions: values past
+// it come from expanding the final expression, and Lua drops those a callee
+// does not declare.
 type Arguments struct {
 	Types    []typ.Type
 	OpenTail bool
+	Written  int
 }
 
 // ArgumentTypes applies Lua's expression-list adjustment at a call site. Only
@@ -30,6 +34,7 @@ func ArgumentTypes(args []ast.Expr, single func(ast.Expr) typ.Type, multi func(a
 	case *ast.FuncCallExpr, *ast.Comma3Expr:
 		values := multi(last)
 		result.Types = append(result.Types, values...)
+		result.Written = len(args) - 1 + min(1, len(values))
 		adjusted := false
 		switch ex := last.(type) {
 		case *ast.FuncCallExpr:
@@ -42,6 +47,7 @@ func ArgumentTypes(args []ast.Expr, single func(ast.Expr) typ.Type, multi func(a
 		result.OpenTail = !adjusted && (vararg || isCall && unknownCallArity(call, single))
 	default:
 		result.Types = append(result.Types, single(last))
+		result.Written = len(result.Types)
 	}
 	return result
 }

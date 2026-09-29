@@ -127,6 +127,7 @@ func checkSingleCall(
 	def := ops.CallDef{
 		Args:     args.Types,
 		OpenTail: args.OpenTail,
+		Written:  args.Written,
 		Query:    query,
 	}
 

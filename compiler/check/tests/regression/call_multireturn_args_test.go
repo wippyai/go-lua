@@ -179,13 +179,22 @@ local function forward(...: number) need(...) end
 			want: "argument 1:",
 		},
 		{
-			name: "expanded extra follows explicit extra arity",
+			name: "expanded values past declared parameters are dropped",
 			code: `
 local function take(a: string, b: number) end
 local function three(): (string, number, boolean) return "x", 1, true end
 take(three())
+local upper = string.upper(("a b"):gsub(" ", "_"))
 `,
-			want: "too many arguments",
+		},
+		{
+			name: "expanded values landing on declared parameters are checked",
+			code: `
+local function take(a: string, b: string) end
+local function pair(): (string, number) return "x", 1 end
+take(pair())
+`,
+			want: "argument 2:",
 		},
 		{
 			name: "explicit extra has same arity error",
