@@ -132,10 +132,6 @@ func exportFieldNameFromEffectSymbol(rootName, name string) (string, bool) {
 	return rest, true
 }
 
-func appendRecordField(builder *typ.RecordBuilder, f typ.Field) *typ.RecordBuilder {
-	return builder.AddField(f)
-}
-
 func applyFunctionRefinement(fn *typ.Function, eff *constraint.FunctionRefinement) *typ.Function {
 	if fn == nil || eff == nil {
 		return fn

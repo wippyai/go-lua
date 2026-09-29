@@ -869,7 +869,7 @@ func DecodeManifest(data []byte) (*Manifest, error) {
 	if version != manifestVersion && version != 13 {
 		return nil, ErrVersionMismatch
 	}
-	r.typeReader.version = version
+	r.version = version
 
 	m := &Manifest{
 		Version:   r.readUint64(),
