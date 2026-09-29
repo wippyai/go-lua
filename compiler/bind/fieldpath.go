@@ -58,6 +58,12 @@ func NormalizeFieldPathKey(path string) (string, bool) {
 	// Segment-suffix form (.field, [1], ["key"], legacy [key]).
 	// Parse and re-encode to canonical representation.
 	if strings.HasPrefix(path, ".") || strings.HasPrefix(path, "[") {
+		if strings.HasPrefix(path, ".") && !strings.Contains(path, "[") {
+			if validDottedFields(path[1:]) {
+				return path, true
+			}
+			return "", false
+		}
 		segs := pathkey.ParseSuffix(path)
 		if len(segs) == 0 {
 			return "", false
@@ -65,18 +71,25 @@ func NormalizeFieldPathKey(path string) (string, bool) {
 		return constraint.FormatSegments(segs), true
 	}
 
-	parts := strings.Split(path, ".")
-	segs := make([]constraint.Segment, 0, len(parts))
-
-	for _, part := range parts {
-		if part == "" {
-			return "", false
-		}
-
-		segs = append(segs, constraint.Segment{Kind: constraint.SegmentField, Name: part})
+	if !validDottedFields(path) {
+		return "", false
 	}
+	return "." + path, true
+}
 
-	return FieldPathKeyFromSegments(segs)
+func validDottedFields(path string) bool {
+	remaining := path
+	for {
+		part, rest, hasMore := strings.Cut(remaining, ".")
+		if part == "" || !pathkey.IsIdentName(part) {
+			return false
+		}
+		if !hasMore {
+			break
+		}
+		remaining = rest
+	}
+	return true
 }
 
 func displayFieldPathKey(path string) string {

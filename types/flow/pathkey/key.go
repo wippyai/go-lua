@@ -349,7 +349,7 @@ func collectEquivalentPathsFromPairs(pairs []eqPair, target constraint.Path) *pa
 }
 
 func newPathSet() *pathSet {
-	return &pathSet{paths: make(map[uint64][]constraint.Path)}
+	return &pathSet{}
 }
 
 func (s *pathSet) add(path constraint.Path) bool {
@@ -357,6 +357,9 @@ func (s *pathSet) add(path constraint.Path) bool {
 		return false
 	}
 	hash := path.Hash()
+	if s.paths == nil {
+		s.paths = make(map[uint64][]constraint.Path)
+	}
 	bucket := s.paths[hash]
 	for _, existing := range bucket {
 		if existing.Equal(path) {
