@@ -70,12 +70,15 @@ var tableMethods = typ.NewRecord().
 		Variadic(typ.Any).
 		Returns(typ.Any).
 		Build()).
+	// sort orders the values at integer keys 1..#list, so it takes any
+	// integer-keyed table; an array is one.
 	Field("sort", func() typ.Type {
 		elem := typ.NewTypeParam("T", nil)
+		list := typ.NewMap(typ.Integer, elem)
 		return typ.NewIntersection(
-			typ.Func().TypeParam("T", nil).Param("list", typ.NewArray(elem)).
+			typ.Func().TypeParam("T", nil).Param("list", list).
 				Effects(effect.Mutates(0, effect.Unchanged{})).Build(),
-			typ.Func().TypeParam("T", nil).Param("list", typ.NewArray(elem)).
+			typ.Func().TypeParam("T", nil).Param("list", list).
 				Param("comp", typ.Func().Param("a", elem).Param("b", elem).Returns(typ.Boolean).Build()).
 				Effects(effect.Mutates(0, effect.Unchanged{})).Build(),
 		)

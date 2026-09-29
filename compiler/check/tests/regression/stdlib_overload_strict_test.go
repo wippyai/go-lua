@@ -165,3 +165,58 @@ end
 		t.Run(tt.name, func(t *testing.T) { checkBothModes(t, tt.code, tt.want) })
 	}
 }
+
+// table.sort orders the values at integer keys 1..#list: it takes every
+// integer-keyed table, arrays included, and still rejects a possibly nil list.
+func TestSortIntegerKeyedTable(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		code string
+		want string
+	}{
+		{"integer-keyed map with comparator", `
+local function f(m: {[integer]: {[string]: any}})
+	table.sort(m, function(a, b) return a.x < b.x end)
+end
+`, ""},
+		{"integer-keyed map without comparator", `
+local function f(m: {[integer]: {[string]: any}})
+	table.sort(m)
+end
+`, ""},
+		{"integer-keyed map with typed comparator", `
+type Entry = { name: string }
+local function f(m: {[integer]: Entry})
+	table.sort(m, function(a: Entry, b: Entry): boolean return a.name < b.name end)
+end
+`, ""},
+		{"array", `
+local function f(list: {string})
+	table.sort(list, function(a: string, b: string): boolean return a < b end)
+	table.sort(list)
+end
+`, ""},
+		{"possibly nil integer-keyed map", `
+local function f(m: {[integer]: {[string]: any}}?)
+	table.sort(m)
+end
+`, "argument 1:"},
+		{"possibly nil array", `
+local function f(list: {string}?)
+	table.sort(list)
+end
+`, "argument 1:"},
+		{"string-keyed map", `
+local function f(m: {[string]: number})
+	table.sort(m)
+end
+`, "argument 1:"},
+		{"integer-keyed map with mismatched comparator", `
+local function f(m: {[integer]: number})
+	table.sort(m, function(a: string, b: string): boolean return a < b end)
+end
+`, "unsatisfiable bounds: number is not subtype of never"},
+	} {
+		t.Run(tt.name, func(t *testing.T) { checkBothModes(t, tt.code, tt.want) })
+	}
+}

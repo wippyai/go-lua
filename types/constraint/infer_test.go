@@ -165,3 +165,47 @@ func TestInferSetConcreteBoundsConflict(t *testing.T) {
 		t.Fatal("expected number and string bounds to conflict")
 	}
 }
+
+// An array and a tuple are maps from integer keys to their elements, so they
+// bind an integer-keyed map pattern's value.
+func TestInferSetMapPatternFromArrayAndTuple(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		concrete typ.Type
+		want     typ.Type
+	}{
+		{"array", typ.NewArray(typ.String), typ.String},
+		{"tuple", typ.NewTuple(typ.String, typ.String), typ.String},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cs := constraint.NewInferSet()
+			tv := typ.NewTypeVar(1)
+			constraint.MatchContra(typ.NewMap(typ.Integer, tv), tt.concrete, cs)
+
+			solution, err := cs.Solve()
+			if err != nil {
+				t.Fatalf("Solve failed: %v", err)
+			}
+			if !typ.TypeEquals(solution[1], tt.want) {
+				t.Errorf("expected %v, got %v", tt.want, solution[1])
+			}
+		})
+	}
+}
+
+func TestInferSetMapPatternKeyFromArray(t *testing.T) {
+	cs := constraint.NewInferSet()
+	key, value := typ.NewTypeVar(1), typ.NewTypeVar(2)
+	constraint.MatchContra(typ.NewMap(key, value), typ.NewArray(typ.Boolean), cs)
+
+	solution, err := cs.Solve()
+	if err != nil {
+		t.Fatalf("Solve failed: %v", err)
+	}
+	if !typ.TypeEquals(solution[1], typ.Integer) {
+		t.Errorf("key: expected integer, got %v", solution[1])
+	}
+	if !typ.TypeEquals(solution[2], typ.Boolean) {
+		t.Errorf("value: expected boolean, got %v", solution[2])
+	}
+}

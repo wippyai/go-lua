@@ -895,6 +895,22 @@ func matchDepth(pattern, concrete typ.Type, cs *InferSet, variance subtype.Varia
 
 				matchDepth(p.Key, c.Key, cs, keyVar, depth+1)
 				matchDepth(p.Value, c.Value, cs, valVar, depth+1)
+			} else if c, ok := concrete.(*typ.Array); ok {
+				// An array is a map from integer keys to its element.
+				keyVar := subtype.CombineVariance(variance, subtype.Invariant)
+				valVar := subtype.CombineVariance(variance, subtype.Invariant)
+
+				matchDepth(p.Key, typ.Integer, cs, keyVar, depth+1)
+				matchDepth(p.Value, c.Element, cs, valVar, depth+1)
+			} else if c, ok := concrete.(*typ.Tuple); ok {
+				// A tuple is a map from integer keys to its elements.
+				keyVar := subtype.CombineVariance(variance, subtype.Invariant)
+				valVar := subtype.CombineVariance(variance, subtype.Invariant)
+
+				matchDepth(p.Key, typ.Integer, cs, keyVar, depth+1)
+				for _, elem := range c.Elements {
+					matchDepth(p.Value, elem, cs, valVar, depth+1)
+				}
 			} else if c, ok := concrete.(*typ.Record); ok {
 				keyVar := subtype.CombineVariance(variance, subtype.Invariant)
 				valVar := subtype.CombineVariance(variance, subtype.Invariant)
