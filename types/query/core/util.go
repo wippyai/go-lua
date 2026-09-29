@@ -35,6 +35,12 @@ func TypeNames(types []typ.Type) []string {
 	return names
 }
 
+// fieldProjection carries the field names and their types through one type walk.
+type fieldProjection struct {
+	names []string
+	types map[string]typ.Type
+}
+
 // AllFields returns all field names from a type that has fields.
 //
 // For records, returns the field names directly.
@@ -45,118 +51,7 @@ func TypeNames(types []typ.Type) []string {
 //
 // Returns nil if the type has no fields.
 func AllFields(t typ.Type) []string {
-	return allFieldsDepth(t, 0)
-}
-
-// allFieldsDepth recursively collects field names with depth limiting.
-func allFieldsDepth(t typ.Type, depth int) []string {
-	if stopDepth(t, depth) {
-		return nil
-	}
-
-	return typ.Visit(t, typ.Visitor[[]string]{
-		Record: func(r *typ.Record) []string {
-			if len(r.Fields) == 0 {
-				return nil
-			}
-
-			names := make([]string, len(r.Fields))
-			for i, f := range r.Fields {
-				names[i] = f.Name
-			}
-
-			return names
-		},
-		Interface: func(i *typ.Interface) []string {
-			if len(i.Methods) == 0 {
-				return nil
-			}
-
-			names := make([]string, 0, len(i.Methods))
-			for _, m := range i.Methods {
-				names = append(names, m.Name)
-			}
-
-			return names
-		},
-		Recursive: func(rec *typ.Recursive) []string {
-			if rec.Body == nil || rec.Body == rec {
-				return nil
-			}
-			return allFieldsDepth(rec.Body, depth+1)
-		},
-		Alias: func(a *typ.Alias) []string {
-			return allFieldsDepth(a.Target, depth+1)
-		},
-		Optional: func(o *typ.Optional) []string {
-			return allFieldsDepth(o.Inner, depth+1)
-		},
-		Instantiated: func(inst *typ.Instantiated) []string {
-			resolved, err := ResolveInstantiated(inst)
-			if err != nil {
-				return nil
-			}
-			return allFieldsDepth(resolved, depth+1)
-		},
-		Union: func(u *typ.Union) []string {
-			if len(u.Members) == 0 {
-				return nil
-			}
-			var common map[string]bool
-			for _, member := range u.Members {
-				names := allFieldsDepth(member, depth+1)
-				if len(names) == 0 {
-					return nil
-				}
-				if common == nil {
-					common = make(map[string]bool, len(names))
-					for _, n := range names {
-						common[n] = true
-					}
-					continue
-				}
-				next := make(map[string]bool, len(names))
-				for _, n := range names {
-					if common[n] {
-						next[n] = true
-					}
-				}
-				common = next
-				if len(common) == 0 {
-					return nil
-				}
-			}
-			result := make([]string, 0, len(common))
-			for n := range common {
-				result = append(result, n)
-			}
-			sort.Strings(result)
-			return result
-		},
-		Intersection: func(in *typ.Intersection) []string {
-			if len(in.Members) == 0 {
-				return nil
-			}
-			seen := make(map[string]bool)
-			for _, member := range in.Members {
-				for _, n := range allFieldsDepth(member, depth+1) {
-					seen[n] = true
-				}
-			}
-			if len(seen) == 0 {
-				return nil
-			}
-			result := make([]string, 0, len(seen))
-			for n := range seen {
-				result = append(result, n)
-			}
-			sort.Strings(result)
-			return result
-		},
-		Default: func(t typ.Type) []string {
-			return nil
-		},
-	})
+	return fieldProjectionDepth(t, 0).names
 }
 
 // AllFieldTypes returns field names mapped to their types.
@@ -167,7 +62,7 @@ func allFieldsDepth(t typ.Type, depth int) []string {
 //
 // Returns nil if the type has no fields.
 func AllFieldTypes(t typ.Type) map[string]typ.Type {
-	return allFieldTypesDepth(t, 0)
+	return fieldProjectionDepth(t, 0).types
 }
 
 // AllFieldTypesResolved returns field names mapped to their types with Self resolved.
@@ -189,119 +84,169 @@ func AllFieldTypesResolved(t typ.Type) map[string]typ.Type {
 	return fields
 }
 
-// allFieldTypesDepth recursively collects field types with depth limiting.
-func allFieldTypesDepth(t typ.Type, depth int) map[string]typ.Type {
+// fieldProjectionDepth collects field names and types with depth limiting.
+func fieldProjectionDepth(t typ.Type, depth int) fieldProjection {
 	if stopDepth(t, depth) {
-		return nil
+		return fieldProjection{}
 	}
 
-	return typ.Visit(t, typ.Visitor[map[string]typ.Type]{
-		Record: func(r *typ.Record) map[string]typ.Type {
+	return typ.Visit(t, typ.Visitor[fieldProjection]{
+		Record: func(r *typ.Record) fieldProjection {
 			if len(r.Fields) == 0 {
-				return nil
+				return fieldProjection{}
 			}
-			fields := make(map[string]typ.Type, len(r.Fields))
-			for _, f := range r.Fields {
-				fields[f.Name] = f.Type
+			projection := fieldProjection{
+				names: make([]string, len(r.Fields)),
+				types: make(map[string]typ.Type, len(r.Fields)),
 			}
-			return fields
+			for i, f := range r.Fields {
+				projection.names[i] = f.Name
+				projection.types[f.Name] = f.Type
+			}
+			return projection
 		},
-		Interface: func(i *typ.Interface) map[string]typ.Type {
+		Interface: func(i *typ.Interface) fieldProjection {
 			if len(i.Methods) == 0 {
-				return nil
+				return fieldProjection{}
 			}
-			fields := make(map[string]typ.Type, len(i.Methods))
-			for _, m := range i.Methods {
-				fields[m.Name] = m.Type
+			projection := fieldProjection{
+				names: make([]string, len(i.Methods)),
+				types: make(map[string]typ.Type, len(i.Methods)),
 			}
-			return fields
+			for i, m := range i.Methods {
+				projection.names[i] = m.Name
+				projection.types[m.Name] = m.Type
+			}
+			return projection
 		},
-		Recursive: func(rec *typ.Recursive) map[string]typ.Type {
+		Recursive: func(rec *typ.Recursive) fieldProjection {
 			if rec.Body == nil || rec.Body == rec {
-				return nil
+				return fieldProjection{}
 			}
-			return allFieldTypesDepth(rec.Body, depth+1)
+			return fieldProjectionDepth(rec.Body, depth+1)
 		},
-		Alias: func(a *typ.Alias) map[string]typ.Type {
-			return allFieldTypesDepth(a.Target, depth+1)
+		Alias: func(a *typ.Alias) fieldProjection {
+			return fieldProjectionDepth(a.Target, depth+1)
 		},
-		Optional: func(o *typ.Optional) map[string]typ.Type {
-			return allFieldTypesDepth(o.Inner, depth+1)
+		Optional: func(o *typ.Optional) fieldProjection {
+			return fieldProjectionDepth(o.Inner, depth+1)
 		},
-		Instantiated: func(inst *typ.Instantiated) map[string]typ.Type {
+		Instantiated: func(inst *typ.Instantiated) fieldProjection {
 			resolved, err := ResolveInstantiated(inst)
 			if err != nil {
-				return nil
+				return fieldProjection{}
 			}
-			return allFieldTypesDepth(resolved, depth+1)
+			return fieldProjectionDepth(resolved, depth+1)
 		},
-		Union: func(u *typ.Union) map[string]typ.Type {
-			if len(u.Members) == 0 {
-				return nil
-			}
-			var out map[string]typ.Type
+		Union: func(u *typ.Union) fieldProjection {
+			var commonNames map[string]bool
+			var fieldTypes map[string]typ.Type
+			namesActive, typesActive := true, true
+			firstNames, firstTypes := true, true
+
 			for _, member := range u.Members {
-				fields := allFieldTypesDepth(member, depth+1)
-				if len(fields) == 0 {
-					return nil
-				}
-				if out == nil {
-					out = make(map[string]typ.Type, len(fields))
-					for name, ft := range fields {
-						if ft != nil {
-							out[name] = ft
+				projection := fieldProjectionDepth(member, depth+1)
+				if namesActive {
+					if len(projection.names) == 0 {
+						namesActive = false
+						commonNames = nil
+					} else if firstNames {
+						commonNames = make(map[string]bool, len(projection.names))
+						for _, name := range projection.names {
+							commonNames[name] = true
+						}
+						firstNames = false
+					} else {
+						next := make(map[string]bool, len(projection.names))
+						for _, name := range projection.names {
+							if commonNames[name] {
+								next[name] = true
+							}
+						}
+						commonNames = next
+						if len(commonNames) == 0 {
+							namesActive = false
 						}
 					}
-					continue
 				}
-				for name, existing := range out {
-					ft, ok := fields[name]
-					if !ok || ft == nil {
-						delete(out, name)
-						continue
-					}
-					if existing == nil {
-						out[name] = ft
-						continue
-					}
-					out[name] = typ.NewUnion(existing, ft)
-				}
-				if len(out) == 0 {
-					return nil
-				}
-			}
-			return out
-		},
-		Intersection: func(in *typ.Intersection) map[string]typ.Type {
-			if len(in.Members) == 0 {
-				return nil
-			}
-			out := make(map[string]typ.Type)
-			for _, member := range in.Members {
-				fields := allFieldTypesDepth(member, depth+1)
-				if len(fields) == 0 {
-					continue
-				}
-				for name, ft := range fields {
-					if ft == nil {
-						continue
-					}
-					if existing, ok := out[name]; ok && existing != nil {
-						out[name] = typ.NewIntersection(existing, ft)
+
+				if typesActive {
+					if len(projection.types) == 0 {
+						typesActive = false
+						fieldTypes = nil
+					} else if firstTypes {
+						fieldTypes = make(map[string]typ.Type, len(projection.types))
+						for name, fieldType := range projection.types {
+							if fieldType != nil {
+								fieldTypes[name] = fieldType
+							}
+						}
+						firstTypes = false
 					} else {
-						out[name] = ft
+						for name, existing := range fieldTypes {
+							fieldType, ok := projection.types[name]
+							if !ok || fieldType == nil {
+								delete(fieldTypes, name)
+							} else if existing == nil {
+								fieldTypes[name] = fieldType
+							} else {
+								fieldTypes[name] = typ.NewUnion(existing, fieldType)
+							}
+						}
+						if len(fieldTypes) == 0 {
+							typesActive = false
+							fieldTypes = nil
+						}
 					}
 				}
 			}
-			if len(out) == 0 {
-				return nil
+
+			var names []string
+			if namesActive && !firstNames {
+				names = sortedFieldNames(commonNames)
 			}
-			return out
+			return fieldProjection{names: names, types: fieldTypes}
 		},
-		Default: func(t typ.Type) map[string]typ.Type {
-			return nil
+		Intersection: func(in *typ.Intersection) fieldProjection {
+			seenNames := make(map[string]bool)
+			fieldTypes := make(map[string]typ.Type)
+			for _, member := range in.Members {
+				projection := fieldProjectionDepth(member, depth+1)
+				for _, name := range projection.names {
+					seenNames[name] = true
+				}
+				for name, fieldType := range projection.types {
+					if fieldType == nil {
+						continue
+					}
+					if existing, ok := fieldTypes[name]; ok && existing != nil {
+						fieldTypes[name] = typ.NewIntersection(existing, fieldType)
+					} else {
+						fieldTypes[name] = fieldType
+					}
+				}
+			}
+			if len(fieldTypes) == 0 {
+				fieldTypes = nil
+			}
+			return fieldProjection{names: sortedFieldNames(seenNames), types: fieldTypes}
+		},
+		Default: func(t typ.Type) fieldProjection {
+			return fieldProjection{}
 		},
 	})
+}
+
+func sortedFieldNames(names map[string]bool) []string {
+	if len(names) == 0 {
+		return nil
+	}
+	result := make([]string, 0, len(names))
+	for name := range names {
+		result = append(result, name)
+	}
+	sort.Strings(result)
+	return result
 }
 
 // AllMethods returns all method names from a type with methods.
@@ -635,6 +580,12 @@ func keyTypeDepth(t typ.Type, depth int) typ.Type {
 	}
 
 	return typ.Visit(t, typ.Visitor[typ.Type]{
+		Interface: func(i *typ.Interface) typ.Type {
+			if unwrap.IsBuiltinTableTop(i) {
+				return typ.Any
+			}
+			return nil
+		},
 		Map: func(m *typ.Map) typ.Type {
 			return m.Key
 		},
@@ -709,6 +660,12 @@ func valueTypeDepth(t typ.Type, depth int) typ.Type {
 	}
 
 	return typ.Visit(t, typ.Visitor[typ.Type]{
+		Interface: func(i *typ.Interface) typ.Type {
+			if unwrap.IsBuiltinTableTop(i) {
+				return typ.Any
+			}
+			return nil
+		},
 		Map: func(m *typ.Map) typ.Type {
 			return m.Value
 		},

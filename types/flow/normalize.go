@@ -148,6 +148,23 @@ func (in *Inputs) Normalize() {
 		})
 	}
 
+	if len(in.FieldWriteEffects) > 1 {
+		sort.Slice(in.FieldWriteEffects, func(i, j int) bool {
+			a := in.FieldWriteEffects[i]
+			b := in.FieldWriteEffects[j]
+			if a.Point != b.Point {
+				return a.Point < b.Point
+			}
+			if pathLess(a.Target, b.Target) {
+				return true
+			}
+			if pathLess(b.Target, a.Target) {
+				return false
+			}
+			return a.Field < b.Field
+		})
+	}
+
 	if len(in.WideningEvents) > 1 {
 		sort.Slice(in.WideningEvents, func(i, j int) bool {
 			a := in.WideningEvents[i]

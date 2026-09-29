@@ -1,0 +1,4 @@
+{
+  "description": "a select case built on a channel of union type yields each member channel's payload; excluding the timer leaves those payloads",
+  "packages": ["channel", "time"]
+}

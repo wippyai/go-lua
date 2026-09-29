@@ -171,6 +171,28 @@ func TestPathAffectedByAssignment(t *testing.T) {
 			},
 			want: false,
 		},
+		{
+			name: "string index write affects dot access",
+			path: constraint.Path{Symbol: 100, Segments: []constraint.Segment{
+				{Kind: constraint.SegmentField, Name: "value"},
+			}},
+			assignSym: 100,
+			assignSegs: []constraint.Segment{
+				{Kind: constraint.SegmentIndexString, Name: "value"},
+			},
+			want: true,
+		},
+		{
+			name: "dot write affects string index access",
+			path: constraint.Path{Symbol: 100, Segments: []constraint.Segment{
+				{Kind: constraint.SegmentIndexString, Name: "value"},
+			}},
+			assignSym: 100,
+			assignSegs: []constraint.Segment{
+				{Kind: constraint.SegmentField, Name: "value"},
+			},
+			want: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -180,5 +202,170 @@ func TestPathAffectedByAssignment(t *testing.T) {
 				t.Errorf("PathAffectedByAssignment() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestKillRedefinedConditions_MutableAliasWrite(t *testing.T) {
+	x := constraint.Path{Root: "x", Symbol: 1, Version: 1}
+	y := constraint.Path{Root: "y", Symbol: 2, Version: 1}
+	z := constraint.Path{Root: "z", Symbol: 3, Version: 1}
+	u := constraint.Path{Root: "u", Symbol: 4, Version: 1}
+	v := constraint.Path{Root: "v", Symbol: 5, Version: 1}
+	cond := constraint.FromConstraints(
+		constraint.NewEqPath(x, y), constraint.NewEqPath(y, z),
+		constraint.NewEqPath(u, v),
+		constraint.NotNil{Path: x.Field("other")},
+		constraint.HasField{Path: x, Field: "other"},
+		constraint.KeyOf{Table: x, Key: u},
+		constraint.NotNil{Path: x},
+	)
+	write := Assignment{Point: 10, TargetSym: z.Symbol, TargetSegs: z.IndexStr("other").Segments}
+	got := KillRedefinedConditions(cond, 10, []Assignment{write})
+	want := constraint.FromConstraints(constraint.NewEqPath(u, v), constraint.NotNil{Path: x})
+	if !got.Equals(want) {
+		t.Fatalf("mutable alias write left stale facts: got %v, want %v", got, want)
+	}
+	dynamic := Assignment{Point: 10, TargetSym: z.Symbol, ChildrenOnly: true}
+	if got := KillRedefinedConditions(cond, 10, []Assignment{dynamic}); !got.Equals(want) {
+		t.Fatalf("dynamic alias write left stale facts: got %v, want %v", got, want)
+	}
+}
+
+func TestKillRedefinedConditions_EscapedIndexedChild(t *testing.T) {
+	table := constraint.Path{Root: "table", Symbol: 1, Version: 1}
+	other := constraint.Path{Root: "other", Symbol: 2, Version: 1}
+	indexed := table.Field("lists").IndexInt(2)
+	cond := constraint.FromConstraints(
+		constraint.IsNil{Path: indexed},
+		constraint.HasField{Path: table, Field: "ok"},
+		constraint.NewEqPath(table, other),
+	)
+	write := Assignment{Point: 10, TargetSym: table.Symbol, ChildrenOnly: true, IndexedChildrenOnly: true}
+	want := constraint.FromConstraints(
+		constraint.HasField{Path: table, Field: "ok"},
+		constraint.NewEqPath(table, other),
+	)
+	if got := KillRedefinedConditions(cond, 10, []Assignment{write}); !got.Equals(want) {
+		t.Fatalf("call kept an indexed nil fact or lost a static fact: got %v, want %v", got, want)
+	}
+	if got := KillRedefinedConditions(cond, 9, []Assignment{write}); !got.Equals(cond) {
+		t.Fatalf("call invalidated a fact before it ran: got %v, want %v", got, cond)
+	}
+}
+
+func TestPropagate_FactHoldsAfterPointAndThroughPhi(t *testing.T) {
+	// entry -> branch -> {write A, write B} -> join
+	// Each write establishes KeyOf on the table version it defines; the join
+	// merges those versions into one phi version.
+	g := &mockGraph{
+		entry: 1,
+		nodes: map[cfg.Point]*cfg.Node{
+			1: {Kind: cfg.NodeEntry},
+			2: {Kind: cfg.NodeBranch},
+			3: {Kind: cfg.NodeAssign},
+			4: {Kind: cfg.NodeAssign},
+			5: {Kind: cfg.NodeJoin},
+		},
+		preds: map[cfg.Point][]cfg.Point{1: {}, 2: {1}, 3: {2}, 4: {2}, 5: {3, 4}},
+		succs: map[cfg.Point][]cfg.Point{1: {2}, 2: {3, 4}, 3: {5}, 4: {5}, 5: {}},
+		rpo:   []cfg.Point{1, 2, 3, 4, 5},
+	}
+	keyOf := func(version int) constraint.Condition {
+		return constraint.FromConstraints(constraint.KeyOf{
+			Table: constraint.Path{Root: "t", Symbol: 1, Version: version},
+			Key:   constraint.Path{Root: "k", Symbol: 2, Version: 1},
+		})
+	}
+	inputs := &Inputs{
+		Graph:          g,
+		EdgeConditions: make(EdgeConditions),
+		Facts:          map[cfg.Point]constraint.Condition{3: keyOf(2), 4: keyOf(3)},
+		PhiRenames: map[EdgeKey]map[constraint.VersionRef]int{
+			{From: 3, To: 5}: {{Symbol: 1, Version: 2}: 4},
+			{From: 4, To: 5}: {{Symbol: 1, Version: 3}: 4},
+		},
+	}
+
+	result := Propagate(inputs)
+
+	if result.PointConditions[3].HasConstraints() {
+		t.Errorf("a write's fact must not hold at the write itself, got %v", result.PointConditions[3])
+	}
+	if !result.PointConditions[5].Equals(keyOf(4)) {
+		t.Errorf("expected the join to hold the fact for the phi version, got %v", result.PointConditions[5])
+	}
+}
+
+func TestPropagate_ReturnRelationSurvivesPhiAndErrorGuard(t *testing.T) {
+	g := &mockGraph{
+		entry: 1,
+		nodes: map[cfg.Point]*cfg.Node{
+			1: {Kind: cfg.NodeEntry}, 2: {Kind: cfg.NodeBranch},
+			3: {Kind: cfg.NodeAssign}, 4: {Kind: cfg.NodeAssign},
+			5: {Kind: cfg.NodeJoin}, 6: {Kind: cfg.NodeBranch},
+			7: {Kind: cfg.NodeAssign},
+		},
+		preds: map[cfg.Point][]cfg.Point{1: {}, 2: {1}, 3: {2}, 4: {2}, 5: {3, 4}, 6: {5}, 7: {6}},
+		succs: map[cfg.Point][]cfg.Point{1: {2}, 2: {3, 4}, 3: {5}, 4: {5}, 5: {6}, 6: {7}},
+		rpo:   []cfg.Point{1, 2, 3, 4, 5, 6, 7},
+	}
+	value := func(version int) constraint.Path { return constraint.Path{Root: "v", Symbol: 1, Version: version} }
+	err := func(version int) constraint.Path { return constraint.Path{Root: "err", Symbol: 2, Version: version} }
+	relation := func(version int) constraint.Condition {
+		return constraint.Or(
+			constraint.FromConstraints(constraint.Truthy{Path: err(version)}, constraint.IsNil{Path: value(version)}),
+			constraint.FromConstraints(constraint.Falsy{Path: err(version)}, constraint.NotNil{Path: value(version)}),
+		)
+	}
+	inputs := &Inputs{
+		Graph: g,
+		Facts: map[cfg.Point]constraint.Condition{3: relation(1), 4: relation(2)},
+		PhiRenames: map[EdgeKey]map[constraint.VersionRef]int{
+			{From: 3, To: 5}: {{Symbol: 1, Version: 1}: 3, {Symbol: 2, Version: 1}: 3},
+			{From: 4, To: 5}: {{Symbol: 1, Version: 2}: 3, {Symbol: 2, Version: 2}: 3},
+		},
+		EdgeConditions: EdgeConditions{{From: 6, To: 7}: constraint.FromConstraints(constraint.Falsy{Path: err(3)})},
+	}
+	result := Propagate(inputs)
+	if !result.PointConditions[5].Equals(relation(3)) {
+		t.Fatalf("phi lost the return relation: %v", result.PointConditions[5])
+	}
+	want := constraint.FromConstraints(constraint.Falsy{Path: err(3)}, constraint.NotNil{Path: value(3)})
+	if !result.PointConditions[7].Equals(want) {
+		t.Fatalf("error guard failed to narrow the value: got %v, want %v", result.PointConditions[7], want)
+	}
+}
+
+func TestPropagate_FactOnOneIncomingPathDoesNotHoldAtJoin(t *testing.T) {
+	g := &mockGraph{
+		entry: 1,
+		nodes: map[cfg.Point]*cfg.Node{
+			1: {Kind: cfg.NodeEntry},
+			2: {Kind: cfg.NodeBranch},
+			3: {Kind: cfg.NodeAssign},
+			4: {Kind: cfg.NodeJoin},
+		},
+		preds: map[cfg.Point][]cfg.Point{1: {}, 2: {1}, 3: {2}, 4: {2, 3}},
+		succs: map[cfg.Point][]cfg.Point{1: {2}, 2: {3, 4}, 3: {4}, 4: {}},
+		rpo:   []cfg.Point{1, 2, 3, 4},
+	}
+	fact := constraint.FromConstraints(constraint.KeyOf{
+		Table: constraint.Path{Root: "t", Symbol: 1, Version: 2},
+		Key:   constraint.Path{Root: "k", Symbol: 2, Version: 1},
+	})
+	inputs := &Inputs{
+		Graph:          g,
+		EdgeConditions: make(EdgeConditions),
+		Facts:          map[cfg.Point]constraint.Condition{3: fact},
+		PhiRenames: map[EdgeKey]map[constraint.VersionRef]int{
+			{From: 2, To: 4}: {{Symbol: 1, Version: 1}: 3},
+			{From: 3, To: 4}: {{Symbol: 1, Version: 2}: 3},
+		},
+	}
+
+	result := Propagate(inputs)
+
+	if result.PointConditions[4].HasConstraints() {
+		t.Errorf("expected no fact at the join, got %v", result.PointConditions[4])
 	}
 }

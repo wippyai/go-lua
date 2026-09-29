@@ -1,10 +1,46 @@
 package constraint
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/wippyai/go-lua/types/narrow"
+	"github.com/wippyai/go-lua/types/typ"
 )
+
+func TestCondition_AndCapRetainsFreshReturnRelation(t *testing.T) {
+	oldPath := Path{Root: "prior", Symbol: 1}
+	commonPath := Path{Root: "required", Symbol: 2}
+	errPath := Path{Root: "err", Symbol: 3}
+	valuePath := Path{Root: "value", Symbol: 4}
+
+	var previous [][]Constraint
+	for i := 0; i < 20; i++ {
+		previous = append(previous, []Constraint{
+			NotNil{Path: commonPath},
+			FieldEquals{Target: oldPath, Field: "case", Value: typ.LiteralInt(int64(i))},
+		})
+	}
+	prior := FromDisjuncts(previous)
+	relation := Or(
+		FromConstraints(Truthy{Path: errPath}, IsNil{Path: valuePath}),
+		FromConstraints(Falsy{Path: errPath}, NotNil{Path: valuePath}),
+	)
+
+	got := And(prior, relation)
+	if got.NumDisjuncts() != 2 {
+		t.Fatalf("expected both return cases after capping, got %v", got)
+	}
+	for _, disjunct := range got.Disjuncts {
+		if !ConjunctionContains(disjunct, NotNil{Path: commonPath}) {
+			t.Fatalf("lost a fact shared by every prior case: %v", got)
+		}
+	}
+	if !got.Subsumes(And(prior, FromConstraints(Truthy{Path: errPath}, IsNil{Path: valuePath}))) ||
+		!got.Subsumes(And(prior, FromConstraints(Falsy{Path: errPath}, NotNil{Path: valuePath}))) {
+		t.Fatalf("capped condition excluded a reachable return case: %v", got)
+	}
+}
 
 func TestCondition_TrueFalse(t *testing.T) {
 	trueCond := TrueCondition()
@@ -93,6 +129,31 @@ func TestCondition_AndOr(t *testing.T) {
 	}
 	if len(or.MustConstraints()) != 0 {
 		t.Errorf("A OR B should have no must constraints, got %d", len(or.MustConstraints()))
+	}
+}
+
+func TestOrIncrementalImpossibilityWork(t *testing.T) {
+	const branches = 24
+	condition := FalseCondition()
+	checks := 0
+	for i := range branches {
+		branch := FromConstraints(Truthy{Path: Path{Root: fmt.Sprintf("branch%d", i)}})
+		condition = orWithWork(condition, branch, &checks)
+	}
+	if condition.NumDisjuncts() != branches {
+		t.Fatalf("got %d branches, want %d", condition.NumDisjuncts(), branches)
+	}
+	if checks > branches*2 {
+		t.Fatalf("checked %d existing conjunctions for %d branches; want linear work", checks, branches)
+	}
+}
+
+func TestOrChecksLiteralConditionContradictions(t *testing.T) {
+	path := Path{Root: "value"}
+	raw := Condition{Disjuncts: [][]Constraint{{IsNil{Path: path}, Truthy{Path: path}}}}
+	got := Or(raw, FromConstraints(NotNil{Path: Path{Root: "other"}}))
+	if got.NumDisjuncts() != 1 || !got.Equals(FromConstraints(NotNil{Path: Path{Root: "other"}})) {
+		t.Fatalf("literal contradictory branch survived: %v", got)
 	}
 }
 

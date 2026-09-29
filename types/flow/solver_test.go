@@ -91,6 +91,7 @@ type mockSSAGraph struct {
 	scope    *symbolScope
 	phis     []cfg.PhiNode
 	nextSym  cfg.SymbolID
+	params   []cfg.SymbolID
 }
 
 func newMockSSAGraph(c *cfg.CFG) *mockSSAGraph {
@@ -133,7 +134,7 @@ func (m *mockSSAGraph) ParamNames() []string {
 }
 
 func (m *mockSSAGraph) ParamSymbols() []cfg.SymbolID {
-	return nil
+	return m.params
 }
 
 func (m *mockSSAGraph) ParamDeclPoints() []cfg.Point {
@@ -236,6 +237,30 @@ func newInputs(g *mockSSAGraph) *Inputs {
 		TypeKeys:       make(map[uint64]typ.Type),
 	}
 }
+
+func TestDynamicIndexOnIncompleteRecordKeepsUnlistedValuesUnknown(t *testing.T) {
+	c, branch, thenNode, _, _ := buildBranchJoinCFG()
+	g := newMockSSAGraph(c)
+	sym := setupSymbol(g, "metadata", []cfg.Point{c.Entry(), branch, thenNode, c.Exit()})
+	version := cfg.Version{Root: "metadata", Symbol: sym, ID: 1}
+	for _, p := range []cfg.Point{c.Entry(), branch, thenNode, c.Exit()} {
+		setVersion(g, p, sym, version)
+	}
+	inputs := newInputs(g)
+	inputs.Decomposer = testMapElementDecomposer{}
+	inputs.DeclaredTypes[sym] = typ.NewRecord().Field("filename", typ.LiteralString("known.txt")).Build()
+	solution := Solve(inputs, testResolver())
+	got := solution.mapElementTypeAt(thenNode, &MapElementSource{MapPath: constraint.Path{Root: "metadata", Symbol: sym}})
+	if !typ.IsUnknown(got) {
+		t.Fatalf("dynamic index on incomplete record = %v, want unknown", got)
+	}
+}
+
+type testMapElementDecomposer struct{}
+
+func (testMapElementDecomposer) ElementType(t typ.Type) typ.Type { return core.ElementType(t) }
+func (testMapElementDecomposer) KeyType(t typ.Type) typ.Type     { return core.KeyType(t) }
+func (testMapElementDecomposer) ValueType(t typ.Type) typ.Type   { return core.ValueType(t) }
 
 func TestSolutionResolveTypeKey_BuiltinWithoutTypeKeyMap(t *testing.T) {
 	s := &Solution{inputs: &Inputs{TypeKeys: nil}}

@@ -107,6 +107,15 @@ func ExtractDeclaredTypes(fc *core.FlowContext, inputs *flow.Inputs) {
 		}
 		inputs.DeclaredTypes[sym] = resolve.Ref(t, fc.Base)
 	}
+	for _, slot := range fc.Graph.ParamSlotsReadOnly() {
+		if slot.Symbol == 0 || slot.TypeAnnotation == nil {
+			continue
+		}
+		if inputs.AnnotatedVars == nil {
+			inputs.AnnotatedVars = make(map[cfg.SymbolID]bool)
+		}
+		inputs.AnnotatedVars[slot.Symbol] = true
+	}
 
 	if fc.Services != nil {
 		fc.Graph.EachFuncDef(func(p cfg.Point, info *cfg.FuncDefInfo) {
@@ -157,6 +166,7 @@ func ExtractDeclaredTypes(fc *core.FlowContext, inputs *flow.Inputs) {
 							if existing := inputs.DeclaredTypes[sym]; existing == nil || typ.IsSoft(existing, typ.SoftAnnotationPolicy) {
 								inputs.DeclaredTypes[sym] = resolved
 							}
+							markRefinableAnnotated(inputs, sym)
 						} else {
 							inputs.DeclaredTypes[sym] = resolved
 							annotate = true
@@ -170,6 +180,7 @@ func ExtractDeclaredTypes(fc *core.FlowContext, inputs *flow.Inputs) {
 							if existing := inputs.DeclaredTypes[sym]; existing == nil || typ.IsSoft(existing, typ.SoftAnnotationPolicy) {
 								inputs.DeclaredTypes[sym] = resolved
 							}
+							markRefinableAnnotated(inputs, sym)
 						} else {
 							inputs.DeclaredTypes[sym] = resolved
 							annotate = true
@@ -193,6 +204,14 @@ func ExtractDeclaredTypes(fc *core.FlowContext, inputs *flow.Inputs) {
 			}
 		})
 	})
+}
+
+// markRefinableAnnotated records that sym carries a refinable annotation.
+func markRefinableAnnotated(inputs *flow.Inputs, sym cfg.SymbolID) {
+	if inputs.RefinableAnnotatedVars == nil {
+		inputs.RefinableAnnotatedVars = make(map[cfg.SymbolID]bool)
+	}
+	inputs.RefinableAnnotatedVars[sym] = true
 }
 
 // ExtractModuleAliases collects symbol -> module path mappings from require() assignments.

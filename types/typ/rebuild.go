@@ -21,6 +21,18 @@ func buildFunctionType(
 	spec SpecInfo,
 	refinement RefinementInfo,
 ) *Function {
+	paramsCopy := append([]Param(nil), params...)
+	returnsCopy := append([]Type(nil), returns...)
+	params, returns = paramsCopy, returnsCopy
+	if len(typeParams) > 0 {
+		for i := range params {
+			params[i].Type = bindTypeParams(params[i].Type, typeParams)
+		}
+		variadic = bindTypeParams(variadic, typeParams)
+		for i := range returns {
+			returns[i] = bindTypeParams(returns[i], typeParams)
+		}
+	}
 	h := uint64(kind.Function)
 	for _, tp := range typeParams {
 		h = internal.HashCombine(h, tp.Hash())
@@ -46,10 +58,6 @@ func buildFunctionType(
 
 	typeParamsCopy := make([]*TypeParam, len(typeParams))
 	copy(typeParamsCopy, typeParams)
-	paramsCopy := make([]Param, len(params))
-	copy(paramsCopy, params)
-	returnsCopy := make([]Type, len(returns))
-	copy(returnsCopy, returns)
 	softPrunable := softPruneParams(paramsCopy) || softPruneAny(variadic) || softPruneAny(returnsCopy...)
 
 	return &Function{
@@ -65,7 +73,7 @@ func buildFunctionType(
 	}
 }
 
-func buildRecordType(fields []Field, metatable, mapKey, mapValue Type, open bool, assumeSorted bool) *Record {
+func buildRecordTypeWithFlags(fields []Field, metatable, mapKey, mapValue Type, open, declared bool, assumeSorted, inferred, explicitNil, complete bool) *Record {
 	sorted := make([]Field, len(fields))
 	copy(sorted, fields)
 	if !assumeSorted || !fieldsSortedByName(sorted) {
@@ -76,6 +84,9 @@ func buildRecordType(fields []Field, metatable, mapKey, mapValue Type, open bool
 	for i := range sorted {
 		if sorted[i].Type == nil {
 			sorted[i].Type = Unknown
+		}
+		if !sorted[i].Optional {
+			sorted[i].InferredPresence = false
 		}
 	}
 
@@ -92,6 +103,9 @@ func buildRecordType(fields []Field, metatable, mapKey, mapValue Type, open bool
 		h = internal.HashCombine(h, f.Type.Hash())
 		if f.Optional {
 			h = internal.HashCombine(h, 1)
+		}
+		if f.InferredPresence {
+			h = internal.HashCombine(h, 4)
 		}
 		if f.Readonly {
 			h = internal.HashCombine(h, 2)
@@ -112,17 +126,33 @@ func buildRecordType(fields []Field, metatable, mapKey, mapValue Type, open bool
 		h = internal.HashCombine(h, recordMapValueHash)
 		h = internal.HashCombine(h, mapValue.Hash())
 	}
+	if declared {
+		h = internal.HashCombine(h, 16)
+	}
+	if inferred {
+		h = internal.HashCombine(h, 4)
+	}
+	if explicitNil {
+		h = internal.HashCombine(h, 8)
+	}
+	if complete {
+		h = internal.HashCombine(h, 32)
+	}
 	softPrunable := softPruneFields(sorted) || softPruneAny(metatable, mapKey, mapValue)
 
 	return &Record{
-		Fields:       sorted,
-		Metatable:    metatable,
-		MapKey:       mapKey,
-		MapValue:     mapValue,
-		Open:         open,
-		sorted:       true,
-		hash:         h,
-		softPrunable: softPrunable,
+		Fields:              sorted,
+		Metatable:           metatable,
+		MapKey:              mapKey,
+		MapValue:            mapValue,
+		MapInferredPresence: inferred,
+		MapExplicitNilWrite: explicitNil,
+		Open:                open,
+		Complete:            complete,
+		Declared:            declared,
+		sorted:              true,
+		hash:                h,
+		softPrunable:        softPrunable,
 	}
 }
 

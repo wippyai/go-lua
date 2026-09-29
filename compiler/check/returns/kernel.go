@@ -1,10 +1,10 @@
 package returns
 
 import (
-	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/types/typ"
-	"github.com/wippyai/go-lua/types/typ/unwrap"
+	typjoin "github.com/wippyai/go-lua/types/typ/join"
 )
 
 // ReconcileFunctionFactInput captures all channels that can influence a single
@@ -21,14 +21,6 @@ type ReconcileFunctionFactInput struct {
 
 // ReconcileFunctionFactOutput is the canonical reconciled state for one symbol.
 type ReconcileFunctionFactOutput struct {
-	Summary []typ.Type
-	Narrow  []typ.Type
-	Func    typ.Type
-}
-
-// FunctionFactCandidate captures incoming candidate data for one symbol's
-// function-related fact channels.
-type FunctionFactCandidate struct {
 	Summary []typ.Type
 	Narrow  []typ.Type
 	Func    typ.Type
@@ -55,18 +47,19 @@ func ReconcileFunctionFact(in ReconcileFunctionFactInput) ReconcileFunctionFactO
 		out.Func = MergeFunctionFactType(out.Func, in.CandidateFunc)
 	}
 
-	// Keep summary and narrow channels mutually refining when post-flow narrow
-	// provides first-order information. MergeReturnSummary is the canonical
-	// policy and already encodes directional refinement preference.
+	// Solved flow supersedes an incomparable pre-flow estimate. A join of the
+	// two would introduce return shapes that no flow path actually produced.
 	if len(out.Narrow) > 0 {
 		if len(out.Summary) == 0 {
+			out.Summary = NormalizeReturnVector(out.Narrow)
+		} else if !returnVectorsComparable(out.Summary, out.Narrow) {
 			out.Summary = NormalizeReturnVector(out.Narrow)
 		} else {
 			out.Summary = MergeReturnSummary(out.Summary, out.Narrow)
 		}
 	}
 
-	if fn := unwrap.Function(out.Func); fn != nil {
+	if fn := typ.GeneralMember(out.Func); fn != nil {
 		alignedSummary := out.Summary
 		if len(out.Narrow) > 0 {
 			// Canonical tie-breaker: function facts track post-flow behavior.
@@ -75,8 +68,23 @@ func ReconcileFunctionFact(in ReconcileFunctionFactInput) ReconcileFunctionFactO
 			alignedSummary = out.Narrow
 		}
 		if len(alignedSummary) > 0 {
-			if aligned, changed := AlignFunctionTypeWithSummary(fn, alignedSummary); changed {
-				out.Func = aligned
+			var aligned *typ.Function
+			var changed bool
+			if len(out.Narrow) > 0 && !returnVectorsComparable(fn.Returns, alignedSummary) {
+				if _, direct := out.Func.(*typ.Function); direct {
+					aligned = typjoin.WithReturns(fn, alignedSummary)
+					changed = aligned != nil && !ReturnTypesEqual(fn.Returns, alignedSummary)
+				}
+			}
+			if aligned == nil {
+				aligned, changed = AlignFunctionTypeWithSummary(fn, alignedSummary)
+			}
+			if changed {
+				if inter, ok := out.Func.(*typ.Intersection); ok {
+					out.Func = withOverloadGeneral(inter, aligned)
+				} else {
+					out.Func = aligned
+				}
 				fn = aligned
 			}
 		}
@@ -88,18 +96,7 @@ func ReconcileFunctionFact(in ReconcileFunctionFactInput) ReconcileFunctionFactO
 	return out
 }
 
-// MergeFunctionFactIntoFacts reconciles and writes function-related facts for
-// one symbol into a facts bundle using canonical kernel policy.
-func MergeFunctionFactIntoFacts(facts *api.Facts, sym cfg.SymbolID, candidate FunctionFactCandidate) {
-	if facts == nil || sym == 0 {
-		return
-	}
-	NormalizeFunctionFactChannels(facts)
-	mergeFunctionFactIntoNormalizedFacts(facts, sym, candidate)
-}
-
-func mergeFunctionFactIntoNormalizedFacts(facts *api.Facts, sym cfg.SymbolID, candidate FunctionFactCandidate) {
-	existing := readFunctionFactFromFacts(facts, sym)
+func mergeCallable(existing, candidate api.FunctionFact) api.FunctionFact {
 	reconciled := ReconcileFunctionFact(ReconcileFunctionFactInput{
 		ExistingSummary:  existing.Summary,
 		ExistingNarrow:   existing.Narrow,
@@ -108,30 +105,25 @@ func mergeFunctionFactIntoNormalizedFacts(facts *api.Facts, sym cfg.SymbolID, ca
 		CandidateNarrow:  candidate.Narrow,
 		CandidateFunc:    candidate.Func,
 	})
-	writeFunctionFactToFacts(facts, sym, api.FunctionFact{
+	sig := existing.Sig
+	if candidate.Sig != nil {
+		sig = mergeLiteralSig(sig, candidate.Sig)
+	}
+	return api.FunctionFact{
 		Summary: reconciled.Summary,
 		Narrow:  reconciled.Narrow,
 		Func:    reconciled.Func,
-	})
+		Sig:     sig,
+	}
 }
 
-// MergeFunctionFactsIntoFacts merges full function-fact channel maps into facts
-// via the canonical single-symbol reconciliation path.
-func MergeFunctionFactsIntoFacts(
-	facts *api.Facts,
-	summaries api.ReturnSummaries,
-	narrows api.NarrowReturnSummaries,
-	funcs api.FuncTypes,
-) {
-	if facts == nil {
+// MergeCallable reconciles one literal's facts, including its contextual signature.
+func MergeCallable(facts *api.Facts, fn *ast.FunctionExpr, candidate api.FunctionFact) {
+	if facts == nil || fn == nil {
 		return
 	}
-	NormalizeFunctionFactChannels(facts)
-	for _, sym := range collectFunctionFactChannelSymbols(summaries, narrows, funcs, nil) {
-		mergeFunctionFactIntoNormalizedFacts(facts, sym, FunctionFactCandidate{
-			Summary: summaries[sym],
-			Narrow:  narrows[sym],
-			Func:    funcs[sym],
-		})
+	if facts.Callables == nil {
+		facts.Callables = make(api.Callables)
 	}
+	facts.Callables[fn] = mergeCallable(facts.Callables[fn], candidate)
 }

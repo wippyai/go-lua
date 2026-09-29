@@ -14,6 +14,8 @@ const (
 	KeyMutate            = "mutate"
 	KeyReturn            = "return"
 	KeyErrorReturn       = "error_return"
+	KeyTruthyErrorReturn = "truthy_error_return"
+	KeyGuardedReturnType = "guarded_return_type"
 	KeyReturnLength      = "return_length"
 	KeyIterator          = "iterator"
 	KeyTableMutator      = "table_mutator"
@@ -123,8 +125,14 @@ func LabelKey(l Label) string {
 		Return: func(Return) string {
 			return KeyReturn
 		},
-		ErrorReturn: func(ErrorReturn) string {
+		ErrorReturn: func(e ErrorReturn) string {
+			if e.ValueTruthy {
+				return KeyTruthyErrorReturn
+			}
 			return KeyErrorReturn
+		},
+		GuardedReturnType: func(GuardedReturnType) string {
+			return KeyGuardedReturnType
 		},
 		ReturnLength: func(ReturnLength) string {
 			return KeyReturnLength

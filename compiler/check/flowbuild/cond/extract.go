@@ -18,6 +18,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/callsite"
 	checkeffects "github.com/wippyai/go-lua/compiler/check/effects"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/core"
@@ -25,7 +26,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/path"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/predicate"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/resolve"
-	"github.com/wippyai/go-lua/compiler/check/flowbuild/sibling"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow"
@@ -33,8 +33,38 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
+// newConditionExtractor returns the extractor for conditions at p.
+func newConditionExtractor(fc *core.FlowContext, inputs *flow.Inputs, p cfg.Point) *ConditionExtractor {
+	return &ConditionExtractor{
+		P: p, SC: fc.Scopes[p], Inputs: inputs,
+		Synth:            fc.Derived.Synth,
+		SymResolver:      fc.Derived.SymResolver,
+		TypeKeyRes:       fc.Derived.TypeKeyRes,
+		ConstResolver:    predicate.BuildConstResolver(inputs, p),
+		RefinementBySym:  fc.Derived.RefinementBySym,
+		UnstableSymbols:  fc.Derived.CapturedReassignments,
+		ReceiverRoots:    fc.Derived.ReceiverRoots,
+		NilableRoots:     fc.Derived.NilableRoots,
+		KnownNonNilPaths: fc.Derived.KnownNonNilPaths,
+		ModuleBindings:   fc.ModuleBindings,
+	}
+}
+
+// ConditionsFunc returns the conditions an expression establishes at a point
+// when truthy and when falsy, as a branch on it puts them on its edges.
+func ConditionsFunc(fc *core.FlowContext, inputs *flow.Inputs) api.ConditionFromExprFunc {
+	return func(p cfg.Point, expr ast.Expr) (constraint.Condition, constraint.Condition) {
+		if fc == nil || fc.Derived == nil || inputs == nil || expr == nil {
+			return constraint.TrueCondition(), constraint.TrueCondition()
+		}
+		bc := newConditionExtractor(fc, inputs, p).conditionsFromEvaluatedExpr(expr)
+		return bc.OnTrue, bc.OnFalse
+	}
+}
+
 // ExtractEdgeConstraints extracts type constraints from branch conditions.
 func ExtractEdgeConstraints(fc *core.FlowContext, inputs *flow.Inputs) {
+	validatedEnums := validatedEnumGuards(fc)
 	fc.Graph.EachBranch(func(p cfg.Point, info *cfg.BranchInfo) {
 		succs := fc.Graph.Successors(p)
 		if len(succs) < 2 {
@@ -46,29 +76,33 @@ func ExtractEdgeConstraints(fc *core.FlowContext, inputs *flow.Inputs) {
 			return
 		}
 
-		constResolver := predicate.BuildConstResolver(inputs, p)
-
-		ce := &ConditionExtractor{
-			P: p, SC: fc.Scopes[p], Inputs: inputs,
-			Synth:           fc.Derived.Synth,
-			SymResolver:     fc.Derived.SymResolver,
-			TypeKeyRes:      fc.Derived.TypeKeyRes,
-			ConstResolver:   constResolver,
-			RefinementBySym: fc.Derived.RefinementBySym,
-		}
+		ce := newConditionExtractor(fc, inputs, p)
 		constraints := ce.ConstraintsFromBranch(info)
+		if info.Condition != nil {
+			constraints = ce.conditionsFromEvaluatedExpr(info.Condition)
+		}
+		if proof, ok := validatedEnums[info.Condition]; ok {
+			validatedPath := path.FromExprWithBindingsAt(proof.subject, ce.ConstResolver, fc.Graph.Bindings(), fc.Graph, p)
+			if validatedPath.Symbol != 0 {
+				if inputs.TypeKeys == nil {
+					inputs.TypeKeys = make(map[uint64]typ.Type)
+				}
+				hash := proof.values.Hash()
+				inputs.TypeKeys[hash] = proof.values
+				constraints.OnFalse = constraint.And(constraints.OnFalse, constraint.FromConstraints(constraint.HasType{
+					Path: validatedPath, Type: narrow.HashTypeKey(hash),
+				}))
+			}
+		}
 
-		// For generic for loops, add NotNil and KeyOf constraints for loop variables
+		// Lua continues a generic loop only when its first (control) result is
+		// present. Later iterator results may still be nil inside the body.
 		if node := fc.Graph.CFG().Node(p); node != nil && len(node.LoopLocals) > 0 {
 			var loopConstraints []constraint.Constraint
-			for _, sym := range node.LoopLocals {
-				if sym != 0 {
-					root := fc.Graph.NameOf(sym)
-					loopPath := path.WithVersion(constraint.Path{Root: root, Symbol: sym}, fc.Graph, p)
-					loopConstraints = append(loopConstraints, constraint.NotNil{
-						Path: loopPath,
-					})
-				}
+			if sym := node.LoopLocals[0]; sym != 0 {
+				root := fc.Graph.NameOf(sym)
+				loopPath := path.WithVersion(constraint.Path{Root: root, Symbol: sym}, fc.Graph, p)
+				loopConstraints = append(loopConstraints, constraint.NotNil{Path: loopPath})
 			}
 
 			// For keyed iterators (pairs), emit KeyOf constraint for the key variable
@@ -77,8 +111,17 @@ func ExtractEdgeConstraints(fc *core.FlowContext, inputs *flow.Inputs) {
 					bindings := fc.Graph.Bindings()
 					iterSource := resolve.ExtractIteratorSource(
 						assignInfo.IterExprs, node.LoopPreheader,
-						fc.Derived.Synth, fc.Derived.SymResolver, constResolver, bindings,
+						fc.Derived.Synth, fc.Derived.SymResolver, ce.ConstResolver, bindings,
 					)
+					// Indexed/keyed iterator contracts guarantee a present value
+					// while the loop continues. Custom iterators have no such rule.
+					if iterSource != nil && len(node.LoopLocals) > 1 {
+						if sym := node.LoopLocals[1]; sym != 0 {
+							valuePath := path.WithVersion(constraint.Path{Root: fc.Graph.NameOf(sym), Symbol: sym}, fc.Graph, p)
+							loopConstraints = append(loopConstraints, constraint.NotNil{Path: valuePath})
+						}
+					}
+
 					if iterSource != nil && iterSource.Kind == flow.IterateKeyed && len(node.LoopLocals) > 0 {
 						keySym := node.LoopLocals[0]
 						if keySym != 0 {
@@ -219,6 +262,39 @@ func ExtractNumericConstraints(fc *core.FlowContext, inputs *flow.Inputs) {
 			}
 		}
 	})
+	// A normal return from a throwing assertion establishes the truth of its
+	// argument. Carry numeric length facts along the same outgoing edges.
+	fc.Graph.EachStmtCall(func(p cfg.Point, info *cfg.CallInfo) {
+		args := runtimeCallArgs(info)
+		if len(args) == 0 {
+			return
+		}
+		eff := ExtractFunctionRefinement(info, p, fc.Derived.Synth, fc.Derived.RefinementBySym, fc.Derived.SymResolver, fc.Graph, fc.ModuleBindings)
+		if eff == nil {
+			return
+		}
+		for _, c := range eff.OnReturn.MustConstraints() {
+			var numeric []constraint.NumericConstraint
+			switch fact := c.(type) {
+			case constraint.Truthy:
+				if idx, ok := constraint.PlaceholderArgIndex(fact.Path, len(args)); ok {
+					numeric = NumericConstraintsFromExpr(args[idx], p, inputs)
+				}
+			case constraint.EqPath:
+				left, leftOK := constraint.PlaceholderArgIndex(fact.Left, len(args))
+				right, rightOK := constraint.PlaceholderArgIndex(fact.Right, len(args))
+				if leftOK && rightOK {
+					numeric = NumericConstraintsFromExpr(&ast.RelationalOpExpr{Lhs: args[left], Rhs: args[right], Operator: "=="}, p, inputs)
+				}
+			}
+			if len(numeric) == 0 {
+				continue
+			}
+			for _, succ := range fc.Graph.Successors(p) {
+				inputs.EdgeNumericConstraints = append(inputs.EdgeNumericConstraints, flow.EdgeNumericConstraint{From: p, To: succ, Constraints: numeric})
+			}
+		}
+	})
 }
 
 // numericForConstraints extracts numeric constraints from a numeric for-loop.
@@ -268,31 +344,10 @@ func NumericForConstraints(graph *cfg.Graph, branchPoint cfg.Point, varName stri
 
 func ExtractLenPath(expr ast.Expr, p cfg.Point, graph *cfg.Graph) constraint.Path {
 	lenOp, ok := expr.(*ast.UnaryLenOpExpr)
-	if !ok {
+	if !ok || graph == nil {
 		return constraint.Path{}
 	}
-
-	ident, ok := lenOp.Expr.(*ast.IdentExpr)
-	if !ok || ident.Value == "" {
-		return constraint.Path{}
-	}
-
-	bindings := graph.Bindings()
-	if bindings == nil {
-		return constraint.Path{Root: ident.Value}
-	}
-
-	sym, found := bindings.SymbolOf(ident)
-	if !found || sym == 0 {
-		return constraint.Path{Root: ident.Value}
-	}
-
-	name := ident.Value
-	if n := bindings.Name(sym); n != "" {
-		name = n
-	}
-	lenPath := constraint.Path{Root: name, Symbol: sym}
-	return path.WithVersion(lenPath, graph, p)
+	return path.FromExprWithBindingsAt(lenOp.Expr, nil, graph.Bindings(), graph, p)
 }
 
 // ExtractLenBound extracts symbolic len-path bound with an optional constant offset.
@@ -312,11 +367,20 @@ func ExtractLenBound(expr ast.Expr, p cfg.Point, graph *cfg.Graph) (constraint.P
 	if op.Operator != "+" && op.Operator != "-" {
 		return constraint.Path{}, 0, false
 	}
-	arrPath := ExtractLenPath(op.Lhs, p, graph)
+	var lhs, rhs ast.Expr
+	ast.WalkExprChildren(op, func(child ast.Expr, index int) {
+		switch index {
+		case 0:
+			lhs = child
+		case 1:
+			rhs = child
+		}
+	})
+	arrPath := ExtractLenPath(lhs, p, graph)
 	if arrPath.IsEmpty() {
 		return constraint.Path{}, 0, false
 	}
-	k, ok := numconst.IntConstFromExpr(op.Rhs)
+	k, ok := numconst.IntConstFromExpr(rhs)
 	if !ok {
 		return constraint.Path{}, 0, false
 	}
@@ -361,6 +425,29 @@ func ExtractCallOnReturnConstraints(
 	if fc == nil || fc.Graph == nil || fc.Derived == nil || inputs == nil {
 		return out
 	}
+	var rebindingCallees *CapturedRebindingFacts
+	if len(fc.Derived.CapturedReassignments) != 0 {
+		rebindingCallees = CapturedRebindingsByCallee(fc.Graph)
+	}
+	nestedAt := func(p cfg.Point, exprs []ast.Expr, assigned map[cfg.SymbolID]bool) constraint.Condition {
+		sc := fc.Scopes[p]
+		constResolver := predicate.BuildConstResolver(inputs, p)
+		var combined constraint.Condition
+		for _, expr := range exprs {
+			for _, call := range evaluatedNestedCalls(expr, fc.Graph) {
+				fact := ConstraintsFromCallOnReturn(call, p, sc, inputs, fc.Derived.Synth, fc.Derived.TypeKeyRes, fc.Derived.RefinementBySym, constResolver, fc.Derived.SymResolver, fc.Graph, fc.ModuleBindings)
+				fact = stableNestedFacts(fact, fc.Graph, fc.Derived.CapturedReassignments, assigned)
+				if fact.HasConstraints() {
+					if combined.HasConstraints() {
+						combined = constraint.And(combined, fact)
+					} else {
+						combined = fact
+					}
+				}
+			}
+		}
+		return combined
+	}
 
 	for _, p := range fc.Graph.RPO() {
 		if !PointHasTerminatingCallSite(fc.Graph, p, fc.Derived.Synth, fc.Derived.SymResolver, fc.Derived.RefinementBySym, fc.ModuleBindings) {
@@ -383,6 +470,19 @@ func ExtractCallOnReturnConstraints(
 		constResolver := predicate.BuildConstResolver(inputs, p)
 
 		cond := ConstraintsFromCallOnReturn(info, p, sc, inputs, fc.Derived.Synth, fc.Derived.TypeKeyRes, fc.Derived.RefinementBySym, constResolver, fc.Derived.SymResolver, fc.Graph, fc.ModuleBindings)
+		cond = stableCallConstraints(cond, info, fc.Derived.CapturedReassignments, rebindingCallees, fc.Graph.Bindings())
+		if info != nil && info.Call != nil {
+			// A normal return from the statement means its evaluated arguments
+			// returned too. Their local-value facts survive the enclosing call.
+			nested := nestedAt(p, []ast.Expr{info.Call}, nil)
+			if nested.HasConstraints() {
+				if cond.HasConstraints() {
+					cond = constraint.And(cond, nested)
+				} else {
+					cond = nested
+				}
+			}
+		}
 		if !cond.HasConstraints() {
 			return
 		}
@@ -400,6 +500,22 @@ func ExtractCallOnReturnConstraints(
 		sc := fc.Scopes[p]
 		constResolver := predicate.BuildConstResolver(inputs, p)
 		cond := ConstraintsFromAssignOnReturn(info, p, sc, inputs, fc.Derived.Synth, fc.Derived.TypeKeyRes, fc.Derived.RefinementBySym, constResolver, fc.Derived.SymResolver, fc.Graph, fc.ModuleBindings)
+		for _, call := range info.SourceCalls {
+			cond = stableCallConstraints(cond, call, fc.Derived.CapturedReassignments, rebindingCallees, fc.Graph.Bindings())
+		}
+		assigned := make(map[cfg.SymbolID]bool)
+		for _, target := range info.Targets {
+			if target.Kind == cfg.TargetIdent && target.Symbol != 0 {
+				assigned[target.Symbol] = true
+			}
+		}
+		if nested := nestedAt(p, info.Sources, assigned); nested.HasConstraints() {
+			if cond.HasConstraints() {
+				cond = constraint.And(cond, nested)
+			} else {
+				cond = nested
+			}
+		}
 		if !cond.HasConstraints() {
 			return
 		}
@@ -414,6 +530,68 @@ func ExtractCallOnReturnConstraints(
 	})
 
 	return out
+}
+
+// A nested callee can rebind a captured local during the same call whose
+// OnReturn fact mentions it. Such a fact describes the argument's old value,
+// not necessarily the local's value when the call returns.
+func stableCallConstraints(cond constraint.Condition, call *cfg.CallInfo, unstable map[cfg.SymbolID]bool, rebindingCallees *CapturedRebindingFacts, bindings *bind.BindingTable) constraint.Condition {
+	if !cond.HasConstraints() || len(unstable) == 0 || call == nil {
+		return cond
+	}
+	// Direct calls may be aliases of a local closure, so retain only facts
+	// about locals that no nested closure can rebind.
+	unsafe := unstable
+	// The standard assert builtin only checks its already evaluated argument.
+	// It cannot run a closure that rebinds a captured local between the check
+	// and normal return. A shadowing local called assert is not the builtin.
+	if call.CalleePath.Root == "assert" && len(call.CalleePath.Segments) == 0 && bindings != nil && call.CalleeSymbol != 0 {
+		if k, ok := bindings.Kind(call.CalleeSymbol); ok && k == cfg.SymbolGlobal {
+			unsafe = nil
+		}
+	}
+	if len(call.CalleePath.Segments) != 0 {
+		// A field call can reach a caller local through a locally stored closure
+		// or through a callback argument supplied to an imported function.
+		unsafe = make(map[cfg.SymbolID]bool)
+		callee := call.CalleePath
+		callee.Version = 0
+		if rebindingCallees != nil {
+			for sym := range rebindingCallees.ByPath[callee.Key()] {
+				unsafe[sym] = true
+			}
+			for i, arg := range call.Args {
+				if fn, ok := arg.(*ast.FunctionExpr); ok {
+					for sym := range rebindingCallees.ByFunc[fn] {
+						unsafe[sym] = true
+					}
+				}
+				if i < len(call.ArgSymbols) {
+					for sym := range rebindingCallees.BySymbol[call.ArgSymbols[i]] {
+						unsafe[sym] = true
+					}
+				}
+			}
+		}
+		if len(unsafe) == 0 {
+			return cond
+		}
+	}
+	var kept []constraint.Constraint
+	for _, c := range cond.MustConstraints() {
+		mayRebind := false
+		constraint.VisitPaths(c, func(path constraint.Path) bool {
+			if unsafe[path.Symbol] {
+				mayRebind = true
+				return true
+			}
+			return false
+		})
+		if !mayRebind {
+			kept = append(kept, c)
+		}
+	}
+	return constraint.FromConstraints(kept...)
 }
 
 // constraintsFromCallOnReturn extracts OnReturn constraints from a call.
@@ -435,14 +613,15 @@ func ConstraintsFromCallOnReturn(
 	}
 	callArgs := runtimeCallArgs(info)
 	if len(callArgs) == 0 {
-		return constraint.Condition{}
+		return immediateReturnedClosureConstraints(info, p, synthFn, graph, moduleBindings)
 	}
 
 	bindings := resolve.GetBindings(inputs)
 
-	// TypeName(x) pattern - check metatype
-	if info.CalleeName != "" && typeKeyResolver != nil {
-		if typeKey, ok := typeKeyResolver(info.CalleeName, sc); ok && !typeKey.IsZero() {
+	// TypeName(x) pattern - check metatype. Method calls such as x:TypeName()
+	// are not type checks even when the method shares a type's name.
+	if info.IsTypeCheck && info.Method == "" && typeKeyResolver != nil {
+		if typeKey, ok := typeKeyResolver(info.TypeCheckName, sc); ok && !typeKey.IsZero() {
 			if len(callArgs) > 0 {
 				argPath := path.FromExprWithBindingsAt(callArgs[0], constResolver, bindings, graph, p)
 				if !argPath.IsEmpty() {
@@ -520,7 +699,6 @@ func ConstraintsFromCallOnReturn(
 	if len(must) == 0 {
 		return constraint.Condition{}
 	}
-	must = append(must, siblingConstraintsFromOnReturn(must, inputs, bindings, graph, p)...)
 	cond := constraint.FromConjunction(must)
 
 	if cond.IsFalse() || !cond.HasConstraints() {
@@ -667,54 +845,6 @@ func substituteReturnConstraintPaths(c constraint.Constraint, retTargets map[int
 		},
 		Default: func(constraint.Constraint) constraint.Constraint { return c },
 	})
-}
-
-func siblingConstraintsFromOnReturn(disj []constraint.Constraint, inputs *flow.Inputs, bindings *bind.BindingTable, graph *cfg.Graph, p cfg.Point) []constraint.Constraint {
-	if len(disj) == 0 {
-		return nil
-	}
-	var out []constraint.Constraint
-	for _, c := range disj {
-		var cpath constraint.Path
-		var wantNil bool
-		switch v := c.(type) {
-		case constraint.IsNil:
-			cpath = v.Path
-			wantNil = false
-		case constraint.Falsy:
-			cpath = v.Path
-			wantNil = false
-		case constraint.NotNil:
-			cpath = v.Path
-			wantNil = true
-		case constraint.Truthy:
-			cpath = v.Path
-			wantNil = true
-		default:
-			continue
-		}
-		if cpath.Symbol == 0 {
-			continue
-		}
-		version := graph.VisibleVersion(p, cpath.Symbol)
-		raw := sibling.ConstraintsForSymbol(cpath.Symbol, version.ID, inputs, wantNil, bindings)
-		if len(raw) == 0 {
-			continue
-		}
-		for _, rc := range raw {
-			switch v := rc.(type) {
-			case constraint.IsNil:
-				v.Path = path.WithVersion(v.Path, graph, p)
-				out = append(out, v)
-			case constraint.NotNil:
-				v.Path = path.WithVersion(v.Path, graph, p)
-				out = append(out, v)
-			default:
-				out = append(out, rc)
-			}
-		}
-	}
-	return out
 }
 
 func normalizePathConstraints(conj []constraint.Constraint) []constraint.Constraint {
@@ -991,6 +1121,8 @@ func ExtractPredicateLinkFromCallInfo(
 
 	onTruthy := eff.OnTrue.Substitute(argPaths)
 	onFalsy := eff.OnFalse.Substitute(argPaths)
+	onTruthy = rebaseCapturedKeyOf(onTruthy, p, graph, bindings, inputs)
+	onFalsy = rebaseCapturedKeyOf(onFalsy, p, graph, bindings, inputs)
 
 	if !onTruthy.HasConstraints() && !onFalsy.HasConstraints() {
 		return nil
@@ -1000,6 +1132,84 @@ func ExtractPredicateLinkFromCallInfo(
 		OnTruthy: onTruthy,
 		OnFalsy:  onFalsy,
 	}
+}
+
+// A captured table has a different SSA version inside its predicate than in
+// the caller. The call observes the caller's current binding, so attach that
+// version to the returned key fact. A captured rebind prevents that identity
+// from being stable across the call.
+func rebaseCapturedKeyOf(cond constraint.Condition, p cfg.Point, graph *cfg.Graph, bindings *bind.BindingTable, inputs *flow.Inputs) constraint.Condition {
+	if !cond.HasConstraints() || graph == nil || bindings == nil {
+		return cond
+	}
+	reassigned := CapturedReassignments(graph)
+	disjuncts := make([][]constraint.Constraint, 0, len(cond.Disjuncts))
+	for _, disjunct := range cond.Disjuncts {
+		updated := make([]constraint.Constraint, 0, len(disjunct))
+		for _, c := range disjunct {
+			keyOf, ok := c.(constraint.KeyOf)
+			if !ok || keyOf.Table.Symbol == 0 || keyOf.Table.IsPlaceholder() {
+				updated = append(updated, c)
+				continue
+			}
+			kind, bound := bindings.Kind(keyOf.Table.Symbol)
+			version := graph.VisibleVersion(p, keyOf.Table.Symbol)
+			if !bound || kind != cfg.SymbolLocal || reassigned[keyOf.Table.Symbol] || version.IsZero() ||
+				capturedTableMayHaveAlias(inputs, graph, p, keyOf.Table.Symbol) {
+				continue
+			}
+			keyOf.Table.Version = version.ID
+			updated = append(updated, keyOf)
+		}
+		if len(updated) == 0 {
+			return constraint.TrueCondition()
+		}
+		disjuncts = append(disjuncts, updated)
+	}
+	return constraint.FromDisjuncts(disjuncts)
+}
+
+// An alias created before this call can mutate the captured table after the
+// predicate returns. Do not publish a portable key fact in that case.
+func capturedTableMayHaveAlias(inputs *flow.Inputs, graph *cfg.Graph, callPoint cfg.Point, tableSym cfg.SymbolID) bool {
+	if inputs == nil {
+		return true
+	}
+	captures := 0
+	for _, nested := range graph.NestedFunctions() {
+		if nested.Func == nil {
+			continue
+		}
+		for _, sym := range graph.Bindings().CapturedSymbols(nested.Func) {
+			if sym == tableSym {
+				captures++
+			}
+		}
+	}
+	if captures != 1 {
+		return true
+	}
+	for point, roots := range inputs.CallAliasRoots {
+		if point != callPoint && !graph.Reachable(point, callPoint, true) {
+			continue
+		}
+		for _, sym := range roots {
+			if sym == tableSym {
+				return true
+			}
+		}
+	}
+	for _, assignment := range inputs.Assignments {
+		if assignment.SourcePath.Symbol != tableSym || len(assignment.SourcePath.Segments) != 0 ||
+			assignment.TargetPath.Symbol == 0 ||
+			(assignment.TargetPath.Symbol == tableSym && len(assignment.TargetPath.Segments) == 0) {
+			continue
+		}
+		if graph.Reachable(assignment.Point, callPoint, true) {
+			return true
+		}
+	}
+	return false
 }
 
 // ComputeDeadPoints computes dead points from a graph using effect-based termination analysis.

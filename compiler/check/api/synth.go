@@ -178,6 +178,8 @@ type FlowOps interface {
 	// ArrayLenBoundWithOffsetAt returns array variable and offset for symbolic bound:
 	// varName <= len(array) + offset.
 	ArrayLenBoundWithOffsetAt(p cfg.Point, varName string) (arrKey string, offset int64, ok bool)
+	HasLengthAtLeast(p cfg.Point, tablePath constraint.Path, minimum int64) bool
+	ExactLengthAt(p cfg.Point, tablePath constraint.Path) (int64, bool)
 
 	// IsPointDead returns whether a CFG point is unreachable.
 	IsPointDead(p cfg.Point) bool
@@ -185,6 +187,14 @@ type FlowOps interface {
 	// HasKeyOf checks if table contains a key from another path.
 	// Used for key-existence narrowing after table access patterns.
 	HasKeyOf(p cfg.Point, tablePath, keyPath constraint.Path) bool
+
+	// NarrowedTypeAssuming is NarrowedTypeAt with extra holding at p as well.
+	// The right operand of `and`/`or` is typed under the condition its left
+	// operand establishes, as a branch is typed under its guard.
+	NarrowedTypeAssuming(p cfg.Point, path constraint.Path, extra constraint.Condition) typ.Type
+
+	// HasKeyOfAssuming is HasKeyOf with extra holding at p as well.
+	HasKeyOfAssuming(p cfg.Point, tablePath, keyPath constraint.Path, extra constraint.Condition) bool
 }
 
 // LiteralSynth provides synthesis capabilities for function literals.
@@ -202,7 +212,14 @@ type ScopeMap = map[cfg.Point]*scope.State
 type ExprSynth = func(ast.Expr, cfg.Point) typ.Type
 
 // PathFromExprFunc builds a flow path from an expression at a CFG point.
-type PathFromExprFunc func(p cfg.Point, expr ast.Expr, sc *scope.State) constraint.Path
+// keyType types index keys, so t[k] with k typed as exactly one string literal
+// resolves to the static field path of t.
+type PathFromExprFunc func(p cfg.Point, expr ast.Expr, sc *scope.State, keyType func(ast.Expr) typ.Type) constraint.Path
+
+// ConditionFromExprFunc returns the conditions an expression establishes at a
+// CFG point when it is truthy and when it is falsy. They are the same
+// conditions a branch on the expression puts on its edges.
+type ConditionFromExprFunc func(p cfg.Point, expr ast.Expr) (onTrue, onFalse constraint.Condition)
 
 // SynthAPI provides type synthesis operations for flow extraction.
 // synth.Engine satisfies this interface directly.
@@ -212,4 +229,7 @@ type SynthAPI interface {
 	InferIterVars(exprs []ast.Expr, count int, p cfg.Point) []typ.Type
 	ExpandValuesWithSpecTypes(exprs []ast.Expr, needed int, p cfg.Point, specTypes SpecTypes) []typ.Type
 	InferIterVarsWithSpecTypes(exprs []ast.Expr, count int, p cfg.Point, specTypes SpecTypes) []typ.Type
+	// TypeOfWithSpecTypes synthesizes expr reading every symbol in specTypes
+	// through its overlay type.
+	TypeOfWithSpecTypes(expr ast.Expr, p cfg.Point, specTypes SpecTypes) typ.Type
 }

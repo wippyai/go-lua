@@ -191,11 +191,18 @@ func CoalesceMaps(types []typ.Type) []typ.Type {
 
 	key := maps[0].Key
 	val := maps[0].Value
+	inferred, explicitNil := maps[0].InferredPresence, maps[0].ExplicitNilWrite
 	for i := 1; i < len(maps); i++ {
 		key = Types(key, maps[i].Key)
 		val = Types(val, maps[i].Value)
+		inferred = inferred && maps[i].InferredPresence
+		explicitNil = explicitNil || maps[i].ExplicitNilWrite
 	}
-	rest = append(rest, typ.NewMap(key, val))
+	merged := maps[0].WithTypes(key, val).WithInferredPresence(inferred)
+	if explicitNil {
+		merged = merged.WithExplicitNilWrite()
+	}
+	rest = append(rest, merged)
 	return rest
 }
 
@@ -231,25 +238,7 @@ func CoalesceRecordOpenness(types []typ.Type) []typ.Type {
 			result = append(result, t)
 			continue
 		}
-		builder := typ.NewRecord().SetOpen(true)
-		for _, f := range r.Fields {
-			switch {
-			case f.Optional && f.Readonly:
-				builder.OptReadonlyField(f.Name, f.Type)
-			case f.Optional:
-				builder.OptField(f.Name, f.Type)
-			case f.Readonly:
-				builder.ReadonlyField(f.Name, f.Type)
-			default:
-				builder.Field(f.Name, f.Type)
-			}
-		}
-		if r.Metatable != nil {
-			builder.Metatable(r.Metatable)
-		}
-		if r.HasMapComponent() {
-			builder.MapComponent(r.MapKey, r.MapValue)
-		}
+		builder := r.Builder().SetOpen(true)
 		result = append(result, builder.Build())
 	}
 	return result
@@ -348,6 +337,7 @@ func CoalesceRecordMapComponents(types []typ.Type) []typ.Type {
 
 			// Merge map components
 			var mapKey, mapValue typ.Type
+			mapInferred, mapExplicit := true, false
 			for _, r := range g.records {
 				if !r.HasMapComponent() {
 					continue
@@ -359,30 +349,25 @@ func CoalesceRecordMapComponents(types []typ.Type) []typ.Type {
 					mapKey = Types(mapKey, r.MapKey)
 					mapValue = Types(mapValue, r.MapValue)
 				}
+				mapInferred = mapInferred && r.MapInferredPresence
+				mapExplicit = mapExplicit || r.MapExplicitNilWrite
 			}
-			// Use the first record as the template
+			// Use the first record as the template. The merged shape is
+			// declared only when every contributing record is.
 			template := g.template
-			builder := typ.NewRecord()
-			if template.Open {
-				builder.SetOpen(true)
-			}
-			for _, f := range template.Fields {
-				switch {
-				case f.Optional && f.Readonly:
-					builder.OptReadonlyField(f.Name, f.Type)
-				case f.Optional:
-					builder.OptField(f.Name, f.Type)
-				case f.Readonly:
-					builder.ReadonlyField(f.Name, f.Type)
-				default:
-					builder.Field(f.Name, f.Type)
+			allDeclared := true
+			complete := true
+			for _, r := range g.records {
+				if !r.Declared {
+					allDeclared = false
+				}
+				if r.Open && !r.Complete {
+					complete = false
 				}
 			}
-			if template.Metatable != nil {
-				builder.Metatable(template.Metatable)
-			}
+			builder := template.Builder().SetDeclared(allDeclared).SetComplete(complete)
 			if mapKey != nil && mapValue != nil {
-				builder.MapComponent(mapKey, mapValue)
+				builder.MapComponentWithFlags(mapKey, mapValue, mapInferred, mapExplicit)
 			}
 			merged := builder.Build()
 
@@ -420,7 +405,7 @@ func sameRecordFieldSignature(a, b *typ.Record) bool {
 	}
 	for i, af := range a.Fields {
 		bf := b.Fields[i]
-		if af.Name != bf.Name || af.Optional != bf.Optional || af.Readonly != bf.Readonly {
+		if af.Name != bf.Name || af.Optional != bf.Optional || af.InferredPresence != bf.InferredPresence || af.Readonly != bf.Readonly {
 			return false
 		}
 		if !typ.TypeEquals(af.Type, bf.Type) {
@@ -442,6 +427,9 @@ func recordFieldSignatureHash(r *typ.Record) uint64 {
 		h = internal.HashCombine(h, internal.FnvString(f.Name))
 		if f.Optional {
 			h = internal.HashCombine(h, 2)
+		}
+		if f.InferredPresence {
+			h = internal.HashCombine(h, 4)
 		}
 		if f.Readonly {
 			h = internal.HashCombine(h, 3)

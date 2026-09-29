@@ -25,7 +25,7 @@ func stopDepthPattern(pattern, concrete typ.Type, depth int) bool {
 //
 // # Algorithm
 //
-// 1. Constraints are added via [InferSet.AddSubtype] and [InferSet.AddEqual]
+// 1. Constraints are added via [InferSet.AddSubtype]
 // 2. Lower bounds (types that are subtypes of the variable) are joined
 // 3. Upper bounds (types that the variable must be a subtype of) are met
 // 4. Cyclic dependencies are resolved using Tarjan's SCC algorithm
@@ -107,12 +107,6 @@ func (c *InferSet) AddSubtype(sub, super typ.Type) {
 			c.unsatisfiable = true
 		}
 	}
-}
-
-// AddEqual records that two types must be equal.
-func (c *InferSet) AddEqual(a, b typ.Type) {
-	c.AddSubtype(a, b)
-	c.AddSubtype(b, a)
 }
 
 // Solve attempts to solve all constraints.
@@ -777,7 +771,7 @@ func applyInferSubst(t typ.Type, s InferSubstitution, visited map[int]bool, memo
 				return t
 			}
 
-			return typ.NewArray(elem)
+			return a.WithElement(elem)
 		},
 		Map: func(m *typ.Map) typ.Type {
 			key := applyInferSubst(m.Key, s, visited, memo, depth+1)
@@ -787,7 +781,7 @@ func applyInferSubst(t typ.Type, s InferSubstitution, visited map[int]bool, memo
 				return t
 			}
 
-			return typ.NewMap(key, value)
+			return m.WithTypes(key, value)
 		},
 		Record: func(r *typ.Record) typ.Type {
 			changed := false
@@ -795,7 +789,8 @@ func applyInferSubst(t typ.Type, s InferSubstitution, visited map[int]bool, memo
 
 			for i, f := range r.Fields {
 				fType := applyInferSubst(f.Type, s, visited, memo, depth+1)
-				fields[i] = typ.Field{Name: f.Name, Type: fType, Optional: f.Optional, Readonly: f.Readonly}
+				fields[i] = f
+				fields[i].Type = fType
 
 				if fType != f.Type {
 					changed = true
@@ -806,22 +801,7 @@ func applyInferSubst(t typ.Type, s InferSubstitution, visited map[int]bool, memo
 				return t
 			}
 
-			rb := typ.NewRecord()
-
-			for _, f := range fields {
-				if f.Readonly {
-					rb.ReadonlyField(f.Name, f.Type)
-				} else if f.Optional {
-					rb.OptField(f.Name, f.Type)
-				} else {
-					rb.Field(f.Name, f.Type)
-				}
-			}
-
-			rec := rb.Build()
-			rec.Metatable = r.Metatable
-
-			return rec
+			return r.WithChildren(fields, r.Metatable, r.MapKey, r.MapValue)
 		},
 		Alias: func(a *typ.Alias) typ.Type {
 			target := applyInferSubst(a.Target, s, visited, memo, depth+1)
@@ -837,11 +817,6 @@ func applyInferSubst(t typ.Type, s InferSubstitution, visited map[int]bool, memo
 	})
 	memo[t] = result
 	return result
-}
-
-// Match walks pattern and concrete types in parallel, collecting constraints.
-func Match(pattern, concrete typ.Type, cs *InferSet) {
-	matchDepth(pattern, concrete, cs, subtype.Covariant, 0)
 }
 
 // MatchContra matches with contravariant orientation (for parameter positions).

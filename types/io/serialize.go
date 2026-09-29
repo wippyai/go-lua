@@ -36,6 +36,9 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
+const typeEncodingVersion byte = 14
+const typeEncodingMagic = "TYPE"
+
 var (
 	ErrInvalidType   = errors.New("invalid type encoding")
 	ErrUnknownType   = errors.New("unknown type kind")
@@ -52,7 +55,9 @@ const (
 
 func Encode(t typ.Type) ([]byte, error) {
 	var buf bytes.Buffer
-	w := &typeWriter{w: &buf}
+	buf.WriteString(typeEncodingMagic)
+	buf.WriteByte(typeEncodingVersion)
+	w := &typeWriter{w: &buf, version: typeEncodingVersion}
 	w.writeType(t)
 
 	if w.err != nil {
@@ -63,7 +68,18 @@ func Encode(t typ.Type) ([]byte, error) {
 }
 
 func Decode(data []byte) (typ.Type, error) {
-	r := &typeReader{r: bytes.NewReader(data)}
+	version := byte(13) // unframed data belongs to the previous type encoding
+	if bytes.HasPrefix(data, []byte(typeEncodingMagic)) {
+		if len(data) < len(typeEncodingMagic)+1 {
+			return nil, ErrInvalidType
+		}
+		version = data[len(typeEncodingMagic)]
+		if version != typeEncodingVersion && version != 13 {
+			return nil, ErrVersionMismatch
+		}
+		data = data[len(typeEncodingMagic)+1:]
+	}
+	r := &typeReader{r: bytes.NewReader(data), version: version}
 	t := r.readType()
 
 	if r.err != nil {

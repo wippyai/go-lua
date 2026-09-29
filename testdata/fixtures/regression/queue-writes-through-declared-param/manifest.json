@@ -1,0 +1,5 @@
+{
+  "description": "Writes a callee makes through a parameter declared Queue, into its fields, keep the caller's Queue one type.",
+  "files": ["main.lua"],
+  "check": {"errors": 0}
+}

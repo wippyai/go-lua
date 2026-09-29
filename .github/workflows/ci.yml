@@ -40,7 +40,7 @@ jobs:
   test:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
@@ -58,12 +58,18 @@ jobs:
       - name: Run tests
         env:
           GOCACHE: ${{ runner.temp }}/go-build
-        run: go test -timeout 120s ./...
+        # The fixture suite checks the full application corpus and now needs
+        # several minutes to finish on CI runners.
+        run: go test -timeout 25m ./...
 
   race:
-    name: Race Tests
+    name: Race Tests (${{ matrix.shard }})
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [other, ac, dg, hj, k, lr, sz]
     steps:
       - name: Check out code
         uses: actions/checkout@v6
@@ -78,7 +84,8 @@ jobs:
         env:
           GOCACHE: ${{ runner.temp }}/go-build
           GORACE: "halt_on_error=1"
-        run: go test -race -timeout 120s ./...
+        # Each shard checks disjoint fixtures; "other" runs every non-fixture test.
+        run: bash .github/scripts/race-shard.sh "${{ matrix.shard }}"
 
   fuzz:
     name: Fuzz
@@ -97,17 +104,17 @@ jobs:
       - name: Fuzz type decode
         env:
           GOCACHE: ${{ runner.temp }}/go-build
-        run: go test -fuzz=FuzzTypeDecodeToValidation -fuzztime=60s -timeout=120s
+        run: go test -run='^$' -fuzz=FuzzTypeDecodeToValidation -fuzztime=60s -timeout=120s
 
       - name: Fuzz Lua source types
         env:
           GOCACHE: ${{ runner.temp }}/go-build
-        run: go test -fuzz=FuzzLuaTypeValidation -fuzztime=60s -timeout=120s
+        run: go test -run='^$' -fuzz=FuzzLuaTypeValidation -fuzztime=60s -timeout=120s
 
       - name: Fuzz Lua with manifest
         env:
           GOCACHE: ${{ runner.temp }}/go-build
-        run: go test -fuzz=FuzzLuaWithManifestTypes -fuzztime=60s -timeout=120s
+        run: go test -run='^$' -fuzz=FuzzLuaWithManifestTypes -fuzztime=60s -timeout=120s
 
   bench:
     name: Benchmarks
@@ -124,9 +131,10 @@ jobs:
           cache: true
 
       - name: Run benchmarks
+        shell: bash
         env:
           GOCACHE: ${{ runner.temp }}/go-build
-        run: go test -bench="Benchmark(Validate|Is)" -benchmem -count=1 -timeout=60s | tee bench.txt
+        run: go test -run='^$' -bench="Benchmark(Validate|Is)" -benchmem -count=1 -timeout=60s | tee bench.txt
 
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4

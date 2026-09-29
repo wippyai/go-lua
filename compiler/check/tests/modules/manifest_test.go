@@ -85,9 +85,9 @@ func TestManifest_LocalRequireInFunction(t *testing.T) {
 	}
 }
 
-// TestManifest_SoftAnnotationParamHints ensures soft annotations like {any}
-// are overridden by call-site param hints.
-func TestManifest_SoftAnnotationParamHints(t *testing.T) {
+// TestManifest_AnyElementAnnotationParam ensures elements of a {any}
+// parameter are accepted where typed parameters expect them.
+func TestManifest_AnyElementAnnotationParam(t *testing.T) {
 	registryManifest := io.NewManifest("registry")
 	entryType := typ.NewRecord().Field("id", typ.String).Build()
 	findFn := typ.Func().Param("query", typ.Any).Returns(typ.NewArray(entryType)).Build()
@@ -115,13 +115,14 @@ func TestManifest_SoftAnnotationParamHints(t *testing.T) {
 		for _, d := range result.Errors {
 			t.Logf("error: %s", d.Message)
 		}
-		t.Errorf("expected no errors with soft annotation param hints")
+		t.Errorf("expected no errors for elements of an {any} parameter")
 	}
 }
 
-// TestManifest_SoftLocalAnnotations ensures soft local annotations are refined
-// by table mutations and indexer assignments in return inference.
-func TestManifest_SoftLocalAnnotations(t *testing.T) {
+// TestManifest_AnyElementLocalAnnotations ensures locals annotated with any
+// element types accept table mutations and indexer assignments, and their
+// elements flow to typed parameters.
+func TestManifest_AnyElementLocalAnnotations(t *testing.T) {
 	registryManifest := io.NewManifest("registry")
 	metaType := typ.NewMap(typ.String, typ.Any)
 	entryType := typ.NewRecord().
@@ -180,7 +181,7 @@ func TestManifest_SoftLocalAnnotations(t *testing.T) {
 		for _, d := range result.Errors {
 			t.Logf("error: %s", d.Message)
 		}
-		t.Errorf("expected no errors with soft local annotations")
+		t.Errorf("expected no errors for locals annotated with any element types")
 	}
 }
 

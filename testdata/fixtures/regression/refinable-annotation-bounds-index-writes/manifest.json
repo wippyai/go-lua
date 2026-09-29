@@ -1,0 +1,6 @@
+{
+  "description": "A refinable {any} annotation bounds the refinement index writes make: a write by a number or dynamic key leaves the local {any} rather than a map the return rejects.",
+  "files": ["main.lua"],
+  "packages": ["channel"],
+  "check": {"errors": 0}
+}

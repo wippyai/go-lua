@@ -11,15 +11,15 @@ import (
 )
 
 func TestPropagateParamHintsFromCallGraph_Empty(t *testing.T) {
-	PropagateParamHintsFromCallGraph(nil)
-	PropagateParamHintsFromCallGraph(map[cfg.SymbolID]*LocalFuncInfo{})
+	PropagateParamHintsFromCallGraph(nil, SignatureEnv{})
+	PropagateParamHintsFromCallGraph(map[cfg.SymbolID]*LocalFuncInfo{}, SignatureEnv{})
 }
 
 func TestPropagateParamHintsFromCallGraph_NilGraph(t *testing.T) {
 	localFuncs := map[cfg.SymbolID]*LocalFuncInfo{
 		1: {Sym: 1, Graph: nil},
 	}
-	PropagateParamHintsFromCallGraph(localFuncs)
+	PropagateParamHintsFromCallGraph(localFuncs, SignatureEnv{})
 }
 
 func TestPropagateParamHintsFromCallGraph_SingleFuncNoArgs(t *testing.T) {
@@ -29,7 +29,7 @@ func TestPropagateParamHintsFromCallGraph_SingleFuncNoArgs(t *testing.T) {
 	localFuncs := map[cfg.SymbolID]*LocalFuncInfo{
 		1: {Sym: 1, Fn: fn, Graph: graph},
 	}
-	PropagateParamHintsFromCallGraph(localFuncs)
+	PropagateParamHintsFromCallGraph(localFuncs, SignatureEnv{})
 
 	if localFuncs[1].ParamHints != nil {
 		t.Error("expected nil ParamHints for function with no callers")
@@ -37,12 +37,12 @@ func TestPropagateParamHintsFromCallGraph_SingleFuncNoArgs(t *testing.T) {
 }
 
 func TestBuildLocalCallGraph_Empty(t *testing.T) {
-	result := BuildLocalCallGraph(nil, nil)
+	result := BuildLocalCallGraph(nil, nil, SignatureEnv{})
 	if len(result) != 0 {
 		t.Errorf("expected empty map, got %v", result)
 	}
 
-	result = BuildLocalCallGraph(map[cfg.SymbolID]*LocalFuncInfo{}, nil)
+	result = BuildLocalCallGraph(map[cfg.SymbolID]*LocalFuncInfo{}, nil, SignatureEnv{})
 	if len(result) != 0 {
 		t.Errorf("expected empty map, got %v", result)
 	}
@@ -52,7 +52,7 @@ func TestBuildLocalCallGraph_NilGraph(t *testing.T) {
 	localFuncs := map[cfg.SymbolID]*LocalFuncInfo{
 		1: {Sym: 1, Graph: nil},
 	}
-	result := BuildLocalCallGraph(localFuncs, nil)
+	result := BuildLocalCallGraph(localFuncs, nil, SignatureEnv{})
 	if result[1] != nil {
 		t.Error("expected nil callees for func with nil graph")
 	}
@@ -65,7 +65,7 @@ func TestBuildLocalCallGraph_SingleFunc(t *testing.T) {
 	localFuncs := map[cfg.SymbolID]*LocalFuncInfo{
 		1: {Sym: 1, Fn: fn, Graph: graph},
 	}
-	result := BuildLocalCallGraph(localFuncs, nil)
+	result := BuildLocalCallGraph(localFuncs, nil, SignatureEnv{})
 	// Function with no calls to other local functions has nil callees (correct behavior)
 	callees, exists := result[1]
 	if !exists {
@@ -257,14 +257,16 @@ func TestBuildLocalCallGraph_AddsCallbackFunctionEdges(t *testing.T) {
 		t.Fatalf("expected symbols for a and b, got a=%d b=%d", aSym, bSym)
 	}
 
-	adj := BuildLocalCallGraph(localFuncs, chunkGraph.Bindings())
+	adj := BuildLocalCallGraph(localFuncs, chunkGraph.Bindings(), SignatureEnv{})
 	aCallees := adj[aSym]
 	if !containsSymbol(aCallees, bSym) {
 		t.Fatalf("expected call graph edge a -> b via callback argument, got %v", aCallees)
 	}
 }
 
-func TestPropagateParamHintsFromCallGraph_MethodRuntimeIndexing(t *testing.T) {
+// obj:callee(7) calls whatever obj.callee holds at runtime; a local function
+// that merely shares the method's name is not the callee and gets no hints.
+func TestPropagateParamHintsFromCallGraph_MethodNameDoesNotSelectLocalFunction(t *testing.T) {
 	stmts, err := parse.ParseString(`
 		local function callee(self, x)
 			return x
@@ -314,17 +316,12 @@ func TestPropagateParamHintsFromCallGraph_MethodRuntimeIndexing(t *testing.T) {
 		t.Fatalf("expected symbols for callee/caller, got callee=%d caller=%d", calleeSym, callerSym)
 	}
 
-	PropagateParamHintsFromCallGraph(localFuncs)
+	PropagateParamHintsFromCallGraph(localFuncs, SignatureEnv{})
 
-	hints := localFuncs[calleeSym].ParamHints
-	if len(hints) < 2 {
-		t.Fatalf("expected at least 2 param hints for callee(self,x), got %d", len(hints))
-	}
-	if !typ.TypeEquals(hints[1], typ.Number) {
-		t.Fatalf("expected hint for x at index 1 to be number, got %v", hints[1])
-	}
-	if hints[0] != nil {
-		t.Fatalf("expected no informative hint for receiver at index 0, got %v", hints[0])
+	for i, hint := range localFuncs[calleeSym].ParamHints {
+		if hint != nil {
+			t.Fatalf("local callee must get no hint from obj:callee(7), got %v at %d", hint, i)
+		}
 	}
 }
 

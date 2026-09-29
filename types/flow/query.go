@@ -3,6 +3,7 @@ package flow
 import (
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/flow/join"
 	"github.com/wippyai/go-lua/types/flow/pathkey"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/narrow"
@@ -10,10 +11,30 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
+// pathTypeOrigin records where the type of a path at a point comes from.
+type pathTypeOrigin uint8
+
+const (
+	// pathTypeProjected: the type is projected from the path's root value or
+	// declared type, as that value stands before any branch narrowing. A root
+	// path's own type is never projected.
+	pathTypeProjected pathTypeOrigin = iota
+	// pathTypeRecorded: the type is a fact recorded for the path itself by an
+	// assignment to it, valid until the next write to the path.
+	pathTypeRecorded
+)
+
 // TypeAt returns the type for a path at a CFG point using canonical keys.
 func (s *Solution) TypeAt(p cfg.Point, path constraint.Path) typ.Type {
+	t, _ := s.typeAtWithOrigin(p, path)
+	return t
+}
+
+// typeAtWithOrigin returns the type for a path at a CFG point and whether it is
+// a fact recorded for the path or a projection from its root.
+func (s *Solution) typeAtWithOrigin(p cfg.Point, path constraint.Path) (typ.Type, pathTypeOrigin) {
 	if path.IsEmpty() || s.pkResolver == nil {
-		return nil
+		return nil, pathTypeProjected
 	}
 
 	// Get canonical key for this path at this point
@@ -23,13 +44,13 @@ func (s *Solution) TypeAt(p cfg.Point, path constraint.Path) typ.Type {
 		declaredType := s.lookupDeclaredType(path)
 		if declaredType != nil {
 			if len(path.Segments) == 0 {
-				return declaredType
+				return declaredType, pathTypeProjected
 			}
 			if d, ok := s.deriveTypeFrom(declaredType, path.Segments); ok {
-				return d
+				return d, pathTypeProjected
 			}
 		}
-		return nil
+		return nil, pathTypeProjected
 	}
 
 	// Get base key (path without segments)
@@ -43,10 +64,10 @@ func (s *Solution) TypeAt(p cfg.Point, path constraint.Path) typ.Type {
 		declaredType := s.lookupDeclaredType(path)
 		if declaredType != nil {
 			if len(path.Segments) == 0 {
-				return declaredType
+				return declaredType, pathTypeProjected
 			}
 			if d, ok := s.deriveTypeFrom(declaredType, path.Segments); ok {
-				return d
+				return d, pathTypeProjected
 			}
 		}
 	}
@@ -65,7 +86,7 @@ func (s *Solution) TypeAt(p cfg.Point, path constraint.Path) typ.Type {
 				}
 			}
 		}
-		return s.mergeFieldAssignments(baseType, string(baseKey))
+		return s.mergeFieldAssignments(baseType, string(baseKey)), pathTypeRecorded
 	}
 
 	var derived typ.Type
@@ -75,20 +96,13 @@ func (s *Solution) TypeAt(p cfg.Point, path constraint.Path) typ.Type {
 		}
 	}
 
-	if full != nil && full.Kind().IsPlaceholder() && derived != nil {
-		full = derived
+	// A recorded any write describes the actual child value even when the
+	// enclosing open record does not yet list that field. A nil projection
+	// from the record cannot replace the dynamic value stored by the write.
+	if full != nil && (derived == nil || typ.IsAny(full) || !full.Kind().IsPlaceholder()) {
+		return full, pathTypeRecorded
 	}
-	if derived != nil && derived.Kind().IsPlaceholder() && full != nil {
-		derived = full
-	}
-
-	var candidate typ.Type
-	if full != nil {
-		candidate = full
-	} else {
-		candidate = derived
-	}
-	return candidate
+	return derived, pathTypeProjected
 }
 
 // ConditionAt returns the full DNF condition at a CFG point.
@@ -137,6 +151,83 @@ func (s *Solution) conditionAtFallback(p cfg.Point, depth int) constraint.Condit
 		return predCond
 	}
 	return constraint.And(predCond, edgeCond)
+}
+
+// IsNonNilAt reports whether the condition at p proves the value at path
+// present: every disjunct holds a Truthy or NotNil fact for it. It decides
+// presence where the type cannot express it, as for a value typed any that a
+// guard proved truthy.
+func (s *Solution) IsNonNilAt(p cfg.Point, path constraint.Path) bool {
+	return s.hasPresenceFactAt(p, path, false)
+}
+
+// IsTruthyAt reports whether every reachable path to p proves a value truthy.
+func (s *Solution) IsTruthyAt(p cfg.Point, path constraint.Path) bool {
+	return s.hasPresenceFactAt(p, path, true)
+}
+
+func (s *Solution) hasPresenceFactAt(p cfg.Point, path constraint.Path, truthyOnly bool) bool {
+	if s == nil || s.pkResolver == nil || path.IsEmpty() {
+		return false
+	}
+	cond := s.ConditionAt(p)
+	if !cond.HasConstraints() || cond.IsFalse() {
+		return false
+	}
+	want := s.pkResolver.KeyAt(p, path)
+	if want == "" {
+		return false
+	}
+	for i := 0; i < cond.NumDisjuncts(); i++ {
+		// Copies preserve identity. Follow only equalities that hold in this
+		// disjunct, so every reachable path must still prove presence.
+		equalKeys := map[string]bool{string(want): true}
+		items := cond.DisjunctConstraints(i)
+
+		for changed := true; changed; {
+			changed = false
+			for _, c := range items {
+				eq, ok := c.(constraint.EqPath)
+				if !ok {
+					continue
+				}
+				left := string(s.pkResolver.KeyAt(p, eq.Left))
+				right := string(s.pkResolver.KeyAt(p, eq.Right))
+				if left == "" || right == "" {
+					continue
+				}
+				if equalKeys[left] && !equalKeys[right] {
+					equalKeys[right], changed = true, true
+				}
+				if equalKeys[right] && !equalKeys[left] {
+					equalKeys[left], changed = true, true
+				}
+			}
+		}
+		found := false
+		for _, c := range items {
+			var factPath constraint.Path
+			switch v := c.(type) {
+			case constraint.Truthy:
+				factPath = v.Path
+			case constraint.NotNil:
+				if truthyOnly {
+					continue
+				}
+				factPath = v.Path
+			default:
+				continue
+			}
+			if equalKeys[string(s.pkResolver.KeyAt(p, factPath))] {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
 }
 
 // ExcludesTypeAt checks if a NotHasType constraint applies to the path at point p.
@@ -280,6 +371,37 @@ func (s *Solution) ArrayLenBoundAt(p cfg.Point, varName string) (arrKey string, 
 	return string(pathKey), ok
 }
 
+// HasLengthAtLeast reports a lower bound on this versioned table's length.
+func (s *Solution) HasLengthAtLeast(p cfg.Point, tablePath constraint.Path, minimum int64) bool {
+	if s == nil || s.numericStates == nil || s.pkResolver == nil {
+		return false
+	}
+	state := s.numericStates[p]
+	if state == nil {
+		return false
+	}
+	key := s.pkResolver.KeyAt(p, s.operandPath(p, tablePath))
+	lower, ok := state.LengthLowerBoundFor(key)
+	if ok && lower >= minimum {
+		return true
+	}
+	exact, ok := state.LengthExactFor(key)
+	return ok && exact >= minimum
+}
+
+// ExactLengthAt returns a proved result of Lua's length operator for this table version.
+func (s *Solution) ExactLengthAt(p cfg.Point, tablePath constraint.Path) (int64, bool) {
+	if s == nil || s.numericStates == nil || s.pkResolver == nil {
+		return 0, false
+	}
+	state := s.numericStates[p]
+	if state == nil {
+		return 0, false
+	}
+	key := s.pkResolver.KeyAt(p, s.operandPath(p, tablePath))
+	return state.LengthExactFor(key)
+}
+
 // ArrayLenBoundWithOffsetAt returns the array key and offset for a symbolic length bound.
 func (s *Solution) ArrayLenBoundWithOffsetAt(p cfg.Point, varName string) (arrKey string, offset int64, ok bool) {
 	if s == nil || s.numericStates == nil {
@@ -310,9 +432,17 @@ func (s *Solution) ArrayLenBoundWithOffsetAt(p cfg.Point, varName string) (arrKe
 
 // NarrowedTypeAt returns the type at point p for path, narrowed by the DNF condition.
 // This is a pure query that composes: baseTypeAt + ConditionAt + applyCondition.
+//
+// A read at an assignment evaluates before the assignment writes its targets,
+// so a variable the assignment at p rebinds reads its value on entry to p.
 func (s *Solution) NarrowedTypeAt(p cfg.Point, path constraint.Path) typ.Type {
 	if s == nil {
 		return nil
+	}
+	if path.Version == 0 && s.rebindsAt(p, path.Symbol) {
+		if pre := s.preAssignmentNarrowedTypeAt(p, path); pre != nil {
+			return pre
+		}
 	}
 	cacheKey, cacheable := s.narrowedTypeCacheKey(p, path)
 	if !s.queryCacheEnabled {
@@ -330,12 +460,41 @@ func (s *Solution) NarrowedTypeAt(p cfg.Point, path constraint.Path) typ.Type {
 		}
 	}
 
+	result := s.narrowedTypeUnder(p, path, s.ConditionAt(p))
+	if cacheable {
+		s.narrowedTypeCache[cacheKey] = narrowedTypeCacheValue{t: result, ok: result != nil}
+	}
+	return result
+}
+
+// rebindsAt reports whether an assignment at p gives sym a new value.
+func (s *Solution) rebindsAt(p cfg.Point, sym cfg.SymbolID) bool {
+	if sym == 0 || s.inputs == nil {
+		return false
+	}
+	if s.rebinds == nil {
+		s.rebinds = make(map[cfg.Point]map[cfg.SymbolID]bool)
+		for _, assign := range s.inputs.Assignments {
+			if assign.TargetPath.Symbol == 0 || len(assign.TargetPath.Segments) != 0 {
+				continue
+			}
+			syms := s.rebinds[assign.Point]
+			if syms == nil {
+				syms = make(map[cfg.SymbolID]bool)
+				s.rebinds[assign.Point] = syms
+			}
+			syms[assign.TargetPath.Symbol] = true
+		}
+	}
+	return s.rebinds[p][sym]
+}
+
+// narrowedTypeUnder returns the type at point p for path, narrowed by
+// condition.
+func (s *Solution) narrowedTypeUnder(p cfg.Point, path constraint.Path, condition constraint.Condition) typ.Type {
 	baseType := s.baseTypeAt(p, path)
 	if baseType == nil {
-		if cacheable {
-			s.narrowedTypeCache[cacheKey] = narrowedTypeCacheValue{}
-		}
-		return nil
+		return s.refineExactLengthIndex(p, path, nil)
 	}
 	// For annotated symbols, ensure base type does not drop required structure.
 	// If the base type is not a subtype of the declared type, fall back to declared.
@@ -348,20 +507,143 @@ func (s *Solution) NarrowedTypeAt(p cfg.Point, path constraint.Path) typ.Type {
 			}
 		}
 	}
-
-	condition := s.ConditionAt(p)
+	if condition.IsFalse() {
+		return typ.Never
+	}
 	if !condition.HasConstraints() {
-		if cacheable {
-			s.narrowedTypeCache[cacheKey] = narrowedTypeCacheValue{t: baseType, ok: true}
-		}
-		return baseType
+		return s.refineExactLengthIndex(p, path, baseType)
 	}
+	baseType = s.narrowRecordFieldAliases(p, path, baseType, condition)
+	return s.refineExactLengthIndex(p, path, s.applyCondition(p, baseType, path, condition))
+}
 
-	result := s.applyCondition(p, baseType, path, condition)
-	if cacheable {
-		s.narrowedTypeCache[cacheKey] = narrowedTypeCacheValue{t: result, ok: true}
+func (s *Solution) refineExactLengthIndex(p cfg.Point, path constraint.Path, t typ.Type) typ.Type {
+	n := len(path.Segments)
+	if n == 0 {
+		return t
 	}
-	return result
+	last := path.Segments[n-1]
+	if last.Kind != constraint.SegmentIndexInt || last.Index <= 0 {
+		return t
+	}
+	tablePath := path
+	tablePath.Segments = path.Segments[:n-1]
+	// An inferred open empty table says nothing about values added through
+	// another path. Once its length is positive, a nil-only projection for an
+	// indexed slot is stale. The slot may still be nil in a sparse table, so
+	// retain gradual uncertainty rather than treating it as present.
+	if t != nil && t.Kind() == kind.Nil && s.HasLengthAtLeast(p, tablePath, int64(last.Index)) {
+		if r, ok := s.baseTypeAt(p, tablePath).(*typ.Record); ok && r.Open && len(r.Fields) == 0 && !r.HasMapComponent() {
+			return typ.Unknown
+		}
+	}
+	length, ok := s.ExactLengthAt(p, tablePath)
+	if !ok || length != int64(last.Index) {
+		return t
+	}
+	if t != nil {
+		if present := narrow.RemoveNil(t); !typ.IsNever(present) {
+			return present
+		}
+	}
+	// An exact positive Lua length proves the border slot exists, though its
+	// element type may be unknown when the prior projection was only nil.
+	return typ.Unknown
+}
+
+// narrowRecordFieldAliases carries a branch refinement through a field that
+// was initialized from a scalar path, such as t.engine = engine. A refinement
+// of engine also describes t.engine until that field is written again.
+func (s *Solution) narrowRecordFieldAliases(p cfg.Point, path constraint.Path, t typ.Type, condition constraint.Condition) typ.Type {
+	if len(path.Segments) != 0 || s.pkResolver == nil {
+		return t
+	}
+	rec, ok := t.(*typ.Record)
+	if !ok {
+		return t
+	}
+	for _, field := range rec.Fields {
+		sourceKey := s.aliasSourceKeyAt(p, path.Field(field.Name))
+		if sourceKey == "" {
+			continue
+		}
+		sym, version, suffix, ok := pathkey.ParseKeyUnchecked(constraint.PathKey(sourceKey))
+		if !ok || sym == 0 || version == 0 || suffix != "" || sym == path.Symbol {
+			continue
+		}
+		sourcePath := constraint.Path{Symbol: sym, Version: version}
+		sourceType := s.values[sourceKey]
+		if sourceType == nil {
+			sourceType = s.baseTypeAt(p, sourcePath)
+		}
+		if sourceType == nil {
+			continue
+		}
+		narrowed := s.applyCondition(p, sourceType, sourcePath, condition)
+		if narrowed != nil && subtype.IsSubtype(narrowed, field.Type) && !typ.TypeEquals(narrowed, field.Type) {
+			field.Type = narrowed
+			rec = rec.WithField(field)
+		}
+	}
+	return rec
+}
+
+// NarrowTypeAt narrows t, a type the caller holds for path, by the condition
+// reaching p. It serves callers that know the value's type from outside the
+// solution, such as assignment inference running before the full solve.
+func (s *Solution) NarrowTypeAt(p cfg.Point, path constraint.Path, t typ.Type) typ.Type {
+	return s.NarrowTypeAssuming(p, path, t, constraint.TrueCondition())
+}
+
+// NarrowTypeAssuming narrows t, a type the caller holds for path, by the
+// condition reaching p conjoined with extra.
+func (s *Solution) NarrowTypeAssuming(p cfg.Point, path constraint.Path, t typ.Type, extra constraint.Condition) typ.Type {
+	if s == nil || t == nil || path.IsEmpty() {
+		return t
+	}
+	return s.applyCondition(p, t, path, constraint.And(s.ConditionAt(p), extra))
+}
+
+// NarrowTypeBeforeAssuming narrows t, a type the caller holds for path on
+// entry to p, by the facts entering p along each incoming edge conjoined with
+// extra. A read evaluated by an assignment at p that writes path observes the
+// value before that write: the facts of a predecessor and of its edge to p,
+// over the versions visible at that predecessor.
+func (s *Solution) NarrowTypeBeforeAssuming(p cfg.Point, path constraint.Path, t typ.Type, extra constraint.Condition) typ.Type {
+	if s == nil || t == nil || path.IsEmpty() || s.inputs == nil || s.inputs.Graph == nil {
+		return t
+	}
+	preds := graphPredecessors(s.inputs.Graph, p)
+	if len(preds) == 0 {
+		return t
+	}
+	narrowed := make([]typ.Type, 0, len(preds))
+	for _, pred := range preds {
+		entering := s.ConditionAt(pred)
+		if edge, ok := s.edgeConditions[edgeKey{from: pred, to: p}]; ok {
+			entering = constraint.And(entering, edge)
+		}
+		n := s.applyCondition(pred, t, path, constraint.And(entering, extra))
+		if n != nil && !typ.IsNever(n) {
+			narrowed = append(narrowed, n)
+		}
+	}
+	if len(narrowed) == 0 {
+		return typ.Never
+	}
+	return join.Types(narrowed...)
+}
+
+// NarrowedTypeAssuming returns the type at p for path narrowed by the
+// condition reaching p conjoined with extra. An operand evaluated only when
+// another operand's condition holds, such as the right operand of `and`, is
+// typed with that condition as extra, so an expression guard narrows exactly
+// as the same guard on a branch does.
+func (s *Solution) NarrowedTypeAssuming(p cfg.Point, path constraint.Path, extra constraint.Condition) typ.Type {
+	if s == nil {
+		return nil
+	}
+	return s.narrowedTypeUnder(p, path, constraint.And(s.ConditionAt(p), extra))
 }
 
 func (s *Solution) narrowedTypeCacheKey(p cfg.Point, path constraint.Path) (narrowedTypeCacheKey, bool) {
@@ -383,18 +665,22 @@ func (s *Solution) narrowedTypeCacheKey(p cfg.Point, path constraint.Path) (narr
 }
 
 // baseTypeAt returns the base type for a path at point p, for use in narrowing.
-// For child paths: prefers the narrower of explicit (TypeAt) vs parent-derived.
+//
+// A child path has two sources: its own type at p (TypeAt) and the type derived
+// from its closest narrowed ancestor. When the own type is only a projection of
+// the root value as it stands before narrowing, the ancestor-derived type is the
+// same projection taken after narrowing, so it wins. When the own type is a fact
+// recorded by an assignment to the path, both describe the same value and the
+// more specific one wins.
 func (s *Solution) baseTypeAt(p cfg.Point, path constraint.Path) typ.Type {
-	explicit := s.TypeAt(p, path)
+	explicit, origin := s.typeAtWithOrigin(p, path)
 
 	if len(path.Segments) == 0 {
 		return explicit
 	}
 
-	// For child paths, derive from narrowed parent
 	derived := s.derivedTypeAt(p, path)
 
-	// Use whichever type is available; if both, prefer the narrower one
 	if explicit == nil {
 		return derived
 	}
@@ -402,21 +688,27 @@ func (s *Solution) baseTypeAt(p cfg.Point, path constraint.Path) typ.Type {
 		return explicit
 	}
 
-	// Both available: prefer the narrower one
-	// If derived is falsy (nil/false), prefer explicit to avoid narrowing to never
+	// A falsy derived type (nil/false) would narrow the path to never.
 	if derived.Kind() == kind.Nil || isFalseLiteral(derived) {
 		return explicit
 	}
+	// A write to a child table can turn an imported or captured empty table
+	// into an array or map. Its old parent projection is only the pre-write
+	// shape; the recorded child value describes the current table.
+	if origin == pathTypeRecorded && (derived.Kind() == kind.Never || isEmptyRecordNoMapType(derived)) {
+		return explicit
+	}
 
-	// Prefer concrete explicit child-path facts over placeholder parent-derived facts.
+	if origin == pathTypeProjected {
+		return derived
+	}
+
 	if derived.Kind().IsPlaceholder() && !explicit.Kind().IsPlaceholder() {
 		return explicit
 	}
 	if explicit.Kind().IsPlaceholder() && !derived.Kind().IsPlaceholder() {
 		return derived
 	}
-
-	// If one is a subtype of the other, keep the more specific type.
 	if subtype.IsSubtype(explicit, derived) {
 		return explicit
 	}
@@ -424,8 +716,7 @@ func (s *Solution) baseTypeAt(p cfg.Point, path constraint.Path) typ.Type {
 		return derived
 	}
 
-	// If explicit is narrower (e.g., string vs string?), prefer explicit
-	// This happens when a field assignment provides a flow-narrowed type
+	// An assignment of T to a path whose ancestor projects T? keeps T.
 	if opt, ok := derived.(*typ.Optional); ok {
 		if typ.TypeEquals(explicit, opt.Inner) {
 			return explicit
@@ -477,14 +768,14 @@ func isFalseLiteral(t typ.Type) bool {
 
 // applyCondition narrows baseType using a DNF condition.
 func (s *Solution) applyCondition(p cfg.Point, baseType typ.Type, path constraint.Path, cond constraint.Condition) typ.Type {
-	if baseType == nil || !cond.HasConstraints() {
-		return baseType
-	}
-	if cond.IsTrue() {
+	if baseType == nil {
 		return baseType
 	}
 	if cond.IsFalse() {
 		return typ.Never
+	}
+	if !cond.HasConstraints() || cond.IsTrue() {
+		return baseType
 	}
 
 	var narrowedTypes []typ.Type
@@ -496,6 +787,12 @@ func (s *Solution) applyCondition(p cfg.Point, baseType typ.Type, path constrain
 		}
 		narrowed := s.applyConstraints(p, baseType, path, disjunct)
 		if narrowed != nil && !narrowed.Kind().IsNever() {
+			// A disjunct that leaves the value unresolved admits every value,
+			// so the union over the disjuncts is unresolved too; NewUnion
+			// would drop it as carrying no information.
+			if typ.IsUnknown(narrowed) {
+				return narrowed
+			}
 			narrowedTypes = append(narrowedTypes, narrowed)
 		}
 	}
@@ -562,10 +859,16 @@ func (s *Solution) applyConstraints(p cfg.Point, baseType typ.Type, path constra
 	}
 
 	if narrowed, ok := s.deriveFromNarrowedAncestors(canonicalKey, dom); ok {
-		if current == nil {
-			current = narrowed
-		} else {
-			current = narrow.Intersect(current, narrowed)
+		_, origin := s.typeAtWithOrigin(p, path)
+		if origin == pathTypeRecorded && isEmptyRecordNoMapType(narrowed) && !isEmptyRecordNoMapType(current) {
+			ok = false
+		}
+		if ok {
+			if current == nil {
+				current = narrowed
+			} else {
+				current = narrow.Intersect(current, narrowed)
+			}
 		}
 	}
 
@@ -691,6 +994,11 @@ func (s *Solution) filterByChildNarrowings(baseType typ.Type, parentPath constra
 		for _, child := range parsedChildren {
 			memberChild, ok := s.deriveTypeFrom(member, child.segs)
 			if !ok || memberChild == nil {
+				// A missing field can read as nil. A nil constraint therefore
+				// cannot rule out a member without a projected field type.
+				if child.narrowed.Kind() == kind.Nil {
+					continue
+				}
 				compatible = false
 				break
 			}
@@ -720,27 +1028,71 @@ func (s *Solution) filterByChildNarrowings(baseType typ.Type, parentPath constra
 	return typ.NewUnion(kept...)
 }
 
-// IsPointDead returns true if the given CFG point is unreachable due to divergence.
+// IsPointDead returns true if the given CFG point is unreachable due to divergence
+// or because every incoming edge is unsatisfiable.
 func (s *Solution) IsPointDead(p cfg.Point) bool {
-	if s == nil || s.inputs == nil || s.inputs.DeadPoints == nil {
+	if s == nil || s.inputs == nil {
 		return false
 	}
-	return s.inputs.DeadPoints[p]
+	if s.inputs.DeadPoints != nil && s.inputs.DeadPoints[p] {
+		return true
+	}
+	return s.pointDeadByUnsat(p)
 }
 
-// HasKeyOf checks if a KeyOf constraint exists at point p for the given table and key paths.
+// HasKeyOf checks if a KeyOf constraint exists at point p for the given table
+// and key paths, read as operands of the statement at p.
 func (s *Solution) HasKeyOf(p cfg.Point, tablePath, keyPath constraint.Path) bool {
-	if s == nil || s.pkResolver == nil {
+	if s == nil {
 		return false
 	}
-	cond := s.ConditionAt(p)
-	if !cond.HasConstraints() {
+	return s.hasKeyOfUnder(p, tablePath, keyPath, s.ConditionAt(p))
+}
+
+// HasKeyOfAssuming checks for a KeyOf fact under the condition reaching p
+// conjoined with extra.
+func (s *Solution) HasKeyOfAssuming(p cfg.Point, tablePath, keyPath constraint.Path, extra constraint.Condition) bool {
+	if s == nil {
+		return false
+	}
+	return s.hasKeyOfUnder(p, tablePath, keyPath, constraint.And(s.ConditionAt(p), extra))
+}
+
+func (s *Solution) hasKeyOfUnder(p cfg.Point, tablePath, keyPath constraint.Path, cond constraint.Condition) bool {
+	if s.pkResolver == nil || !cond.HasConstraints() {
 		return false
 	}
 	resolve := func(path constraint.Path) constraint.PathKey {
-		return s.pkResolver.KeyAt(p, path)
+		return s.pkResolver.KeyAt(p, s.operandPath(p, path))
 	}
 	return constraint.HasKeyOfConstraint(cond, tablePath, keyPath, resolve)
+}
+
+// operandPath pins path to the version its symbol has as an operand of the
+// statement at p. The statement reads its operands before it writes, so when
+// it assigns the symbol, as t[k] = t[k] + 1 assigns t, the operand is the
+// version its predecessors agree on rather than the one visible after p.
+func (s *Solution) operandPath(p cfg.Point, path constraint.Path) constraint.Path {
+	if path.Symbol == 0 || path.Version != 0 || s.inputs == nil || s.inputs.Graph == nil {
+		return path
+	}
+	after := s.inputs.Graph.VisibleVersion(p, path.Symbol)
+	var before cfg.Version
+	for i, pred := range graphPredecessors(s.inputs.Graph, p) {
+		ver := s.inputs.Graph.VisibleVersion(pred, path.Symbol)
+		if i == 0 {
+			before = ver
+			continue
+		}
+		if ver.ID != before.ID {
+			return path
+		}
+	}
+	if before.IsZero() || before.ID == after.ID {
+		return path
+	}
+	path.Version = before.ID
+	return path
 }
 
 func (s *Solution) parseSuffixCached(suffix string) []constraint.Segment {

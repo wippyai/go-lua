@@ -1,6 +1,7 @@
 package ops
 
 import (
+	"github.com/wippyai/go-lua/types/subtype"
 	"testing"
 
 	"github.com/wippyai/go-lua/types/typ"
@@ -9,7 +10,7 @@ import (
 func TestCheckTable_NoExpected(t *testing.T) {
 	fields := []FieldDef{{Name: "x", Type: typ.Integer}}
 
-	result := CheckTable(fields, nil, nil)
+	result := CheckTable(subtype.Gradual, fields, nil, nil)
 	if result.Type == nil {
 		t.Error("should synthesize type")
 	}
@@ -22,7 +23,7 @@ func TestCheckTable_NoExpected(t *testing.T) {
 func TestCheckTable_ExpectedAny(t *testing.T) {
 	fields := []FieldDef{{Name: "x", Type: typ.Integer}}
 
-	result := CheckTable(fields, nil, typ.Any)
+	result := CheckTable(subtype.Gradual, fields, nil, typ.Any)
 	if len(result.Errors) > 0 {
 		t.Error("any should accept any table")
 	}
@@ -40,7 +41,7 @@ func TestCheckTable_ExpectedRecord_Match(t *testing.T) {
 		},
 	}
 
-	result := CheckTable(fields, nil, expected)
+	result := CheckTable(subtype.Gradual, fields, nil, expected)
 	if len(result.Errors) > 0 {
 		t.Errorf("should match expected: %v", result.Errors)
 	}
@@ -55,7 +56,7 @@ func TestCheckTable_ExpectedRecord_MissingField(t *testing.T) {
 		},
 	}
 
-	result := CheckTable(fields, nil, expected)
+	result := CheckTable(subtype.Gradual, fields, nil, expected)
 	if len(result.Errors) == 0 {
 		t.Error("should report missing required field")
 	}
@@ -70,7 +71,7 @@ func TestCheckTable_ExpectedRecord_OptionalField(t *testing.T) {
 		},
 	}
 
-	result := CheckTable(fields, nil, expected)
+	result := CheckTable(subtype.Gradual, fields, nil, expected)
 	if len(result.Errors) > 0 {
 		t.Errorf("optional field should not be required: %v", result.Errors)
 	}
@@ -84,7 +85,7 @@ func TestCheckTable_ExpectedRecord_ExtraField(t *testing.T) {
 	expected := &typ.Record{
 		Fields: []typ.Field{{Name: "x", Type: typ.Integer}},
 	}
-	result := CheckTable(fields, nil, expected)
+	result := CheckTable(subtype.Gradual, fields, nil, expected)
 	hasExtraError := false
 
 	for _, err := range result.Errors {
@@ -102,7 +103,7 @@ func TestCheckTable_ExpectedRecord_ExtraField(t *testing.T) {
 func TestCheckTable_ExpectedArray(t *testing.T) {
 	expected := &typ.Array{Element: typ.Integer}
 
-	result := CheckTable(nil, []typ.Type{typ.Integer, typ.Integer}, expected)
+	result := CheckTable(subtype.Gradual, nil, []typ.Type{typ.Integer, typ.Integer}, expected)
 	if len(result.Errors) > 0 {
 		t.Errorf("should match array: %v", result.Errors)
 	}
@@ -111,7 +112,7 @@ func TestCheckTable_ExpectedArray(t *testing.T) {
 func TestCheckTable_ExpectedArray_TypeMismatch(t *testing.T) {
 	expected := &typ.Array{Element: typ.Integer}
 
-	result := CheckTable(nil, []typ.Type{typ.Integer, typ.String}, expected)
+	result := CheckTable(subtype.Gradual, nil, []typ.Type{typ.Integer, typ.String}, expected)
 	if len(result.Errors) == 0 {
 		t.Error("should report element type mismatch")
 	}
@@ -120,7 +121,7 @@ func TestCheckTable_ExpectedArray_TypeMismatch(t *testing.T) {
 func TestCheckTable_ExpectedTuple(t *testing.T) {
 	expected := typ.NewTuple(typ.Integer, typ.String)
 
-	result := CheckTable(nil, []typ.Type{typ.Integer, typ.String}, expected)
+	result := CheckTable(subtype.Gradual, nil, []typ.Type{typ.Integer, typ.String}, expected)
 	if len(result.Errors) > 0 {
 		t.Errorf("should match tuple: %v", result.Errors)
 	}
@@ -129,7 +130,7 @@ func TestCheckTable_ExpectedTuple(t *testing.T) {
 func TestCheckTable_ExpectedTuple_TooFew(t *testing.T) {
 	expected := typ.NewTuple(typ.Integer, typ.String, typ.Boolean)
 
-	result := CheckTable(nil, []typ.Type{typ.Integer}, expected)
+	result := CheckTable(subtype.Gradual, nil, []typ.Type{typ.Integer}, expected)
 	if len(result.Errors) == 0 {
 		t.Error("should report not enough elements")
 	}
@@ -142,7 +143,7 @@ func TestCheckTable_ExpectedMap(t *testing.T) {
 		{Name: "b", Type: typ.Integer},
 	}
 
-	result := CheckTable(fields, nil, expected)
+	result := CheckTable(subtype.Gradual, fields, nil, expected)
 	if len(result.Errors) > 0 {
 		t.Errorf("should match map: %v", result.Errors)
 	}
@@ -153,7 +154,7 @@ func TestCheckTable_ExpectedAlias(t *testing.T) {
 	alias := &typ.Alias{Name: "MyRec", Target: rec}
 	fields := []FieldDef{{Name: "x", Type: typ.Integer}}
 
-	result := CheckTable(fields, nil, alias)
+	result := CheckTable(subtype.Gradual, fields, nil, alias)
 	if len(result.Errors) > 0 {
 		t.Errorf("should unwrap alias: %v", result.Errors)
 	}
@@ -164,7 +165,7 @@ func TestCheckTable_ExpectedOptional(t *testing.T) {
 	opt := typ.NewOptional(rec)
 	fields := []FieldDef{{Name: "x", Type: typ.Integer}}
 
-	result := CheckTable(fields, nil, opt)
+	result := CheckTable(subtype.Gradual, fields, nil, opt)
 	if len(result.Errors) > 0 {
 		t.Errorf("should handle optional: %v", result.Errors)
 	}
@@ -172,14 +173,14 @@ func TestCheckTable_ExpectedOptional(t *testing.T) {
 
 func TestCheckTable_NilFieldTypeDoesNotPanic(t *testing.T) {
 	fields := []FieldDef{{Name: "x", Type: nil}}
-	result := CheckTable(fields, nil, nil)
+	result := CheckTable(subtype.Gradual, fields, nil, nil)
 	if result.Type == nil {
 		t.Error("expected synthesized type for nil field type")
 	}
 }
 
 func TestCheckTable_NilArrayElementDoesNotPanic(t *testing.T) {
-	result := CheckTable(nil, []typ.Type{nil}, nil)
+	result := CheckTable(subtype.Gradual, nil, []typ.Type{nil}, nil)
 	if result.Type == nil {
 		t.Error("expected synthesized type for nil array element")
 	}

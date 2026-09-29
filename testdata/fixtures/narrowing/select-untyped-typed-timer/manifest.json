@@ -1,0 +1,4 @@
+{
+  "description": "channel.new() payload mixed with a typed channel and time.after(): narrowing selects each case payload",
+  "packages": ["channel", "time"]
+}

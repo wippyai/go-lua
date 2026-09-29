@@ -44,6 +44,8 @@ package flowbuild
 import (
 	"slices"
 
+	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/assign"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/cond"
@@ -58,6 +60,7 @@ import (
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 // coreDecomposer implements flow.TypeDecomposer using query/core functions.
@@ -90,9 +93,10 @@ func Run(fc *fbcore.FlowContext) *flow.Inputs {
 
 	// Compute derived resolvers and store in a separate derived bundle.
 	derived := &fbcore.Derived{
-		SymResolver:     resolve.BuildInputSymbolResolver(fc.CheckCtx, inputs),
-		TypeKeyRes:      resolve.BuildContextTypeKeyResolver(fc.CheckCtx),
-		RefinementBySym: resolve.BuildRefinementLookup(fc.CheckCtx),
+		SymResolver:           resolve.BuildInputSymbolResolver(fc.CheckCtx, inputs),
+		TypeKeyRes:            resolve.BuildContextTypeKeyResolver(fc.CheckCtx),
+		RefinementBySym:       resolve.BuildRefinementLookup(fc.CheckCtx),
+		CapturedReassignments: cond.CapturedReassignments(fc.Graph),
 	}
 	if fc.API != nil {
 		derived.Synth = fc.API.TypeOf
@@ -105,6 +109,33 @@ func Run(fc *fbcore.FlowContext) *flow.Inputs {
 
 	// Assignments with const resolution.
 	assign.ExtractAssignments(fc, inputs, keyscoll.BuildKeysCollectorDetector(fc.Graph, fc.ModuleBindings))
+	inputs.ClosedMapVars = assign.ClosedMapVars(fc.Graph, inputs)
+	inputs.CallAliasRoots = collectCallAliasRoots(fc)
+	if bindings := fc.Graph.Bindings(); bindings != nil {
+		fresh := bindings.FreshTablePaths()
+		capturedFresh := make(map[cfg.SymbolID]map[string]bool, len(fresh))
+		captured := make(map[cfg.SymbolID]bool)
+		if fn := fc.Graph.Func(); fn != nil {
+			for _, sym := range bindings.CapturedSymbols(fn) {
+				captured[sym] = true
+			}
+		}
+		for _, nested := range fc.Graph.NestedFunctions() {
+			if nested.Func == nil {
+				continue
+			}
+			for _, sym := range bindings.CapturedSymbols(nested.Func) {
+				captured[sym] = true
+			}
+		}
+		for sym, paths := range fresh {
+			if captured[sym] {
+				capturedFresh[sym] = paths
+			}
+		}
+		inputs.FreshLocalTablePaths = capturedFresh
+	}
+	derived.ReceiverRoots, derived.NilableRoots, derived.KnownNonNilPaths = cond.ReceiverRoots(inputs, fc.Graph)
 
 	// Table mutator assignments (table.insert-like).
 	mutator.ExtractTableMutatorAssignments(fc, inputs)
@@ -124,6 +155,7 @@ func Run(fc *fbcore.FlowContext) *flow.Inputs {
 	// Call OnReturn constraints, merged into edges.
 	callConstraints := cond.ExtractCallOnReturnConstraints(fc, inputs)
 	MergeCallConstraintsIntoEdges(inputs, callConstraints)
+	cond.ExtractEvaluationConstraints(fc, inputs)
 
 	// Mark terminating call edges as unreachable (error(), etc.).
 	for _, p := range fc.Graph.RPO() {
@@ -151,6 +183,147 @@ func Run(fc *fbcore.FlowContext) *flow.Inputs {
 	return inputs
 }
 
+func collectCallAliasRoots(fc *fbcore.FlowContext) map[cfg.Point][]cfg.SymbolID {
+	if fc == nil {
+		return nil
+	}
+	graph := fc.Graph
+	if graph == nil || graph.Bindings() == nil {
+		return nil
+	}
+	bindings := graph.Bindings()
+	byPoint := make(map[cfg.Point]map[cfg.SymbolID]bool)
+	record := func(p cfg.Point, expr ast.Expr) {
+		visitCalls(expr, func(call *ast.FuncCallExpr) {
+			// A closed borrow-all contract cannot retain or mutate an argument.
+			// Its guard facts remain valid after the call (notably type(t[k])).
+			if fc.Derived != nil && fc.Derived.Synth != nil {
+				if callee := fc.Derived.Synth(call.Func, p); callee != nil {
+					if _, single := unwrap.Alias(callee).(*typ.Function); single {
+						if row, ok := core.EffectRowOf(callee); ok && row.IsClosed() && row.BorrowsAllParams() && !row.HasStore() && !row.HasMutate() {
+							return
+						}
+					}
+				}
+			}
+			roots := byPoint[p]
+			if roots == nil {
+				roots = make(map[cfg.SymbolID]bool)
+				byPoint[p] = roots
+			}
+			collectAliasedRoots(call.Receiver, bindings, roots)
+			for _, arg := range call.Args {
+				collectAliasedRoots(arg, bindings, roots)
+			}
+		})
+	}
+	graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
+		if info != nil {
+			record(p, info.Call)
+		}
+	})
+	graph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
+		for _, expr := range info.Sources {
+			record(p, expr)
+		}
+		for _, expr := range info.IterExprs {
+			record(p, expr)
+		}
+		for _, target := range info.Targets {
+			record(p, target.Base)
+			record(p, target.Key)
+		}
+	})
+	graph.EachReturn(func(p cfg.Point, info *cfg.ReturnInfo) {
+		for _, expr := range info.Exprs {
+			record(p, expr)
+		}
+	})
+	graph.EachBranch(func(p cfg.Point, info *cfg.BranchInfo) {
+		if info != nil {
+			record(p, info.Condition)
+		}
+	})
+	result := make(map[cfg.Point][]cfg.SymbolID, len(byPoint))
+	for p, roots := range byPoint {
+		for sym := range roots {
+			result[p] = append(result[p], sym)
+		}
+		slices.Sort(result[p])
+	}
+	return result
+}
+
+func visitCalls(expr ast.Expr, visit func(*ast.FuncCallExpr)) {
+	switch e := expr.(type) {
+	case *ast.FuncCallExpr:
+		visit(e)
+		visitCalls(e.Func, visit)
+		visitCalls(e.Receiver, visit)
+		for _, arg := range e.Args {
+			visitCalls(arg, visit)
+		}
+	case *ast.AttrGetExpr:
+		visitCalls(e.Object, visit)
+		visitCalls(e.Key, visit)
+	case *ast.TableExpr:
+		for _, field := range e.Fields {
+			if field != nil {
+				visitCalls(field.Key, visit)
+				visitCalls(field.Value, visit)
+			}
+		}
+	case *ast.LogicalOpExpr:
+		visitCalls(e.Lhs, visit)
+		visitCalls(e.Rhs, visit)
+	case *ast.RelationalOpExpr:
+		visitCalls(e.Lhs, visit)
+		visitCalls(e.Rhs, visit)
+	case *ast.ArithmeticOpExpr:
+		visitCalls(e.Lhs, visit)
+		visitCalls(e.Rhs, visit)
+	case *ast.StringConcatOpExpr:
+		visitCalls(e.Lhs, visit)
+		visitCalls(e.Rhs, visit)
+	case *ast.UnaryNotOpExpr:
+		visitCalls(e.Expr, visit)
+	case *ast.UnaryMinusOpExpr:
+		visitCalls(e.Expr, visit)
+	case *ast.UnaryLenOpExpr:
+		visitCalls(e.Expr, visit)
+	case *ast.UnaryBNotOpExpr:
+		visitCalls(e.Expr, visit)
+	case *ast.CastExpr:
+		visitCalls(e.Expr, visit)
+	case *ast.NonNilAssertExpr:
+		visitCalls(e.Expr, visit)
+	}
+}
+
+// Only expressions that can carry the table reference itself are recorded.
+// Indexing and scalar operations yield values rather than the source table.
+func collectAliasedRoots(expr ast.Expr, bindings *bind.BindingTable, roots map[cfg.SymbolID]bool) {
+	switch e := expr.(type) {
+	case *ast.IdentExpr:
+		if sym, ok := bindings.SymbolOf(e); ok {
+			roots[sym] = true
+		}
+	case *ast.TableExpr:
+		for _, field := range e.Fields {
+			if field != nil {
+				collectAliasedRoots(field.Value, bindings, roots)
+			}
+		}
+	case *ast.CastExpr:
+		collectAliasedRoots(e.Expr, bindings, roots)
+	case *ast.NonNilAssertExpr:
+		collectAliasedRoots(e.Expr, bindings, roots)
+	case *ast.LogicalOpExpr:
+		collectAliasedRoots(e.Lhs, bindings, roots)
+		collectAliasedRoots(e.Rhs, bindings, roots)
+	}
+}
+
 // initInputsFromContext creates and seeds the Inputs struct from FlowContext.
 func initInputsFromContext(fc *fbcore.FlowContext) *flow.Inputs {
 	initialTypes := make(map[cfg.SymbolID]typ.Type)
@@ -166,18 +339,18 @@ func initInputsFromContext(fc *fbcore.FlowContext) *flow.Inputs {
 	}
 
 	return &flow.Inputs{
-		Graph:              fc.Graph,
-		Decomposer:         coreDecomposer{},
-		DeclaredTypes:      initialTypes,
-		ConstValues:        make(map[cfg.SymbolID]map[cfg.Point]*flow.ConstValue),
-		TypeKeys:           make(map[uint64]typ.Type),
-		ReturnKinds:        make(map[cfg.Point]flow.ReturnKind),
-		ReturnConstraints:  make(map[cfg.Point]flow.ReturnExprConstraints),
-		PredicateLinks:     make(map[string]flow.PredicateLink),
-		SiblingAssignments: make(map[flow.SiblingKey]*flow.SiblingAssignment),
-		ModuleAliases:      moduleAliases,
-		SiblingTypes:       fc.SiblingTypes,
-		LiteralTypes:       fc.LiteralTypes,
+		Graph:             fc.Graph,
+		Decomposer:        coreDecomposer{},
+		DeclaredTypes:     initialTypes,
+		ConstValues:       make(map[cfg.SymbolID]map[cfg.Point]*flow.ConstValue),
+		TypeKeys:          make(map[uint64]typ.Type),
+		ReturnKinds:       make(map[cfg.Point]flow.ReturnKind),
+		ReturnConstraints: make(map[cfg.Point]flow.ReturnExprConstraints),
+		PredicateLinks:    make(map[string]flow.PredicateLink),
+		Facts:             make(map[cfg.Point]constraint.Condition),
+		ModuleAliases:     moduleAliases,
+		SiblingTypes:      fc.SiblingTypes,
+		LiteralTypes:      fc.LiteralTypes,
 	}
 }
 

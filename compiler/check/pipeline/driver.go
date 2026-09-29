@@ -7,7 +7,8 @@
 //  3. Execute the memoized function analysis pipeline
 //  4. Propagate effects and interprocedural facts
 //  5. Process nested functions recursively
-//  6. Repeat until fixpoint (no channel changes) or max iterations
+//  6. Repeat until fixpoint (no channel changes) or the round budget, which
+//     extends MaxIterations to the chunk's closure-nesting and call-chain depth
 //
 // The driver coordinates several inference subsystems:
 //   - Return inference: Computes return types for local functions
@@ -28,8 +29,10 @@ import (
 	nestedinfer "github.com/wippyai/go-lua/compiler/check/infer/nested"
 	returninfer "github.com/wippyai/go-lua/compiler/check/infer/return"
 	"github.com/wippyai/go-lua/compiler/check/modules"
+	"github.com/wippyai/go-lua/compiler/check/phase"
 	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/compiler/check/scope"
+	storepkg "github.com/wippyai/go-lua/compiler/check/store"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/diag"
@@ -40,19 +43,30 @@ import (
 
 // Config supplies dependencies for the fixpoint driver.
 type Config struct {
-	Types         core.TypeOps
-	GlobalTypes   map[string]typ.Type
-	Stdlib        *scope.State
-	Manifests     *db.DB
-	MaxIterations int
-	MaxScopeDepth int
-	EmitScopeDiag bool
-	FuncResultQ   *db.Query[api.FuncKey, *api.FuncResult]
+	Types       core.TypeOps
+	GlobalTypes map[string]typ.Type
+	Stdlib      *scope.State
+	Manifests   *db.DB
+	// MaxIterations is the minimum round budget of a chunk; chunks whose
+	// structure needs more rounds get more (see roundBudget).
+	MaxIterations       int
+	MaxScopeDepth       int
+	EmitScopeDiag       bool
+	FuncResultQ         *db.Query[api.FuncKey, *api.FuncResult]
+	Profile             *FixpointProfile
+	DisableLeafFastPath bool
+	DisableWorklist     bool
 }
 
 // Driver executes the fixpoint loop and function analysis.
 type Driver struct {
-	cfg Config
+	cfg     Config
+	results map[api.GraphKey]cachedAnalysis
+}
+
+type cachedAnalysis struct {
+	result *api.FuncResult
+	reads  storepkg.FactReadSet
 }
 
 // New creates a driver with the provided configuration.
@@ -89,24 +103,49 @@ func (d *Driver) Run(sess api.AnalysisSession, chunk []ast.Stmt) {
 		}
 	}
 
+	if store != nil {
+		store.SeedFunctionRefinements(structuralTerminators(store, d.cfg.GlobalTypes))
+	}
+
+	d.runFixpoint(sess, fn, d.cfg.Stdlib)
+}
+
+// RunPrepared is used by the opt-in fixture assertion. The caller supplies
+// the original AST, bindings, and CFG hierarchy in a fresh iteration store so
+// symbol and graph identities are exactly the same for both schedules.
+func (d *Driver) RunPrepared(sess api.AnalysisSession, fn *ast.FunctionExpr) {
+	if sess == nil || fn == nil {
+		return
+	}
+	sess.SetRootFuncNode(fn)
+	store := sess.StoreHandle()
+	if store != nil {
+		if root := sess.GetOrBuildCFG(fn); root != nil && d.cfg.Stdlib != nil {
+			store.SetGraphParentHash(root.ID(), d.cfg.Stdlib.Hash())
+		}
+		store.SeedFunctionRefinements(structuralTerminators(store, d.cfg.GlobalTypes))
+	}
 	d.runFixpoint(sess, fn, d.cfg.Stdlib)
 }
 
 func (d *Driver) runFixpoint(sess api.AnalysisSession, fn *ast.FunctionExpr, parent *scope.State) {
-	maxIterations := d.cfg.MaxIterations
-	if maxIterations < 1 {
-		maxIterations = 1
-	}
+	rounds := d.roundBudget(sess.StoreHandle())
+	d.results = make(map[api.GraphKey]cachedAnalysis)
 
 	converged := false
-	for iter := 0; iter < maxIterations; iter++ {
+	for iter := 0; iter < rounds; iter++ {
+		if d.cfg.Profile != nil {
+			d.cfg.Profile.rounds = iter + 1
+		}
 		d.prepareIterationState(sess)
 		d.checkFunctionFixpoint(sess, fn, parent)
+		d.cfg.Profile.roundOutput(sess.StoreHandle())
 		if d.advanceFixpoint(sess.StoreHandle()) {
 			converged = true
 			break
 		}
 	}
+	d.cfg.Profile.report(sess.Source())
 
 	if !converged {
 		store := sess.StoreHandle()
@@ -158,9 +197,30 @@ func (d *Driver) checkFunctionFixpoint(sess api.AnalysisSession, fn *ast.Functio
 	store := sess.StoreHandle()
 	parentHash := d.registerParentScope(store, graph.ID(), parent)
 
+	phaseStart := d.cfg.Profile.start()
 	d.runReturnInference(sess, graph, parent, store)
+	d.cfg.Profile.mark(graph.ID(), "returns", phaseStart)
 
-	result := d.loadFunctionResult(sess, graph.ID(), parentHash, store)
+	key := api.GraphKey{GraphID: graph.ID(), ParentHash: parentHash}
+	tracked, canTrack := store.(*storepkg.SessionStore)
+	previous, hasPrevious := d.results[key]
+	var result *api.FuncResult
+	if !d.cfg.DisableWorklist && canTrack && hasPrevious && tracked.FactsUnchanged(previous.reads) {
+		result = previous.result
+		d.cfg.Profile.skipped(graph.ID(), fn.Line())
+	} else {
+		if d.cfg.Profile != nil && store != nil {
+			d.cfg.Profile.begin(graph.ID(), fn.Line(), int(store.Revision()), parentHash, store)
+		}
+		if canTrack {
+			tracked.BeginFactReads()
+		}
+		result = d.loadFunctionResult(sess, graph.ID(), parentHash, store)
+		if canTrack {
+			reads := tracked.EndFactReads()
+			d.results[key] = cachedAnalysis{result: result, reads: reads}
+		}
+	}
 	if result == nil {
 		return
 	}
@@ -177,7 +237,9 @@ func (d *Driver) checkFunctionFixpoint(sess api.AnalysisSession, fn *ast.Functio
 		}
 	}
 	d.storeFunctionRefinement(store, result, funcSym)
+	phaseStart = d.cfg.Profile.start()
 	interprocinfer.StoreFactsFromResult(store, fn, result, parent)
+	d.cfg.Profile.mark(graph.ID(), "postflow", phaseStart)
 	d.processNestedFunctions(sess, store, graph, results, result)
 }
 
@@ -201,7 +263,6 @@ func (d *Driver) processNestedFunctions(
 			}
 			return api.ViewFromResult(results[fn])
 		},
-		RootResult: api.ViewFromResult(sess.RootResultValue()),
 	})
 	nestedProc.ProcessNestedFunctions(graph, api.ViewFromResult(result))
 }
@@ -223,16 +284,29 @@ func (d *Driver) runReturnInference(
 	if store == nil || graph == nil {
 		return
 	}
+	// Graphs without local functions or type definitions cannot produce preflow
+	// summaries. Avoid preparing aliases and effect lookups for them.
+	if !d.cfg.DisableLeafFastPath && !returninfer.HasReturnInferenceWork(graph) {
+		return
+	}
 
+	var onSCC func([]cfg.SymbolID, int)
+	if d.cfg.Profile != nil {
+		onSCC = func(scc []cfg.SymbolID, iterations int) {
+			d.cfg.Profile.scc(graph.ID(), store.Revision(), scc, iterations)
+		}
+	}
 	inferencer := returninfer.New(returninfer.Config{
-		Types:         d.cfg.Types,
-		GlobalTypes:   d.cfg.GlobalTypes,
-		Manifests:     d.cfg.Manifests,
-		Stdlib:        d.cfg.Stdlib,
-		Store:         store,
-		Graphs:        sess,
-		SourceName:    sess.Source(),
-		MaxIterations: returns.MaxReturnSummaryIterations,
+		Types:               d.cfg.Types,
+		GlobalTypes:         d.cfg.GlobalTypes,
+		Manifests:           d.cfg.Manifests,
+		Stdlib:              d.cfg.Stdlib,
+		Store:               store,
+		Graphs:              sess,
+		SourceName:          sess.Source(),
+		MaxIterations:       returns.MaxReturnSummaryIterations,
+		DisableLeafFastPath: d.cfg.DisableLeafFastPath,
+		OnSCC:               onSCC,
 	})
 
 	var refinementLookup constraint.RefinementLookupBySym
@@ -240,9 +314,17 @@ func (d *Driver) runReturnInference(
 		refinementLookup = es.LookupRefinementBySym
 	}
 
-	summaries, funcTypes, diags := inferencer.ComputeForGraph(returninfer.RunContext{
-		Ctx:          sess.Context(),
-		ParentFacts:  d.parentFactsForGraph(sess, store, graph.ID()),
+	summaries, callables, diags := inferencer.ComputeForGraph(returninfer.RunContext{
+		Env: phase.PhaseEnv{
+			Ctx:            sess.Context(),
+			Graph:          graph,
+			Types:          d.cfg.Types,
+			Manifests:      d.cfg.Manifests,
+			GlobalTypes:    d.cfg.GlobalTypes,
+			ModuleAliases:  modules.MergeAliases(store.ModuleAliases(), modules.CollectAliases(graph)),
+			ModuleBindings: store.ModuleBindings(),
+		},
+		ParentFacts:  d.localFunctionFacts(sess, store, graph.ID()),
 		EffectLookup: refinementLookup,
 	}, graph, parent)
 	if len(diags) > 0 {
@@ -253,12 +335,18 @@ func (d *Driver) runReturnInference(
 	}
 	if key, ok := store.GraphKeyFor(graph, parent); ok {
 		store.UpdateInterprocFactsNext(key, func(facts *api.Facts) {
-			returns.MergeFunctionFactsIntoFacts(facts, summaries, nil, funcTypes)
+			for fn, fact := range callables {
+				returns.MergeCallable(facts, fn, fact)
+			}
 		})
 	}
 }
 
-func (d *Driver) parentFactsForGraph(
+// localFunctionFacts returns the solved facts of the graph whose local
+// functions return inference infers. Their definition points and the locals
+// they capture belong to that graph, so the facts are the graph's own result,
+// from the previous iteration.
+func (d *Driver) localFunctionFacts(
 	sess api.AnalysisSession,
 	store api.IterationStore,
 	graphID uint64,
@@ -266,27 +354,23 @@ func (d *Driver) parentFactsForGraph(
 	if store == nil || graphID == 0 {
 		return nil
 	}
-	meta, ok := store.NestedMetaFor(graphID)
-	if !ok || meta.ParentGraphID == 0 {
-		return nil
-	}
 	results := sess.ResultsMap()
 	if results == nil {
 		return nil
 	}
-	parentGraph := store.Graphs()[meta.ParentGraphID]
-	if parentGraph == nil {
+	graph := store.Graphs()[graphID]
+	if graph == nil {
 		return nil
 	}
-	parentFn := store.FuncForGraph(parentGraph)
-	if parentFn == nil {
+	fn := store.FuncForGraph(graph)
+	if fn == nil {
 		return nil
 	}
-	parentResult := results[parentFn]
-	if parentResult == nil {
+	result := results[fn]
+	if result == nil {
 		return nil
 	}
-	return parentResult.Facts
+	return result.Facts
 }
 
 func (d *Driver) loadFunctionResult(

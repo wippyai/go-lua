@@ -37,8 +37,10 @@ package hooks
 
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	basecfg "github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/diag"
 )
 
@@ -77,13 +79,49 @@ func WithReturn() check.Option {
 
 // WithCall enables function call argument type checking.
 func WithCall() check.Option {
-	return check.WithPass(func(sess *check.Session, _ *ast.FunctionExpr, result *api.FuncResult) []diag.Diagnostic {
+	return check.WithPass(func(sess *check.Session, fn *ast.FunctionExpr, result *api.FuncResult) []diag.Diagnostic {
 		if result.NarrowSynth == nil {
 			return nil
 		}
 		narrowView := result.NarrowSynth.Narrow()
-		return CheckCalls(result.Graph, result.Scopes, result.NarrowSynth, narrowView, sess.SourceName)
+		return checkCalls(result.Graph, result.Scopes, result.NarrowSynth, narrowView, sess.SourceName, isProtectedCallback(sess, fn, result.Graph))
 	})
+}
+
+func isProtectedCallback(sess *check.Session, fn *ast.FunctionExpr, graph *cfg.Graph) bool {
+	if sess == nil || sess.Store == nil || fn == nil || graph == nil {
+		return false
+	}
+	meta, ok := sess.Store.NestedMetaFor(graph.ID())
+	if !ok {
+		return false
+	}
+	parent := sess.Store.Graphs()[meta.ParentGraphID]
+	if parent == nil {
+		return false
+	}
+	parentResult := sess.Results[parent.Func()]
+	if parentResult == nil {
+		return false
+	}
+	protected := false
+	parent.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
+		if protected || info == nil || info.Method != "" || len(info.Args) == 0 || info.Args[0] != fn || info.CalleeName != "pcall" {
+			return
+		}
+		for sc := parentResult.Scopes[p]; sc != nil; sc = sc.Parent() {
+			if sc.IsLocal("pcall") {
+				return
+			}
+		}
+		sym := info.CalleeSymbol
+		if sym == 0 {
+			sym, _ = parent.SymbolAt(p, "pcall")
+		}
+		kind, ok := parent.SymbolKind(sym)
+		protected = sym != 0 && ok && kind == basecfg.SymbolGlobal
+	})
+	return protected
 }
 
 // WithField enables field access checking.
@@ -93,7 +131,7 @@ func WithField() check.Option {
 			return nil
 		}
 		narrowView := result.NarrowSynth.Narrow()
-		return CheckFields(result.Graph, result.NarrowSynth, narrowView, sess.SourceName)
+		return CheckFields(result.Graph, result.NarrowSynth, narrowView, result.FlowSolution, result.Conditions, sess.SourceName)
 	})
 }
 

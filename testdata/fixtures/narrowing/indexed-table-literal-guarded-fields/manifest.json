@@ -1,0 +1,1 @@
+{"description": "a table literal written through a dynamic key keeps the fields its guards narrow: a truthy guard removes nil, a type() guard falling through a return narrows any"}

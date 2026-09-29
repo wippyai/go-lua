@@ -40,7 +40,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/constprop"
 	fbcore "github.com/wippyai/go-lua/compiler/check/flowbuild/core"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/decl"
-	"github.com/wippyai/go-lua/compiler/check/flowbuild/guard"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/keyscoll"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/mutator"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/path"
@@ -53,7 +52,8 @@ import (
 	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/kind"
-	"github.com/wippyai/go-lua/types/narrow"
+	querycore "github.com/wippyai/go-lua/types/query/core"
+	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
@@ -86,8 +86,8 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 	// Collects spec-narrowed types from contract specs and propagates through method calls.
 	// Uses expandValues with SpecTypes overlay for method call synthesis.
 	specNarrowed := CollectSpecNarrowedTypes(fc.Graph, fc.Scopes, synth, symResolver, fc.API, fc.ModuleBindings)
-	preflowBranchSolution := buildPreflowBranchSolution(fc, inputs)
-	inferredTypes := collectInferredTypes(fc.Graph, fc.Scopes, synth, fc.API, symResolver, specNarrowed, inputs.AnnotatedVars, inputs, fc.ModuleBindings, fc.CallCtx, fc.TypeOps, preflowBranchSolution, fc.Services)
+	preflowBranchSolution := buildPreflowFacts(fc, inputs)
+	inferredTypes := collectInferredTypes(fc.Graph, fc.Scopes, synth, fc.API, symResolver, specNarrowed, inputs.AnnotatedVars, inputs, fc.ModuleBindings, fc.CallCtx, fc.TypeOps, preflowBranchSolution)
 	// Promote inferred parameter types into DeclaredTypes for unannotated params.
 	// This enables bidirectional inference at call sites (e.g., custom assert helpers).
 	if inputs.DeclaredTypes != nil {
@@ -151,12 +151,8 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 	overlayTypes = mergeSpecTypesInto(overlayTypes, inferredTypes)
 	overlayTypes = mergeSpecTypesInto(overlayTypes, specNarrowed)
 	overlayTypes = mergeSpecTypesInto(overlayTypes, loopVarTypes)
-	// Precompute truthy guards: map from CFG point to paths that are narrowed (non-nil) at that point.
-	// Used during table literal synthesis to unwrap optional types.
-	truthyGuards := guard.CollectTruthyGuards(fc.Graph, bindings)
-	typeGuards := guard.CollectTypeGuards(fc.Graph, bindings)
 
-	baseSynth := synthWithOverlayAndPreflow(overlayTypes, bindings, inputs, fc.CallCtx, fc.TypeOps, preflowBranchSolution, synth)
+	baseSynth := synthWithOverlayAndPreflow(overlayTypes, bindings, inputs, fc.CallCtx, fc.TypeOps, preflowBranchSolution, overlaySynth(fc.API, overlayTypes, synth))
 	idom, _ := cfganalysis.ComputeDominators(fc.Graph.CFG())
 	structuredWrites := indexStructuredWrites(fc.Graph)
 	var wrappedSynth func(ast.Expr, cfg.Point) typ.Type
@@ -165,29 +161,6 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 			if t := tblutil.SynthTableLiteralWithWrapper(table, p, wrappedSynth); t != nil {
 				return t
 			}
-		}
-		// Check if this is an attribute access where the full path has a truthy guard.
-		if attr, ok := expr.(*ast.AttrGetExpr); ok {
-			t := synth(expr, p)
-			if t != nil && bindings != nil {
-				if pathKey, ok := guard.TruthyKeyFromExpr(attr, bindings); ok && pathKey.Field != "" {
-					if guards, ok := typeGuards[p]; ok {
-						if tk, ok := guards[pathKey]; ok && !tk.IsZero() {
-							if narrowed := narrow.ByTypeKey(t, tk, nil); narrowed != nil {
-								t = narrowed
-							}
-						}
-					}
-					if guards, ok := truthyGuards[p]; ok {
-						if guards[pathKey] {
-							if opt, ok := t.(*typ.Optional); ok {
-								return opt.Inner
-							}
-						}
-					}
-				}
-			}
-			return t
 		}
 		return baseSynth(expr, p)
 	}
@@ -205,6 +178,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 
 	fc.Graph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
 		sc := fc.Scopes[p]
+		keyTypeAt := func(key ast.Expr) typ.Type { return wrappedSynth(key, p) }
 
 		// Handle numeric for loops
 		if info.NumericFor != nil {
@@ -271,7 +245,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 			}
 			// Use pre-assignment symbol overlays for assignment targets so RHS
 			// synthesis follows Lua evaluation order (`x = f(x, ...)`).
-			rhsOverlay := rhsSpecTypesAtAssignPoint(fc.Graph, info, p, overlayTypes, resolverWithSpec)
+			rhsOverlay := rhsSpecTypesAtAssignPoint(fc.Graph, info, p, overlayTypes, resolverWithSpec, preflowBranchSolution)
 			rhsOverlay = enrichStructuredOverlayAtPoint(fc.Graph, idom, structuredWrites, p, rhsOverlay, resolverWithSpec, wrappedSynth)
 			values = expandedAssignValues(fc.API, info, p, rhsOverlay)
 			valuesComputed = true
@@ -291,31 +265,50 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 
 				// Determine assigned type using identity-based resolver.
 				// For annotated locals, keep the declared type (RHS should not override).
+				rhsType := func() typ.Type {
+					ensureValues()
+					if value := assignValueAt(values, i); value != nil {
+						return preferPreciseDirectSourceType(value, source, p, sc, wrappedSynth, len(info.Targets) == 1)
+					}
+					if wrappedSynth != nil && source != nil {
+						return wrappedSynth(source, p)
+					}
+					return nil
+				}
 				assignedType := typ.Unknown
 				if info.IsLocal {
 					if inputs != nil && inputs.AnnotatedVars != nil && inputs.AnnotatedVars[sym] {
 						if dt, ok := inputs.DeclaredTypes[sym]; ok && dt != nil {
 							assignedType = dt
-						}
-					} else {
-						if t, ok := resolverWithSpec(p, sym); ok && t != nil {
-							// Keep previously resolved assignment types only when
-							// they carry concrete information. Top-like placeholders
-							// (any/unknown/soft) must not block RHS-derived types.
-							if !isTopLikeResolvedAssignType(t) {
-								assignedType = t
+							// An annotation constrains the signature, but does not erase
+							// contracts proved for the actual assigned function.
+							if declared, ok := unwrap.Alias(dt).(*typ.Function); ok {
+								if rhs := rhsType(); rhs != nil {
+									if bindings != nil && !bindings.IsReassigned(sym) && (fc.ModuleBindings == nil || !fc.ModuleBindings.IsReassigned(sym)) {
+										assignedType = querycore.PreserveFunctionContracts(declared, rhs)
+										overlayTypes[sym] = assignedType
+										specNarrowed[sym] = assignedType
+										inputs.DeclaredTypes[sym] = assignedType
+									}
+								}
 							}
+						}
+					} else if t, ok := resolverWithSpec(p, sym); ok && t != nil {
+						// A final resolved type is authoritative when it carries
+						// concrete information; top-like placeholders
+						// (any/unknown/soft) yield to RHS-derived types. A
+						// pending estimate is filled by RHS evidence.
+						if !typ.IsFinal(t) {
+							assignedType = typ.Resolve(t, rhsType())
+						} else if !isTopLikeResolvedAssignType(t) {
+							assignedType = t
 						}
 					}
 				}
 				// Fall back to expression synthesis if no declared/known type
 				if typ.IsAbsentOrUnknown(assignedType) {
-					ensureValues()
-					if value := assignValueAt(values, i); value != nil {
-						assignedType = value
-						assignedType = preferPreciseDirectSourceType(assignedType, source, p, sc, wrappedSynth, len(info.Targets) == 1)
-					} else if wrappedSynth != nil && source != nil {
-						assignedType = wrappedSynth(source, p)
+					if rhs := rhsType(); rhs != nil {
+						assignedType = rhs
 					}
 				}
 				// Override with expanded values if source call has a spec-narrowed receiver.
@@ -340,10 +333,27 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 				if assignedType == nil {
 					assignedType = typ.Unknown
 				}
+				// A later field write can give an unannotated local a partial
+				// inferred record before this initializer is emitted. When the
+				// initializer itself is dynamic, that partial record cannot
+				// replace its other unknown runtime fields.
+				if info.IsLocal && source != nil && wrappedSynth != nil && typ.IsAny(wrappedSynth(source, p)) {
+					if _, partialRecord := unwrap.Alias(assignedType).(*typ.Record); partialRecord {
+						assignedType = typ.Any
+					}
+				}
 
 				// Use pre-collected spec-narrowed type if available (via SymbolID)
 				if narrowed, ok := specNarrowed[sym]; ok {
 					assignedType = narrowed
+				}
+				// The assignment type is published into the flow: pending
+				// positions do not cross that boundary.
+				assignedType = typ.Finalize(assignedType)
+				// A value refining a soft annotation is one value the annotation
+				// admits; the annotation's other keys stay possible.
+				if inputs != nil && inputs.RefinableAnnotatedVars[sym] {
+					assignedType = typ.PartialViewDeep(assignedType)
 				}
 
 				// Build source path with const resolution and bindings.
@@ -353,15 +363,15 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 				var sourcePath constraint.Path
 				var mapElementSource *flow.MapElementSource
 				if source != nil {
-					if sp := path.FromExprWithBindings(source, constResolver, bindings); !sp.IsEmpty() {
+					if sp := path.FromExprWithKeyTypes(source, constResolver, bindings, keyTypeAt); !sp.IsEmpty() {
 						sourcePath = constraint.Path{
 							Root:     resolve.RootNameFromBindings(bindings, sp.Symbol, sp.Root),
 							Symbol:   sp.Symbol,
 							Segments: sp.Segments,
 						}
 					} else if attr, ok := source.(*ast.AttrGetExpr); ok {
-						if _, isStatic := staticSegmentForAttrKey(attr.Key, constResolver); !isStatic {
-							if mp := path.FromExprWithBindings(attr.Object, constResolver, bindings); !mp.IsEmpty() && mp.Symbol != 0 {
+						if _, isStatic := path.IndexKeySegment(attr.Key, constResolver, keyTypeAt); !isStatic {
+							if mp := path.FromExprWithKeyTypes(attr.Object, constResolver, bindings, keyTypeAt); !mp.IsEmpty() && mp.Symbol != 0 {
 								mp = constraint.Path{
 									Root:     resolve.RootNameFromBindings(bindings, mp.Symbol, mp.Root),
 									Symbol:   mp.Symbol,
@@ -405,7 +415,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 									link.OnTruthy = constraint.And(link.OnTruthy, constraint.FromConstraints(constraint.IsNil{Path: valuePath}))
 									var checkType typ.Type
 									if sc != nil {
-										if resolved, ok := sc.LookupType(callInfo.TypeCheckName); ok && resolved != nil {
+										if resolved, ok := sc.LookupValueType(callInfo.TypeCheckName); ok && resolved != nil {
 											checkType = resolve.Ref(resolved, sc)
 										}
 									}
@@ -440,7 +450,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 							if !ok || fn == nil {
 								continue
 							}
-							if info := keyscoll.DetectKeysCollector(fn); info != nil && info.ReturnIndex == retIndex {
+							if info := keyscoll.DetectKeysCollectorWithBindings(fn, fc.ModuleBindings); info != nil && info.ReturnIndex == retIndex {
 								tableSym = callsite.SymbolOrCreateFieldFromExpr(callsite.RuntimeArgAt(call, info.ParamIndex), bindings)
 								break
 							}
@@ -478,7 +488,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 						if elemInfo.ReturnIndex == retIndex {
 							// For method calls, index 0 is self (receiver)
 							if callsite.IsMethodCallInfo(call) && elemInfo.SourceRef.Index == 0 {
-								if recvPath := path.FromExprWithBindings(call.Receiver, constResolver, bindings); !recvPath.IsEmpty() && recvPath.Symbol != 0 {
+								if recvPath := path.FromExprWithKeyTypes(call.Receiver, constResolver, bindings, keyTypeAt); !recvPath.IsEmpty() && recvPath.Symbol != 0 {
 									containerElemSrc = &flow.ContainerElementSource{
 										ContainerPath: constraint.Path{
 											Root:     resolve.RootNameFromBindings(bindings, recvPath.Symbol, recvPath.Root),
@@ -501,6 +511,43 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 					ContainerElementSource: containerElemSrc,
 					MapElementSource:       mapElementSource,
 				})
+				// A direct copy preserves identity and nil state even when an any
+				// annotation hides the source type from return inference.
+				// The fact is useful for flow proof only when the destination's
+				// static type cannot contradict the copied runtime value. An
+				// invalid annotated assignment must still report downstream errors.
+				var copyType typ.Type
+				if sourcePath.Symbol != 0 && len(sourcePath.Segments) == 0 && sourcePath.Symbol != sym {
+					copyType = wrappedSynth(source, p)
+				}
+				copyTypeFits := typ.IsAny(assignedType) || typ.IsUnknown(assignedType) ||
+					copyType != nil && !typ.IsAny(copyType) && !typ.IsUnknown(copyType) && subtype.IsSubtype(copyType, assignedType)
+				if copyTypeFits && sourcePath.Symbol != 0 && len(sourcePath.Segments) == 0 && sourcePath.Symbol != sym {
+					sourceReassigned := false
+					for _, other := range info.Targets {
+						if other.Symbol == sourcePath.Symbol {
+							sourceReassigned = true
+							break
+						}
+					}
+					if !sourceReassigned {
+						destVersion := fc.Graph.VisibleVersion(p, sym)
+						sourceVersion := fc.Graph.VisibleVersion(p, sourcePath.Symbol)
+						if destVersion.ID != 0 && sourceVersion.ID != 0 {
+							dest := constraint.Path{Root: resolve.RootName(fc.Graph, sym, name), Symbol: sym, Version: destVersion.ID}
+							sourcePath.Version = sourceVersion.ID
+							fact := constraint.FromConstraints(constraint.NewEqPath(dest, sourcePath))
+							if inputs.Facts == nil {
+								inputs.Facts = make(map[cfg.Point]constraint.Condition)
+							}
+							if old, ok := inputs.Facts[p]; ok {
+								inputs.Facts[p] = constraint.And(old, fact)
+							} else {
+								inputs.Facts[p] = fact
+							}
+						}
+					}
+				}
 
 				// Emit per-field assignments for table literals to enable flow narrowing
 				if source != nil {
@@ -541,7 +588,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 				// Create assignment for the field path: root.field1.field2... = assignedType
 				sourcePath := constraint.Path{}
 				if source != nil {
-					if sp := path.FromExprWithBindings(source, constResolver, bindings); !sp.IsEmpty() {
+					if sp := path.FromExprWithKeyTypes(source, constResolver, bindings, keyTypeAt); !sp.IsEmpty() {
 						sourcePath = sp
 					}
 				}
@@ -568,7 +615,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 						Symbol: sym,
 					}
 				} else if target.Base != nil {
-					if bp := path.FromExprWithBindings(target.Base, constResolver, bindings); !bp.IsEmpty() && bp.Symbol != 0 {
+					if bp := path.FromExprWithKeyTypes(target.Base, constResolver, bindings, keyTypeAt); !bp.IsEmpty() && bp.Symbol != 0 {
 						basePath = constraint.Path{
 							Root:     resolve.RootNameFromBindings(bindings, bp.Symbol, bp.Root),
 							Symbol:   bp.Symbol,
@@ -629,6 +676,12 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 					}
 				}
 
+				if keySeg.Name == "" && keyType == nil && target.Key != nil {
+					if seg, ok := path.KeyTypeSegment(keyTypeAt(target.Key)); ok {
+						keySeg = seg
+					}
+				}
+
 				if basePath.IsEmpty() {
 					if lifted, ok := buildLiftedDynamicIndexerAssignment(
 						target,
@@ -641,8 +694,8 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 						constResolver,
 						wrappedSynth,
 						resolverWithSpec,
-						truthyGuards,
-						typeGuards,
+						inputs,
+						preflowBranchSolution,
 					); ok {
 						inputs.IndexerAssignments = append(inputs.IndexerAssignments, lifted)
 					}
@@ -664,16 +717,10 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 						keyType = wrappedSynth(target.Key, p)
 					}
 					keyType = canonicalDynamicKeyType(keyType)
-					// Apply truthy guards to narrow optional fields in table literals.
-					valType := assignedType
-					if source != nil && bindings != nil && truthyGuards != nil {
-						if tbl, ok := source.(*ast.TableExpr); ok {
-							valType = guard.NarrowTableFieldsByGuard(valType, tbl, p, bindings, truthyGuards, typeGuards)
-						}
-					}
+					valType := narrowTableFieldsAtPoint(assignedType, source, p, bindings, inputs, preflowBranchSolution)
 					valuePath := constraint.Path{}
 					if source != nil {
-						if sp := path.FromExprWithBindings(source, constResolver, bindings); !sp.IsEmpty() {
+						if sp := path.FromExprWithKeyTypes(source, constResolver, bindings, keyTypeAt); !sp.IsEmpty() {
 							valuePath = constraint.Path{
 								Root:     resolve.RootNameFromBindings(bindings, sp.Symbol, sp.Root),
 								Symbol:   sp.Symbol,
@@ -683,15 +730,16 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 					}
 					resolved := resolve.Ref(valType, sc)
 					inputs.IndexerAssignments = append(inputs.IndexerAssignments, flow.IndexerAssignment{
-						Point:     p,
-						Root:      basePath.Root,
-						Symbol:    basePath.Symbol,
-						Segments:  basePath.Segments,
-						KeyVar:    keyVar,
-						KeySymbol: keySym,
-						KeyType:   keyType,
-						ValuePath: valuePath,
-						ValType:   resolved,
+						Point:           p,
+						Root:            basePath.Root,
+						Symbol:          basePath.Symbol,
+						Segments:        basePath.Segments,
+						KeyVar:          keyVar,
+						KeySymbol:       keySym,
+						KeyType:         keyType,
+						ValuePath:       valuePath,
+						ValueFieldPaths: tableValueFieldPaths(source, p, bindings, inputs),
+						ValType:         resolved,
 					})
 					continue
 				}
@@ -699,7 +747,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 				// Create assignment for the field path: root.fieldName = assignedType
 				sourcePath := constraint.Path{}
 				if source != nil {
-					if sp := path.FromExprWithBindings(source, constResolver, bindings); !sp.IsEmpty() {
+					if sp := path.FromExprWithKeyTypes(source, constResolver, bindings, keyTypeAt); !sp.IsEmpty() {
 						sourcePath = sp
 					}
 				}
@@ -717,49 +765,76 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 			}
 		}
 
-		// Handle sibling assignments from expanding trailing calls.
+		// The call establishes relations between its returned values at this
+		// assignment. The solver carries them with ordinary branch conditions.
+		// A truthy result of `local flag = value and expr` proves that the
+		// original local value was truthy. Keep the relation on SSA versions so
+		// later writes to either local do not inherit this proof.
+		info.EachTargetSource(func(_ int, target cfg.AssignTarget, source ast.Expr) {
+			logical, ok := source.(*ast.LogicalOpExpr)
+			if !ok || logical.Operator != "and" || target.Kind != cfg.TargetIdent || target.Symbol == 0 {
+				return
+			}
+			lhs, ok := logical.Lhs.(*ast.IdentExpr)
+			if !ok || bindings == nil {
+				return
+			}
+			lhsSym, ok := bindings.SymbolOf(lhs)
+			if !ok || lhsSym == 0 || fc.Derived.CapturedReassignments[lhsSym] {
+				return
+			}
+			if k, ok := bindings.Kind(lhsSym); !ok || k == cfg.SymbolGlobal {
+				return
+			}
+			for _, assigned := range info.Targets {
+				if assigned.Symbol == lhsSym {
+					return
+				}
+			}
+			lhsVersion := fc.Graph.VisibleVersion(p, lhsSym)
+			targetVersion := fc.Graph.VisibleVersion(p, target.Symbol)
+			if lhsVersion.ID == 0 || targetVersion.ID == 0 {
+				return
+			}
+			lhsPath := constraint.Path{Root: lhs.Value, Symbol: lhsSym, Version: lhsVersion.ID}
+			targetPath := constraint.Path{Root: target.Name, Symbol: target.Symbol, Version: targetVersion.ID}
+			fact := constraint.Or(
+				constraint.FromConstraints(constraint.Falsy{Path: targetPath}),
+				constraint.FromConstraints(constraint.Truthy{Path: lhsPath}),
+			)
+			if previous, ok := inputs.Facts[p]; ok {
+				inputs.Facts[p] = constraint.And(previous, fact)
+			} else {
+				inputs.Facts[p] = fact
+			}
+		})
+
 		if sourceCall, start := info.ExpandingSourceCall(); sourceCall != nil {
 			count := len(info.Targets) - start
-			symbols := make([]cfg.SymbolID, count)
-			names := make([]string, count)
-			types := make([]typ.Type, count)
-			ensureValues()
+			paths := make([]constraint.Path, count)
 			for i := 0; i < count; i++ {
 				target, ok := info.TargetAt(start + i)
-				if !ok {
+				if !ok || target.Kind != cfg.TargetIdent || target.Symbol == 0 {
 					continue
 				}
-				if target.Kind == cfg.TargetIdent && target.Name != "" {
-					names[i] = target.Name
-					symbols[i] = target.Symbol
-				}
-				if value := assignValueAt(values, start+i); value != nil {
-					types[i] = value
+				ver := fc.Graph.VisibleVersion(p, target.Symbol)
+				if ver.ID != 0 {
+					paths[i] = constraint.Path{Root: target.Name, Symbol: target.Symbol, Version: ver.ID}
 				}
 			}
-			correlations, coCorrelations, guardedCorrelations := extractCallCorrelations(sourceCall, wrappedSynth, p, resolverWithSpec, fc.Graph, bindings, fc.ModuleBindings)
-			for _, corr := range guardedCorrelations {
+			inverse, together, guarded := extractCallCorrelations(sourceCall, wrappedSynth, p, resolverWithSpec, fc.Graph, bindings, fc.ModuleBindings)
+			for _, corr := range guarded {
 				decl.AddTypeKey(inputs, corr.TargetType)
 			}
-			sibling := &flow.SiblingAssignment{
-				Symbols:             symbols,
-				Names:               names,
-				Types:               types,
-				Correlations:        correlations,
-				CoCorrelations:      coCorrelations,
-				GuardedCorrelations: guardedCorrelations,
-			}
-			for i, sym := range symbols {
-				if sym != 0 && names[i] != "" {
-					ver := fc.Graph.VisibleVersion(p, sym)
-					if ver.ID == 0 {
-						continue
-					}
-					key := flow.SiblingKey{Symbol: sym, VersionID: ver.ID}
-					inputs.SiblingAssignments[key] = sibling
+			if fact := returnRelation(paths, inverse, together, guarded); fact.HasConstraints() {
+				if previous, ok := inputs.Facts[p]; ok {
+					inputs.Facts[p] = constraint.And(previous, fact)
+				} else {
+					inputs.Facts[p] = fact
 				}
 			}
 		}
+
 	})
 }
 
@@ -780,14 +855,18 @@ func buildLiftedDynamicIndexerAssignment(
 	constResolver func(string) *flow.ConstValue,
 	synth func(ast.Expr, cfg.Point) typ.Type,
 	symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool),
-	truthyGuards map[cfg.Point]map[guard.TruthyPathKey]bool,
-	typeGuards map[cfg.Point]map[guard.TruthyPathKey]narrow.TypeKey,
+	inputs *flow.Inputs,
+	preflow *preflowFacts,
 ) (flow.IndexerAssignment, bool) {
 	if target.Expr == nil {
 		return flow.IndexerAssignment{}, false
 	}
 
-	rootExpr, steps, ok := flattenAttrChain(target.Expr, constResolver)
+	var keyTypeAt func(ast.Expr) typ.Type
+	if synth != nil {
+		keyTypeAt = func(key ast.Expr) typ.Type { return synth(key, p) }
+	}
+	rootExpr, steps, ok := flattenAttrChain(target.Expr, constResolver, keyTypeAt)
 	if !ok || rootExpr == nil || len(steps) == 0 {
 		return flow.IndexerAssignment{}, false
 	}
@@ -821,12 +900,7 @@ func buildLiftedDynamicIndexerAssignment(
 	outer := steps[firstDynamic]
 	keyVar, keySym, keyType := keyInfoForStep(outer, graph, bindings, synth, symResolver, p, true)
 
-	valType := assignedType
-	if source != nil && bindings != nil && truthyGuards != nil {
-		if tbl, ok := source.(*ast.TableExpr); ok {
-			valType = guard.NarrowTableFieldsByGuard(valType, tbl, p, bindings, truthyGuards, typeGuards)
-		}
-	}
+	valType := narrowTableFieldsAtPoint(assignedType, source, p, bindings, inputs, preflow)
 	valType = resolve.Ref(valType, sc)
 	if valType == nil {
 		valType = typ.Unknown
@@ -835,10 +909,18 @@ func buildLiftedDynamicIndexerAssignment(
 	for i := len(steps) - 1; i > firstDynamic; i-- {
 		valType = wrapStepValue(steps[i], valType, graph, bindings, synth, symResolver, p)
 	}
+	fieldUpdate := ""
+	if firstDynamic == len(steps)-2 && steps[len(steps)-1].Static && steps[len(steps)-1].Seg.Kind == constraint.SegmentField {
+		fieldUpdate = steps[len(steps)-1].Seg.Name
+	}
 
+	// The source value is the entry itself only when the dynamic step is the
+	// last one; otherwise the entry is the wrapped shape built above, and
+	// resolving the source path at solve time would replace it with the
+	// field's value.
 	valuePath := constraint.Path{}
-	if source != nil {
-		if sp := path.FromExprWithBindings(source, constResolver, bindings); !sp.IsEmpty() {
+	if source != nil && firstDynamic == len(steps)-1 {
+		if sp := path.FromExprWithKeyTypes(source, constResolver, bindings, keyTypeAt); !sp.IsEmpty() {
 			valuePath = constraint.Path{
 				Root:     resolve.RootNameFromBindings(bindings, sp.Symbol, sp.Root),
 				Symbol:   sp.Symbol,
@@ -848,19 +930,25 @@ func buildLiftedDynamicIndexerAssignment(
 	}
 
 	return flow.IndexerAssignment{
-		Point:     p,
-		Root:      rootPath.Root,
-		Symbol:    rootPath.Symbol,
-		Segments:  rootPath.Segments,
-		KeyVar:    keyVar,
-		KeySymbol: keySym,
-		KeyType:   keyType,
-		ValuePath: valuePath,
-		ValType:   valType,
+		Point:           p,
+		Root:            rootPath.Root,
+		Symbol:          rootPath.Symbol,
+		Segments:        rootPath.Segments,
+		KeyVar:          keyVar,
+		KeySymbol:       keySym,
+		KeyType:         keyType,
+		ValuePath:       valuePath,
+		ValueFieldPaths: tableValueFieldPaths(source, p, bindings, inputs),
+		ValType:         valType,
+		FieldUpdate:     fieldUpdate,
 	}, true
 }
 
-func flattenAttrChain(expr ast.Expr, constResolver func(string) *flow.ConstValue) (ast.Expr, []attrChainStep, bool) {
+func flattenAttrChain(
+	expr ast.Expr,
+	constResolver func(string) *flow.ConstValue,
+	keyType func(ast.Expr) typ.Type,
+) (ast.Expr, []attrChainStep, bool) {
 	if expr == nil {
 		return nil, nil, false
 	}
@@ -869,41 +957,19 @@ func flattenAttrChain(expr ast.Expr, constResolver func(string) *flow.ConstValue
 		return expr, nil, true
 	}
 
-	root, steps, ok := flattenAttrChain(attr.Object, constResolver)
+	root, steps, ok := flattenAttrChain(attr.Object, constResolver, keyType)
 	if !ok || root == nil {
 		return nil, nil, false
 	}
 
 	step := attrChainStep{KeyExpr: attr.Key}
-	if seg, ok := staticSegmentForAttrKey(attr.Key, constResolver); ok {
+	if seg, ok := path.IndexKeySegment(attr.Key, constResolver, keyType); ok {
 		step.Static = true
 		step.Seg = seg
 	}
 
 	steps = append(steps, step)
 	return root, steps, true
-}
-
-func staticSegmentForAttrKey(key ast.Expr, constResolver func(string) *flow.ConstValue) (constraint.Segment, bool) {
-	switch k := key.(type) {
-	case *ast.StringExpr, *ast.NumberExpr:
-		return path.StaticKeySegment(k)
-	case *ast.IdentExpr:
-		if constResolver == nil {
-			return constraint.Segment{}, false
-		}
-		val := constResolver(k.Value)
-		if val == nil {
-			return constraint.Segment{}, false
-		}
-		switch val.Kind {
-		case flow.ConstString:
-			return path.StaticKeySegment(&ast.StringExpr{Value: val.Str})
-		case flow.ConstInt:
-			return constraint.Segment{Kind: constraint.SegmentIndexInt, Index: int(val.Int)}, true
-		}
-	}
-	return constraint.Segment{}, false
 }
 
 func keyInfoForStep(
@@ -1102,7 +1168,6 @@ func ExtractFuncDefAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs) {
 		if fnType == nil {
 			fnType = typ.Unknown
 		}
-
 		// Create sub-path assignment: M.add = function
 		inputs.Assignments = append(inputs.Assignments, flow.UnifiedAssignment{
 			Point: p,
@@ -1157,7 +1222,7 @@ func extractCallCorrelations(
 	graph *cfg.Graph,
 	bindings *bind.BindingTable,
 	moduleBindings *bind.BindingTable,
-) ([]flow.ReturnCorrelation, []flow.ReturnCorrelation, []flow.GuardedTypeCorrelation) {
+) ([]ReturnCorrelation, []ReturnCorrelation, []GuardedTypeCorrelation) {
 	if callInfo == nil {
 		return nil, nil, nil
 	}
@@ -1169,26 +1234,46 @@ func extractCallCorrelations(
 
 // correlationsFromFunctionType extracts ErrorReturn and CorrelatedReturn labels from a function's spec effects.
 // Returns (inverse correlations, co-correlations).
-func correlationsFromFunctionType(fnType typ.Type) ([]flow.ReturnCorrelation, []flow.ReturnCorrelation) {
+func correlationsFromFunctionType(fnType typ.Type) ([]ReturnCorrelation, []ReturnCorrelation) {
 	if fnType == nil {
 		return nil, nil
 	}
+	if union, ok := typ.UnwrapAnnotated(fnType).(*typ.Union); ok {
+		var inverse, coCorr []ReturnCorrelation
+		for i, member := range union.Members {
+			// A relation is valid for a union call only when every possible
+			// callee has it. A later return estimate may make one function
+			// into several callable alternatives without changing this fact.
+			if unwrap.Function(member) == nil {
+				return nil, nil
+			}
+			memberInverse, memberCo := correlationsFromFunctionType(member)
+			if i == 0 {
+				inverse, coCorr = memberInverse, memberCo
+			} else {
+				inverse = commonReturnCorrelations(inverse, memberInverse)
+				coCorr = commonReturnCorrelations(coCorr, memberCo)
+			}
+		}
+		return inverse, coCorr
+	}
 	spec := contract.ExtractSpec(fnType)
-	var inverse []flow.ReturnCorrelation
-	var coCorr []flow.ReturnCorrelation
+	var inverse []ReturnCorrelation
+	var coCorr []ReturnCorrelation
 	if spec != nil {
 		for _, label := range spec.Effects.Labels {
 			if er, ok := label.(effect.ErrorReturn); ok {
-				inverse = append(inverse, flow.ReturnCorrelation{
-					ValueIndex: er.ValueIndex,
-					ErrorIndex: er.ErrorIndex,
+				inverse = append(inverse, ReturnCorrelation{
+					ValueIndex:  er.ValueIndex,
+					ErrorIndex:  er.ErrorIndex,
+					ValueTruthy: er.ValueTruthy,
 				})
 			}
 			if cr, ok := label.(effect.CorrelatedReturn); ok {
 				// Expand pairwise: each pair of indices forms a co-correlation
 				for i := 0; i < len(cr.Indices); i++ {
 					for j := i + 1; j < len(cr.Indices); j++ {
-						coCorr = append(coCorr, flow.ReturnCorrelation{
+						coCorr = append(coCorr, ReturnCorrelation{
 							ValueIndex: cr.Indices[i],
 							ErrorIndex: cr.Indices[j],
 						})
@@ -1197,16 +1282,23 @@ func correlationsFromFunctionType(fnType typ.Type) ([]flow.ReturnCorrelation, []
 			}
 		}
 	}
-	if len(inverse) == 0 && len(coCorr) == 0 {
-		convInv, convCo := InferErrorReturnConvention(fnType)
-		if len(convInv) > 0 {
-			inverse = append(inverse, convInv...)
-		}
-		if len(convCo) > 0 {
-			coCorr = append(coCorr, convCo...)
+	return inverse, coCorr
+}
+
+func commonReturnCorrelations(a, b []ReturnCorrelation) []ReturnCorrelation {
+	if len(a) == 0 || len(b) == 0 {
+		return nil
+	}
+	out := make([]ReturnCorrelation, 0, len(a))
+	for _, candidate := range a {
+		for _, other := range b {
+			if candidate == other {
+				out = append(out, candidate)
+				break
+			}
 		}
 	}
-	return inverse, coCorr
+	return out
 }
 
 func guardedTypeCorrelationsFromCall(
@@ -1214,7 +1306,7 @@ func guardedTypeCorrelationsFromCall(
 	callInfo *cfg.CallInfo,
 	synth func(ast.Expr, cfg.Point) typ.Type,
 	p cfg.Point,
-) []flow.GuardedTypeCorrelation {
+) []GuardedTypeCorrelation {
 	if fnType == nil || callInfo == nil || synth == nil {
 		return nil
 	}
@@ -1231,8 +1323,20 @@ func guardedTypeCorrelationsFromCall(
 		return nil
 	}
 
-	var out []flow.GuardedTypeCorrelation
+	var out []GuardedTypeCorrelation
 	for _, label := range spec.Effects.Labels {
+		if relation, ok := label.(effect.GuardedReturnType); ok {
+			if relation.GuardIndex < 0 || relation.TargetIndex < 0 || relation.GuardIndex >= len(fn.Returns) || relation.TargetIndex >= len(fn.Returns) {
+				continue
+			}
+			if targetType, ok := relation.TargetType.(typ.Type); ok && targetType.Hash() == relation.TargetHash {
+				out = append(out, GuardedTypeCorrelation{
+					GuardIndex: relation.GuardIndex, TargetIndex: relation.TargetIndex,
+					GuardOnTruthy: true, TargetType: targetType,
+				})
+			}
+			continue
+		}
 		ret, ok := label.(effect.Return)
 		if !ok || ret.Transform == nil || ret.ReturnIndex < 0 {
 			continue
@@ -1253,7 +1357,7 @@ func guardedTypeCorrelationsFromCall(
 		if targetType == nil || typ.IsAny(targetType) || typ.IsUnknown(targetType) {
 			continue
 		}
-		out = append(out, flow.GuardedTypeCorrelation{
+		out = append(out, GuardedTypeCorrelation{
 			GuardIndex:    guardIdx,
 			TargetIndex:   ret.ReturnIndex,
 			GuardOnTruthy: true,

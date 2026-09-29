@@ -48,7 +48,7 @@ func TestHooksRequireNarrowSynth_FieldHook(t *testing.T) {
 	}
 	graph := cfg.Build(fn)
 
-	diags := hooks.CheckFields(graph, nil, nil, "test.lua")
+	diags := hooks.CheckFields(graph, nil, nil, nil, nil, "test.lua")
 
 	if len(diags) != 0 {
 		t.Errorf("field hook should return empty diagnostics when NarrowSynth is nil, got %d", len(diags))

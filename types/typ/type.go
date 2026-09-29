@@ -50,15 +50,16 @@ type Type interface {
 //   - Unknown: missing or unresolved information. It should force narrowing/inference
 //     rather than silently permitting operations.
 var (
-	Nil     Type = nilType{}
-	Boolean Type = booleanType{}
-	Number  Type = numberType{}
-	Integer Type = integerType{}
-	String  Type = stringType{}
-	Any     Type = anyType{}
-	Unknown Type = unknownType{}
-	Never   Type = neverType{}
-	Self    Type = selfType{}
+	Nil        Type = nilType{}
+	Boolean    Type = booleanType{}
+	Number     Type = numberType{}
+	Integer    Type = integerType{}
+	String     Type = stringType{}
+	Any        Type = anyType{}
+	Unknown    Type = unknownType{}
+	Unresolved Type = unresolvedType{}
+	Never      Type = neverType{}
+	Self       Type = selfType{}
 )
 
 // Primitive type implementations
@@ -112,6 +113,13 @@ func (unknownType) String() string     { return "unknown" }
 func (unknownType) Hash() uint64       { return uint64(kind.Unknown) }
 func (unknownType) Equals(o Type) bool { return IsUnknown(o) }
 
+type unresolvedType struct{}
+
+func (unresolvedType) Kind() kind.Kind    { return kind.Unresolved }
+func (unresolvedType) String() string     { return "unresolved" }
+func (unresolvedType) Hash() uint64       { return uint64(kind.Unresolved) }
+func (unresolvedType) Equals(o Type) bool { return IsUnresolved(o) }
+
 type neverType struct{}
 
 func (neverType) Kind() kind.Kind    { return kind.Never }
@@ -126,12 +134,15 @@ func (selfType) String() string     { return "self" }
 func (selfType) Hash() uint64       { return uint64(kind.Self) }
 func (selfType) Equals(o Type) bool { return o.Kind() == kind.Self }
 
-// LuaError is the standard error type for Lua functions.
-// It represents structured errors with message, kind, retryable, etc.
+// LuaError is the runtime error value: what errors.new, errors.wrap and host
+// modules return, and what the `error` and `Error` type names denote. Its
+// methods mirror the runtime: retryable is nil when unspecified and details
+// is nil when empty. The value also converts to a string through its
+// __tostring and __concat metamethods.
 var LuaError Type = NewInterface("Error", []Method{
 	{Name: "kind", Type: Func().Param("self", Self).Returns(String).Build()},
-	{Name: "retryable", Type: Func().Param("self", Self).Returns(Boolean).Build()},
-	{Name: "details", Type: Func().Param("self", Self).Returns(Any).Build()},
+	{Name: "retryable", Type: Func().Param("self", Self).Returns(NewOptional(Boolean)).Build()},
+	{Name: "details", Type: Func().Param("self", Self).Returns(NewOptional(NewMap(String, Any))).Build()},
 	{Name: "message", Type: Func().Param("self", Self).Returns(String).Build()},
 	{Name: "stack", Type: Func().Param("self", Self).Returns(String).Build()},
 })

@@ -1,0 +1,1 @@
+{"description":"A local function calling a captured alias of a stdlib function returns that call's type alongside its other returns.","files":["main.lua"]}

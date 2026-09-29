@@ -1,0 +1,3 @@
+{
+  "description": "keeper.components.tools:ui: `params = params or {}` on an unannotated param stays unknown, so params.action is not nil and the code after its string guard is live"
+}

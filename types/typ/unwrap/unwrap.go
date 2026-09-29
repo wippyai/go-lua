@@ -36,10 +36,21 @@ func underlyingDepth(t typ.Type, guard internal.RecursionGuard) typ.Type {
 
 // Alias unwraps only Alias wrappers, preserving Optional.
 func Alias(t typ.Type) typ.Type {
+	plain := typ.UnwrapAnnotated(t)
+	if _, ok := plain.(*typ.Alias); !ok {
+		return plain
+	}
 	return unwrapAliasDepth(t, typ.NewGuard())
 }
 
 func unwrapAliasDepth(t typ.Type, guard internal.RecursionGuard) typ.Type {
+	plain := typ.UnwrapAnnotated(t)
+	if _, ok := plain.(*typ.Alias); !ok {
+		if guard.Depth() > typ.DefaultRecursionDepth {
+			return nil
+		}
+		return plain
+	}
 	return typ.VisitWithGuard(t, guard, nil, func(next internal.RecursionGuard) typ.Visitor[typ.Type] {
 		return typ.Visitor[typ.Type]{
 			Alias: func(a *typ.Alias) typ.Type {
@@ -154,37 +165,73 @@ func IsBuiltinTableTop(t typ.Type) bool {
 		return false
 	}
 	iface, ok := t.(*typ.Interface)
-	return ok && iface.Name == "table" && len(iface.Methods) == 0
+	if ok {
+		return iface.Name == "table" && len(iface.Methods) == 0
+	}
+	// A local reference to the builtin can survive in a synthesized union
+	// before scope resolution has replaced it with the marker interface.
+	ref, ok := t.(*typ.Ref)
+	return ok && ref.Module == "" && ref.Name == "table"
 }
 
-// Function extracts a Function type, unwrapping Alias and Optional.
+// TableTopAsMap returns the builtin table top as the map it describes, every
+// key holding any; other types are returned unchanged. A structural write into
+// the top extends this map rather than replacing it.
+func TableTopAsMap(t typ.Type) typ.Type {
+	if IsBuiltinTableTop(t) {
+		return typ.NewMap(typ.Any, typ.Any)
+	}
+	return t
+}
+
+// Function extracts a Function type, unwrapping transparent wrappers and
+// selecting the general member of an all-function intersection.
 func Function(t typ.Type) *typ.Function {
 	return unwrapFunctionDepth(t, typ.NewGuard())
 }
 
 func unwrapFunctionDepth(t typ.Type, guard internal.RecursionGuard) *typ.Function {
-	return typ.VisitWithGuard(t, guard, nil, func(next internal.RecursionGuard) typ.Visitor[*typ.Function] {
-		return typ.Visitor[*typ.Function]{
-			Function: func(fn *typ.Function) *typ.Function {
-				return fn
-			},
-			Optional: func(o *typ.Optional) *typ.Function {
-				return unwrapFunctionDepth(o.Inner, next)
-			},
-			Recursive: func(rec *typ.Recursive) *typ.Function {
-				if rec.Body == nil || rec.Body == rec {
-					return nil
-				}
-				return unwrapFunctionDepth(rec.Body, next)
-			},
-			Alias: func(a *typ.Alias) *typ.Function {
-				return unwrapFunctionDepth(a.UnaliasedTarget(), next)
-			},
-			Default: func(t typ.Type) *typ.Function {
-				return nil
-			},
+	if t == nil {
+		return nil
+	}
+	next, ok := guard.Enter(t)
+	if !ok {
+		return nil
+	}
+	// Match Visit's transparent-wrapper handling without allocating a visitor
+	// and its captured recursion guard on every function lookup.
+	for {
+		ann, ok := t.(*typ.Annotated)
+		if !ok || ann.Inner == nil || ann.Inner == t {
+			break
 		}
-	})
+		t = ann.Inner
+	}
+	switch v := t.(type) {
+	case *typ.Function:
+		return v
+	case *typ.Intersection:
+		if len(v.Members) == 0 {
+			return nil
+		}
+		for _, member := range v.Members {
+			if unwrapFunctionDepth(member, next) == nil {
+				return nil
+			}
+		}
+		return typ.GeneralMember(v)
+	case *typ.Optional:
+		return unwrapFunctionDepth(v.Inner, next)
+	case *typ.Recursive:
+		if v.Body == nil || v.Body == v {
+			return nil
+		}
+		return unwrapFunctionDepth(v.Body, next)
+	case *typ.Alias:
+		return unwrapFunctionDepth(v.UnaliasedTarget(), next)
+	default:
+		return nil
+	}
 }
 
 // Record extracts a Record type, unwrapping Alias and Optional.

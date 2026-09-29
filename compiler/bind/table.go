@@ -28,6 +28,7 @@ package bind
 
 import (
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -48,6 +49,10 @@ import (
 // BindingTable is the primary output of the binding phase and is consumed
 // by type checking and CFG construction phases.
 type BindingTable struct {
+	// freshTablePaths records unannotated local table literals and nested
+	// literal tables, intersected across direct reassignments.
+	freshTablePaths map[cfg.SymbolID]map[string]bool
+	emptyTablePaths map[cfg.SymbolID]map[string]bool
 	// symbols maps identifier references to their resolved symbols
 	symbols map[*ast.IdentExpr]cfg.SymbolID
 
@@ -84,6 +89,10 @@ type BindingTable struct {
 
 	// funcLitBySymbol maps symbols back to their function literals
 	funcLitBySymbol map[cfg.SymbolID]*ast.FunctionExpr
+
+	// reassigned records writes after a symbol's declaration. A function
+	// literal associated with such a symbol is not its guaranteed value.
+	reassigned map[cfg.SymbolID]bool
 
 	// capturedCache memoizes captured symbols per function for repeated queries.
 	capturedMu    sync.RWMutex
@@ -123,6 +132,8 @@ func NewBindingTableWithHint(symbolHint, stmtHint int) *BindingTable {
 	}
 
 	return &BindingTable{
+		freshTablePaths:   make(map[cfg.SymbolID]map[string]bool),
+		emptyTablePaths:   make(map[cfg.SymbolID]map[string]bool),
 		symbols:           make(map[*ast.IdentExpr]cfg.SymbolID, identHint),
 		kind:              make(map[cfg.SymbolID]cfg.SymbolKind, symbolHint),
 		names:             make(map[cfg.SymbolID]string, symbolHint),
@@ -134,7 +145,112 @@ func NewBindingTableWithHint(symbolHint, stmtHint int) *BindingTable {
 		fieldSymbols:      make(map[fieldPathKey]cfg.SymbolID),
 		funcLitSymbols:    make(map[*ast.FunctionExpr]cfg.SymbolID),
 		funcLitBySymbol:   make(map[cfg.SymbolID]*ast.FunctionExpr),
+		reassigned:        make(map[cfg.SymbolID]bool),
 		capturedCache:     make(map[*ast.FunctionExpr][]cfg.SymbolID),
+	}
+}
+
+// IsReassigned reports whether a declaration's value can be replaced.
+func (t *BindingTable) IsReassigned(sym cfg.SymbolID) bool {
+	return t != nil && t.reassigned[sym]
+}
+
+// MarkReassigned records an assignment to an existing symbol.
+func (t *BindingTable) MarkReassigned(sym cfg.SymbolID) {
+	if t != nil && sym != 0 {
+		t.reassigned[sym] = true
+	}
+}
+
+// FreshTablePath reports whether this local table path originates from a
+// literal table on every direct assignment to its root.
+func (t *BindingTable) FreshTablePath(sym cfg.SymbolID, fields []string) bool {
+	paths := t.freshTablePaths[sym]
+	if paths == nil {
+		return false
+	}
+	return paths[strings.Join(fields, ".")]
+}
+
+// EmptyFreshTablePath requires every direct initialization to be an empty
+// unannotated literal; it is used when summarizing values stored into a map.
+func (t *BindingTable) EmptyFreshTablePath(sym cfg.SymbolID, fields []string) bool {
+	return t.emptyTablePaths[sym][strings.Join(fields, ".")]
+}
+
+// FreshTablePaths returns a snapshot for flow analysis, including captures.
+func (t *BindingTable) FreshTablePaths() map[cfg.SymbolID]map[string]bool {
+	out := make(map[cfg.SymbolID]map[string]bool, len(t.freshTablePaths))
+	for sym, paths := range t.freshTablePaths {
+		copyPaths := make(map[string]bool, len(paths))
+		for path, fresh := range paths {
+			copyPaths[path] = fresh
+		}
+		out[sym] = copyPaths
+	}
+	return out
+}
+
+func (t *BindingTable) setFreshTableLiteral(sym cfg.SymbolID, expr ast.Expr, annotated bool, reassignment bool) {
+	if kind, ok := t.Kind(sym); !ok || kind != cfg.SymbolLocal {
+		return
+	}
+	next := make(map[string]bool)
+	empty := make(map[string]bool)
+	if !annotated {
+		collectFreshTablePaths(expr, "", next, empty)
+	}
+	if !reassignment {
+		t.freshTablePaths[sym] = next
+		t.emptyTablePaths[sym] = empty
+		return
+	}
+	old := t.freshTablePaths[sym]
+	for path := range old {
+		if !next[path] {
+			delete(old, path)
+		}
+	}
+	for path := range t.emptyTablePaths[sym] {
+		if !empty[path] {
+			delete(t.emptyTablePaths[sym], path)
+		}
+	}
+}
+
+func (t *BindingTable) invalidateFreshPath(sym cfg.SymbolID, fields []string) {
+	prefix := strings.Join(fields, ".")
+	for path := range t.freshTablePaths[sym] {
+		if path == prefix || strings.HasPrefix(path, prefix+".") {
+			delete(t.freshTablePaths[sym], path)
+		}
+	}
+	for path := range t.emptyTablePaths[sym] {
+		if path == prefix || strings.HasPrefix(path, prefix+".") {
+			delete(t.emptyTablePaths[sym], path)
+		}
+	}
+}
+
+func collectFreshTablePaths(expr ast.Expr, prefix string, paths, empty map[string]bool) {
+	table, ok := expr.(*ast.TableExpr)
+	if !ok {
+		return
+	}
+	paths[prefix] = true
+	if len(table.Fields) == 0 {
+		empty[prefix] = true
+	}
+	for _, field := range table.Fields {
+		key, ok := field.Key.(*ast.StringExpr)
+		if !ok {
+			continue
+		}
+		child := key.Value
+		if prefix != "" {
+			child = prefix + "." + child
+		}
+		collectFreshTablePaths(field.Value, child, paths, empty)
 	}
 }
 
@@ -463,7 +579,8 @@ func (t *BindingTable) FuncLitBySymbol(sym cfg.SymbolID) (*ast.FunctionExpr, boo
 // functions) and globals.
 //
 // The analysis walks the function body to find all referenced symbols,
-// then subtracts symbols declared within the function (parameters and locals).
+// then subtracts symbols declared within the function (parameters and locals),
+// including those declared by functions nested in it.
 func (t *BindingTable) CapturedSymbols(fn *ast.FunctionExpr) []cfg.SymbolID {
 	if fn == nil {
 		return nil
@@ -476,17 +593,8 @@ func (t *BindingTable) CapturedSymbols(fn *ast.FunctionExpr) []cfg.SymbolID {
 	t.capturedMu.RUnlock()
 
 	declared := make(map[cfg.SymbolID]bool)
-
-	for _, sym := range t.paramSymbols[fn] {
-		if sym != 0 {
-			declared[sym] = true
-		}
-	}
-
-	t.collectDeclaredInStmts(fn.Stmts, declared)
-
 	referenced := make(map[cfg.SymbolID]bool)
-	t.collectReferencedInStmts(fn.Stmts, referenced)
+	t.collectInFunction(fn, declared, referenced)
 
 	var captured []cfg.SymbolID
 	for sym := range referenced {
@@ -505,6 +613,21 @@ func (t *BindingTable) CapturedSymbols(fn *ast.FunctionExpr) []cfg.SymbolID {
 	t.capturedCache[fn] = captured
 	t.capturedMu.Unlock()
 	return captured
+}
+
+// collectInFunction gathers the parameters and locals fn declares and the
+// symbols its body references, including those of functions nested in it.
+func (t *BindingTable) collectInFunction(fn *ast.FunctionExpr, declared, referenced map[cfg.SymbolID]bool) {
+	if fn == nil {
+		return
+	}
+	for _, sym := range t.paramSymbols[fn] {
+		if sym != 0 {
+			declared[sym] = true
+		}
+	}
+	t.collectDeclaredInStmts(fn.Stmts, declared)
+	t.collectReferencedInStmts(fn.Stmts, declared, referenced)
 }
 
 // collectDeclaredInStmts gathers all symbols declared within a statement list.
@@ -557,69 +680,69 @@ func (t *BindingTable) collectDeclaredInStmt(stmt ast.Stmt, declared map[cfg.Sym
 	}
 }
 
-// collectReferencedInStmts gathers all symbols referenced in a statement list.
-func (t *BindingTable) collectReferencedInStmts(stmts []ast.Stmt, referenced map[cfg.SymbolID]bool) {
+// collectReferencedInStmts gathers all symbols referenced in a statement list,
+// and the declarations of the functions nested in it.
+func (t *BindingTable) collectReferencedInStmts(stmts []ast.Stmt, declared, referenced map[cfg.SymbolID]bool) {
 	for _, stmt := range stmts {
-		t.collectReferencedInStmt(stmt, referenced)
+		t.collectReferencedInStmt(stmt, declared, referenced)
 	}
 }
 
 // collectReferencedInStmt gathers symbols referenced in a single statement.
-// Recurses into nested blocks and function bodies to find all references.
-func (t *BindingTable) collectReferencedInStmt(stmt ast.Stmt, referenced map[cfg.SymbolID]bool) {
+// Recurses into nested blocks and function bodies to find all references, and
+// gathers the declarations of the nested functions.
+func (t *BindingTable) collectReferencedInStmt(stmt ast.Stmt, declared, referenced map[cfg.SymbolID]bool) {
 	if stmt == nil {
 		return
 	}
 	switch s := stmt.(type) {
 	case *ast.AssignStmt:
 		for _, e := range s.Lhs {
-			t.collectReferencedInExpr(e, referenced)
+			t.collectReferencedInExpr(e, declared, referenced)
 		}
 		for _, e := range s.Rhs {
-			t.collectReferencedInExpr(e, referenced)
+			t.collectReferencedInExpr(e, declared, referenced)
 		}
 	case *ast.LocalAssignStmt:
 		for _, e := range s.Exprs {
-			t.collectReferencedInExpr(e, referenced)
+			t.collectReferencedInExpr(e, declared, referenced)
 		}
 	case *ast.FuncCallStmt:
-		t.collectReferencedInExpr(s.Expr, referenced)
+		t.collectReferencedInExpr(s.Expr, declared, referenced)
 	case *ast.DoBlockStmt:
-		t.collectReferencedInStmts(s.Stmts, referenced)
+		t.collectReferencedInStmts(s.Stmts, declared, referenced)
 	case *ast.WhileStmt:
-		t.collectReferencedInExpr(s.Condition, referenced)
-		t.collectReferencedInStmts(s.Stmts, referenced)
+		t.collectReferencedInExpr(s.Condition, declared, referenced)
+		t.collectReferencedInStmts(s.Stmts, declared, referenced)
 	case *ast.RepeatStmt:
-		t.collectReferencedInStmts(s.Stmts, referenced)
-		t.collectReferencedInExpr(s.Condition, referenced)
+		t.collectReferencedInStmts(s.Stmts, declared, referenced)
+		t.collectReferencedInExpr(s.Condition, declared, referenced)
 	case *ast.IfStmt:
-		t.collectReferencedInExpr(s.Condition, referenced)
-		t.collectReferencedInStmts(s.Then, referenced)
-		t.collectReferencedInStmts(s.Else, referenced)
+		t.collectReferencedInExpr(s.Condition, declared, referenced)
+		t.collectReferencedInStmts(s.Then, declared, referenced)
+		t.collectReferencedInStmts(s.Else, declared, referenced)
 	case *ast.NumberForStmt:
-		t.collectReferencedInExpr(s.Init, referenced)
-		t.collectReferencedInExpr(s.Limit, referenced)
-		t.collectReferencedInExpr(s.Step, referenced)
-		t.collectReferencedInStmts(s.Stmts, referenced)
+		t.collectReferencedInExpr(s.Init, declared, referenced)
+		t.collectReferencedInExpr(s.Limit, declared, referenced)
+		t.collectReferencedInExpr(s.Step, declared, referenced)
+		t.collectReferencedInStmts(s.Stmts, declared, referenced)
 	case *ast.GenericForStmt:
 		for _, e := range s.Exprs {
-			t.collectReferencedInExpr(e, referenced)
+			t.collectReferencedInExpr(e, declared, referenced)
 		}
-		t.collectReferencedInStmts(s.Stmts, referenced)
+		t.collectReferencedInStmts(s.Stmts, declared, referenced)
 	case *ast.FuncDefStmt:
-		if s.Func != nil {
-			t.collectReferencedInStmts(s.Func.Stmts, referenced)
-		}
+		t.collectInFunction(s.Func, declared, referenced)
 	case *ast.ReturnStmt:
 		for _, e := range s.Exprs {
-			t.collectReferencedInExpr(e, referenced)
+			t.collectReferencedInExpr(e, declared, referenced)
 		}
 	}
 }
 
 // collectReferencedInExpr gathers symbols referenced in an expression.
 // Recurses into subexpressions and nested function bodies.
-func (t *BindingTable) collectReferencedInExpr(expr ast.Expr, referenced map[cfg.SymbolID]bool) {
+func (t *BindingTable) collectReferencedInExpr(expr ast.Expr, declared, referenced map[cfg.SymbolID]bool) {
 	if expr == nil {
 		return
 	}
@@ -629,48 +752,47 @@ func (t *BindingTable) collectReferencedInExpr(expr ast.Expr, referenced map[cfg
 			referenced[sym] = true
 		}
 	case *ast.AttrGetExpr:
-		t.collectReferencedInExpr(e.Object, referenced)
-		t.collectReferencedInExpr(e.Key, referenced)
+		t.collectReferencedInExpr(e.Object, declared, referenced)
+		t.collectReferencedInExpr(e.Key, declared, referenced)
 	case *ast.TableExpr:
 		for _, f := range e.Fields {
 			if f != nil {
-				t.collectReferencedInExpr(f.Key, referenced)
-				t.collectReferencedInExpr(f.Value, referenced)
+				t.collectReferencedInExpr(f.Key, declared, referenced)
+				t.collectReferencedInExpr(f.Value, declared, referenced)
 			}
 		}
 	case *ast.FuncCallExpr:
-		t.collectReferencedInExpr(e.Func, referenced)
-		t.collectReferencedInExpr(e.Receiver, referenced)
+		t.collectReferencedInExpr(e.Func, declared, referenced)
+		t.collectReferencedInExpr(e.Receiver, declared, referenced)
 		for _, a := range e.Args {
-			t.collectReferencedInExpr(a, referenced)
+			t.collectReferencedInExpr(a, declared, referenced)
 		}
 	case *ast.FunctionExpr:
-		// Recurse into nested function bodies
-		t.collectReferencedInStmts(e.Stmts, referenced)
+		t.collectInFunction(e, declared, referenced)
 	case *ast.LogicalOpExpr:
-		t.collectReferencedInExpr(e.Lhs, referenced)
-		t.collectReferencedInExpr(e.Rhs, referenced)
+		t.collectReferencedInExpr(e.Lhs, declared, referenced)
+		t.collectReferencedInExpr(e.Rhs, declared, referenced)
 	case *ast.RelationalOpExpr:
-		t.collectReferencedInExpr(e.Lhs, referenced)
-		t.collectReferencedInExpr(e.Rhs, referenced)
+		t.collectReferencedInExpr(e.Lhs, declared, referenced)
+		t.collectReferencedInExpr(e.Rhs, declared, referenced)
 	case *ast.StringConcatOpExpr:
-		t.collectReferencedInExpr(e.Lhs, referenced)
-		t.collectReferencedInExpr(e.Rhs, referenced)
+		t.collectReferencedInExpr(e.Lhs, declared, referenced)
+		t.collectReferencedInExpr(e.Rhs, declared, referenced)
 	case *ast.ArithmeticOpExpr:
-		t.collectReferencedInExpr(e.Lhs, referenced)
-		t.collectReferencedInExpr(e.Rhs, referenced)
+		t.collectReferencedInExpr(e.Lhs, declared, referenced)
+		t.collectReferencedInExpr(e.Rhs, declared, referenced)
 	case *ast.UnaryMinusOpExpr:
-		t.collectReferencedInExpr(e.Expr, referenced)
+		t.collectReferencedInExpr(e.Expr, declared, referenced)
 	case *ast.UnaryNotOpExpr:
-		t.collectReferencedInExpr(e.Expr, referenced)
+		t.collectReferencedInExpr(e.Expr, declared, referenced)
 	case *ast.UnaryLenOpExpr:
-		t.collectReferencedInExpr(e.Expr, referenced)
+		t.collectReferencedInExpr(e.Expr, declared, referenced)
 	case *ast.UnaryBNotOpExpr:
-		t.collectReferencedInExpr(e.Expr, referenced)
+		t.collectReferencedInExpr(e.Expr, declared, referenced)
 	case *ast.CastExpr:
-		t.collectReferencedInExpr(e.Expr, referenced)
+		t.collectReferencedInExpr(e.Expr, declared, referenced)
 	case *ast.NonNilAssertExpr:
-		t.collectReferencedInExpr(e.Expr, referenced)
+		t.collectReferencedInExpr(e.Expr, declared, referenced)
 	}
 }
 

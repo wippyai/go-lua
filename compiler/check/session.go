@@ -42,13 +42,17 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/modules"
+	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/compiler/check/store"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/diag"
 	"github.com/wippyai/go-lua/types/io"
 	"github.com/wippyai/go-lua/types/typ"
+	"sort"
+	"strings"
 )
 
 // Session holds all state and results for analyzing a single Lua module.
@@ -272,37 +276,15 @@ func (s *Session) RegisterGraphHierarchy(root *cfg.Graph) {
 				}
 			}
 		}
-		// Register local function assignments within this graph.
-		g.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
-			if info == nil || !info.IsLocal || len(info.Targets) == 0 {
-				return
-			}
-			info.EachTargetSource(func(_ int, target cfg.AssignTarget, source ast.Expr) {
-				if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
-					return
-				}
-				if fnExpr, ok := source.(*ast.FunctionExpr); ok && fnExpr != nil {
-					child := s.GetOrBuildCFG(fnExpr)
-					if child == nil {
-						return
-					}
-					s.Store.RegisterGraph(child, fnExpr)
-					s.Store.RegisterNestedMeta(child.ID(), g.ID(), p)
-					s.Store.RegisterFunctionRef(target.Symbol, fnExpr, child, g.ID(), p)
-				}
-			})
-		})
-		g.EachFuncDef(func(p cfg.Point, info *cfg.FuncDefInfo) {
-			if info == nil || info.Symbol == 0 || info.FuncExpr == nil {
-				return
-			}
-			child := s.GetOrBuildCFG(info.FuncExpr)
+		// Register the local functions of this graph.
+		g.EachLocalFunction(func(p cfg.Point, sym cfg.SymbolID, fnExpr *ast.FunctionExpr) {
+			child := s.GetOrBuildCFG(fnExpr)
 			if child == nil {
 				return
 			}
-			s.Store.RegisterGraph(child, info.FuncExpr)
+			s.Store.RegisterGraph(child, fnExpr)
 			s.Store.RegisterNestedMeta(child.ID(), g.ID(), p)
-			s.Store.RegisterFunctionRef(info.Symbol, info.FuncExpr, child, g.ID(), p)
+			s.Store.RegisterFunctionRef(sym, fnExpr, child, g.ID(), p)
 		})
 		for _, nf := range g.NestedFunctions() {
 			if nf.Func == nil {
@@ -484,6 +466,7 @@ func (s *Session) ExportManifest(modulePath string) *io.Manifest {
 	}
 
 	manifest := io.NewManifest(modulePath)
+	manifest.BodyBacked = true
 	exportType := s.ExportType()
 	manifest.SetExport(exportType)
 
@@ -492,7 +475,215 @@ func (s *Session) ExportManifest(modulePath string) *io.Manifest {
 	}
 
 	modules.ExportFunctionSummaries(manifest, exportType, s.RootGraph(), s.RefinementsForExport())
+	s.exportModuleCallWrites(manifest)
+	s.exportPossibleModuleCallWrites(manifest)
+	s.exportTruthyCallbackCalls(manifest)
 	return manifest
+}
+
+// exportPossibleModuleCallWrites follows local calls and imported calls made by
+// each exported function. The summary describes types that may be written; it
+// does not claim the write occurs on every path through the function.
+func (s *Session) exportPossibleModuleCallWrites(manifest *io.Manifest) {
+	if s == nil || s.Store == nil || manifest == nil || s.RootGraph() == nil {
+		return
+	}
+	rec, ok := manifest.Export.(*typ.Record)
+	if !ok {
+		return
+	}
+	root := s.RootGraph()
+	returnedTables := make(map[cfg.SymbolID]bool)
+	root.EachReturn(func(_ cfg.Point, ret *cfg.ReturnInfo) {
+		if ret != nil && len(ret.Symbols) > 0 && ret.Symbols[0] != 0 {
+			returnedTables[ret.Symbols[0]] = true
+		}
+	})
+	seenExports := make(map[string]bool)
+	addExport := func(name string, sym cfg.SymbolID) {
+		if name == "" || sym == 0 || seenExports[name] {
+			return
+		}
+		field := rec.GetField(name)
+		if field == nil {
+			return
+		}
+		if _, ok := field.Type.(*typ.Function); !ok {
+			return
+		}
+		seenExports[name] = true
+		writes := make(map[string]io.ModuleWrite)
+		s.collectPossibleModuleCallWrites(sym, make(map[cfg.SymbolID]bool), writes)
+		if len(writes) == 0 {
+			return
+		}
+		keys := make([]string, 0, len(writes))
+		for key := range writes {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		if manifest.MayCallWrites == nil {
+			manifest.MayCallWrites = make(map[string][]io.ModuleWrite)
+		}
+		for _, key := range keys {
+			manifest.MayCallWrites[name] = append(manifest.MayCallWrites[name], writes[key])
+		}
+	}
+	for _, nested := range root.NestedFunctions() {
+		name := root.NameOf(nested.Symbol)
+		if _, field, hasRoot := strings.Cut(name, "."); hasRoot {
+			if strings.Contains(field, ".") {
+				continue
+			}
+			name = field
+		}
+		addExport(name, nested.Symbol)
+	}
+	// A local function may be exported under another field name by assignment.
+	// The source symbol identifies the same checked function body.
+	root.EachAssign(func(_ cfg.Point, assign *cfg.AssignInfo) {
+		if assign == nil {
+			return
+		}
+		for i, target := range assign.Targets {
+			if target.Kind != cfg.TargetField || len(target.FieldPath) != 1 ||
+				!returnedTables[target.BaseSymbol] || i >= len(assign.SourceSymbols) {
+				continue
+			}
+			sym := assign.SourceSymbols[i]
+			if s.Store.FunctionRefBySym(sym) != nil {
+				addExport(target.FieldPath[0], sym)
+			}
+		}
+	})
+}
+
+func (s *Session) collectPossibleModuleCallWrites(fn cfg.SymbolID, seen map[cfg.SymbolID]bool, writes map[string]io.ModuleWrite) {
+	if fn == 0 || seen[fn] {
+		return
+	}
+	seen[fn] = true
+	ref := s.Store.FunctionRefBySym(fn)
+	if ref == nil {
+		return
+	}
+	graph := s.Store.Graphs()[ref.GraphID]
+	if graph == nil {
+		return
+	}
+	bindings := graph.Bindings()
+	aliases := modules.MergeAliases(s.Store.ModuleAliases(), modules.CollectAliases(graph))
+	add := func(write io.ModuleWrite) {
+		if write.Module == "" || write.Field == "" || write.Type == nil {
+			return
+		}
+		key := write.Module + "\x00" + write.Path + "\x00" + write.Field
+		if prior, ok := writes[key]; ok {
+			write.Type = api.JoinFieldWrite(api.FieldWriteKey{Path: write.Path, Field: write.Field}, prior.Type, write.Type)
+		}
+		writes[key] = write
+	}
+	source := returns.StoreFieldWriteSource{Store: s.Store, Bindings: s.Store.ModuleBindings()}
+	direct := returns.DirectFieldWriteKeys(graph)
+	for target, set := range source.FieldWritesOf(fn) {
+		module := aliases[target]
+		if module == "" || (bindings != nil && bindings.IsReassigned(target)) ||
+			(s.Store.ModuleBindings() != nil && s.Store.ModuleBindings().IsReassigned(target)) {
+			continue
+		}
+		for key, t := range set {
+			if !direct[target][key] {
+				continue
+			}
+			add(io.ModuleWrite{Module: module, Path: key.Path, Field: key.Field, Type: t})
+		}
+	}
+	reachable := graph.CFG().Reachable()
+	graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
+		if info == nil || !reachable[p] {
+			return
+		}
+		if len(info.CalleePath.Segments) == 1 {
+			segment := info.CalleePath.Segments[0]
+			if segment.Kind == constraint.SegmentField || segment.Kind == constraint.SegmentIndexString {
+				moduleSym := info.CalleePath.Symbol
+				module := aliases[moduleSym]
+				if module != "" && (bindings == nil || !bindings.IsReassigned(moduleSym)) &&
+					(s.Store.ModuleBindings() == nil || !s.Store.ModuleBindings().IsReassigned(moduleSym)) &&
+					!modules.AssignedModuleField(graph, moduleSym, segment.Name) {
+					if imported := s.Ctx.DB().Manifest(module); imported != nil && imported.BodyBacked {
+						for _, write := range imported.CallWrites[segment.Name] {
+							add(write)
+						}
+						for _, write := range imported.MayCallWrites[segment.Name] {
+							add(write)
+						}
+					}
+				}
+			}
+		}
+		callee := callsite.SelectPreferredSymbol(
+			callsite.CallableCalleeSymbolCandidates(info, graph, bindings, s.Store.ModuleBindings()),
+			func(sym cfg.SymbolID) bool { return s.Store.FunctionRefBySym(sym) != nil },
+		)
+		if callee != 0 {
+			s.collectPossibleModuleCallWrites(callee, seen, writes)
+		}
+	})
+}
+
+// exportModuleCallWrites preserves effects on another imported module's table
+// without applying them to the module's export before the function is called.
+func (s *Session) exportModuleCallWrites(manifest *io.Manifest) {
+	if s == nil || s.Store == nil || manifest == nil || s.RootGraph() == nil {
+		return
+	}
+	rec, ok := manifest.Export.(*typ.Record)
+	if !ok {
+		return
+	}
+	graph := s.RootGraph()
+	aliases := s.Store.ModuleAliases()
+	source := returns.StoreFieldWriteSource{Store: s.Store, Bindings: s.Store.ModuleBindings()}
+	for _, nested := range graph.NestedFunctions() {
+		name := graph.NameOf(nested.Symbol)
+		if _, field, hasRoot := strings.Cut(name, "."); hasRoot {
+			if strings.Contains(field, ".") {
+				continue
+			}
+			name = field
+		}
+		field := rec.GetField(name)
+		if field == nil {
+			continue
+		}
+		if _, ok := field.Type.(*typ.Function); !ok {
+			continue
+		}
+		writes := source.FieldWritesOf(nested.Symbol)
+		must := source.MustWritesOf(nested.Symbol)
+		for _, target := range cfg.SortedSymbolIDs(writes) {
+			module := aliases[target]
+			if module == "" {
+				continue
+			}
+			for _, key := range api.SortedFieldWriteKeys(writes[target]) {
+				if !must[target][key] {
+					continue
+				}
+				t := writes[target][key]
+				if t == nil {
+					continue
+				}
+				if manifest.CallWrites == nil {
+					manifest.CallWrites = make(map[string][]io.ModuleWrite)
+				}
+				manifest.CallWrites[name] = append(manifest.CallWrites[name], io.ModuleWrite{
+					Module: module, Path: key.Path, Field: key.Field, Type: t,
+				})
+			}
+		}
+	}
 }
 
 // RefinementsForExport extracts computed function refinements for manifest generation.

@@ -80,7 +80,10 @@ func CollectSpecNarrowedTypes(
 			}
 
 			// Fall back to regular synthesis for method calls only
-			// This captures t = time.now() where the return type is known
+			// This captures t = time.now() where the return type is known.
+			// A dynamic result is not known: this synthesis ignores the branch
+			// guards reaching the call, so a receiver narrowed from any reads
+			// as any here while the assignment resolves its method.
 			// Only capture non-union types to avoid interfering with narrowing
 			if call.Method != "" && synth != nil {
 				inferred := assignValueAt(expanded, i)
@@ -89,7 +92,7 @@ func CollectSpecNarrowedTypes(
 						inferred = synth(source, p)
 					}
 				}
-				if typ.IsUnknownOrNil(inferred) {
+				if typ.IsUnknownOrNil(inferred) || typ.IsAny(inferred) {
 					return
 				}
 				// Skip union types - they may need narrowing later
@@ -217,7 +220,7 @@ func NarrowReturnTypeBySpec(
 		return nil
 	}
 
-	spec := contract.ExtractSpec(fnType)
+	spec := resolveCallSpec(fnType, callInfo, p, symResolver, graph, bindings, moduleBindings)
 	if spec == nil || spec.Return == nil || len(spec.Return.Cases) == 0 {
 		return nil
 	}
@@ -227,5 +230,38 @@ func NarrowReturnTypeBySpec(
 		return t
 	}
 
+	return nil
+}
+
+// resolveCallSpec returns the callee's contract spec, preferring the
+// synthesized type and falling back to the stored function type when the
+// synthesized view carries no return cases.
+func resolveCallSpec(
+	fnType typ.Type,
+	callInfo *cfg.CallInfo,
+	p cfg.Point,
+	symResolver func(cfg.Point, cfg.SymbolID) (typ.Type, bool),
+	graph *cfg.Graph,
+	bindings *bind.BindingTable,
+	moduleBindings *bind.BindingTable,
+) *contract.Spec {
+	if spec := contract.ExtractSpec(fnType); spec != nil && spec.Return != nil && len(spec.Return.Cases) > 0 {
+		return spec
+	}
+	if symResolver == nil {
+		return nil
+	}
+	for _, calleeSym := range callsite.CallableCalleeSymbolCandidates(callInfo, graph, bindings, moduleBindings) {
+		if calleeSym == 0 {
+			continue
+		}
+		t, ok := symResolver(p, calleeSym)
+		if !ok || t == nil {
+			continue
+		}
+		if spec := contract.ExtractSpec(t); spec != nil && spec.Return != nil && len(spec.Return.Cases) > 0 {
+			return spec
+		}
+	}
 	return nil
 }

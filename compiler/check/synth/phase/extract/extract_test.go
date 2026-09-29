@@ -107,3 +107,7 @@ func TestSpecTypes(t *testing.T) {
 		t.Fatal("expected string type")
 	}
 }
+
+func (s *mockSynthInterface) TypeOfWithSpecTypes(expr ast.Expr, p cfg.Point, _ api.SpecTypes) typ.Type {
+	return s.TypeOf(expr, p)
+}

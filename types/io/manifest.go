@@ -16,7 +16,7 @@ import (
 // Manifest file format constants.
 const (
 	manifestMagic   = 0x4D414E49 // "MANI" - identifies valid manifest files
-	manifestVersion = 8          // v8: encode function type params + record open/map components
+	manifestVersion = 14         // v14: semantic presence and completeness metadata
 )
 
 // Manifest decoding errors.
@@ -46,6 +46,9 @@ type Manifest struct {
 	Path string
 	// Version is a monotonic counter for cache invalidation.
 	Version uint64
+	// BodyBacked means exported function relations must come from checked Lua
+	// return paths. External manifests contain declarations without Lua bodies.
+	BodyBacked bool
 
 	// Export is the type returned by require(). Usually a record of functions.
 	Export typ.Type
@@ -55,6 +58,16 @@ type Manifest struct {
 	// Summaries maps function names to their behavioral specifications.
 	// Enables interprocedural analysis without source code.
 	Summaries map[string]*FunctionSummary
+	// CallWrites records writes an exported function makes to another imported
+	// module's table. The caller applies them only after that function executes.
+	CallWrites map[string][]ModuleWrite
+	// MayCallWrites records possible writes, including writes reached through
+	// local helpers and imported calls. They are applied only at a call site and
+	// never establish that a field was written on every return path.
+	MayCallWrites map[string][]ModuleWrite
+	// TruthyCallbackCalls records module fields invoked on every path that
+	// returns a truthy first result from an exported function.
+	TruthyCallbackCalls map[string][]CallbackCall
 
 	// Globals records types assigned to _G for global namespace pollution tracking.
 	Globals map[string]typ.Type
@@ -63,6 +76,29 @@ type Manifest struct {
 	cachedEnriched      typ.Type
 	cachedEnrichedReady bool
 	cachedLookupValues  map[string]lookupValueResult
+
+	declaredOnce sync.Once
+}
+
+// ModuleWrite is a callee write to a table exported by another module.
+// Path identifies the table below that module's export; Field is its named
+// field or the dynamic index marker "[]".
+type ModuleWrite struct {
+	Module string
+	Path   string
+	Field  string
+	Type   typ.Type
+}
+
+// CallbackCall describes a call through a mutable field of this module's
+// export. NonNilArgs are callback argument positions whose values are proved
+// nonnil at the call point.
+type CallbackCall struct {
+	Field      string
+	NonNilArgs []int
+	// PriorFields are mutable callbacks read before this call. The importer
+	// must prove its installed versions cannot replace Field.
+	PriorFields []string
 }
 
 type lookupValueResult struct {
@@ -210,9 +246,10 @@ func (m *Manifest) DefineSummary(name string, s *FunctionSummary) {
 	m.invalidateCaches()
 }
 
-// SetExport sets the module's export type.
+// SetExport sets the module's export type. Importers write the exported
+// tables too, so none of them is seen complete from outside the module.
 func (m *Manifest) SetExport(t typ.Type) {
-	m.Export = t
+	m.Export = typ.PartialViewDeep(t)
 	m.invalidateCaches()
 }
 
@@ -365,7 +402,7 @@ func (m *Manifest) EnrichedExport() typ.Type {
 	resolvedExport := resolveManifestLocalRefs(m.Export, m.Types)
 	enriched := resolvedExport
 	if resolvedExport != nil && len(m.Summaries) > 0 {
-		enriched = enrichTypeWithSummaries(resolvedExport, m.Summaries)
+		enriched = enrichTypeWithSummaries(enriched, m.Summaries)
 	}
 
 	m.cacheMu.Lock()
@@ -377,6 +414,46 @@ func (m *Manifest) EnrichedExport() typ.Type {
 	m.cacheMu.Unlock()
 
 	return cached
+}
+
+// MarkDeclared marks every record in this manifest declared, so that an absent
+// field read on one is closed. A runtime manifest is an interface declaration,
+// so its shape is closed; a Lua-inferred export is not and keeps its inferred,
+// open shapes. Callers skip this for body-backed manifests.
+//
+// The marking runs once per manifest. A linter connects one shared builtin
+// manifest into many databases concurrently, so a sync.Once serializes the
+// single in-place write; every later reader observes it through the database,
+// which happens after Connect. The manifest object keeps its identity, and each
+// source record maps to one marked object, which nominal field narrowing needs.
+func (m *Manifest) MarkDeclared() {
+	if m == nil {
+		return
+	}
+	m.declaredOnce.Do(func() {
+		roots := make([]typ.Type, 0, 1+len(m.Types)+len(m.Globals))
+		roots = append(roots, m.Export)
+		typeNames := sortedKeys(m.Types)
+		for _, name := range typeNames {
+			roots = append(roots, m.Types[name])
+		}
+		globalNames := sortedKeys(m.Globals)
+		for _, name := range globalNames {
+			roots = append(roots, m.Globals[name])
+		}
+		marked := typ.MarkDeclaredShared(roots...)
+		m.Export = marked[0]
+		next := 1
+		for _, name := range typeNames {
+			m.Types[name] = marked[next]
+			next++
+		}
+		for _, name := range globalNames {
+			m.Globals[name] = marked[next]
+			next++
+		}
+		m.invalidateCaches()
+	})
 }
 
 // resolveManifestLocalRefs resolves local typ.Ref nodes against manifest type
@@ -480,48 +557,32 @@ func enrichTopLevelTypeWithSummaries(t typ.Type, summaries summaryIndex, depth i
 	}
 }
 
-// enrichRecordWithSummaries creates a new record with function fields enriched.
+// enrichRecordWithSummaries returns r with its function fields enriched. Every
+// other property of the record (openness, map component, metatable, field
+// flags) is kept.
 func enrichRecordWithSummaries(r *typ.Record, summaries summaryIndex) *typ.Record {
 	if r == nil || len(r.Fields) == 0 {
 		return r
 	}
 
-	changed := false
-
-	newFields := make([]typ.Field, len(r.Fields))
-	for i, f := range r.Fields {
-		newFields[i] = f
-
-		if fn, ok := f.Type.(*typ.Function); ok {
-			if summary, exists := summaries.lookup(f.Name); exists {
-				enriched := ApplyFunctionSummary(fn, summary)
-				if enriched != nil && enriched != fn {
-					newFields[i].Type = enriched
-					changed = true
-				}
-			}
+	out := r
+	for _, f := range r.Fields {
+		fn, ok := f.Type.(*typ.Function)
+		if !ok {
+			continue
 		}
-	}
-
-	if !changed {
-		return r
-	}
-
-	builder := typ.NewRecord()
-
-	for _, f := range newFields {
-		if f.Optional {
-			builder.OptField(f.Name, f.Type)
-		} else {
-			builder.Field(f.Name, f.Type)
+		summary, exists := summaries.lookup(f.Name)
+		if !exists {
+			continue
 		}
+		enriched := ApplyFunctionSummary(fn, summary)
+		if enriched == nil || enriched == fn {
+			continue
+		}
+		f.Type = enriched
+		out = out.WithField(f)
 	}
-
-	if r.Metatable != nil {
-		builder.Metatable(r.Metatable)
-	}
-
-	return builder.Build()
+	return out
 }
 
 // enrichInterfaceWithSummaries creates a new interface with method types enriched.
@@ -603,10 +664,15 @@ func ApplyFunctionSummary(fn *typ.Function, summary *FunctionSummary) *typ.Funct
 		builder.Effects(fn.Effects)
 	}
 
-	// Build spec from summary constraints, fall back to fn's spec
+	// Add summary constraints to the function's existing spec. Return effects
+	// proved from the body remain valid when a summary adds OnReturn facts.
 	if summary.Requires.HasConstraints() || summary.Ensures.HasConstraints() ||
 		len(summary.ExprRequires) > 0 || len(summary.ExprEnsures) > 0 {
 		spec := contract.NewSpec()
+		if existing := contract.ExtractSpec(fn); existing != nil {
+			clone := *existing
+			spec = &clone
+		}
 		spec.Requires = constraint.And(spec.Requires, summary.Requires)
 		spec.Ensures = constraint.And(spec.Ensures, summary.Ensures)
 
@@ -699,13 +765,18 @@ func canonicalSummaryName(name string) string {
 
 // Encode serializes manifest to binary.
 func (m *Manifest) Encode() ([]byte, error) {
+	return m.encodeVersion(manifestVersion)
+}
+
+func (m *Manifest) encodeVersion(version byte) ([]byte, error) {
 	var buf bytes.Buffer
-	w := &manifestWriter{typeWriter: &typeWriter{w: &buf}}
+	w := &manifestWriter{typeWriter: &typeWriter{w: &buf, version: version}}
 
 	w.writeUint32(manifestMagic)
-	w.writeByte(manifestVersion)
+	w.writeByte(version)
 	w.writeUint64(m.Version)
 	w.writeString(m.Path)
+	w.writeBool(m.BodyBacked)
 
 	// Export
 	w.writeBool(m.Export != nil)
@@ -728,6 +799,47 @@ func (m *Manifest) Encode() ([]byte, error) {
 	for _, name := range sortedKeys(m.Summaries) {
 		w.writeString(name)
 		w.writeSummary(m.Summaries[name])
+	}
+	w.writeUint32(uint32(len(m.CallWrites)))
+	for _, name := range sortedKeys(m.CallWrites) {
+		w.writeString(name)
+		writes := m.CallWrites[name]
+		w.writeUint32(uint32(len(writes)))
+		for _, write := range writes {
+			w.writeString(write.Module)
+			w.writeString(write.Path)
+			w.writeString(write.Field)
+			w.writeType(write.Type)
+		}
+	}
+	w.writeUint32(uint32(len(m.MayCallWrites)))
+	for _, name := range sortedKeys(m.MayCallWrites) {
+		w.writeString(name)
+		writes := m.MayCallWrites[name]
+		w.writeUint32(uint32(len(writes)))
+		for _, write := range writes {
+			w.writeString(write.Module)
+			w.writeString(write.Path)
+			w.writeString(write.Field)
+			w.writeType(write.Type)
+		}
+	}
+	w.writeUint32(uint32(len(m.TruthyCallbackCalls)))
+	for _, name := range sortedKeys(m.TruthyCallbackCalls) {
+		w.writeString(name)
+		calls := m.TruthyCallbackCalls[name]
+		w.writeUint32(uint32(len(calls)))
+		for _, call := range calls {
+			w.writeString(call.Field)
+			w.writeUint32(uint32(len(call.NonNilArgs)))
+			for _, arg := range call.NonNilArgs {
+				w.writeUint32(uint32(arg))
+			}
+			w.writeUint32(uint32(len(call.PriorFields)))
+			for _, field := range call.PriorFields {
+				w.writeString(field)
+			}
+		}
 	}
 
 	// Globals
@@ -753,9 +865,11 @@ func DecodeManifest(data []byte) (*Manifest, error) {
 		return nil, ErrInvalidManifest
 	}
 
-	if r.readByte() != manifestVersion {
+	version := r.readByte()
+	if version != manifestVersion && version != 13 {
 		return nil, ErrVersionMismatch
 	}
+	r.version = version
 
 	m := &Manifest{
 		Version:   r.readUint64(),
@@ -764,6 +878,7 @@ func DecodeManifest(data []byte) (*Manifest, error) {
 		Summaries: make(map[string]*FunctionSummary),
 		Globals:   make(map[string]typ.Type),
 	}
+	m.BodyBacked = r.readBool()
 
 	// Export
 	if r.readBool() {
@@ -788,6 +903,79 @@ func DecodeManifest(data []byte) (*Manifest, error) {
 	for i := uint32(0); i < count; i++ {
 		name := r.readString()
 		m.Summaries[name] = r.readSummary()
+	}
+	count = r.readUint32()
+	if !r.checkSliceLen(count) {
+		return nil, r.err
+	}
+	if count > 0 {
+		m.CallWrites = make(map[string][]ModuleWrite, count)
+	}
+	for i := uint32(0); i < count; i++ {
+		name := r.readString()
+		length := r.readUint32()
+		if !r.checkSliceLen(length) {
+			return nil, r.err
+		}
+		writes := make([]ModuleWrite, length)
+		for j := range writes {
+			writes[j] = ModuleWrite{Module: r.readString(), Path: r.readString(), Field: r.readString(), Type: r.readType()}
+		}
+		m.CallWrites[name] = writes
+	}
+	count = r.readUint32()
+	if !r.checkSliceLen(count) {
+		return nil, r.err
+	}
+	if count > 0 {
+		m.MayCallWrites = make(map[string][]ModuleWrite, count)
+	}
+	for i := uint32(0); i < count; i++ {
+		name := r.readString()
+		length := r.readUint32()
+		if !r.checkSliceLen(length) {
+			return nil, r.err
+		}
+		writes := make([]ModuleWrite, length)
+		for j := range writes {
+			writes[j] = ModuleWrite{Module: r.readString(), Path: r.readString(), Field: r.readString(), Type: r.readType()}
+		}
+		m.MayCallWrites[name] = writes
+	}
+	count = r.readUint32()
+	if !r.checkSliceLen(count) {
+		return nil, r.err
+	}
+	if count > 0 {
+		m.TruthyCallbackCalls = make(map[string][]CallbackCall, count)
+	}
+	for i := uint32(0); i < count; i++ {
+		name := r.readString()
+		length := r.readUint32()
+		if !r.checkSliceLen(length) {
+			return nil, r.err
+		}
+		calls := make([]CallbackCall, length)
+		for j := range calls {
+			calls[j].Field = r.readString()
+			argsLength := r.readUint32()
+			if !r.checkSliceLen(argsLength) {
+				return nil, r.err
+			}
+			calls[j].NonNilArgs = make([]int, argsLength)
+			for k := range calls[j].NonNilArgs {
+				calls[j].NonNilArgs[k] = int(r.readUint32())
+			}
+			priorLength := r.readUint32()
+			if !r.checkSliceLen(priorLength) {
+				return nil, r.err
+			}
+			calls[j].PriorFields = make([]string, priorLength)
+			for k := range calls[j].PriorFields {
+				calls[j].PriorFields[k] = r.readString()
+			}
+		}
+		m.TruthyCallbackCalls[name] = calls
 	}
 
 	// Globals

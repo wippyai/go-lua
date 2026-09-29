@@ -22,6 +22,19 @@ func MathMaxSpec() *contract.Spec {
 		)
 }
 
+// numericExtremum types math.max and math.min: they return one of their
+// arguments, so the result has the arguments' numeric type.
+func numericExtremum(spec *contract.Spec) typ.Type {
+	tp := typ.NewTypeParam("T", typ.Number)
+	return typ.Func().
+		TypeParam("T", typ.Number).
+		Param("x", tp).
+		Variadic(tp).
+		Returns(tp).
+		Spec(spec).
+		Build()
+}
+
 var mathMethods = typ.NewRecord().
 	Field("abs", typ.Func().Param("x", typ.Number).Returns(typ.Number).Build()).
 	Field("acos", typ.Func().Param("x", typ.Number).Returns(typ.Number).Build()).
@@ -40,9 +53,9 @@ var mathMethods = typ.NewRecord().
 	Field("ldexp", typ.Func().Param("m", typ.Number).Param("e", typ.Integer).Returns(typ.Number).Build()).
 	Field("log", typ.Func().Param("x", typ.Number).OptParam("base", typ.Number).Returns(typ.Number).Build()).
 	Field("log10", typ.Func().Param("x", typ.Number).Returns(typ.Number).Build()).
-	Field("max", typ.Func().Param("x", typ.Number).Variadic(typ.Number).Returns(typ.Number).Spec(MathMaxSpec()).Build()).
+	Field("max", numericExtremum(MathMaxSpec())).
 	Field("maxinteger", typ.Integer).
-	Field("min", typ.Func().Param("x", typ.Number).Variadic(typ.Number).Returns(typ.Number).Spec(MathMinSpec()).Build()).
+	Field("min", numericExtremum(MathMinSpec())).
 	Field("mininteger", typ.Integer).
 	Field("mod", typ.Func().Param("x", typ.Number).Param("y", typ.Number).Returns(typ.Number).Build()).
 	Field("modf", typ.Func().Param("x", typ.Number).Returns(typ.Integer, typ.Number).Build()).

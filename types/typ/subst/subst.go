@@ -12,34 +12,23 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-// Substitute replaces type parameters with concrete types throughout a type.
-//
-// Used during generic instantiation to replace TypeParam references with
-// the corresponding type arguments. The subs map keys are type parameter names.
-func Substitute(t typ.Type, subs map[string]typ.Type) typ.Type {
-	if len(subs) == 0 {
-		return t
-	}
-	return typ.Rewrite(t, func(n typ.Type) (typ.Type, bool) {
-		if tp, ok := n.(*typ.TypeParam); ok {
-			if sub, ok := subs[tp.Name]; ok {
-				return sub, true
-			}
-		}
-		return nil, false
-	})
-}
-
 // Params replaces type parameters with corresponding type arguments.
 func Params(t typ.Type, params []*typ.TypeParam, args []typ.Type) typ.Type {
 	if len(params) != len(args) || len(params) == 0 {
 		return t
 	}
-	subs := make(map[string]typ.Type, len(params))
+	subs := make(map[*typ.TypeParam]typ.Type, len(params))
 	for i, p := range params {
-		subs[p.Name] = args[i]
+		subs[p] = args[i]
 	}
-	return Substitute(t, subs)
+	return typ.Rewrite(t, func(n typ.Type) (typ.Type, bool) {
+		if tp, ok := n.(*typ.TypeParam); ok {
+			if sub, ok := subs[tp]; ok {
+				return sub, true
+			}
+		}
+		return nil, false
+	})
 }
 
 // Self replaces Self type references with a concrete type.
@@ -182,14 +171,14 @@ func expandInstantiatedCore(t typ.Type, orig typ.Type, guard internal.RecursionG
 		if elem == v.Element {
 			return orig
 		}
-		return typ.NewArray(elem)
+		return v.WithElement(elem)
 	case *typ.Map:
 		key := expandInstantiatedGuard(v.Key, guard, memo)
 		value := expandInstantiatedGuard(v.Value, guard, memo)
 		if key == v.Key && value == v.Value {
 			return orig
 		}
-		return typ.NewMap(key, value)
+		return v.WithTypes(key, value)
 	case *typ.Tuple:
 		var elems []typ.Type
 		for i, e := range v.Elements {
@@ -299,7 +288,8 @@ func expandInstantiatedCore(t typ.Type, orig typ.Type, guard internal.RecursionG
 					copy(fields, v.Fields)
 				}
 				changed = true
-				fields[i] = typ.Field{Name: f.Name, Type: newType, Optional: f.Optional, Readonly: f.Readonly}
+				fields[i] = f
+				fields[i].Type = newType
 			} else if fields != nil {
 				fields[i] = f
 			}
@@ -331,33 +321,11 @@ func expandInstantiatedCore(t typ.Type, orig typ.Type, guard internal.RecursionG
 			return orig
 		}
 
-		builder := typ.NewRecord()
-		if v.Open {
-			builder.SetOpen(true)
-		}
 		fieldsSrc := v.Fields
 		if fields != nil {
 			fieldsSrc = fields
 		}
-		for _, f := range fieldsSrc {
-			switch {
-			case f.Optional && f.Readonly:
-				builder = builder.OptReadonlyField(f.Name, f.Type)
-			case f.Optional:
-				builder = builder.OptField(f.Name, f.Type)
-			case f.Readonly:
-				builder = builder.ReadonlyField(f.Name, f.Type)
-			default:
-				builder = builder.Field(f.Name, f.Type)
-			}
-		}
-		if metatable != nil {
-			builder = builder.Metatable(metatable)
-		}
-		if mapKey != nil && mapValue != nil {
-			builder = builder.MapComponent(mapKey, mapValue)
-		}
-		return builder.Build()
+		return v.WithChildren(fieldsSrc, metatable, mapKey, mapValue)
 	case *typ.Alias:
 		target := expandInstantiatedGuard(v.Target, guard, memo)
 		if target == v.Target {

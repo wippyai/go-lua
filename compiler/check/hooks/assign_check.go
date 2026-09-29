@@ -34,11 +34,14 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/path"
+	"github.com/wippyai/go-lua/compiler/check/modules"
 	"github.com/wippyai/go-lua/compiler/check/scope"
+	"github.com/wippyai/go-lua/compiler/check/synth/phase/extract"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/diag"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/flow/join"
+	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -49,6 +52,8 @@ func CheckAssignments(graph *cfg.Graph, scopes map[cfg.Point]*scope.State, narro
 		return nil
 	}
 
+	mode := core.AssignabilityOf(narrowSynth.Context())
+	moduleAliases := modules.CollectAliases(graph)
 	annotated := make(map[cfg.SymbolID]typ.Type)
 	assigned := make(map[cfg.SymbolID]bool)
 	graph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
@@ -167,13 +172,17 @@ func CheckAssignments(graph *cfg.Graph, scopes map[cfg.Point]*scope.State, narro
 				sourcePath := extractSourcePath(source, graph, p)
 				if !sourcePath.IsEmpty() {
 					if narrowed := flowQ.NarrowedTypeAt(p, sourcePath); !typ.IsAbsentOrUnknown(narrowed) {
-						valueType = preferPreciseSourcePathType(valueType, narrowed)
+						// Flow may still carry the manifest singleton after the
+						// imported table is mutated through an alias or escapes.
+						if !staleImportedFieldFact(source, graph, moduleAliases) {
+							valueType = preferPreciseSourcePathType(valueType, narrowed)
+						}
 					}
 				}
 			}
 
 			if table, ok := source.(*ast.TableExpr); ok && !sourceUsesTarget {
-				if result := tableCheck(table, declaredType, narrowSynth, p); result.Handled {
+				if result := tableCheck(mode, table, declaredType, narrowSynth, p); result.Handled {
 					if result.Compatible {
 						return
 					}
@@ -233,7 +242,7 @@ func CheckAssignments(graph *cfg.Graph, scopes map[cfg.Point]*scope.State, narro
 				}
 			}
 
-			if !subtype.IsSubtype(valueType, declaredType) {
+			if !mode.Assignable(valueType, declaredType) {
 				pos := diag.Position{File: sourceName, Line: source.Line(), Column: source.Column()}
 				span := ast.SpanOf(source)
 				msg := formatAssignMismatch(valueType, declaredType)
@@ -246,11 +255,42 @@ func CheckAssignments(graph *cfg.Graph, scopes map[cfg.Point]*scope.State, narro
 					Message:  msg,
 					Help:     help,
 				})
+			} else if subtype.ImplicitUnknownFlow(valueType, declaredType) {
+				pos := diag.Position{File: sourceName, Line: source.Line(), Column: source.Column()}
+				diags = append(diags, implicitUnknownHint(pos, ast.SpanOf(source), "", declaredType))
 			}
 		})
 	})
 
 	return diags
+}
+
+func staleImportedFieldFact(source ast.Expr, graph *cfg.Graph, aliases map[cfg.SymbolID]string) bool {
+	attr, ok := source.(*ast.AttrGetExpr)
+	if !ok {
+		return false
+	}
+	ident, ok := attr.Object.(*ast.IdentExpr)
+	if !ok {
+		return false
+	}
+	key, ok := attr.Key.(*ast.StringExpr)
+	if !ok {
+		return false
+	}
+	sym, ok := graph.Bindings().SymbolOf(ident)
+	if !ok {
+		return false
+	}
+	var imported cfg.SymbolID
+	graph.EachAliasSymbol(sym, func(candidate cfg.SymbolID) bool {
+		if aliases[candidate] != "" {
+			imported = candidate
+			return true
+		}
+		return false
+	})
+	return imported != 0 && extract.ImportedFieldMayChange(graph, graph.Bindings(), imported, key.Value)
 }
 
 func preferPreciseSourcePathType(current, narrowed typ.Type) typ.Type {
@@ -315,54 +355,23 @@ func exprReferencesSymbol(expr ast.Expr, sym cfg.SymbolID, bindings identBinding
 	if expr == nil || sym == 0 || bindings == nil {
 		return false
 	}
-
-	switch e := expr.(type) {
-	case *ast.IdentExpr:
-		if bound, ok := bindings.SymbolOf(e); ok && bound == sym {
-			return true
-		}
-		return false
-	case *ast.AttrGetExpr:
-		return exprReferencesSymbol(e.Object, sym, bindings) || exprReferencesSymbol(e.Key, sym, bindings)
-	case *ast.TableExpr:
-		for _, field := range e.Fields {
-			if field == nil {
-				continue
-			}
-			if exprReferencesSymbol(field.Key, sym, bindings) || exprReferencesSymbol(field.Value, sym, bindings) {
-				return true
-			}
-		}
-		return false
-	case *ast.FuncCallExpr:
-		if exprReferencesSymbol(e.Func, sym, bindings) || exprReferencesSymbol(e.Receiver, sym, bindings) {
-			return true
-		}
-		for _, arg := range e.Args {
-			if exprReferencesSymbol(arg, sym, bindings) {
-				return true
-			}
-		}
-		return false
-	case *ast.LogicalOpExpr:
-		return exprReferencesSymbol(e.Lhs, sym, bindings) || exprReferencesSymbol(e.Rhs, sym, bindings)
-	case *ast.RelationalOpExpr:
-		return exprReferencesSymbol(e.Lhs, sym, bindings) || exprReferencesSymbol(e.Rhs, sym, bindings)
-	case *ast.StringConcatOpExpr:
-		return exprReferencesSymbol(e.Lhs, sym, bindings) || exprReferencesSymbol(e.Rhs, sym, bindings)
-	case *ast.ArithmeticOpExpr:
-		return exprReferencesSymbol(e.Lhs, sym, bindings) || exprReferencesSymbol(e.Rhs, sym, bindings)
-	case *ast.UnaryMinusOpExpr:
-		return exprReferencesSymbol(e.Expr, sym, bindings)
-	case *ast.UnaryNotOpExpr:
-		return exprReferencesSymbol(e.Expr, sym, bindings)
-	case *ast.UnaryLenOpExpr:
-		return exprReferencesSymbol(e.Expr, sym, bindings)
-	case *ast.UnaryBNotOpExpr:
-		return exprReferencesSymbol(e.Expr, sym, bindings)
-	default:
+	if ident, ok := expr.(*ast.IdentExpr); ok {
+		bound, ok := bindings.SymbolOf(ident)
+		return ok && bound == sym
+	}
+	if _, ok := expr.(*ast.CastExpr); ok {
 		return false
 	}
+	if _, ok := expr.(*ast.NonNilAssertExpr); ok {
+		return false
+	}
+	found := false
+	ast.WalkExprChildren(expr, func(child ast.Expr, _ int) {
+		if !found {
+			found = exprReferencesSymbol(child, sym, bindings)
+		}
+	})
+	return found
 }
 
 func preAssignmentExprTypeForAssign(expr ast.Expr, p cfg.Point, synth api.Synth, graph *cfg.Graph, expected typ.Type) typ.Type {

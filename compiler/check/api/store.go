@@ -77,10 +77,10 @@ type SnapshotStore interface {
 	GetReturnSummariesSnapshot(graph *cfg.Graph, parent *scope.State) ReturnSummaries
 	GetNarrowReturnSummariesSnapshot(graph *cfg.Graph, parent *scope.State) NarrowReturnSummaries
 	GetCapturedTypesSnapshot(graph *cfg.Graph, parent *scope.State) CapturedTypes
-	GetCapturedFieldAssignsSnapshot(graph *cfg.Graph, parent *scope.State) CapturedFieldAssigns
+	GetFieldWritesSnapshot(graph *cfg.Graph, parent *scope.State) FieldWrites
 	GetCapturedContainerMutationsSnapshot(graph *cfg.Graph, parent *scope.State) CapturedContainerMutations
 	GetLocalFuncTypesSnapshot(graph *cfg.Graph, parent *scope.State) FuncTypes
-	GetLiteralSigsSnapshot(graph *cfg.Graph, parent *scope.State) LiteralSigs
+	GetCallablesSnapshot(graph *cfg.Graph, parent *scope.State) Callables
 }
 
 // FunctionRefs provides symbol/function lookup for function graphs.
@@ -113,16 +113,23 @@ type InterprocFactSink interface {
 	UpdateInterprocFactsNext(key GraphKey, update func(*Facts))
 }
 
+// ClassSelfBinder binds a table symbol to an immutable recursive body snapshot.
+type ClassSelfBinder interface {
+	BindClassSelf(graph *cfg.Graph, at cfg.Point, sym cfg.SymbolID, name string, body typ.Type) typ.Type
+	BindClassReceiver(graph *cfg.Graph, at cfg.Point, sym cfg.SymbolID, name string, body typ.Type) typ.Type
+}
+
 // NestedStore is the store interface required by nested processing.
 type NestedStore interface {
 	StoreView
 	ConstructorFieldStore
 	InterprocFactSink
+	ClassSelfBinder
 }
 
 // LiteralSigSource is used by phase runners to supply literal signatures.
 type LiteralSigSource interface {
-	GetLiteralSigsSnapshot(graph *cfg.Graph, parent *scope.State) LiteralSigs
+	GetCallablesSnapshot(graph *cfg.Graph, parent *scope.State) Callables
 }
 
 // LiteralSigSink accepts literal signature results from analysis.
@@ -143,6 +150,8 @@ type IterationStore interface {
 
 	RefinementStore() RefinementStore
 	StoreFunctionRefinement(sym cfg.SymbolID, eff *constraint.FunctionRefinement)
+	SeedFunctionRefinements(refinements map[cfg.SymbolID]*constraint.FunctionRefinement)
+	FunctionRefs() []*FunctionRef
 
 	SetModuleBindings(bindings *bind.BindingTable)
 	SetModuleAliases(aliases map[cfg.SymbolID]string)

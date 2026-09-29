@@ -318,3 +318,16 @@ func TestInferTypeArgs_ExpectedExplicitUnionPrefersSpecificMember(t *testing.T) 
 		t.Fatalf("T = %v, want string", typeArgs[0])
 	}
 }
+
+// An argument typed never places no bound on a type parameter.
+func TestInferTypeArgs_NeverArgumentPlacesNoBound(t *testing.T) {
+	tp := typ.NewTypeParam("T", typ.Number)
+	fn := typ.Func().TypeParam("T", typ.Number).Param("x", tp).Variadic(tp).Returns(tp).Build()
+	got, err := InferTypeArgsWithExpectedAndMode(fn, []typ.Type{typ.Never, typ.Integer}, false, nil, nil, false)
+	if err != nil {
+		t.Fatalf("inference failed: %v", err)
+	}
+	if len(got) != 1 || !typ.TypeEquals(got[0], typ.Integer) {
+		t.Fatalf("T = %v, want integer", got)
+	}
+}

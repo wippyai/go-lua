@@ -6,8 +6,28 @@ import (
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/narrow"
+	querycore "github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
 )
+
+func TestFilterByChildNarrowings_MissingFieldCanBeNil(t *testing.T) {
+	success := typ.NewRecord().Field("result", typ.Any).Build()
+	failure := typ.NewRecord().Field("error", typ.Any).Build()
+	parent := constraint.NewPath(1, "entry")
+	child := parent.Field("result").Key()
+	solution := &Solution{resolver: querycore.Resolver()}
+	base := typ.NewUnion(success, failure)
+
+	got := solution.filterByChildNarrowings(base, parent, map[constraint.PathKey]typ.Type{child: typ.Nil})
+	if !typ.TypeEquals(got, base) {
+		t.Fatalf("nil result should retain both record shapes, got %v", got)
+	}
+
+	got = solution.filterByChildNarrowings(base, parent, map[constraint.PathKey]typ.Type{child: typ.String})
+	if !typ.TypeEquals(got, success) {
+		t.Fatalf("non-nil result should retain only the record with that field, got %v", got)
+	}
+}
 
 func TestTypeAt_EmptyPath(t *testing.T) {
 	c := cfg.New()
@@ -174,6 +194,50 @@ func TestBaseTypeAt_WithSegments_ExplicitPreferred(t *testing.T) {
 	result := s.baseTypeAt(c.Entry(), path)
 	if result != errType {
 		t.Errorf("baseTypeAt(r.err) = %v, want Err (explicit assignment)", result)
+	}
+}
+
+func TestTypeAt_PlaceholderFieldFactKeepsConcreteSlot(t *testing.T) {
+	c := cfg.New()
+	g := newMockSSAGraph(c)
+
+	symR := setupSymbol(g, "r", []cfg.Point{c.Entry()})
+	ver := cfg.Version{Root: "r", Symbol: symR, ID: 1}
+	setVersion(g, c.Entry(), symR, ver)
+
+	recordType := typ.NewRecord().Field("count", typ.Number).Field("label", typ.String).Build()
+	countPath := constraint.Path{
+		Root:     "r",
+		Symbol:   symR,
+		Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "count"}},
+	}
+	labelPath := constraint.Path{
+		Root:     "r",
+		Symbol:   symR,
+		Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "label"}},
+	}
+
+	inputs := newInputs(g)
+	inputs.DeclaredTypes[symR] = recordType
+	inputs.Assignments = []UnifiedAssignment{
+		{Point: c.Entry(), TargetPath: constraint.Path{Root: "r", Symbol: symR}, Type: recordType},
+		{Point: c.Entry(), TargetPath: countPath, Type: typ.Any},
+		{Point: c.Entry(), TargetPath: labelPath, Type: typ.LiteralString("x")},
+	}
+
+	s := Solve(inputs, testResolver())
+
+	root := s.TypeAt(c.Entry(), constraint.Path{Root: "r", Symbol: symR})
+	count, ok := testResolver().Field(root, "count")
+	if !ok || !typ.TypeEquals(count, typ.Number) {
+		t.Errorf("r.count in root = %v, want number", count)
+	}
+	label, ok := testResolver().Field(root, "label")
+	if !ok || !typ.TypeEquals(label, typ.LiteralString("x")) {
+		t.Errorf("r.label in root = %v, want \"x\"", label)
+	}
+	if got := s.NarrowedTypeAt(c.Entry(), countPath); !typ.TypeEquals(got, typ.Number) {
+		t.Errorf("NarrowedTypeAt(r.count) = %v, want number", got)
 	}
 }
 

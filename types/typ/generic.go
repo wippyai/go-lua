@@ -79,6 +79,7 @@ type Generic struct {
 // NewGeneric creates a generic type definition.
 // Named generics use nominal identity, anonymous generics use structural identity.
 func NewGeneric(name string, params []*TypeParam, body Type) *Generic {
+	body = bindTypeParams(body, params)
 	h := internal.HashCombine(uint64(kind.Generic), internal.FnvString(name))
 	for _, p := range params {
 		h = internal.HashCombine(h, p.Hash())
@@ -94,6 +95,29 @@ func NewGeneric(name string, params []*TypeParam, body Type) *Generic {
 	copy(copied, params)
 
 	return &Generic{Name: name, TypeParams: copied, Body: body, hash: h}
+}
+
+// bindTypeParams resolves unbound references once, at the declaring binder.
+// Substitution then uses the declaration pointers rather than parameter names.
+func bindTypeParams(body Type, params []*TypeParam) Type {
+	if body == nil || len(params) == 0 {
+		return body
+	}
+	return Rewrite(body, func(t Type) (Type, bool) {
+		if fn, ok := t.(*Function); ok && len(fn.TypeParams) > 0 {
+			return t, true // A nested generic function owns its own parameters.
+		}
+		ref, ok := t.(*TypeParam)
+		if !ok {
+			return nil, false
+		}
+		for _, param := range params {
+			if ref.Name == param.Name {
+				return param, true
+			}
+		}
+		return nil, false
+	})
 }
 
 func (g *Generic) Kind() kind.Kind { return kind.Generic }

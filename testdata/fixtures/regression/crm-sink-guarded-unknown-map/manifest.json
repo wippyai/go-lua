@@ -1,0 +1,1 @@
+{"description":"Source excerpt from spiralscout.crm.sink:crm_sink_implementation through guarded command preparation; preliminary phi checks must not erase live guards.","files":["sql.lua","main.lua"],"check":{"errors":0}}

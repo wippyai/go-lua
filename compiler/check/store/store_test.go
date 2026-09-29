@@ -1,6 +1,7 @@
 package store
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -8,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/compiler/check/scope"
+	"github.com/wippyai/go-lua/compiler/parse"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -96,10 +98,11 @@ func TestWidenInterprocFacts_Empty(t *testing.T) {
 }
 
 func TestWidenInterprocFacts_OnlyPrev(t *testing.T) {
+	fn := &ast.FunctionExpr{}
 	prev := map[api.GraphKey]api.Facts{
 		{GraphID: 1}: {
-			FunctionFacts: api.FunctionFacts{
-				1: {Summary: []typ.Type{typ.String}},
+			Callables: api.Callables{
+				fn: {Summary: []typ.Type{typ.String}},
 			},
 		},
 	}
@@ -110,10 +113,11 @@ func TestWidenInterprocFacts_OnlyPrev(t *testing.T) {
 }
 
 func TestWidenInterprocFacts_OnlyNext(t *testing.T) {
+	fn := &ast.FunctionExpr{}
 	next := map[api.GraphKey]api.Facts{
 		{GraphID: 1}: {
-			FunctionFacts: api.FunctionFacts{
-				1: {Summary: []typ.Type{typ.Number}},
+			Callables: api.Callables{
+				fn: {Summary: []typ.Type{typ.Number}},
 			},
 		},
 	}
@@ -124,17 +128,18 @@ func TestWidenInterprocFacts_OnlyNext(t *testing.T) {
 }
 
 func TestWidenInterprocFacts_Merge(t *testing.T) {
+	fn := &ast.FunctionExpr{}
 	prev := map[api.GraphKey]api.Facts{
 		{GraphID: 1}: {
-			FunctionFacts: api.FunctionFacts{
-				1: {Summary: []typ.Type{typ.String}},
+			Callables: api.Callables{
+				fn: {Summary: []typ.Type{typ.String}},
 			},
 		},
 	}
 	next := map[api.GraphKey]api.Facts{
 		{GraphID: 2}: {
-			FunctionFacts: api.FunctionFacts{
-				1: {Summary: []typ.Type{typ.Number}},
+			Callables: api.Callables{
+				fn: {Summary: []typ.Type{typ.Number}},
 			},
 		},
 	}
@@ -145,45 +150,91 @@ func TestWidenInterprocFacts_Merge(t *testing.T) {
 }
 
 func TestReturnSummariesFromFacts_FallsBackToCanonical(t *testing.T) {
+	graph, fn := callableViewGraph(1)
 	facts := api.Facts{
-		FunctionFacts: api.FunctionFacts{
-			cfg.SymbolID(1): {
+		Callables: api.Callables{
+			fn: {
 				Summary: []typ.Type{typ.String},
 			},
 		},
 	}
-	got := returns.SummaryViewFromFacts(facts)
+	got := returns.SummaryViewFromFacts(graph, facts)
 	if len(got) != 1 || len(got[cfg.SymbolID(1)]) != 1 || got[cfg.SymbolID(1)][0] != typ.String {
 		t.Fatalf("unexpected summary view: %#v", got)
 	}
 }
 
 func TestNarrowReturnSummariesFromFacts_FallsBackToCanonical(t *testing.T) {
+	graph, fn := callableViewGraph(2)
 	facts := api.Facts{
-		FunctionFacts: api.FunctionFacts{
-			cfg.SymbolID(2): {
+		Callables: api.Callables{
+			fn: {
 				Narrow: []typ.Type{typ.Number},
 			},
 		},
 	}
-	got := returns.NarrowViewFromFacts(facts)
+	got := returns.NarrowViewFromFacts(graph, facts)
 	if len(got) != 1 || len(got[cfg.SymbolID(2)]) != 1 || got[cfg.SymbolID(2)][0] != typ.Number {
 		t.Fatalf("unexpected narrow view: %#v", got)
 	}
 }
 
 func TestLocalFuncTypesFromFacts_FallsBackToCanonical(t *testing.T) {
+	graph, literal := callableViewGraph(3)
 	fn := typ.Func().Returns(typ.Boolean).Build()
 	facts := api.Facts{
-		FunctionFacts: api.FunctionFacts{
-			cfg.SymbolID(3): {
+		Callables: api.Callables{
+			literal: {
 				Func: fn,
 			},
 		},
 	}
-	got := returns.FuncTypeViewFromFacts(facts)
+	got := returns.FuncTypeViewFromFacts(graph, facts)
 	if len(got) != 1 || !typ.TypeEquals(got[cfg.SymbolID(3)], fn) {
 		t.Fatalf("unexpected func type view: %#v", got)
+	}
+}
+
+func callableViewGraph(sym cfg.SymbolID) (*cfg.Graph, *ast.FunctionExpr) {
+	fn := &ast.FunctionExpr{ParList: &ast.ParList{}}
+	graph := cfg.Build(fn)
+	graph.Bindings().SetFuncLitSymbol(fn, sym)
+	return graph, fn
+}
+
+func TestFunctionFactViewUsesStableSnapshotUntilSwap(t *testing.T) {
+	graph, fn := callableViewGraph(42)
+	parent := scope.New()
+	s := NewSessionStore()
+	key, ok := s.GraphKeyFor(graph, parent)
+	if !ok {
+		t.Fatal("missing graph key")
+	}
+	s.InterprocPrev.Facts[key] = api.Facts{Callables: api.Callables{
+		fn: {Summary: []typ.Type{typ.String}},
+	}}
+	first := s.functionFactView(graph, parent)
+	if first.summaries[42][0] != typ.String {
+		t.Fatal("missing initial summary")
+	}
+	// A repeated read must reuse the fold while the stable snapshot is unchanged.
+	if got := s.functionFactView(graph, parent); got.definitions[42].Summary[0] != typ.String {
+		t.Fatal("missing cached definition")
+	}
+	if len(s.functionViews.views) != 1 {
+		t.Fatal("expected one cached graph view")
+	}
+	s.InterprocNext.Facts[key] = api.Facts{Callables: api.Callables{
+		fn: {Summary: []typ.Type{typ.Number}},
+	}}
+	if !s.FixpointSwap() {
+		t.Fatal("expected changed facts")
+	}
+	if len(s.functionViews.views) != 0 {
+		t.Fatal("cache survived facts swap")
+	}
+	if got := s.functionFactView(graph, parent); got.summaries[42][0] == typ.String {
+		t.Fatal("stale summary after swap")
 	}
 }
 
@@ -235,20 +286,21 @@ func TestIterationStore_Fields(t *testing.T) {
 
 func TestIterationScratch_Fields(t *testing.T) {
 	s := &IterationScratch{
-		LiteralSigsByGraphID: make(map[uint64]map[*ast.FunctionExpr]*typ.Function),
+		SigsByGraphID: make(map[uint64]map[*ast.FunctionExpr]*typ.Function),
 	}
-	if s.LiteralSigsByGraphID == nil {
-		t.Error("LiteralSigsByGraphID should be initialized")
+	if s.SigsByGraphID == nil {
+		t.Error("SigsByGraphID should be initialized")
 	}
 }
 
 func TestFixpointSwap_TracksChannelDiffsAndResetsNext(t *testing.T) {
 	s := NewSessionStore()
+	fn := &ast.FunctionExpr{}
 
 	s.InterprocNext.Refinements[1] = &constraint.FunctionRefinement{Terminates: true}
 	s.InterprocNext.Facts[api.GraphKey{GraphID: 7, ParentHash: 11}] = api.Facts{
-		FunctionFacts: api.FunctionFacts{
-			1: {Summary: []typ.Type{typ.String}},
+		Callables: api.Callables{
+			fn: {Summary: []typ.Type{typ.String}},
 		},
 	}
 	s.InterprocNext.ConstructorFields[3] = map[string]typ.Type{
@@ -287,6 +339,69 @@ func TestFixpointSwap_TracksChannelDiffsAndResetsNext(t *testing.T) {
 	}
 }
 
+func TestFactVersionsChangeOnlyWithStructuralValues(t *testing.T) {
+	s := NewSessionStore()
+	key := api.GraphKey{GraphID: 7, ParentHash: 11}
+	factKey := FactKey{Channel: factInterproc, Graph: key}
+	s.InterprocNext.Facts[key] = api.Facts{CapturedTypes: api.CapturedTypes{1: typ.String}}
+	s.FixpointSwap()
+	s.BeginFactReads()
+	s.recordFactRead(factKey)
+	reads := s.EndFactReads()
+	if !s.FactsUnchanged(reads) {
+		t.Fatal("fresh read should match its snapshot")
+	}
+	s.InterprocNext.Facts[key] = api.Facts{CapturedTypes: api.CapturedTypes{1: typ.String}}
+	s.FixpointSwap()
+	if !s.FactsUnchanged(reads) {
+		t.Fatal("equal fact must keep its version")
+	}
+	s.InterprocNext.Facts[key] = api.Facts{CapturedTypes: api.CapturedTypes{1: typ.Number}}
+	s.FixpointSwap()
+	if s.FactsUnchanged(reads) {
+		t.Fatal("changed fact must invalidate its readers")
+	}
+}
+
+func TestGraphFactChannelVersionsAreIndependent(t *testing.T) {
+	s := NewSessionStore()
+	key := api.GraphKey{GraphID: 7, ParentHash: 11}
+	s.InterprocNext.Facts[key] = api.Facts{CapturedTypes: api.CapturedTypes{1: typ.String}}
+	s.FixpointSwap()
+	s.BeginFactReads()
+	s.recordFactRead(FactKey{Channel: factCapturedTypes, Graph: key})
+	s.recordFactRead(FactKey{Channel: factCallables, Graph: key})
+	reads := s.EndFactReads()
+	s.InterprocNext.Facts[key] = api.Facts{CapturedTypes: api.CapturedTypes{1: typ.Number}}
+	s.FixpointSwap()
+	if s.FactsUnchanged(reads) {
+		t.Fatal("captured type reader must be invalidated")
+	}
+	delete(reads, FactKey{Channel: factCapturedTypes, Graph: key})
+	if !s.FactsUnchanged(reads) {
+		t.Fatal("callable reader must survive unrelated captured type change")
+	}
+}
+
+func TestScratchSignatureVersionTracksCurrentRoundValue(t *testing.T) {
+	s := NewSessionStore()
+	fn := &ast.FunctionExpr{}
+	s.StoreLiteralSigs(9, map[*ast.FunctionExpr]*typ.Function{fn: typ.Func().Returns(typ.String).Build()})
+	s.BeginFactReads()
+	s.ScratchLiteralSigs(9)
+	reads := s.EndFactReads()
+	s.resetScratch()
+	s.StoreLiteralSigs(9, map[*ast.FunctionExpr]*typ.Function{fn: typ.Func().Returns(typ.String).Build()})
+	if !s.FactsUnchanged(reads) {
+		t.Fatal("equal current-round signatures must preserve the read version")
+	}
+	s.resetScratch()
+	s.StoreLiteralSigs(9, map[*ast.FunctionExpr]*typ.Function{fn: typ.Func().Returns(typ.Number).Build()})
+	if s.FactsUnchanged(reads) {
+		t.Fatal("changed current-round signatures must invalidate the reader")
+	}
+}
+
 func TestClearIterationChannels_InitializesMissingState(t *testing.T) {
 	s := &SessionStore{}
 	s.ClearIterationChannels()
@@ -300,7 +415,7 @@ func TestClearIterationChannels_InitializesMissingState(t *testing.T) {
 	if s.InterprocPrev == nil || s.InterprocNext == nil {
 		t.Fatal("expected interproc states to be initialized")
 	}
-	if s.Scratch.LiteralSigsByGraphID == nil {
+	if s.Scratch.SigsByGraphID == nil {
 		t.Fatal("expected scratch literal signatures map to be initialized")
 	}
 }
@@ -343,5 +458,43 @@ func TestClearIterationChannels_ResetsRevision(t *testing.T) {
 	s.ClearIterationChannels()
 	if got := s.Revision(); got != 0 {
 		t.Fatalf("expected revision reset to 0, got %d", got)
+	}
+}
+
+// Bindings of a class table within a round join their bodies, so a later
+// snapshot refines the earlier ones; the next round binds a fresh snapshot of
+// the same identity.
+func TestBindClassSelf_JoinsBindingsWithinRound(t *testing.T) {
+	chunk, err := parse.Parse(strings.NewReader("local C = {}\nreturn C"), "test.lua")
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	graph := cfg.Build(&ast.FunctionExpr{Stmts: chunk})
+	var sym cfg.SymbolID
+	graph.EachAssign(func(_ cfg.Point, info *cfg.AssignInfo) {
+		if target, ok := info.FirstTarget(); ok && target.Symbol != 0 {
+			sym = target.Symbol
+		}
+	})
+	s := NewSessionStore()
+	first := s.BindClassSelf(graph, 0, sym, "C", typ.NewRecord().Field("name", typ.String).Build())
+	again := s.BindClassSelf(graph, 0, sym, "C", typ.NewRecord().Field("id", typ.Integer).Build())
+	joined, ok := again.(*typ.Recursive)
+	if !ok {
+		t.Fatalf("expected a snapshot, got %s", again)
+	}
+	if body, ok := joined.Body.(*typ.Record); !ok || body.GetField("name") == nil || body.GetField("id") == nil {
+		t.Fatalf("expected the round's bindings joined, got %s", typ.FormatShort(joined.Body))
+	}
+
+	s.FixpointSwap()
+	next := s.BindClassSelf(graph, 0, sym, "C", typ.NewRecord().Field("id", typ.Integer).Build())
+	a, _ := first.(*typ.Recursive)
+	b, ok := next.(*typ.Recursive)
+	if !ok || a == nil || b.ID != a.ID || b == a {
+		t.Fatalf("expected a fresh snapshot of the same identity, got %s", next)
+	}
+	if body, ok := b.Body.(*typ.Record); !ok || body.GetField("id") == nil || body.GetField("name") != nil {
+		t.Fatalf("expected the next round's body alone, got %s", typ.FormatShort(b.Body))
 	}
 }

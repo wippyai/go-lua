@@ -1,0 +1,24 @@
+{
+  "description": "Exact keeper.components.ui:supervisor registry source with dynamic runtime module stubs.",
+  "files": [
+    "channel.lua",
+    "consts.lua",
+    "env.lua",
+    "filenames.lua",
+    "fs.lua",
+    "http_client.lua",
+    "json.lua",
+    "logger.lua",
+    "process.lua",
+    "scanner.lua",
+    "supervisor.lua",
+    "system.lua",
+    "time.lua",
+    "uuid.lua",
+    "main.lua",
+    "exec.lua"
+  ],
+  "check": {
+    "errors": 0
+  }
+}

@@ -1,0 +1,1 @@
+{"description": "Full spiralscout.pim:schema_core source with six update calls selected from app:pim_schema_api_test in spiralscout/pim/test", "files": ["json.lua", "sql.lua", "config.lua", "attribute_config.lua", "uuid.lua", "pim.lua", "funcs.lua", "security.lua", "ctx.lua", "time.lua", "schema.lua", "test.lua", "main.lua"], "check": {"errors": 0}}

@@ -1,0 +1,1 @@
+{"description":"Real wippy.session prompt builder and wippy.test assertion sources keep the successful builder/error pair correlated.","files":["consts.lua","contract.lua","ctx.lua","prompt.lua","test.lua","prompt_builder.lua","main.lua"],"packages":["time","process"]}

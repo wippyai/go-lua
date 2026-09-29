@@ -1,0 +1,4 @@
+{
+  "description": "A concretely inferred record keeps written field types; a field write through an any-valued row preserves dynamic reads.",
+  "files": ["main.lua"]
+}

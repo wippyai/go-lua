@@ -22,9 +22,11 @@ type preciseSourceSynthStub struct {
 	preciseType typ.Type
 }
 
+// TypeOf types every call as preciseType, so a logical expression over calls
+// synthesizes to preciseType directly while its expanded value is any.
 func (s *preciseSourceSynthStub) TypeOf(expr ast.Expr, _ cfg.Point) typ.Type {
 	switch expr.(type) {
-	case *ast.LogicalOpExpr:
+	case *ast.FuncCallExpr:
 		return s.preciseType
 	default:
 		return typ.Unknown
@@ -47,7 +49,7 @@ func TestExtractAssignments_NilConfig(t *testing.T) {
 	inputs := &flow.Inputs{
 		Assignments:        []flow.UnifiedAssignment{},
 		IndexerAssignments: []flow.IndexerAssignment{},
-		SiblingAssignments: make(map[flow.SiblingKey]*flow.SiblingAssignment),
+		Facts:              make(map[cfg.Point]constraint.Condition),
 		PredicateLinks:     make(map[string]flow.PredicateLink),
 	}
 	fc := &core.FlowContext{}
@@ -132,6 +134,7 @@ func TestExtractCallCorrelations_MethodUsesCanonicalCalleeResolution(t *testing.
 			Type: typ.Func().
 				Param("self", typ.Self).
 				Returns(typ.String, typ.NewOptional(typ.LuaError)).
+				Spec(contract.NewSpec().WithEffects(effect.ErrorReturn{ValueIndex: 0, ErrorIndex: 1})).
 				Build(),
 		},
 	})
@@ -150,7 +153,7 @@ func TestExtractCallCorrelations_MethodUsesCanonicalCalleeResolution(t *testing.
 	if len(inverse) != 1 {
 		t.Fatalf("expected one inverse correlation, got %v", inverse)
 	}
-	if inverse[0] != (flow.ReturnCorrelation{ValueIndex: 0, ErrorIndex: 1}) {
+	if inverse[0] != (ReturnCorrelation{ValueIndex: 0, ErrorIndex: 1}) {
 		t.Fatalf("unexpected inverse correlation: %+v", inverse[0])
 	}
 }
@@ -227,9 +230,9 @@ func TestExtractAssignments_ContainerElementSourceFromTrailingCall(t *testing.T)
 	}
 
 	inputs := &flow.Inputs{
-		DeclaredTypes:      make(map[cfg.SymbolID]typ.Type),
-		PredicateLinks:     make(map[string]flow.PredicateLink),
-		SiblingAssignments: make(map[flow.SiblingKey]*flow.SiblingAssignment),
+		DeclaredTypes:  make(map[cfg.SymbolID]typ.Type),
+		PredicateLinks: make(map[string]flow.PredicateLink),
+		Facts:          make(map[cfg.Point]constraint.Condition),
 	}
 	ExtractAssignments(&core.FlowContext{
 		Graph: graph,
@@ -284,9 +287,9 @@ func TestExtractAssignments_KeysCollectorEffectFallbackIgnoresNonCollectorEffect
 	}
 
 	inputs := &flow.Inputs{
-		DeclaredTypes:      make(map[cfg.SymbolID]typ.Type),
-		PredicateLinks:     make(map[string]flow.PredicateLink),
-		SiblingAssignments: make(map[flow.SiblingKey]*flow.SiblingAssignment),
+		DeclaredTypes:  make(map[cfg.SymbolID]typ.Type),
+		PredicateLinks: make(map[string]flow.PredicateLink),
+		Facts:          make(map[cfg.Point]constraint.Condition),
 	}
 	ExtractAssignments(&core.FlowContext{
 		Graph: graph,
@@ -308,9 +311,7 @@ func TestExtractAssignments_KeysCollectorEffectFallbackIgnoresNonCollectorEffect
 
 func TestExtractAssignments_PrefersPreciseDirectTypeOverExpandedAnyForLogicalOr(t *testing.T) {
 	code := `
-		local left = nil
-		local right = nil
-		local ctx = left or right
+		local ctx = get_left() or get_right()
 	`
 	chunk, err := parse.ParseString(code, "emit_precise_or.lua")
 	if err != nil {
@@ -326,9 +327,9 @@ func TestExtractAssignments_PrefersPreciseDirectTypeOverExpandedAnyForLogicalOr(
 	contextAlias := typ.NewAlias("Context", typ.NewMap(typ.String, typ.Any))
 	synthAPI := &preciseSourceSynthStub{preciseType: contextAlias}
 	inputs := &flow.Inputs{
-		DeclaredTypes:      make(map[cfg.SymbolID]typ.Type),
-		PredicateLinks:     make(map[string]flow.PredicateLink),
-		SiblingAssignments: make(map[flow.SiblingKey]*flow.SiblingAssignment),
+		DeclaredTypes:  make(map[cfg.SymbolID]typ.Type),
+		PredicateLinks: make(map[string]flow.PredicateLink),
+		Facts:          make(map[cfg.Point]constraint.Condition),
 	}
 	ExtractAssignments(&core.FlowContext{
 		Graph: graph,
@@ -382,9 +383,9 @@ func TestExtractAssignments_KeysCollectorEffectFallbackRespectsReturnIndex(t *te
 	}
 
 	inputs := &flow.Inputs{
-		DeclaredTypes:      make(map[cfg.SymbolID]typ.Type),
-		PredicateLinks:     make(map[string]flow.PredicateLink),
-		SiblingAssignments: make(map[flow.SiblingKey]*flow.SiblingAssignment),
+		DeclaredTypes:  make(map[cfg.SymbolID]typ.Type),
+		PredicateLinks: make(map[string]flow.PredicateLink),
+		Facts:          make(map[cfg.Point]constraint.Condition),
 	}
 	ExtractAssignments(&core.FlowContext{
 		Graph: graph,
@@ -439,9 +440,9 @@ func TestExtractAssignments_KeysCollectorEffectFallback_TriesAllNameCandidates(t
 	moduleBindings.SetName(matchSym, "collect_keys")
 
 	inputs := &flow.Inputs{
-		DeclaredTypes:      make(map[cfg.SymbolID]typ.Type),
-		PredicateLinks:     make(map[string]flow.PredicateLink),
-		SiblingAssignments: make(map[flow.SiblingKey]*flow.SiblingAssignment),
+		DeclaredTypes:  make(map[cfg.SymbolID]typ.Type),
+		PredicateLinks: make(map[string]flow.PredicateLink),
+		Facts:          make(map[cfg.Point]constraint.Condition),
 	}
 	ExtractAssignments(&core.FlowContext{
 		Graph:          graph,
@@ -531,9 +532,9 @@ func TestExtractAssignments_KeysCollector_WithFilterBranch(t *testing.T) {
 	}
 
 	inputs := &flow.Inputs{
-		DeclaredTypes:      make(map[cfg.SymbolID]typ.Type),
-		PredicateLinks:     make(map[string]flow.PredicateLink),
-		SiblingAssignments: make(map[flow.SiblingKey]*flow.SiblingAssignment),
+		DeclaredTypes:  make(map[cfg.SymbolID]typ.Type),
+		PredicateLinks: make(map[string]flow.PredicateLink),
+		Facts:          make(map[cfg.Point]constraint.Condition),
 	}
 	ExtractAssignments(&core.FlowContext{
 		Graph: graph,
@@ -568,9 +569,9 @@ func TestExtractAssignments_IndexAssign_NonIdentifierStringKey_UsesIndexStringSe
 	}
 
 	inputs := &flow.Inputs{
-		DeclaredTypes:      make(map[cfg.SymbolID]typ.Type),
-		PredicateLinks:     make(map[string]flow.PredicateLink),
-		SiblingAssignments: make(map[flow.SiblingKey]*flow.SiblingAssignment),
+		DeclaredTypes:  make(map[cfg.SymbolID]typ.Type),
+		PredicateLinks: make(map[string]flow.PredicateLink),
+		Facts:          make(map[cfg.Point]constraint.Condition),
 	}
 	ExtractAssignments(&core.FlowContext{
 		Graph: graph,
@@ -630,9 +631,9 @@ func TestExtractAssignments_NestedDynamicIndex_LiftsToRootIndexer(t *testing.T) 
 	}
 
 	inputs := &flow.Inputs{
-		DeclaredTypes:      make(map[cfg.SymbolID]typ.Type),
-		PredicateLinks:     make(map[string]flow.PredicateLink),
-		SiblingAssignments: make(map[flow.SiblingKey]*flow.SiblingAssignment),
+		DeclaredTypes:  make(map[cfg.SymbolID]typ.Type),
+		PredicateLinks: make(map[string]flow.PredicateLink),
+		Facts:          make(map[cfg.Point]constraint.Condition),
 	}
 	ExtractAssignments(&core.FlowContext{
 		Graph: graph,
@@ -669,6 +670,16 @@ func TestCorrelationsFromFunctionType_NoImplicitErrorConvention(t *testing.T) {
 	}
 }
 
+func TestCorrelationsFromFunctionType_SignatureShapeDoesNotProveRelation(t *testing.T) {
+	// An API may return a false value alongside a non-nil error. The return
+	// types alone cannot establish mutual exclusion.
+	fnType := typ.Func().Returns(typ.Boolean, typ.NewOptional(typ.String)).Build()
+	inverse, co := correlationsFromFunctionType(fnType)
+	if len(inverse) != 0 || len(co) != 0 {
+		t.Fatalf("signature shape invented a return relation: inverse=%v co=%v", inverse, co)
+	}
+}
+
 func TestCorrelationsFromFunctionType_ExplicitErrorReturn(t *testing.T) {
 	fnType := typ.Func().
 		Returns(typ.String, typ.NewOptional(typ.LuaError)).
@@ -684,44 +695,49 @@ func TestCorrelationsFromFunctionType_ExplicitErrorReturn(t *testing.T) {
 	if len(inverse) != 1 {
 		t.Fatalf("expected one explicit error correlation, got %v", inverse)
 	}
-	if inverse[0] != (flow.ReturnCorrelation{ValueIndex: 0, ErrorIndex: 1}) {
+	if inverse[0] != (ReturnCorrelation{ValueIndex: 0, ErrorIndex: 1}) {
 		t.Fatalf("unexpected correlation: %+v", inverse[0])
 	}
 }
 
-func TestCorrelationsFromFunctionType_ImplicitLuaErrorConvention(t *testing.T) {
+func TestCorrelationsFromFunctionType_UnionCallRequiresEveryBranch(t *testing.T) {
+	value := typ.NewOptional(typ.NewRecord().Field("get_messages", typ.Func().Build()).Build())
+	spec := contract.NewSpec().WithEffects(effect.ErrorReturn{ValueIndex: 0, ErrorIndex: 1})
+	stringError := typ.Func().Returns(value, typ.NewOptional(typ.String)).Spec(spec).Build()
+	luaError := typ.Func().Returns(value, typ.NewOptional(typ.LuaError)).Spec(spec).Build()
+	uncorrelated := typ.Func().Returns(value, typ.NewOptional(typ.Number)).Build()
+
+	shared, _ := correlationsFromFunctionType(typ.NewUnion(stringError, luaError))
+	if len(shared) != 1 || shared[0] != (ReturnCorrelation{ValueIndex: 0, ErrorIndex: 1}) {
+		t.Fatalf("both callable branches return a correlated value/error pair: %v", shared)
+	}
+	unsafe, _ := correlationsFromFunctionType(typ.NewUnion(stringError, uncorrelated))
+	if len(unsafe) != 0 {
+		t.Fatalf("a branch without the relation must prevent narrowing: %v", unsafe)
+	}
+}
+
+func TestCorrelationsFromFunctionType_NoImplicitLuaErrorConvention(t *testing.T) {
 	fnType := typ.Func().
 		Returns(typ.NewOptional(typ.String), typ.NewOptional(typ.LuaError)).
 		Build()
 	inverse, co := correlationsFromFunctionType(fnType)
-	if len(co) != 0 {
-		t.Fatalf("expected no co-correlations, got %v", co)
-	}
-	if len(inverse) != 1 {
-		t.Fatalf("expected one convention-based correlation, got %v", inverse)
-	}
-	if inverse[0] != (flow.ReturnCorrelation{ValueIndex: 0, ErrorIndex: 1}) {
-		t.Fatalf("unexpected convention correlation: %+v", inverse[0])
+	if len(inverse) != 0 || len(co) != 0 {
+		t.Fatalf("a LuaError slot alone does not prove a relation: inverse=%v co=%v", inverse, co)
 	}
 }
 
-func TestCorrelationsFromFunctionType_ImplicitStringErrorConvention(t *testing.T) {
+func TestCorrelationsFromFunctionType_NoImplicitStringErrorConvention(t *testing.T) {
 	fnType := typ.Func().
 		Returns(typ.NewOptional(typ.String), typ.NewOptional(typ.String)).
 		Build()
 	inverse, co := correlationsFromFunctionType(fnType)
-	if len(co) != 0 {
-		t.Fatalf("expected no co-correlations, got %v", co)
-	}
-	if len(inverse) != 1 {
-		t.Fatalf("expected one convention-based correlation, got %v", inverse)
-	}
-	if inverse[0] != (flow.ReturnCorrelation{ValueIndex: 0, ErrorIndex: 1}) {
-		t.Fatalf("unexpected convention correlation: %+v", inverse[0])
+	if len(inverse) != 0 || len(co) != 0 {
+		t.Fatalf("a string error slot alone does not prove a relation: inverse=%v co=%v", inverse, co)
 	}
 }
 
-func TestCorrelationsFromFunctionType_ImplicitStructuredErrorConvention(t *testing.T) {
+func TestCorrelationsFromFunctionType_NoImplicitStructuredErrorConvention(t *testing.T) {
 	errorType := typ.NewRecord().
 		Field("status_code", typ.Number).
 		Field("message", typ.String).
@@ -730,18 +746,12 @@ func TestCorrelationsFromFunctionType_ImplicitStructuredErrorConvention(t *testi
 		Returns(typ.NewOptional(typ.String), typ.NewOptional(errorType)).
 		Build()
 	inverse, co := correlationsFromFunctionType(fnType)
-	if len(co) != 0 {
-		t.Fatalf("expected no co-correlations, got %v", co)
-	}
-	if len(inverse) != 1 {
-		t.Fatalf("expected one convention-based correlation, got %v", inverse)
-	}
-	if inverse[0] != (flow.ReturnCorrelation{ValueIndex: 0, ErrorIndex: 1}) {
-		t.Fatalf("unexpected convention correlation: %+v", inverse[0])
+	if len(inverse) != 0 || len(co) != 0 {
+		t.Fatalf("a message field alone does not prove a relation: inverse=%v co=%v", inverse, co)
 	}
 }
 
-func TestCorrelationsFromFunctionType_ImplicitUnionErrorConvention(t *testing.T) {
+func TestCorrelationsFromFunctionType_NoImplicitUnionErrorConvention(t *testing.T) {
 	errorType := typ.NewRecord().
 		Field("message", typ.String).
 		Build()
@@ -749,14 +759,8 @@ func TestCorrelationsFromFunctionType_ImplicitUnionErrorConvention(t *testing.T)
 		Returns(typ.NewOptional(typ.String), typ.NewOptional(typ.NewUnion(typ.String, typ.LuaError, errorType))).
 		Build()
 	inverse, co := correlationsFromFunctionType(fnType)
-	if len(co) != 0 {
-		t.Fatalf("expected no co-correlations, got %v", co)
-	}
-	if len(inverse) != 1 {
-		t.Fatalf("expected one convention-based correlation, got %v", inverse)
-	}
-	if inverse[0] != (flow.ReturnCorrelation{ValueIndex: 0, ErrorIndex: 1}) {
-		t.Fatalf("unexpected convention correlation: %+v", inverse[0])
+	if len(inverse) != 0 || len(co) != 0 {
+		t.Fatalf("an error-like union alone does not prove a relation: inverse=%v co=%v", inverse, co)
 	}
 }
 
@@ -800,4 +804,8 @@ func TestGuardedTypeCorrelationsFromCall_CallbackReturnOnTruthy(t *testing.T) {
 	if !typ.TypeEquals(got[0].TargetType, typ.String) {
 		t.Fatalf("expected guarded target type string, got %v", got[0].TargetType)
 	}
+}
+
+func (s *preciseSourceSynthStub) TypeOfWithSpecTypes(expr ast.Expr, p cfg.Point, _ api.SpecTypes) typ.Type {
+	return s.TypeOf(expr, p)
 }

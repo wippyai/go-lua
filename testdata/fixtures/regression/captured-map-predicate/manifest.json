@@ -1,0 +1,1 @@
+{"description":"A predicate over a captured declared map carries key presence to its call argument until the map is mutated.","check":{"errors":2}}

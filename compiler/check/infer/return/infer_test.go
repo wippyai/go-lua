@@ -1,12 +1,14 @@
 package infer
 
 import (
+	"github.com/wippyai/go-lua/compiler/check/flowbuild/assign"
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/compiler/check/scope"
+	"github.com/wippyai/go-lua/compiler/parse"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -66,7 +68,7 @@ func TestUniformFunctionScopes_UsesBaseForAllPoints(t *testing.T) {
 	graph := cfg.Build(fn)
 	base := scope.New()
 
-	scopes := uniformFunctionScopes(graph, base)
+	scopes := assign.UniformScopes(graph, base)
 	if scopes == nil {
 		t.Fatal("expected non-nil scopes")
 	}
@@ -187,4 +189,29 @@ func TestResolveLocalFunctionSummary_UsesCurrentSummaryWithoutStore(t *testing.T
 	if got := inferencer.resolveLocalFunctionSummary(nil, nil, 0); got != nil {
 		t.Fatalf("expected nil summary for symbol 0, got %v", got)
 	}
+}
+
+// A local declared without a value and assigned one function literal is a
+// local function: return inference infers it with its siblings.
+func TestCollectLocalFunctions_DeclaredThenAssigned(t *testing.T) {
+	stmts, err := parse.ParseString(`
+local dec
+dec = function(n)
+	if n == 0 then return "leaf" end
+	return dec(n - 1)
+end
+`, "test.lua")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	g := cfg.Build(&ast.FunctionExpr{ParList: &ast.ParList{HasVargs: true}, Stmts: stmts})
+	fn := stmts[1].(*ast.AssignStmt).Rhs[0].(*ast.FunctionExpr)
+
+	localFuncs := New(Config{}).collectLocalFunctions(g, nil, nil)
+	for sym, info := range localFuncs {
+		if g.NameOf(sym) == "dec" && info.Fn == fn {
+			return
+		}
+	}
+	t.Fatalf("dec is not collected as a local function: %v", localFuncs)
 }

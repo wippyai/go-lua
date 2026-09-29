@@ -38,34 +38,34 @@ return { f = f }
 		t.Fatal("missing root result")
 	}
 
-	var sym cfg.SymbolID
+	var fn *ast.FunctionExpr
 	sess.RootResult.Graph.EachAssign(func(_ cfg.Point, info *cfg.AssignInfo) {
 		if info == nil || !info.IsLocal {
 			return
 		}
 		info.EachTargetSource(func(_ int, target cfg.AssignTarget, source ast.Expr) {
 			if target.Kind == cfg.TargetIdent && target.Name == "f" {
-				if _, ok := source.(*ast.FunctionExpr); ok {
-					sym = target.Symbol
+				if literal, ok := source.(*ast.FunctionExpr); ok {
+					fn = literal
 				}
 			}
 		})
 	})
-	if sym == 0 {
-		t.Fatal("missing local function symbol for f")
+	if fn == nil {
+		t.Fatal("missing local function literal for f")
 	}
 
 	parentHash := sess.Store.GraphParentHashOf(sess.RootResult.Graph.ID())
 	parent := sess.Store.Parents()[parentHash]
 	snap := sess.Store.GetInterprocFactsSnapshot(sess.RootResult.Graph, parent)
 
-	if got := snap.ReturnSummaries[sym]; len(got) != 1 || containsNever(got[0]) {
+	if got := snap.Callables[fn].Summary; len(got) != 1 || containsNever(got[0]) {
 		t.Fatalf("summary contains never artifact: %v", got)
 	}
-	if got := snap.NarrowReturns[sym]; len(got) != 1 || containsNever(got[0]) {
+	if got := snap.Callables[fn].Narrow; len(got) != 1 || containsNever(got[0]) {
 		t.Fatalf("narrow contains never artifact: %v", got)
 	}
-	if got := snap.FuncTypes[sym]; got == nil || containsNever(got) {
+	if got := snap.Callables[fn].Func; got == nil || containsNever(got) {
 		t.Fatalf("function fact contains never artifact: %v", got)
 	}
 
@@ -73,14 +73,16 @@ return { f = f }
 	if mod.HasError() {
 		t.Fatalf("expected clean export check, got: %v", mod.Errors)
 	}
+	// ipairs over a dynamic list yields any values, so the stored block and
+	// its input field are any, as the function body's flow types them.
 	wantExport := typ.NewRecord().
 		Field("f", typ.Func().
-			OptParam("blocks", typ.Any).
+			OptParam("blocks", typ.Unknown).
 			Returns(
 				typ.NewUnion(
 					typ.NewRecord().
 						Field("success", typ.True).
-						Field("result", typ.NewRecord().Field("data", typ.Unknown).Build()).
+						Field("result", typ.NewRecord().Field("data", typ.Any).Build()).
 						Build(),
 					typ.NewRecord().
 						Field("success", typ.False).

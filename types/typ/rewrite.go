@@ -7,6 +7,232 @@ import (
 	"github.com/wippyai/go-lua/types/kind"
 )
 
+// MarkDeclaredShared marks records reachable from several roots as declared in
+// one pass. A source record reachable from more than one root maps to a single
+// marked object, so nominal comparisons across the roots keep pointer identity.
+// Only an unmarked record is rebuilt; an already-declared record is reused, so
+// repeating the call over an unchanged set is stable.
+func MarkDeclaredShared(roots ...Type) []Type {
+	memo := make(map[Type]Type)
+	out := make([]Type, len(roots))
+	for i, root := range roots {
+		if root == nil {
+			continue
+		}
+		out[i] = markDeclaredDepth(root, memo, 0)
+	}
+	return out
+}
+
+func markedRecord(r *Record, memo map[Type]Type) *Record {
+	if marked, ok := memo[r]; ok {
+		return marked.(*Record)
+	}
+	marked := r.WithDeclared(true)
+	memo[r] = marked
+	return marked
+}
+
+func markDeclaredDepth(t Type, memo map[Type]Type, depth int) Type {
+	if t == nil || DepthExceeded(depth) {
+		return t
+	}
+	if prior, ok := memo[t]; ok {
+		return prior
+	}
+	// Visit dispatches through transparent wrappers, so handle an annotated
+	// node here to keep its runtime annotations around the marked inner type.
+	if ann, ok := t.(*Annotated); ok && ann.Inner != nil && ann.Inner != t {
+		inner := markDeclaredDepth(ann.Inner, memo, depth+1)
+		return replaceOrKeep(t, inner == ann.Inner, func() Type { return NewAnnotated(inner, ann.Annotations) })
+	}
+	switch tt := t.(type) {
+	case *Optional:
+		o := tt
+		if o.Inner == nil {
+			return t
+		}
+		inner := markDeclaredDepth(o.Inner, memo, depth+1)
+		return replaceOrKeep(t, inner == o.Inner, func() Type { return NewOptional(inner) })
+	case *Union:
+		u := tt
+		members := markDeclaredMembers(u.Members, memo, depth)
+		if members == nil {
+			return t
+		}
+		return NewUnion(members...)
+	case *Intersection:
+		i := tt
+		members := markDeclaredMembers(i.Members, memo, depth)
+		if members == nil {
+			return t
+		}
+		return NewIntersection(members...)
+	case *Array:
+		a := tt
+		elem := markDeclaredDepth(a.Element, memo, depth+1)
+		return replaceOrKeep(t, elem == a.Element, func() Type { return a.WithElement(elem) })
+	case *Map:
+		m := tt
+		keyType := markDeclaredDepth(m.Key, memo, depth+1)
+		valueType := markDeclaredDepth(m.Value, memo, depth+1)
+		return replaceOrKeep(t, keyType == m.Key && valueType == m.Value, func() Type {
+			return m.WithTypes(keyType, valueType)
+		})
+	case *Tuple:
+		tup := tt
+		elems := make([]Type, len(tup.Elements))
+		changed := false
+		for i, e := range tup.Elements {
+			elems[i] = markDeclaredDepth(e, memo, depth+1)
+			changed = changed || elems[i] != e
+		}
+		return replaceOrKeep(t, !changed, func() Type { return NewTuple(elems...) })
+	case *Function:
+		fn := tt
+		return markDeclaredFunction(fn, t, memo, depth)
+	case *Record:
+		r := tt
+		marked := markedRecord(r, memo)
+		memo[t] = marked
+		// Descend into the marked record's children so nested records
+		// are declared too, keeping the interned field types.
+		fields := make([]Field, len(marked.Fields))
+		changed := false
+		for i, f := range marked.Fields {
+			fields[i] = f
+			fields[i].Type = markDeclaredDepth(f.Type, memo, depth+1)
+			changed = changed || fields[i].Type != f.Type
+		}
+		metatable := marked.Metatable
+		if metatable != nil {
+			next := markDeclaredDepth(metatable, memo, depth+1)
+			changed = changed || next != metatable
+			metatable = next
+		}
+		mapKey, mapValue := marked.MapKey, marked.MapValue
+		if marked.HasMapComponent() {
+			key := markDeclaredDepth(marked.MapKey, memo, depth+1)
+			value := markDeclaredDepth(marked.MapValue, memo, depth+1)
+			changed = changed || key != mapKey || value != mapValue
+			mapKey, mapValue = key, value
+		}
+		if !changed {
+			return marked
+		}
+		return marked.WithChildren(fields, metatable, mapKey, mapValue)
+	case *Alias:
+		a := tt
+		target := markDeclaredDepth(a.Target, memo, depth+1)
+		return replaceOrKeep(t, target == a.Target, func() Type { return NewAlias(a.Name, target) })
+	case *Meta:
+		m := tt
+		of := markDeclaredDepth(m.Of, memo, depth+1)
+		return replaceOrKeep(t, of == m.Of, func() Type { return NewMeta(of) })
+	case *Instantiated:
+		inst := tt
+		args := make([]Type, len(inst.TypeArgs))
+		changed := false
+		for i, a := range inst.TypeArgs {
+			args[i] = markDeclaredDepth(a, memo, depth+1)
+			changed = changed || args[i] != a
+		}
+		if !changed {
+			return t
+		}
+		return Instantiate(inst.Generic, args...)
+	case *Interface:
+		iface := tt
+		methods := make([]Method, len(iface.Methods))
+		changed := false
+		for i, m := range iface.Methods {
+			methods[i] = m
+			if m.Type == nil {
+				continue
+			}
+			next := markDeclaredDepth(m.Type, memo, depth+1)
+			if nextFn, ok := next.(*Function); ok && nextFn != m.Type {
+				methods[i].Type = nextFn
+				changed = true
+			}
+		}
+		if !changed {
+			return t
+		}
+		return NewInterface(iface.Name, methods)
+	case *Recursive:
+		rec := tt
+		if rec.Body == nil || rec.Body == rec {
+			return t
+		}
+		body := markDeclaredDepth(rec.Body, memo, depth+1)
+		if body == rec.Body {
+			return t
+		}
+		return NewRecursiveWithBody(rec.Name, body)
+	case *Generic:
+		g := tt
+		if g.Body == nil {
+			return t
+		}
+		body := markDeclaredDepth(g.Body, memo, depth+1)
+		return replaceOrKeep(t, body == g.Body, func() Type {
+			return NewGeneric(g.Name, g.TypeParams, body)
+		})
+	default:
+		return t
+	}
+}
+
+// replaceOrKeep returns the original t when nothing changed, else the rebuilt
+// value, so pointer identity is preserved for untouched subtrees.
+func replaceOrKeep(t Type, unchanged bool, rebuild func() Type) Type {
+	if unchanged {
+		return t
+	}
+	return rebuild()
+}
+
+func markDeclaredMembers(members []Type, memo map[Type]Type, depth int) []Type {
+	out := make([]Type, len(members))
+	changed := false
+	for i, m := range members {
+		out[i] = markDeclaredDepth(m, memo, depth+1)
+		changed = changed || out[i] != m
+	}
+	if !changed {
+		return nil
+	}
+	return out
+}
+
+func markDeclaredFunction(fn *Function, orig Type, memo map[Type]Type, depth int) Type {
+	params := make([]Param, len(fn.Params))
+	changed := false
+	for i, p := range fn.Params {
+		params[i] = p
+		next := markDeclaredDepth(p.Type, memo, depth+1)
+		if next != p.Type {
+			params[i].Type = next
+			changed = true
+		}
+	}
+	returns := make([]Type, len(fn.Returns))
+	for i, r := range fn.Returns {
+		returns[i] = markDeclaredDepth(r, memo, depth+1)
+		changed = changed || returns[i] != r
+	}
+	var variadic Type
+	if fn.Variadic != nil {
+		variadic = markDeclaredDepth(fn.Variadic, memo, depth+1)
+		changed = changed || variadic != fn.Variadic
+	}
+	if !changed {
+		return orig
+	}
+	return buildFunctionType(fn.TypeParams, params, variadic, returns, fn.Effects, fn.Spec, fn.Refinement)
+}
+
 // Rewrite traverses a type tree and applies fn at each node (bottom-up transformation).
 //
 // The function fn is called on each type node before recursing into children.
@@ -145,7 +371,7 @@ func rewriteDepth(t Type, fn func(Type) (Type, bool), guard internal.RecursionGu
 			out = t
 			break
 		}
-		out = NewArray(elem)
+		out = tt.WithElement(elem)
 	case *Map:
 		keyType := rewriteDepth(tt.Key, fn, next, memo)
 		valueType := rewriteDepth(tt.Value, fn, next, memo)
@@ -153,7 +379,7 @@ func rewriteDepth(t Type, fn func(Type) (Type, bool), guard internal.RecursionGu
 			out = t
 			break
 		}
-		out = NewMap(keyType, valueType)
+		out = tt.WithTypes(keyType, valueType)
 	case *Tuple:
 		var elems []Type
 		for i, e := range tt.Elements {
@@ -342,7 +568,8 @@ func rewriteRecord(v *Record, orig Type, fn func(Type) (Type, bool), guard inter
 				copy(fields, v.Fields)
 			}
 			changed = true
-			fields[i] = Field{Name: f.Name, Type: newType, Optional: f.Optional, Readonly: f.Readonly}
+			fields[i] = f
+			fields[i].Type = newType
 		} else if fields != nil {
 			fields[i] = f
 		}
@@ -377,5 +604,5 @@ func rewriteRecord(v *Record, orig Type, fn func(Type) (Type, bool), guard inter
 	if fields != nil {
 		fieldsSrc = fields
 	}
-	return buildRecordType(fieldsSrc, metatable, mapKey, mapValue, v.Open, true)
+	return v.WithChildren(fieldsSrc, metatable, mapKey, mapValue)
 }

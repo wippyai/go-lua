@@ -1,0 +1,1 @@
+{"description": "Exact wait_for_tables function from both real CRM benchmark sources; elseif db proves release receiver non-nil.", "files": ["main.lua"], "check": {"errors": 0}}

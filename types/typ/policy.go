@@ -15,12 +15,24 @@ func JoinPreferNonSoft(a, b Type) Type {
 	if b == nil {
 		return a
 	}
-	a = PruneSoftUnionMembers(a)
-	b = PruneSoftUnionMembers(b)
-	if IsSoft(a, SoftPlaceholderPolicy) && !IsSoft(b, SoftPlaceholderPolicy) {
+	// Never holds no values, so it is the identity of the join.
+	if a.Kind() == kind.Never {
 		return b
 	}
-	if IsSoft(b, SoftPlaceholderPolicy) && !IsSoft(a, SoftPlaceholderPolicy) {
+	if b.Kind() == kind.Never {
+		return a
+	}
+	if IsUnresolved(a) || IsUnresolved(b) {
+		return NewUnion(a, b)
+	}
+	a = PruneSoftUnionMembers(a)
+	b = PruneSoftUnionMembers(b)
+	// Nil is a real return value, and even an empty table is a real value on
+	// another return path. Keep both when joining them.
+	if IsSoft(a, SoftPlaceholderPolicy) && !IsSoft(b, SoftPlaceholderPolicy) && b.Kind() != kind.Nil {
+		return b
+	}
+	if IsSoft(b, SoftPlaceholderPolicy) && !IsSoft(a, SoftPlaceholderPolicy) && a.Kind() != kind.Nil {
 		return a
 	}
 	// Inline join.Two to avoid dependency cycles inside typ.
@@ -34,6 +46,19 @@ func JoinPreferNonSoft(a, b Type) Type {
 		return a
 	}
 	return PruneSoftUnionMembers(NewUnion(a, b))
+}
+
+// UnknownReturns returns a return vector of the given arity whose every slot is
+// unknown. An arity below one yields a single unknown slot.
+func UnknownReturns(arity int) []Type {
+	if arity < 1 {
+		arity = 1
+	}
+	out := make([]Type, arity)
+	for i := range out {
+		out[i] = Unknown
+	}
+	return out
 }
 
 // JoinReturnSlot merges return slot types while preserving uncertainty.
@@ -50,8 +75,17 @@ func JoinReturnSlot(a, b Type) Type {
 	}
 	a = PruneSoftUnionMembers(a)
 	b = PruneSoftUnionMembers(b)
+	if TypeEquals(a, b) {
+		return a
+	}
 	if preferred, ok := preferArrayOverEmptyRecord(a, b); ok {
 		return preferred
+	}
+	if am, ok := a.(*Map); ok {
+		if bm, ok := b.(*Map); ok && TypeEquals(am.Key, bm.Key) {
+			return newMapWithFlags(am.Key, JoinReturnSlot(am.Value, bm.Value),
+				am.InferredPresence && bm.InferredPresence, am.ExplicitNilWrite || bm.ExplicitNilWrite)
+		}
 	}
 	if merged, ok := JoinCompatibleRecords(a, b); ok {
 		return merged
@@ -63,6 +97,16 @@ func JoinReturnSlot(a, b Type) Type {
 		return Unknown
 	}
 	return coalesceCompatibleRecordMembers(JoinPreferNonSoft(a, b))
+}
+
+// JoinReturnPaths merges return statements of one function. Unlike a soft
+// placeholder used while inferring a return slot, an any-typed value returned
+// on a path can have any runtime shape and absorbs the other paths.
+func JoinReturnPaths(a, b Type) Type {
+	if (a != nil && IsAny(a)) || (b != nil && IsAny(b)) {
+		return Any
+	}
+	return JoinReturnSlot(a, b)
 }
 
 func preferArrayOverEmptyRecord(a, b Type) (Type, bool) {
@@ -80,7 +124,7 @@ func isEmptyRecordNoMap(t Type) bool {
 	case *Alias:
 		return isEmptyRecordNoMap(v.Target)
 	case *Record:
-		return len(v.Fields) == 0 && !v.HasMapComponent()
+		return len(v.Fields) == 0 && !v.HasMapComponent() && v.Metatable == nil
 	default:
 		return false
 	}
@@ -113,13 +157,16 @@ func JoinCompatibleRecords(a, b Type) (Type, bool) {
 	if hasConflictingRequiredLiteralField(ar, br) {
 		return nil, false
 	}
+	if hasLiteralTagWithAsymmetricField(ar, br) {
+		return nil, false
+	}
 
 	// Mixing map and non-map record slots can be semantically distinct.
 	if ar.HasMapComponent() != br.HasMapComponent() {
 		return nil, false
 	}
 
-	builder := NewRecord()
+	builder := NewRecord().SetDeclared(ar.Declared && br.Declared).SetComplete(joinedComplete(ar, br))
 	if ar.Open || br.Open {
 		builder.SetOpen(true)
 	}
@@ -127,9 +174,11 @@ func JoinCompatibleRecords(a, b Type) (Type, bool) {
 		builder.Metatable(ar.Metatable)
 	}
 	if ar.HasMapComponent() && br.HasMapComponent() {
-		builder.MapComponent(
+		builder.MapComponentWithFlags(
 			JoinPreferNonSoft(ar.MapKey, br.MapKey),
 			JoinPreferNonSoft(ar.MapValue, br.MapValue),
+			ar.MapInferredPresence && br.MapInferredPresence,
+			ar.MapExplicitNilWrite || br.MapExplicitNilWrite,
 		)
 	}
 
@@ -154,6 +203,7 @@ func JoinCompatibleRecords(a, b Type) (Type, bool) {
 
 		fieldType := Type(nil)
 		optional := true
+		inferredPresence := false
 		readonly := false
 		switch {
 		case oka && okb:
@@ -162,27 +212,23 @@ func JoinCompatibleRecords(a, b Type) (Type, bool) {
 			// interactions are handled consistently in nested return records.
 			fieldType = JoinReturnSlot(fa.Type, fb.Type)
 			optional = fa.Optional || fb.Optional
+			inferredPresence = optional && (fa.InferredPresence || fb.InferredPresence) &&
+				(!fa.Optional || fa.InferredPresence) && (!fb.Optional || fb.InferredPresence)
 			readonly = fa.Readonly && fb.Readonly
 		case oka:
 			fieldType = fa.Type
 			optional = true
+			inferredPresence = fa.InferredPresence
 			readonly = fa.Readonly
 		case okb:
 			fieldType = fb.Type
 			optional = true
+			inferredPresence = fb.InferredPresence
 			readonly = fb.Readonly
 		}
 
-		switch {
-		case optional && readonly:
-			builder.OptReadonlyField(name, fieldType)
-		case optional:
-			builder.OptField(name, fieldType)
-		case readonly:
-			builder.ReadonlyField(name, fieldType)
-		default:
-			builder.Field(name, fieldType)
-		}
+		builder.AddField(Field{Name: name, Type: fieldType, Optional: optional,
+			InferredPresence: inferredPresence, Readonly: readonly})
 	}
 
 	return builder.Build(), true
@@ -284,9 +330,47 @@ func hasConflictingRequiredLiteralField(a, b *Record) bool {
 	return false
 }
 
+// Keep branch shapes distinct when one branch has a literal tag and another
+// may have that tag but carries additional required fields. Coalescing would
+// make those fields optional and discard the tag/shape relationship.
+func hasLiteralTagWithAsymmetricField(a, b *Record) bool {
+	fieldsA := recordFieldsByName(a)
+	fieldsB := recordFieldsByName(b)
+	asymmetric := false
+	for name, fa := range fieldsA {
+		if _, ok := fieldsB[name]; !ok && !fa.Optional {
+			asymmetric = true
+			break
+		}
+	}
+	if !asymmetric {
+		for name, fb := range fieldsB {
+			if _, ok := fieldsA[name]; !ok && !fb.Optional {
+				asymmetric = true
+				break
+			}
+		}
+	}
+	if !asymmetric {
+		return false
+	}
+	for name, fa := range fieldsA {
+		fb, ok := fieldsB[name]
+		if !ok || fa.Optional || fb.Optional || !isDiscriminantLiteralField(name) {
+			continue
+		}
+		_, aLiteral := literalType(fa.Type)
+		_, bLiteral := literalType(fb.Type)
+		if aLiteral != bLiteral {
+			return true
+		}
+	}
+	return false
+}
+
 func isDiscriminantLiteralField(name string) bool {
 	switch name {
-	case "type", "kind", "tag", "role", "variant", "success", "ok":
+	case "type", "kind", "tag", "role", "variant", "success", "ok", "engine":
 		return true
 	default:
 		return false
@@ -308,15 +392,23 @@ func literalType(t Type) (*Literal, bool) {
 // JoinBranchOutcome merges mutually-exclusive expression outcomes (for example,
 // `a and b` / `a or b`) while preserving uncertainty.
 //
-// Unlike JoinPreferNonSoft, this must not treat unknown as absent information:
-// expression typing needs to preserve runtime uncertainty when one branch may
-// still produce unknown-like values.
+// Unlike JoinPreferNonSoft, this treats a converged unknown as top, never as
+// absent information: pending inference is Unresolved, so an Unknown operand
+// is a value that may be anything at runtime.
 func JoinBranchOutcome(a, b Type) Type {
 	if a == nil {
 		return b
 	}
 	if b == nil {
 		return a
+	}
+	if IsUnresolved(a) || IsUnresolved(b) {
+		return NewUnion(a, b)
+	}
+	// Both outcomes can occur at runtime. A dynamic outcome must survive the
+	// soft-pruning policy used for unfinished inference elsewhere.
+	if IsAny(a) || IsAny(b) {
+		return Any
 	}
 
 	a = PruneSoftUnionMembers(a)
@@ -326,6 +418,11 @@ func JoinBranchOutcome(a, b Type) Type {
 	// unknown and nil means "value may be unknown or absent".
 	if (IsUnknown(a) && b.Kind() == kind.Nil) || (IsUnknown(b) && a.Kind() == kind.Nil) {
 		return NewOptional(Unknown)
+	}
+	// A converged unknown outcome is top: the other outcome adds nothing the
+	// unknown one does not already admit.
+	if IsUnknown(a) || IsUnknown(b) {
+		return Unknown
 	}
 
 	if IsSoft(a, SoftPlaceholderPolicy) && !IsSoft(b, SoftPlaceholderPolicy) && b.Kind() != kind.Nil {

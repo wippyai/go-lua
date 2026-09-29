@@ -74,29 +74,3 @@ func initLibrary() map[string]typ.Type {
 		"_VERSION": typ.String,
 	}
 }
-
-// Lookup resolves a standard library path to its type.
-// Accepts both simple names ("print") and dotted paths ("string.upper").
-// Returns nil if the path does not match any standard library entry.
-func Lookup(path string) typ.Type {
-	if t, ok := library[path]; ok {
-		return t
-	}
-
-	for i := 0; i < len(path); i++ {
-		if path[i] == '.' {
-			base := path[:i]
-			field := path[i+1:]
-			if baseType, ok := library[base]; ok {
-				if rec, ok := baseType.(*typ.Record); ok {
-					if f := rec.GetField(field); f != nil {
-						return f.Type
-					}
-				}
-			}
-			break
-		}
-	}
-
-	return nil
-}

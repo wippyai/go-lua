@@ -1,0 +1,1 @@
+{"description":"Real node_reader sql.get call and guarded DB use against a declared external sql API. Optional return slots alone do not prove value/error correlation; guarded uses must be rejected.","files":["sql.lua","main.lua"],"check":{"errors":1}}

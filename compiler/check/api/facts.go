@@ -33,36 +33,31 @@ type ParamHints = map[cfg.SymbolID][]typ.Type
 // same scope as the call site.
 type FuncTypes = map[cfg.SymbolID]typ.Type
 
-// FunctionFact is the canonical function-related interproc fact for one symbol.
-// Legacy channels (ReturnSummaries/NarrowReturns/FuncTypes) are compatibility
-// views and should be derivable from this value.
+// FunctionFact is the canonical fact for one function literal.
 type FunctionFact struct {
 	Summary []typ.Type
 	Narrow  []typ.Type
 	Func    typ.Type
+	Sig     *typ.Function
 }
 
-// FunctionFacts maps function symbols to their canonical function facts.
-type FunctionFacts = map[cfg.SymbolID]FunctionFact
-
-// LiteralSigs maps anonymous function literal expressions to their signatures.
-// Used when function literals are passed as arguments or assigned to variables
-// without explicit type annotations.
-type LiteralSigs = map[*ast.FunctionExpr]*typ.Function
+// Callables owns facts keyed by the function literal being analyzed.
+type Callables = map[*ast.FunctionExpr]FunctionFact
 
 // CapturedTypes maps captured symbols to their flow-derived types for a graph.
 // These are computed from the parent function's flow facts at the definition
 // point of the nested function and used as type hints for captured variables.
 type CapturedTypes = map[cfg.SymbolID]typ.Type
 
-// CapturedFieldAssigns maps nested function symbols to field assignments
-// they make to captured variables from parent scopes.
+// FieldWrites maps function symbols to the fields a function may write on
+// tables it reaches through captured variables or its own parameters.
 //
-// Structure: nestedFuncSymbol -> capturedVarSymbol -> fieldName -> fieldType
-//
-// This enables the parent scope to see which fields a nested function assigns
-// to its captured variables, supporting constructor inference patterns.
-type CapturedFieldAssigns = map[cfg.SymbolID]map[cfg.SymbolID]map[string]typ.Type
+// Structure: funcSymbol -> targetSymbol -> FieldWriteKey -> fieldType, where
+// the target is a variable captured from an enclosing scope or a parameter of
+// the function, and the key locates the written field in a table the target
+// holds or reaches by static fields. Writes include those made by closures the
+// function creates and by functions it passes the target to.
+type FieldWrites = map[cfg.SymbolID]map[cfg.SymbolID]FieldWriteSet
 
 // ContainerMutation records a container element mutation on a captured variable.
 // Segments capture the path from the base symbol (e.g., .ch, ["queue"]).
@@ -89,17 +84,10 @@ type ConstructorFields = map[cfg.SymbolID]map[string]typ.Type
 // Facts bundles all interprocedural analysis results for a single function graph.
 // These facts are computed during analysis and stored per (graph, parent) pair.
 type Facts struct {
-	FunctionFacts FunctionFacts
-	// Compatibility mirror derived from FunctionFacts.
-	ReturnSummaries ReturnSummaries
-	// Compatibility mirror derived from FunctionFacts.
-	NarrowReturns NarrowReturnSummaries
-	ParamHints    ParamHints
-	// Compatibility mirror derived from FunctionFacts.
-	FuncTypes          FuncTypes
-	LiteralSigs        LiteralSigs
+	Callables          Callables
+	ParamHints         ParamHints
 	CapturedTypes      CapturedTypes
-	CapturedFields     CapturedFieldAssigns
+	FieldWrites        FieldWrites
 	CapturedContainers CapturedContainerMutations
 	ConstructorFields  ConstructorFields
 }

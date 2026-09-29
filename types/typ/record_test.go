@@ -279,3 +279,20 @@ func TestRecordOpenTypeEquals(t *testing.T) {
 		t.Error("TypeEquals should match two identical open records")
 	}
 }
+
+func TestRecordHasSameFieldNames(t *testing.T) {
+	a := NewRecord().Field("x", Number).OptField("y", String).Build()
+	b := NewRecord().OptField("x", String).Field("y", Boolean).Build()
+	c := NewRecord().Field("x", Number).Build()
+	d := NewRecord().Field("x", Number).OptField("y", String).MapComponent(String, Any).Build()
+
+	if !a.HasSameFieldNames(b) {
+		t.Error("records declaring x and y should have the same field names")
+	}
+	if a.HasSameFieldNames(c) || c.HasSameFieldNames(a) {
+		t.Error("records with different field sets should differ")
+	}
+	if a.HasSameFieldNames(d) {
+		t.Error("a map component should distinguish otherwise equal field sets")
+	}
+}

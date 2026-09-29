@@ -47,7 +47,6 @@
 //   - IteratorSource: Derives iterator variable types from the iterated container
 //   - ContainerElementSource: Derives types from container methods (channel:receive())
 //   - MapElementSource: Derives types from dynamic map index reads (t[k])
-//   - SiblingAssignment: Correlates multi-return values (result, err patterns)
 //
 // # Widening
 //
@@ -211,6 +210,21 @@ type Inputs struct {
 	// AnnotatedVars tracks variables with explicit type annotations.
 	AnnotatedVars map[cfg.SymbolID]bool
 
+	// RefinableAnnotatedVars tracks variables whose annotation is refinable,
+	// such as {any}: flow facts may refine their declared type, within it.
+	RefinableAnnotatedVars map[cfg.SymbolID]bool
+
+	// ClosedMapVars marks fresh local maps whose only aliases are their own
+	// indexed writes and one non-looping indexed read. Their observed writes
+	// describe every value that can be read through that map.
+	ClosedMapVars map[cfg.SymbolID]bool
+	// FreshLocalTablePaths records literal table origins shared with nested
+	// closures. Keys within each symbol are dot-separated static field paths.
+	FreshLocalTablePaths map[cfg.SymbolID]map[string]bool
+	// CallAliasRoots lists local table references passed to a call at each point.
+	// Calls can retain or mutate those references after a key fact is learned.
+	CallAliasRoots map[cfg.Point][]cfg.SymbolID
+
 	Assignments    []UnifiedAssignment
 	ConstValues    map[cfg.SymbolID]map[cfg.Point]*ConstValue
 	EdgeConditions []EdgeCondition
@@ -236,10 +250,9 @@ type Inputs struct {
 	// Example: local _, err = Point:is(data) -> err nil implies HasType{data, Point}
 	PredicateLinks map[string]PredicateLink
 
-	// SiblingAssignments tracks variables assigned from the same multi-return call.
-	// Key is "varname@defpoint", maps to the sibling group.
-	// Used for error return pattern where checking err narrows result.
-	SiblingAssignments map[SiblingKey]*SiblingAssignment
+	// Facts are conditions established by a statement and available to its
+	// successors, including relations between results of one call.
+	Facts map[cfg.Point]constraint.Condition
 
 	// IndexerAssignments tracks dynamic index assignments: t[k] = v with non-const k.
 	// Used to widen {} to {[K]: V} based on key/value types.
@@ -252,6 +265,10 @@ type Inputs struct {
 	// ContainerMutatorAssignments tracks container mutations (e.g., channel.send)
 	// that widen element types via ContainerElementUnion effects.
 	ContainerMutatorAssignments []ContainerMutatorAssignment
+
+	// FieldWriteEffects tracks fields that functions reached at a point may
+	// write on a table through an alias.
+	FieldWriteEffects []FieldWriteEffect
 
 	// DeadPoints marks CFG points that are unreachable.
 	// Used when a terminating function (one that never returns) is called.
@@ -289,6 +306,8 @@ type Inputs struct {
 type ReturnExprConstraints struct {
 	OnTrue  constraint.Condition
 	OnFalse constraint.Condition
+	// Predicate is true when the return expression itself is definitely boolean.
+	Predicate bool
 }
 
 // PredicateLink stores predicate constraints for a variable assigned from a predicate call.
@@ -296,40 +315,6 @@ type ReturnExprConstraints struct {
 type PredicateLink struct {
 	OnTruthy constraint.Condition
 	OnFalsy  constraint.Condition
-}
-
-// ReturnCorrelation describes a correlated (value, error) pair in a multi-return.
-// Derived from effect.ErrorReturn on the callee's spec.
-type ReturnCorrelation struct {
-	ValueIndex int
-	ErrorIndex int
-}
-
-// GuardedTypeCorrelation describes branch-sensitive sibling narrowing:
-// when guard return at GuardIndex is truthy/falsy (per GuardOnTruthy),
-// target return at TargetIndex narrows to TargetType.
-type GuardedTypeCorrelation struct {
-	GuardIndex    int
-	TargetIndex   int
-	GuardOnTruthy bool
-	TargetType    typ.Type
-}
-
-// SiblingAssignment tracks variables assigned from the same multi-return call.
-// Used for error return pattern: `local result, err = call()` where checking err narrows result.
-type SiblingAssignment struct {
-	Symbols             []cfg.SymbolID           // Symbol IDs in order (primary identity)
-	Names               []string                 // Variable names (for constraint path construction)
-	Types               []typ.Type               // Declared types for each variable
-	Correlations        []ReturnCorrelation      // Inverse correlations (ErrorReturn): value nil <-> error non-nil
-	CoCorrelations      []ReturnCorrelation      // Same-direction correlations (CorrelatedReturn): all nil or all non-nil
-	GuardedCorrelations []GuardedTypeCorrelation // Branch-sensitive type narrowing from guard/result relations
-}
-
-// SiblingKey uniquely identifies a variable in a sibling assignment by SymbolID+SSA version.
-type SiblingKey struct {
-	Symbol    cfg.SymbolID
-	VersionID int
 }
 
 // IndexerAssignment describes an assignment via dynamic index: t[k] = v
@@ -346,6 +331,17 @@ type IndexerAssignment struct {
 	KeyType   typ.Type             // Optional explicit key type (overrides KeySymbol lookup)
 	ValuePath constraint.Path      // Path to value expression for flow-resolved type lookup
 	ValType   typ.Type             // Fallback type when ValuePath is unavailable
+	// Field paths inside a table literal value, resolved after call returns and
+	// branch facts are available to the flow solver.
+	ValueFieldPaths []IndexerValueFieldPath
+	// FieldUpdate identifies t[k].field = value: it updates an existing entry,
+	// whereas t[k] = value inserts or replaces an entry.
+	FieldUpdate string
+}
+
+type IndexerValueFieldPath struct {
+	Name string
+	Path constraint.Path
 }
 
 // TableMutatorAssignment describes table.insert-like mutations that widen
@@ -368,6 +364,24 @@ type ContainerMutatorAssignment struct {
 	Target    constraint.Path // Container path (symbol-only, e.g., channel variable)
 	ValuePath constraint.Path // Path to value expression for flow-resolved type lookup
 	ValueType typ.Type        // Fallback type if ValuePath doesn't resolve
+}
+
+// FieldWriteEffect records that the table at Target may gain Field of Type
+// from Point on: a function called there writes the field through a
+// parameter, or a closure created there writes it through a captured variable.
+// Closure-created writes may happen later and join as possible effects. A
+// direct call effect is definite when the callee leaves the field present on
+// every return path and no overlapping closure write obscures its shape.
+// IndexerWriteField is the Field of a FieldWriteEffect for writes by dynamic
+// keys (t[k] = v); its Type is the map {[K]: V} they add to the table.
+const IndexerWriteField = "[]"
+
+type FieldWriteEffect struct {
+	Point    cfg.Point
+	Target   constraint.Path // Table path: a symbol, or a static field path below one
+	Field    string
+	Type     typ.Type
+	Definite bool // The call writes this field on every path before returning.
 }
 
 // ContainerElementSource tracks that an assignment's type should be derived

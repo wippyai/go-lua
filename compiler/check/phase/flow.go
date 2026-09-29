@@ -2,9 +2,11 @@ package phase
 
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild"
+	"github.com/wippyai/go-lua/compiler/check/flowbuild/cond"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/core"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/keyscoll"
 	"github.com/wippyai/go-lua/compiler/check/scope"
@@ -31,21 +33,17 @@ func RunExtract(input FlowExtractInput) FlowExtractOutput {
 		WithScope(input.Scope).
 		WithSiblingTypes(input.SiblingTypes).
 		WithLiteralTypes(input.LiteralTypes).
-		WithReturnSummaries(input.ReturnSummaries).
+		WithCallables(input.Callables).
 		BuildDeclared()
 
-	engine := synth.New(synth.Config{
-		Ctx:            input.Ctx,
-		Types:          input.Types,
-		Scopes:         input.Scope.Scopes,
-		Manifests:      input.Manifests,
-		Env:            extractionCtx,
-		Phase:          api.PhaseScopeCompute,
-		ModuleBindings: input.ModuleBindings,
-		ModuleAliases:  moduleAliases,
-	})
+	env := input.PhaseEnv
+	env.Scopes = input.Scope.Scopes
+	env.Env = extractionCtx
+	env.Phase = api.PhaseScopeCompute
+	env.ModuleAliases = moduleAliases
+	engine := synth.New(env)
 
-	inputs := flowbuild.Run(&core.FlowContext{
+	fc := &core.FlowContext{
 		Graph:    input.Graph,
 		Scopes:   input.Scope.Scopes,
 		CheckCtx: extractionCtx,
@@ -63,7 +61,8 @@ func RunExtract(input FlowExtractInput) FlowExtractOutput {
 		LiteralTypes:         input.LiteralTypes,
 		ModuleAliases:        moduleAliases,
 		ModuleBindings:       input.ModuleBindings,
-	})
+	}
+	inputs := flowbuild.Run(fc)
 
 	applyModuleAliasTypes(inputs, input.Manifests)
 
@@ -73,6 +72,7 @@ func RunExtract(input FlowExtractInput) FlowExtractOutput {
 
 	return FlowExtractOutput{
 		Inputs:     inputs,
+		Conditions: cond.ConditionsFunc(fc, inputs),
 		Params:     params,
 		ReturnType: returnType,
 	}
@@ -89,19 +89,14 @@ func applyModuleAliasTypes(inputs *flow.Inputs, manifests io.ManifestQuerier) {
 func RunLiteral(input LiteralInput) LiteralOutput {
 	initialCtx := NewContextBuilder(input.PhaseEnv).
 		WithScope(input.Scope).
-		WithReturnSummaries(input.ReturnSummaries).
+		WithCallables(input.Callables).
 		BuildDeclared()
 
-	engine := synth.New(synth.Config{
-		Ctx:            input.Ctx,
-		Types:          input.Types,
-		Scopes:         input.Scope.Scopes,
-		Manifests:      input.Manifests,
-		Env:            initialCtx,
-		Phase:          api.PhaseScopeCompute,
-		ModuleBindings: input.ModuleBindings,
-		ModuleAliases:  input.ModuleAliases,
-	})
+	env := input.PhaseEnv
+	env.Scopes = input.Scope.Scopes
+	env.Env = initialCtx
+	env.Phase = api.PhaseScopeCompute
+	engine := synth.New(env)
 
 	fnLiteralTypes := synth.FunctionLiteralTypes(input.Graph, func(expr ast.Expr, p cfg.Point) typ.Type {
 		return engine.TypeOf(expr, p)
@@ -179,12 +174,16 @@ func ExtractParams(fn *ast.FunctionExpr, paramTypes map[cfg.SymbolID]typ.Type, g
 // EnrichWithKeysCollector detects if a function is a "keys collector"
 // (returns keys of a parameter) and adds KeyOf constraint to OnReturn.
 // This enables cross-module key-provenance tracking.
-func EnrichWithKeysCollector(eff *constraint.FunctionRefinement, fn *ast.FunctionExpr) *constraint.FunctionRefinement {
+func EnrichWithKeysCollector(eff *constraint.FunctionRefinement, fn *ast.FunctionExpr, moduleBindings ...*bind.BindingTable) *constraint.FunctionRefinement {
 	if fn == nil {
 		return eff
 	}
 
-	info := keyscoll.DetectKeysCollector(fn)
+	var module *bind.BindingTable
+	if len(moduleBindings) > 0 {
+		module = moduleBindings[0]
+	}
+	info := keyscoll.DetectKeysCollectorWithBindings(fn, module)
 	if info == nil {
 		return eff
 	}

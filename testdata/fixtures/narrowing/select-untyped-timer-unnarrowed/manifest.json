@@ -1,0 +1,4 @@
+{
+  "description": "channel.new() payload selected with time.after(): without narrowing, the value is not the timer payload",
+  "packages": ["channel", "time"]
+}

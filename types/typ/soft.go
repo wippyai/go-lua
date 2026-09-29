@@ -176,9 +176,10 @@ func pruneSoftUnionMembersMemo(
 	case *Record:
 		out = pruneSoftRecord(node, t, next, memo, visiting, softMemo)
 	case *Union:
-		// Fast path: if this union has no soft members and no nested changes needed,
-		// skip the expensive isSoftWithMemo checks entirely.
-		if !node.HasSoftMember() {
+		// Pending union paths cannot borrow evidence from other members. Keep
+		// every runtime alternative while still pruning their nested types.
+		// Unions without soft members take the same fast path.
+		if !node.HasSoftMember() || node.Contains(Unresolved) {
 			anyChildChanged := false
 			var rewrittenFast []Type
 			for idx, m := range node.Members {
@@ -261,7 +262,7 @@ func pruneSoftUnionMembersMemo(
 			out = t
 			break
 		}
-		out = NewArray(elem)
+		out = node.WithElement(elem)
 	case *Map:
 		key := pruneSoftUnionMembersMemo(node.Key, next, memo, visiting, softMemo)
 		val := pruneSoftUnionMembersMemo(node.Value, next, memo, visiting, softMemo)
@@ -269,7 +270,7 @@ func pruneSoftUnionMembersMemo(
 			out = t
 			break
 		}
-		out = NewMap(key, val)
+		out = node.WithTypes(key, val)
 	case *Tuple:
 		var elems []Type
 		for i, e := range node.Elements {
@@ -415,7 +416,8 @@ func pruneSoftRecord(
 				copy(fields, r.Fields)
 			}
 			changed = true
-			fields[i] = Field{Name: f.Name, Type: newType, Optional: f.Optional, Readonly: f.Readonly}
+			fields[i] = f
+			fields[i].Type = newType
 		} else if fields != nil {
 			fields[i] = f
 		}
@@ -453,7 +455,7 @@ func pruneSoftRecord(
 	if fields != nil {
 		fieldsSrc = fields
 	}
-	return buildRecordType(fieldsSrc, metatable, mapKey, mapValue, r.Open, true)
+	return r.WithChildren(fieldsSrc, metatable, mapKey, mapValue)
 }
 
 func isSoftWithMemo(t Type, policy SoftPolicy, memo map[Type]bool) bool {

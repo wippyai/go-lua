@@ -3,8 +3,11 @@ package returns
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/types/contract"
+	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -17,14 +20,15 @@ func TestFactsEqual_Empty(t *testing.T) {
 }
 
 func TestFactsEqual_ReturnSummaries(t *testing.T) {
+	fn := &ast.FunctionExpr{}
 	a := api.Facts{
-		FunctionFacts: api.FunctionFacts{
-			1: {Summary: []typ.Type{typ.String}},
+		Callables: api.Callables{
+			fn: {Summary: []typ.Type{typ.String}},
 		},
 	}
 	b := api.Facts{
-		FunctionFacts: api.FunctionFacts{
-			1: {Summary: []typ.Type{typ.String}},
+		Callables: api.Callables{
+			fn: {Summary: []typ.Type{typ.String}},
 		},
 	}
 	if !FactsEqual(a, b) {
@@ -33,14 +37,15 @@ func TestFactsEqual_ReturnSummaries(t *testing.T) {
 }
 
 func TestFactsEqual_DifferentReturnSummaries(t *testing.T) {
+	fn := &ast.FunctionExpr{}
 	a := api.Facts{
-		FunctionFacts: api.FunctionFacts{
-			1: {Summary: []typ.Type{typ.String}},
+		Callables: api.Callables{
+			fn: {Summary: []typ.Type{typ.String}},
 		},
 	}
 	b := api.Facts{
-		FunctionFacts: api.FunctionFacts{
-			1: {Summary: []typ.Type{typ.Number}},
+		Callables: api.Callables{
+			fn: {Summary: []typ.Type{typ.Number}},
 		},
 	}
 	if FactsEqual(a, b) {
@@ -48,71 +53,15 @@ func TestFactsEqual_DifferentReturnSummaries(t *testing.T) {
 	}
 }
 
-func TestFactsEqual_IgnoresLegacyMirrorDrift(t *testing.T) {
-	sym := cfg.SymbolID(77)
-	fn := typ.Func().Returns(typ.String).Build()
-
-	a := api.Facts{
-		FunctionFacts: api.FunctionFacts{
-			sym: {
-				Summary: []typ.Type{typ.String},
-				Narrow:  []typ.Type{typ.String},
-				Func:    fn,
-			},
-		},
-		ReturnSummaries: api.ReturnSummaries{
-			sym: []typ.Type{typ.Number},
-		},
-		NarrowReturns: api.NarrowReturnSummaries{
-			sym: []typ.Type{typ.Number},
-		},
-		FuncTypes: api.FuncTypes{
-			sym: typ.Func().Returns(typ.Number).Build(),
-		},
-	}
-	b := api.Facts{
-		FunctionFacts: api.FunctionFacts{
-			sym: {
-				Summary: []typ.Type{typ.String},
-				Narrow:  []typ.Type{typ.String},
-				Func:    fn,
-			},
-		},
-	}
-
-	if !FactsEqual(a, b) {
-		t.Fatal("expected facts to be equal by canonical function facts")
-	}
-}
-
-func TestFactsEqual_LegacyOnlyChannelsAreComparedCanonically(t *testing.T) {
-	sym := cfg.SymbolID(91)
-
-	a := api.Facts{
-		ReturnSummaries: api.ReturnSummaries{
-			sym: []typ.Type{typ.String},
-		},
-		NarrowReturns: api.NarrowReturnSummaries{
-			sym: []typ.Type{typ.String},
-		},
-		FuncTypes: api.FuncTypes{
-			sym: typ.Func().Returns(typ.String).Build(),
-		},
-	}
-	b := api.Facts{
-		ReturnSummaries: api.ReturnSummaries{
-			sym: []typ.Type{typ.Number},
-		},
-		NarrowReturns: api.NarrowReturnSummaries{
-			sym: []typ.Type{typ.Number},
-		},
-		FuncTypes: api.FuncTypes{
-			sym: typ.Func().Returns(typ.Number).Build(),
-		},
-	}
-
-	if FactsEqual(a, b) {
-		t.Fatal("legacy-only function channels should participate in canonical equality")
+func TestFactsEqual_DetectsNewCallableReturnCorrelation(t *testing.T) {
+	fn := &ast.FunctionExpr{}
+	plain := typ.Func().Returns(typ.NewOptional(typ.String), typ.NewOptional(typ.String)).Build()
+	correlated := typ.Func().Returns(typ.NewOptional(typ.String), typ.NewOptional(typ.String)).
+		Spec(contract.NewSpec().WithEffects(effect.ErrorReturn{ValueIndex: 0, ErrorIndex: 1})).Build()
+	before := api.Facts{Callables: api.Callables{fn: {Func: plain}}}
+	after := api.Facts{Callables: api.Callables{fn: {Func: correlated}}}
+	if FactsEqual(before, after) {
+		t.Fatal("new return correlation must trigger another interprocedural round")
 	}
 }
 
@@ -159,9 +108,9 @@ func TestFuncTypesEqual_Same(t *testing.T) {
 	}
 }
 
-func TestLiteralSigsEqual_Empty(t *testing.T) {
-	if !LiteralSigsEqual(nil, nil) {
-		t.Error("nil literal sigs should be equal")
+func TestCallablesEqual_Empty(t *testing.T) {
+	if !CallablesEqual(nil, nil) {
+		t.Error("nil callables should be equal")
 	}
 }
 
@@ -180,19 +129,19 @@ func TestCapturedTypesEqual_Same(t *testing.T) {
 }
 
 func TestCapturedFieldAssignsEqual_Empty(t *testing.T) {
-	if !CapturedFieldAssignsEqual(nil, nil) {
+	if !FieldWritesEqual(nil, nil) {
 		t.Error("nil captured field assigns should be equal")
 	}
 }
 
 func TestCapturedFieldAssignsEqual_DifferentCallee(t *testing.T) {
-	a := api.CapturedFieldAssigns{
-		cfg.SymbolID(1): {cfg.SymbolID(2): {"foo": typ.String}},
+	a := api.FieldWrites{
+		cfg.SymbolID(1): {cfg.SymbolID(2): {{Field: "foo"}: typ.String}},
 	}
-	b := api.CapturedFieldAssigns{
-		cfg.SymbolID(3): {cfg.SymbolID(2): {"foo": typ.String}},
+	b := api.FieldWrites{
+		cfg.SymbolID(3): {cfg.SymbolID(2): {{Field: "foo"}: typ.String}},
 	}
-	if CapturedFieldAssignsEqual(a, b) {
+	if FieldWritesEqual(a, b) {
 		t.Error("different callee symbols should not be equal")
 	}
 }

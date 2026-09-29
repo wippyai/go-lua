@@ -343,6 +343,20 @@ func TestByFieldLiteral_DiscriminatedUnion(t *testing.T) {
 	}
 }
 
+// A closed record without the field reads nil there, so it cannot hold the
+// literal: only the members that can carry it remain.
+func TestByFieldLiteral_ClosedRecordWithoutFieldIsExcluded(t *testing.T) {
+	resolver := newMockResolver()
+	tagged := typ.NewRecord().Field("node_type", typ.String).Field("id", typ.String).Build()
+	untagged := typ.NewRecord().Field("error", typ.String).Build()
+	union := typ.NewUnion(tagged, untagged)
+
+	got := ByFieldLiteral(union, "node_type", typ.LiteralString("parallel"), resolver)
+	if !typ.TypeEquals(got, tagged) {
+		t.Fatalf("expected %v, got %v", tagged, got)
+	}
+}
+
 func TestByFieldLiteral_BuiltinTableTopMaterializesRecord(t *testing.T) {
 	resolver := newMockResolver()
 	tableTop := typ.NewInterface("table", nil)
@@ -359,10 +373,20 @@ func TestByFieldLiteral_PlaceholderMaterializesRecord(t *testing.T) {
 	resolver := newMockResolver()
 	lit := typ.LiteralString("image")
 
-	result := ByFieldLiteral(typ.Any, "type", lit, resolver)
+	result := ByFieldLiteral(typ.Unknown, "type", lit, resolver)
 	want := typ.NewRecord().Field("type", lit).SetOpen(true).Build()
 	if !typ.TypeEquals(result, want) {
-		t.Errorf("ByFieldLiteral(any, type, \"image\") = %v, want %v", result, want)
+		t.Errorf("ByFieldLiteral(unknown, type, \"image\") = %v, want %v", result, want)
+	}
+}
+
+func TestByFieldLiteral_AnyStaysAny(t *testing.T) {
+	resolver := newMockResolver()
+	lit := typ.LiteralString("image")
+
+	result := ByFieldLiteral(typ.Any, "type", lit, resolver)
+	if !typ.TypeEquals(result, typ.Any) {
+		t.Errorf("ByFieldLiteral(any, type, \"image\") = %v, want any", result)
 	}
 }
 

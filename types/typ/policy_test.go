@@ -20,6 +20,16 @@ func TestJoinReturnSlot_PreservesAnyOverNil(t *testing.T) {
 	}
 }
 
+func TestJoinReturnPaths_AnyAbsorbsConcreteReturn(t *testing.T) {
+	stream := NewRecord().Field("headers", NewMap(String, Any)).Build()
+	if got := JoinReturnPaths(Any, stream); got != Any {
+		t.Fatalf("JoinReturnPaths(any, stream) = %v, want any", got)
+	}
+	if got := JoinReturnPaths(stream, Any); got != Any {
+		t.Fatalf("JoinReturnPaths(stream, any) = %v, want any", got)
+	}
+}
+
 func TestJoinReturnSlot_PrefersArrayOverEmptyRecord(t *testing.T) {
 	empty := NewRecord().Build()
 	arr := NewArray(String)
@@ -165,5 +175,39 @@ func TestJoinReturnSlot_CoalescesUnionRecordMember(t *testing.T) {
 	typeField := merged.GetField("type")
 	if typeField == nil || !typeField.Optional || !TypeEquals(typeField.Type, String) {
 		t.Fatalf("expected optional type:string after coalescing, got %v", typeField)
+	}
+}
+
+// Never holds no values: joining it with any type yields that type, including
+// soft placeholders such as an unannotated any.
+func TestJoinPreferNonSoft_NeverIsIdentity(t *testing.T) {
+	for _, other := range []Type{Any, Nil, String, NewRecord().Field("id", String).Build()} {
+		if got := JoinPreferNonSoft(other, Never); !TypeEquals(got, other) {
+			t.Fatalf("join(%s, never) = %s, want %s", other, got, other)
+		}
+		if got := JoinPreferNonSoft(Never, other); !TypeEquals(got, other) {
+			t.Fatalf("join(never, %s) = %s, want %s", other, got, other)
+		}
+	}
+}
+
+func TestJoinBranchOutcome_UnknownOperandDominates(t *testing.T) {
+	empty := NewRecord().Build()
+	rec := NewRecord().Field("id", String).Build()
+	for _, other := range []Type{empty, rec, String} {
+		if got := JoinBranchOutcome(Unknown, other); !TypeEquals(got, Unknown) {
+			t.Fatalf("JoinBranchOutcome(unknown, %v) = %v, want unknown", other, got)
+		}
+		if got := JoinBranchOutcome(other, Unknown); !TypeEquals(got, Unknown) {
+			t.Fatalf("JoinBranchOutcome(%v, unknown) = %v, want unknown", other, got)
+		}
+	}
+}
+
+func TestJoinBranchOutcome_UnresolvedOperandStaysPending(t *testing.T) {
+	got := JoinBranchOutcome(Unresolved, String)
+	u, ok := got.(*Union)
+	if !ok || !u.Contains(Unresolved) {
+		t.Fatalf("JoinBranchOutcome(unresolved, string) = %v, want union keeping unresolved", got)
 	}
 }

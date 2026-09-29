@@ -1,0 +1,4 @@
+{
+  "description": "channel.new() payload selected with time.after(): each branch of the channel comparison sees its own case payload",
+  "packages": ["channel", "time"]
+}

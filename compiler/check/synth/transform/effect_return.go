@@ -12,7 +12,8 @@ import (
 // ApplyEffectTransform applies return type effects to compute the actual return type.
 // If the function has a contract.Spec with a Return effect, the transform is applied
 // to derive the concrete return type from the argument types.
-func ApplyEffectTransform(fn *typ.Function, args []typ.Type, returnIdx int, baseReturn typ.Type) typ.Type {
+func ApplyEffectTransform(fn *typ.Function, args []typ.Type, returnIdx int, returns []typ.Type) typ.Type {
+	baseReturn := returns[returnIdx]
 	if fn == nil || fn.Spec == nil {
 		return baseReturn
 	}
@@ -26,7 +27,11 @@ func ApplyEffectTransform(fn *typ.Function, args []typ.Type, returnIdx int, base
 	// remains available for narrowing after the error is checked.
 	finish := func(result typ.Type) typ.Type {
 		if er := spec.Effects.GetErrorReturn(returnIdx); er != nil {
-			if !unwrap.IsOptionalLike(result) {
+			errorSlot := typ.Type(typ.Nil)
+			if er.ErrorIndex < len(returns) && returns[er.ErrorIndex] != nil {
+				errorSlot = returns[er.ErrorIndex]
+			}
+			if !unwrap.IsNilType(errorSlot) && !unwrap.IsOptionalLike(result) {
 				return typ.NewOptional(result)
 			}
 		}
@@ -90,8 +95,56 @@ func ApplyEffectTransform(fn *typ.Function, args []typ.Type, returnIdx int, base
 		if result != nil {
 			return finish(result)
 		}
+	case effect.WithMetatable:
+		if withMeta := tableWithMetatable(resolveParamType(args, transform.Table), resolveParamType(args, transform.Metatable)); withMeta != nil {
+			return finish(withMeta)
+		}
 	}
 	return finish(baseReturn)
+}
+
+// tableWithMetatable attaches meta as the metatable of a record table. Nil
+// clears an existing metatable; an optional metatable preserves both possible
+// results. An absent argument leaves the table unchanged and a pending type
+// leaves the result pending. Only records carry a metatable; other table shapes
+// are returned unchanged. Aliased and recursive metatables keep their identity.
+func tableWithMetatable(table, meta typ.Type) typ.Type {
+	if table == nil {
+		return nil
+	}
+	rec, ok := unwrap.Alias(table).(*typ.Record)
+	if !ok {
+		return table
+	}
+	if meta == nil {
+		return table
+	}
+	if unwrap.IsNilType(meta) {
+		return rec.WithMetatable(nil)
+	}
+	if optional, ok := unwrap.Alias(meta).(*typ.Optional); ok {
+		inner := optional.Inner
+		withMeta := tableWithMetatable(table, inner)
+		withoutMeta := rec.WithMetatable(nil)
+		if withMeta == nil || typ.IsUnresolved(withMeta) {
+			return withMeta
+		}
+		return typ.NewUnion(withMeta, withoutMeta)
+	}
+	if union, ok := unwrap.Alias(meta).(*typ.Union); ok {
+		members := make([]typ.Type, 0, len(union.Members))
+		for _, member := range union.Members {
+			members = append(members, tableWithMetatable(table, member))
+		}
+		return typ.NewUnion(members...)
+	}
+	if typ.IsUnresolved(meta) {
+		return typ.Unresolved
+	}
+	if unwrap.Record(meta) == nil {
+		return table
+	}
+	return rec.WithMetatable(meta)
 }
 
 func resolveParamType(args []typ.Type, ref effect.ParamRef) typ.Type {
@@ -174,34 +227,36 @@ func buildSelectResultUnion(args []typ.Type, transform effect.SelectResultOfCase
 	seen := make(map[uint64]bool)
 
 	for caseIdx, caseType := range caseTypes {
-		channelType, valueType := extractSelectCaseParts(caseType)
-		if channelType == nil {
-			// Keep unknown/any case elements conservative; skip concrete non-case fields.
-			if !typ.IsAny(caseType) && !typ.IsUnknown(caseType) {
-				continue
+		for _, alternative := range selectCaseAlternatives(caseType) {
+			channelType, valueType := extractSelectCaseParts(alternative)
+			if channelType == nil {
+				// Keep unknown/any case elements conservative; skip concrete non-case fields.
+				if !typ.IsAny(alternative) && !typ.IsUnknown(alternative) {
+					continue
+				}
+				channelType = typ.Any
+				valueType = typ.Any
 			}
-			channelType = typ.Any
-			valueType = typ.Any
-		}
 
-		builder := typ.NewRecord().
-			Field("channel", channelType).
-			Field("ok", typ.Boolean).
-			Field("value", valueType).
-			// Preserve case multiplicity even when channel/value types are equal.
-			// This keeps identity-sensitive narrowing sound for `result.channel ~= ch`.
-			Field("__select_case_id", typ.LiteralInt(int64(caseIdx)))
+			builder := typ.NewRecord().
+				Field("channel", channelType).
+				Field("ok", typ.Boolean).
+				Field("value", valueType).
+				// Preserve case multiplicity even when channel/value types are equal.
+				// This keeps identity-sensitive narrowing sound for `result.channel ~= ch`.
+				Field("__select_case_id", typ.LiteralInt(int64(caseIdx)))
 
-		if addDefault {
-			builder = builder.OptField("default", typ.Boolean)
-		}
+			if addDefault {
+				builder = builder.OptField("default", typ.Boolean)
+			}
 
-		resultRecord := builder.Build()
+			resultRecord := builder.Build()
 
-		h := resultRecord.Hash()
-		if !seen[h] {
-			seen[h] = true
-			resultTypes = append(resultTypes, resultRecord)
+			h := resultRecord.Hash()
+			if !seen[h] {
+				seen[h] = true
+				resultTypes = append(resultTypes, resultRecord)
+			}
 		}
 	}
 
@@ -325,6 +380,16 @@ func extractSelectCaseElements(casesArg typ.Type) []typ.Type {
 	}
 
 	return []typ.Type{casesArg}
+}
+
+// selectCaseAlternatives returns the case types one case element may be: the
+// members of a union, as a case built on a channel of union type is, or the
+// element itself.
+func selectCaseAlternatives(caseType typ.Type) []typ.Type {
+	if u, ok := unwrap.Alias(caseType).(*typ.Union); ok {
+		return u.Members
+	}
+	return []typ.Type{caseType}
 }
 
 // extractSelectCaseParts extracts the channel and value types from a SelectCase<Ch, T>.

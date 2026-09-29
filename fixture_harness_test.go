@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"github.com/wippyai/go-lua/compiler/check"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -12,8 +13,11 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
+	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/diag"
+	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/io"
+	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -22,7 +26,7 @@ type fixtureSuite struct {
 	Description string        `json:"description,omitempty"`
 	Files       []string      `json:"files,omitempty"`
 	Stdlib      *bool         `json:"stdlib,omitempty"`
-	Packages    []string      `json:"packages,omitempty"` // predefined system packages: "channel", "process", "time", "funcs"
+	Packages    []string      `json:"packages,omitempty"` // predefined system packages: "channel", "funcs", "process", "time", "sql", "fs"
 	Check       *fixtureCheck `json:"check,omitempty"`
 	Run         *fixtureRun   `json:"run,omitempty"`
 	Bench       *fixtureBench `json:"bench,omitempty"`
@@ -32,6 +36,44 @@ type fixtureSuite struct {
 type fixtureCheck struct {
 	Errors *int   `json:"errors,omitempty"`
 	Skip   string `json:"skip,omitempty"`
+	// ExpectedErrors records known diagnostics in unmodified source fixtures.
+	ExpectedErrors []struct {
+		File     string `json:"file"`
+		Line     int    `json:"line"`
+		Contains string `json:"contains"`
+	} `json:"expected_errors,omitempty"`
+	// ExportContains checks inferred module field types at import boundaries.
+	ExportContains map[string]string `json:"export_contains,omitempty"`
+	// Modes lists the checking modes the fixture runs under; the default is
+	// the gradual mode alone.
+	Modes []string `json:"modes,omitempty"`
+}
+
+// Checking modes a fixture can run under.
+const (
+	modeGradual = "gradual"
+	modeStrict  = "strict"
+)
+
+// checkModes returns the checking modes s runs under.
+func checkModes(s namedSuite) []string {
+	if s.Suite.Check != nil && len(s.Suite.Check.Modes) > 0 {
+		return s.Suite.Check.Modes
+	}
+	return []string{modeGradual}
+}
+
+// checkOptionsFor returns the check options of mode.
+func checkOptionsFor(t *testing.T, mode string) check.Options {
+	t.Helper()
+	switch mode {
+	case modeGradual:
+		return check.Options{}
+	case modeStrict:
+		return check.Options{Strict: true}
+	}
+	t.Fatalf("unknown check mode: %s", mode)
+	return check.Options{}
 }
 
 type fixtureRun struct {
@@ -54,11 +96,12 @@ type namedSuite struct {
 type inlineExpectation struct {
 	File     string
 	Line     int
-	Severity string // "error" or "warning"
+	Severity string // "error", "warning" or "hint"
+	Mode     string // checking mode the expectation holds in; empty for every mode
 	Contains string
 }
 
-var expectRe = regexp.MustCompile(`--\s*expect-(error|warning)(?::\s*(.+?))?\s*$`)
+var expectRe = regexp.MustCompile(`^\s*expect-(error|warning|hint)(?:\[([a-z-]+)\])?(?::\s*(.+?))?\s*$`)
 
 // discoverFixtures recursively walks root and finds directories containing .lua files.
 func discoverFixtures(root string) ([]namedSuite, error) {
@@ -148,26 +191,43 @@ func readFixtureFile(dir, name string) string {
 	return string(data)
 }
 
-// parseExpectations scans source lines for expect-error/expect-warning comments.
+// parseExpectations scans source lines for expect-error, expect-warning and
+// expect-hint comments. A line may carry several, each after its own "--".
 func parseExpectations(filename, source string) []inlineExpectation {
 	var expectations []inlineExpectation
 	for i, line := range strings.Split(source, "\n") {
-		m := expectRe.FindStringSubmatch(line)
-		if m == nil {
-			continue
+		parts := strings.Split(line, "--")
+		for _, part := range parts[1:] {
+			m := expectRe.FindStringSubmatch(part)
+			if m == nil {
+				continue
+			}
+			expectations = append(expectations, inlineExpectation{
+				File:     filename,
+				Line:     i + 1,
+				Severity: m[1],
+				Mode:     m[2],
+				Contains: strings.TrimSpace(m[3]),
+			})
 		}
-		expectations = append(expectations, inlineExpectation{
-			File:     filename,
-			Line:     i + 1,
-			Severity: m[1],
-			Contains: strings.TrimSpace(m[2]),
-		})
 	}
 	return expectations
 }
 
-// runCheckPhase type-checks the fixture and verifies diagnostics.
-func runCheckPhase(t *testing.T, s namedSuite) {
+// checkConvergence fails the fixture for every fixpoint that did not converge
+// while checking a module.
+func checkConvergence(t *testing.T, diagnostics []diag.Diagnostic) {
+	t.Helper()
+	for _, d := range diagnostics {
+		if d.Severity == diag.SeverityWarning && (strings.Contains(d.Message, "fixpoint did not converge") ||
+			strings.Contains(d.Message, "type inference did not converge")) {
+			t.Errorf("non-convergence at %s:%d: %s", d.Position.File, d.Position.Line, d.Message)
+		}
+	}
+}
+
+// runCheckPhase type-checks the fixture under mode and verifies diagnostics.
+func runCheckPhase(t *testing.T, s namedSuite, mode string) {
 	t.Helper()
 	if s.Suite.Check != nil && s.Suite.Check.Skip != "" {
 		t.Skip(s.Suite.Check.Skip)
@@ -176,7 +236,7 @@ func runCheckPhase(t *testing.T, s namedSuite) {
 	files := resolveFiles(s)
 	stdlib := resolveStdlib(s)
 
-	var baseOpts []testutil.Option
+	baseOpts := []testutil.Option{testutil.WithCheckOptions(checkOptionsFor(t, mode))}
 	if stdlib {
 		baseOpts = append(baseOpts, testutil.WithStdlib())
 	}
@@ -194,7 +254,11 @@ func runCheckPhase(t *testing.T, s namedSuite) {
 	for _, f := range files {
 		src := readFixtureFile(s.Dir, f)
 		sources[f] = src
-		allExpectations = append(allExpectations, parseExpectations(f, src)...)
+		for _, exp := range parseExpectations(f, src) {
+			if exp.Mode == "" || exp.Mode == mode {
+				allExpectations = append(allExpectations, exp)
+			}
+		}
 	}
 
 	// Check and export dependency modules (all except entry), preserving file order
@@ -204,6 +268,7 @@ func runCheckPhase(t *testing.T, s namedSuite) {
 	}
 	var moduleOrder []namedModule
 	var allDiagnostics []diag.Diagnostic
+	checkedExports := make(map[string]bool)
 	for _, f := range files[:len(files)-1] {
 		modOpts := append([]testutil.Option{}, baseOpts...)
 		for _, nm := range moduleOrder {
@@ -213,6 +278,29 @@ func runCheckPhase(t *testing.T, s namedSuite) {
 		mod := testutil.CheckAndExport(sources[f], name, modOpts...)
 		moduleOrder = append(moduleOrder, namedModule{name, mod})
 		allDiagnostics = append(allDiagnostics, mod.Errors...)
+		checkConvergence(t, mod.Session.Diagnostics)
+		var exportContains map[string]string
+		if s.Suite.Check != nil {
+			exportContains = s.Suite.Check.ExportContains
+		}
+		for qualified, expected := range exportContains {
+			module, field, ok := strings.Cut(qualified, ".")
+			if !ok || module != name {
+				continue
+			}
+			checkedExports[qualified] = true
+			fieldType, found := core.Field(mod.Manifest.Export, field)
+			if !found || !strings.Contains(typ.FormatShort(fieldType), expected) {
+				t.Errorf("export %s: expected type containing %q, got %s", qualified, expected, typ.FormatShort(fieldType))
+			}
+		}
+	}
+	if s.Suite.Check != nil {
+		for qualified := range s.Suite.Check.ExportContains {
+			if !checkedExports[qualified] {
+				t.Errorf("export %s: module was not checked", qualified)
+			}
+		}
 	}
 
 	// Check entry point
@@ -223,9 +311,17 @@ func runCheckPhase(t *testing.T, s namedSuite) {
 	entryFile := files[len(files)-1]
 	result := testutil.Check(sources[entryFile], entryOpts...)
 	allDiagnostics = append(allDiagnostics, result.Diagnostics...)
+	checkConvergence(t, result.Diagnostics)
 
 	// Verify expectations
 	if len(allExpectations) > 0 {
+		verifyInlineExpectations(t, allExpectations, allDiagnostics, entryFile)
+	} else if s.Suite.Check != nil && len(s.Suite.Check.ExpectedErrors) > 0 {
+		for _, expected := range s.Suite.Check.ExpectedErrors {
+			allExpectations = append(allExpectations, inlineExpectation{
+				File: expected.File, Line: expected.Line, Severity: "error", Contains: expected.Contains,
+			})
+		}
 		verifyInlineExpectations(t, allExpectations, allDiagnostics, entryFile)
 	} else if s.Suite.Check != nil && s.Suite.Check.Errors != nil {
 		verifyErrorCount(t, *s.Suite.Check.Errors, allDiagnostics)
@@ -276,7 +372,7 @@ func verifyInlineExpectations(t *testing.T, expectations []inlineExpectation, di
 func matchesExpectation(exp inlineExpectation, d diag.Diagnostic, entryFile string) bool {
 	expFile := exp.File
 	// Match diagnostic file: d.Position.File is set by the checker (e.g. "test.lua" or module name)
-	if !strings.HasSuffix(d.Position.File, strings.TrimSuffix(expFile, ".lua")) &&
+	if d.Position.File != expFile && !strings.HasSuffix(d.Position.File, strings.TrimSuffix(expFile, ".lua")) &&
 		(expFile != entryFile || d.Position.File != "test.lua") {
 		return false
 	}
@@ -284,8 +380,11 @@ func matchesExpectation(exp inlineExpectation, d diag.Diagnostic, entryFile stri
 		return false
 	}
 	wantSeverity := diag.SeverityError
-	if exp.Severity == "warning" {
+	switch exp.Severity {
+	case "warning":
 		wantSeverity = diag.SeverityWarning
+	case "hint":
+		wantSeverity = diag.SeverityHint
 	}
 	if d.Severity != wantSeverity {
 		return false
@@ -394,34 +493,60 @@ func resolvePackageManifest(name string) *io.Manifest {
 		return testutil.ChannelManifest()
 	case "funcs":
 		return testutil.FuncsManifest()
+	case "process":
+		return testutil.ProcessManifest()
 	case "time":
-		return fixtureTimeManifest()
+		return testutil.TimeManifest()
+	case "sql":
+		return fixtureSQLManifest()
+	case "fs":
+		return fixtureFSManifest()
 	default:
 		return nil
 	}
 }
 
-func fixtureTimeManifest() *io.Manifest {
-	m := io.NewManifest("time")
-
-	durationType := typ.NewInterface("time.Duration", []typ.Method{
-		{Name: "seconds", Type: typ.Func().Param("self", typ.Self).Returns(typ.Number).Build()},
+func fixtureSQLManifest() *io.Manifest {
+	row := typ.NewMap(typ.String, typ.Any)
+	rows := typ.NewArray(row)
+	tx := typ.NewInterface("sql.Transaction", []typ.Method{
+		{Name: "query", Type: typ.Func().Param("self", typ.Self).Param("sql", typ.String).Variadic(typ.Any).Returns(rows, typ.NewOptional(typ.LuaError)).Build()},
+		{Name: "execute", Type: typ.Func().Param("self", typ.Self).Param("sql", typ.String).Variadic(typ.Any).Returns(typ.Any, typ.NewOptional(typ.LuaError)).Build()},
+		{Name: "commit", Type: typ.Func().Param("self", typ.Self).Returns(typ.Boolean, typ.NewOptional(typ.LuaError)).Build()},
+		{Name: "rollback", Type: typ.Func().Param("self", typ.Self).Returns(typ.Boolean, typ.NewOptional(typ.LuaError)).Build()},
 	})
-
-	timeType := typ.NewInterface("time.Time", []typ.Method{
-		{Name: "sub", Type: typ.Func().Param("self", typ.Self).Param("t", typ.Self).Returns(durationType).Build()},
-		{Name: "add", Type: typ.Func().Param("self", typ.Self).Param("d", durationType).Returns(typ.Self).Build()},
-		{Name: "unix", Type: typ.Func().Param("self", typ.Self).Returns(typ.Integer).Build()},
+	db := typ.NewInterface("sql.DB", []typ.Method{
+		{Name: "type", Type: typ.Func().Param("self", typ.Self).Returns(typ.String, typ.NewOptional(typ.LuaError)).Build()},
+		{Name: "query", Type: typ.Func().Param("self", typ.Self).Param("sql", typ.String).Variadic(typ.Any).Returns(rows, typ.NewOptional(typ.LuaError)).Build()},
+		{Name: "execute", Type: typ.Func().Param("self", typ.Self).Param("sql", typ.String).Variadic(typ.Any).Returns(typ.Any, typ.NewOptional(typ.LuaError)).Build()},
+		{Name: "begin", Type: typ.Func().Param("self", typ.Self).OptParam("opts", typ.Any).Returns(tx, typ.NewOptional(typ.LuaError)).Build()},
+		{Name: "release", Type: typ.Func().Param("self", typ.Self).Returns(typ.Boolean, typ.NewOptional(typ.LuaError)).Build()},
 	})
+	m := io.NewManifest("sql")
+	m.DefineType("DB", db)
+	m.DefineType("Transaction", tx)
+	m.SetExport(typ.NewRecord().
+		Field("get", typ.Func().Param("dsn", typ.String).Returns(db, typ.NewOptional(typ.LuaError)).Spec(contract.NewSpec().WithEffects(effect.ErrorReturn{ValueIndex: 0, ErrorIndex: 1})).Build()).
+		Field("type", typ.NewRecord().
+			Field("POSTGRES", typ.String).
+			Field("MYSQL", typ.String).
+			Field("SQLITE", typ.String).
+			Field("UNKNOWN", typ.String).Build()).Build())
+	return m
+}
 
-	m.DefineType("Time", timeType)
-	m.DefineType("Duration", durationType)
-
-	moduleType := typ.NewInterface("time", []typ.Method{
-		{Name: "now", Type: typ.Func().Returns(timeType).Build()},
+func fixtureFSManifest() *io.Manifest {
+	volume := typ.NewInterface("fs.FS", []typ.Method{
+		{Name: "mkdir", Type: typ.Func().Param("self", typ.Self).Param("path", typ.String).Returns(typ.Boolean, typ.NewOptional(typ.LuaError)).Build()},
+		{Name: "exists", Type: typ.Func().Param("self", typ.Self).Param("path", typ.String).Returns(typ.Boolean, typ.NewOptional(typ.LuaError)).Build()},
+		{Name: "readfile", Type: typ.Func().Param("self", typ.Self).Param("path", typ.String).Returns(typ.String, typ.NewOptional(typ.LuaError)).Build()},
+		{Name: "writefile", Type: typ.Func().Param("self", typ.Self).Param("path", typ.String).Param("data", typ.String).OptParam("options", typ.String).Returns(typ.Boolean, typ.NewOptional(typ.LuaError)).Build()},
 	})
-	m.SetExport(moduleType)
-
+	m := io.NewManifest("fs")
+	m.DefineType("FS", volume)
+	m.SetExport(typ.NewInterface("fs", []typ.Method{
+		{Name: "get", Type: typ.Func().Param("name", typ.String).Returns(volume, typ.NewOptional(typ.LuaError)).Build()},
+	}))
 	return m
 }
 

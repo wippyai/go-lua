@@ -1,0 +1,3 @@
+{
+  "description": "a guard's fact about a variable ends at its reassignment: a later call does not see the argument narrowed"
+}

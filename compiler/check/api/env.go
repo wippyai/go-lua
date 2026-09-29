@@ -53,16 +53,16 @@ type BaseEnv interface {
 	WithGlobalOverlay(overlay map[string]typ.Type) BaseEnv
 }
 
-// DeclaredEnv provides access to pre-flow return summaries.
+// DeclaredEnv provides access to stable callable facts.
 type DeclaredEnv interface {
 	BaseEnv
-	ReturnSummaries() map[cfg.SymbolID][]typ.Type
+	Callables() Callables
 }
 
-// NarrowEnv provides access to post-flow return summaries.
+// NarrowEnv provides access to stable callable facts.
 type NarrowEnv interface {
 	BaseEnv
-	NarrowReturnSummaries() map[cfg.SymbolID][]typ.Type
+	Callables() Callables
 }
 
 type envBase struct {
@@ -207,13 +207,13 @@ func (c *envCommon) GlobalTypes() map[string]typ.Type {
 // DeclaredEnvImpl is the concrete declared-phase environment.
 type DeclaredEnvImpl struct {
 	*envCommon
-	returnSummaries map[cfg.SymbolID][]typ.Type
+	callables Callables
 }
 
 // NarrowEnvImpl is the concrete narrowing-phase environment.
 type NarrowEnvImpl struct {
 	*envCommon
-	narrowReturns map[cfg.SymbolID][]typ.Type
+	callables Callables
 }
 
 var _ BaseEnv = (*DeclaredEnvImpl)(nil)
@@ -423,20 +423,20 @@ func (e *NarrowEnvImpl) WithGlobalOverlay(overlay map[string]typ.Type) BaseEnv {
 	return &next
 }
 
-// ReturnSummaries returns the return type summaries for sibling functions.
-func (e *DeclaredEnvImpl) ReturnSummaries() map[cfg.SymbolID][]typ.Type {
+// Callables returns stable facts for function literals.
+func (e *DeclaredEnvImpl) Callables() Callables {
 	if e == nil {
 		return nil
 	}
-	return e.returnSummaries
+	return e.callables
 }
 
-// NarrowReturnSummaries returns post-flow return summaries for narrowing.
-func (e *NarrowEnvImpl) NarrowReturnSummaries() map[cfg.SymbolID][]typ.Type {
+// Callables returns stable facts for function literals.
+func (e *NarrowEnvImpl) Callables() Callables {
 	if e == nil {
 		return nil
 	}
-	return e.narrowReturns
+	return e.callables
 }
 
 // DeclaredEnvConfig holds inputs for building a declared-phase Env.
@@ -451,7 +451,7 @@ type DeclaredEnvConfig struct {
 	GlobalTypes     map[string]typ.Type
 	SiblingTypes    map[cfg.SymbolID]typ.Type
 	LiteralTypes    flow.DeclaredTypes
-	ReturnSummaries map[cfg.SymbolID][]typ.Type
+	Callables Callables
 }
 
 // NarrowEnvConfig holds inputs for building a narrowing-phase Env.
@@ -467,7 +467,7 @@ type NarrowEnvConfig struct {
 	GlobalTypes           map[string]typ.Type
 	SiblingTypes          map[cfg.SymbolID]typ.Type
 	LiteralTypes          flow.DeclaredTypes
-	NarrowReturnSummaries map[cfg.SymbolID][]typ.Type
+	Callables Callables
 }
 
 func newEnvBase(
@@ -510,7 +510,7 @@ func NewDeclaredEnv(cfg DeclaredEnvConfig) *DeclaredEnvImpl {
 		cfg.ModuleAliases,
 		cfg.GlobalTypes,
 	)
-	return &DeclaredEnvImpl{envCommon: &envCommon{base: base}, returnSummaries: cfg.ReturnSummaries}
+	return &DeclaredEnvImpl{envCommon: &envCommon{base: base}, callables: cfg.Callables}
 }
 
 // NewNarrowEnv creates a narrowing-phase Env.
@@ -529,7 +529,7 @@ func NewNarrowEnv(cfg NarrowEnvConfig) *NarrowEnvImpl {
 		cfg.ModuleAliases,
 		cfg.GlobalTypes,
 	)
-	return &NarrowEnvImpl{envCommon: &envCommon{base: base}, narrowReturns: cfg.NarrowReturnSummaries}
+	return &NarrowEnvImpl{envCommon: &envCommon{base: base}, callables: cfg.Callables}
 }
 
 // ReturnInferenceEnvConfig holds inputs for return type inference.
@@ -540,7 +540,7 @@ type ReturnInferenceEnvConfig struct {
 	DeclaredTypes   flow.DeclaredTypes
 	GlobalTypes     map[string]typ.Type
 	ModuleAliases   map[cfg.SymbolID]string
-	ReturnSummaries map[cfg.SymbolID][]typ.Type
+	Callables Callables
 }
 
 // NewReturnInferenceEnv creates a declared-phase Env for return inference.
@@ -559,7 +559,7 @@ func NewReturnInferenceEnv(cfg ReturnInferenceEnvConfig) *DeclaredEnvImpl {
 		cfg.ModuleAliases,
 		cfg.GlobalTypes,
 	)
-	return &DeclaredEnvImpl{envCommon: &envCommon{base: base}, returnSummaries: cfg.ReturnSummaries}
+	return &DeclaredEnvImpl{envCommon: &envCommon{base: base}, callables: cfg.Callables}
 }
 
 // unifiedTypeFacts implements flow.TypeFacts with layered type source lookup.
@@ -657,9 +657,8 @@ func (f *unifiedTypeFacts) IsAnnotated(sym cfg.SymbolID) bool {
 	return f.annotatedVars[sym]
 }
 
+// toTypedValue wraps a declared type. A declared unknown is a final dynamic
+// type; only an absent declaration leaves the state unresolved.
 func (f *unifiedTypeFacts) toTypedValue(t typ.Type) flow.TypedValue {
-	if typ.IsUnknown(t) {
-		return flow.TypedValue{Type: t, State: flow.StateUnknown}
-	}
 	return flow.TypedValue{Type: t, State: flow.StateResolved}
 }

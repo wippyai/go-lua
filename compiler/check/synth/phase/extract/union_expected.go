@@ -5,7 +5,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/query/core"
-	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
@@ -42,7 +41,7 @@ func (s *Synthesizer) synthExprWithUnionExpected(
 	var results []typ.Type
 	for _, member := range union.Members {
 		result := s.synthExprWithExpectedSingle(expr, sc, p, recurse, member)
-		if result != nil && s.isSubtype(result, member) {
+		if result != nil && s.isAssignable(result, member) {
 			results = append(results, result)
 		}
 	}
@@ -54,12 +53,13 @@ func (s *Synthesizer) synthExprWithUnionExpected(
 	return typ.NewUnion(results...)
 }
 
-// isSubtype checks subtype relationship using memoized query if available.
-func (s *Synthesizer) isSubtype(sub, super typ.Type) bool {
+// isAssignable reports whether a value of type sub may be used where super is
+// expected, under the session's assignability mode.
+func (s *Synthesizer) isAssignable(sub, super typ.Type) bool {
 	if s.deps.Types != nil {
-		return s.deps.Types.IsSubtype(s.deps.Ctx, sub, super)
+		return s.deps.Types.IsAssignable(s.deps.Ctx, sub, super)
 	}
-	return subtype.IsSubtype(sub, super)
+	return core.AssignabilityOf(s.deps.Ctx).Assignable(sub, super)
 }
 
 // synthExprWithExpectedSingle handles non-union expected types.

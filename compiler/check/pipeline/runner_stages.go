@@ -10,13 +10,12 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth"
-	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
 func (r *Runner) resolveSynthesizedSignature(
-	ctx *db.QueryContext,
+	env phase.PhaseEnv,
 	store api.StoreView,
 	graph *cfg.Graph,
 	fn *ast.FunctionExpr,
@@ -37,12 +36,8 @@ func (r *Runner) resolveSynthesizedSignature(
 		return synthSig
 	}
 	if synthSig == nil {
-		engine := synth.New(synth.Config{
-			Ctx:       ctx,
-			Types:     r.types,
-			Manifests: r.manifests,
-			Phase:     api.PhaseTypeResolution,
-		})
+		env.Phase = api.PhaseTypeResolution
+		engine := synth.New(env)
 		if sig := engine.ResolveFunctionSignature(fn, parent); sig != nil {
 			synthSig = sig
 		} else if seedFn, ok := returns.BuildSeedFunctionTypeWithBindings(fn, engine, parent, graph.Bindings()).(*typ.Function); ok {
@@ -62,7 +57,7 @@ func (r *Runner) appendCapturedMutatorAssignments(
 	env phase.PhaseEnv,
 	scopeOut phase.ScopeOutput,
 	literalOut phase.LiteralOutput,
-	returnSummaries map[cfg.SymbolID][]typ.Type,
+	callables api.Callables,
 	extractOut *phase.FlowExtractOutput,
 ) {
 	if store == nil || graph == nil || extractOut == nil || extractOut.Inputs == nil {
@@ -83,19 +78,13 @@ func (r *Runner) appendCapturedMutatorAssignments(
 		WithScope(scopeOut).
 		WithSiblingTypes(scopeOut.SiblingTypes).
 		WithLiteralTypes(literalOut.LiteralTypes).
-		WithReturnSummaries(returnSummaries).
+		WithCallables(callables).
 		BuildDeclared()
 
-	synthEngine := synth.New(synth.Config{
-		Ctx:            env.Ctx,
-		Types:          env.Types,
-		Scopes:         scopeOut.Scopes,
-		Manifests:      env.Manifests,
-		Env:            declaredEnv,
-		Phase:          api.PhaseScopeCompute,
-		ModuleBindings: env.ModuleBindings,
-		ModuleAliases:  env.ModuleAliases,
-	})
+	env.Scopes = scopeOut.Scopes
+	env.Env = declaredEnv
+	env.Phase = api.PhaseScopeCompute
+	synthEngine := synth.New(env)
 
 	symResolver := resolve.BuildInputSymbolResolver(declaredEnv, extractOut.Inputs)
 	assignmentTypes := resolve.BuildAssignmentTypeResolver(extractOut.Inputs)
@@ -108,6 +97,34 @@ func (r *Runner) appendCapturedMutatorAssignments(
 		return
 	}
 	extractOut.Inputs.ContainerMutatorAssignments = append(extractOut.Inputs.ContainerMutatorAssignments, extra...)
+}
+
+// appendFieldWriteEffects adds the field writes that closures created in graph
+// and functions called from it may perform on tables held by graph's symbols.
+func (r *Runner) appendFieldWriteEffects(
+	store api.StoreView,
+	graph *cfg.Graph,
+	parent *scope.State,
+	extractOut *phase.FlowExtractOutput,
+) {
+	if store == nil || graph == nil || extractOut == nil || extractOut.Inputs == nil {
+		return
+	}
+	bindings := graph.Bindings()
+	if bindings == nil {
+		bindings = store.ModuleBindings()
+	}
+	effects := returns.CollectFieldWriteEffects(
+		graph,
+		bindings,
+		store.GetFieldWritesSnapshot(graph, parent),
+		&returns.StoreFieldWriteSource{Store: store, Bindings: bindings},
+	)
+	extractOut.Inputs.FieldWriteEffects = append(extractOut.Inputs.FieldWriteEffects, effects...)
+	extractOut.Inputs.FieldWriteEffects = append(extractOut.Inputs.FieldWriteEffects,
+		r.importedModuleCallWrites(store, graph, bindings)...)
+	extractOut.Inputs.FieldWriteEffects = append(extractOut.Inputs.FieldWriteEffects,
+		r.importedTruthyCallbackWrites(store, graph, bindings)...)
 }
 
 func (r *Runner) runComputePasses(graph *cfg.Graph, scopes map[cfg.Point]*scope.State) map[string]any {
@@ -144,10 +161,8 @@ func (r *Runner) literalSignatureForFunction(store api.StoreView, graph *cfg.Gra
 	if parentScope == nil {
 		return nil
 	}
-	if sigs := store.GetLiteralSigsSnapshot(parentGraph, parentScope); len(sigs) > 0 {
-		if sig := sigs[fn]; sig != nil {
-			return sig
-		}
+	if sig := store.GetCallablesSnapshot(parentGraph, parentScope)[fn].Sig; sig != nil {
+		return sig
 	}
 	return nil
 }
@@ -157,20 +172,27 @@ func (r *Runner) literalSigProvider(store api.StoreView, graph *cfg.Graph, paren
 		return nil
 	}
 	var literalSigMap map[*ast.FunctionExpr]*typ.Function
-	if sigs := store.GetLiteralSigsSnapshot(graph, parent); len(sigs) > 0 {
-		literalSigMap = mergeLiteralSignatures(nil, sigs, true)
+	if callables := store.GetCallablesSnapshot(graph, parent); len(callables) > 0 {
+		literalSigMap = mergeLiteralSignatures(nil, callables, true)
 	}
 	if meta, ok := store.NestedMetaFor(graph.ID()); ok {
 		parentGraph := store.Graphs()[meta.ParentGraphID]
 		if parentGraph != nil {
 			parentScope := r.parentScopeForGraph(store, parentGraph)
 			if parentScope != nil {
-				if sigs := store.GetLiteralSigsSnapshot(parentGraph, parentScope); len(sigs) > 0 {
-					literalSigMap = mergeLiteralSignatures(literalSigMap, sigs, false)
+				if callables := store.GetCallablesSnapshot(parentGraph, parentScope); len(callables) > 0 {
+					literalSigMap = mergeLiteralSignatures(literalSigMap, callables, false)
 				}
 			}
 			if sigs := scratchLiteralSigs(store, parentGraph.ID()); len(sigs) > 0 {
-				literalSigMap = mergeLiteralSignatures(literalSigMap, sigs, false)
+				if literalSigMap == nil {
+					literalSigMap = make(map[*ast.FunctionExpr]*typ.Function, len(sigs))
+				}
+				for fn, sig := range sigs {
+					if fn != nil && sig != nil && literalSigMap[fn] == nil {
+						literalSigMap[fn] = sig
+					}
+				}
 			}
 		}
 	}
@@ -221,7 +243,7 @@ func (r *Runner) parentScopeForGraph(store api.StoreView, graph *cfg.Graph) *sco
 	return nil
 }
 
-func (r *Runner) mergeCapturedParentFuncTypes(
+func (r *Runner) capturedCallablesFromOwner(
 	store api.StoreView,
 	graph *cfg.Graph,
 	fn *ast.FunctionExpr,
@@ -242,12 +264,16 @@ func (r *Runner) mergeCapturedParentFuncTypes(
 	if parentScope == nil {
 		return
 	}
-	parentFuncTypes := store.GetLocalFuncTypesSnapshot(parentGraph, parentScope)
-	if len(parentFuncTypes) == 0 {
-		return
+	var parentFacts map[cfg.SymbolID]api.FunctionFact
+	if source, ok := store.(interface {
+		GetFunctionFactsSnapshot(*cfg.Graph, *scope.State) map[cfg.SymbolID]api.FunctionFact
+	}); ok {
+		parentFacts = source.GetFunctionFactsSnapshot(parentGraph, parentScope)
+	} else {
+		parentFacts = returns.DefinitionView(parentGraph, store.GetCallablesSnapshot(parentGraph, parentScope))
 	}
 	for _, sym := range graph.Bindings().CapturedSymbols(fn) {
-		ft := parentFuncTypes[sym]
+		ft := parentFacts[sym].Func
 		if sym == 0 || ft == nil {
 			continue
 		}
@@ -260,7 +286,7 @@ func (r *Runner) mergeCapturedParentFuncTypes(
 
 func mergeLiteralSignatures(
 	dst map[*ast.FunctionExpr]*typ.Function,
-	src map[*ast.FunctionExpr]*typ.Function,
+	src api.Callables,
 	overwrite bool,
 ) map[*ast.FunctionExpr]*typ.Function {
 	if len(src) == 0 {
@@ -269,7 +295,8 @@ func mergeLiteralSignatures(
 	if dst == nil {
 		dst = make(map[*ast.FunctionExpr]*typ.Function, len(src))
 	}
-	for fnExpr, sig := range src {
+	for fnExpr, fact := range src {
+		sig := fact.Sig
 		if fnExpr == nil || sig == nil {
 			continue
 		}

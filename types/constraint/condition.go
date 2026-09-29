@@ -77,16 +77,19 @@ type Condition struct {
 	// Each inner slice is a conjunction of constraints that must all hold.
 	// The condition is satisfied if ANY disjunct is fully satisfied.
 	Disjuncts [][]Constraint
+	// normalized records that the disjuncts have already passed contradiction
+	// elimination. Literal conditions from external decoders leave this false.
+	normalized bool
 }
 
 // TrueCondition returns a condition that imposes no constraints.
 func TrueCondition() Condition {
-	return Condition{Disjuncts: [][]Constraint{{}}}
+	return Condition{Disjuncts: [][]Constraint{{}}, normalized: true}
 }
 
 // FalseCondition returns an unsatisfiable condition.
 func FalseCondition() Condition {
-	return Condition{}
+	return Condition{normalized: true}
 }
 
 // FromConstraints builds a condition with a single conjunction.
@@ -94,7 +97,11 @@ func FromConstraints(items ...Constraint) Condition {
 	if len(items) == 0 {
 		return TrueCondition()
 	}
-	return Condition{Disjuncts: [][]Constraint{canonicalizeConjunction(items)}}
+	conj := canonicalizeConjunction(items)
+	if conjunctionImpossible(conj) {
+		return FalseCondition()
+	}
+	return Condition{Disjuncts: [][]Constraint{conj}, normalized: true}
 }
 
 // FromDisjuncts builds a condition from multiple conjunctions.
@@ -215,15 +222,27 @@ func And(a, b Condition) Condition {
 	// Fast path: single disjunct on both sides (very common)
 	if len(a.Disjuncts) == 1 && len(b.Disjuncts) == 1 {
 		merged := mergeConjunctions(a.Disjuncts[0], b.Disjuncts[0])
-		return Condition{Disjuncts: [][]Constraint{merged}}
+		if conjunctionImpossible(merged) {
+			return FalseCondition()
+		}
+		return Condition{Disjuncts: [][]Constraint{merged}, normalized: true}
 	}
 
 	if len(a.Disjuncts)*len(b.Disjuncts) > DefaultMaxDisjuncts {
-		common := mergeConjunctions(a.MustConstraints(), b.MustConstraints())
-		if len(common) == 0 {
-			return TrueCondition()
+		// Either operand is a sound over-approximation of their conjunction.
+		// Keep the smaller disjunction, including its relationships between
+		// paths, and add facts that hold in every case of the other operand.
+		// Collapsing both sides to common facts loses a fresh return relation
+		// whenever an earlier path already has many alternatives.
+		keep, drop := b, a
+		if len(a.Disjuncts) < len(b.Disjuncts) {
+			keep, drop = a, b
 		}
-		return Condition{Disjuncts: [][]Constraint{common}}
+		must := drop.MustConstraints()
+		if len(must) == 0 {
+			return keep
+		}
+		return And(keep, FromConstraints(must...))
 	}
 
 	out := make([][]Constraint, 0, len(a.Disjuncts)*len(b.Disjuncts))
@@ -246,6 +265,10 @@ func And(a, b Condition) Condition {
 
 // Or returns the disjunction of two conditions.
 func Or(a, b Condition) Condition {
+	return orWithWork(a, b, nil)
+}
+
+func orWithWork(a, b Condition, impossibilityChecks *int) Condition {
 	if a.IsFalse() {
 		return b
 	}
@@ -265,10 +288,10 @@ func Or(a, b Condition) Condition {
 		if len(common) == 0 {
 			return TrueCondition()
 		}
-		return Condition{Disjuncts: [][]Constraint{common}}
+		return Condition{Disjuncts: [][]Constraint{common}, normalized: true}
 	}
 
-	return normalizeCondition(Condition{Disjuncts: out})
+	return normalizeConditionWithWork(Condition{Disjuncts: out, normalized: a.normalized && b.normalized}, impossibilityChecks)
 }
 
 // Not negates a condition using De Morgan's laws.
@@ -314,7 +337,7 @@ func (c Condition) Equals(other Condition) bool {
 		return false
 	}
 	for i := range c.Disjuncts {
-		if !conjunctionEquals(c.Disjuncts[i], other.Disjuncts[i]) {
+		if !conjunctionEquals(c.Disjuncts[i], nil, other.Disjuncts[i], nil) {
 			return false
 		}
 	}
@@ -547,18 +570,6 @@ func ConjunctionContains(conj []Constraint, c Constraint) bool {
 	return false
 }
 
-func conjunctionEquals(a, b []Constraint) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if !a[i].Equals(b[i]) {
-			return false
-		}
-	}
-	return true
-}
-
 func conjunctionHash(conj []Constraint) uint64 {
 	if len(conj) == 0 {
 		return 0
@@ -678,174 +689,9 @@ func SubstituteConjunction(conj []Constraint, args []Path) []Constraint {
 }
 
 func substituteConstraint(c Constraint, args []Path) Constraint {
-	return VisitConstraint(c, ConstraintVisitor[Constraint]{
-		Truthy: func(v Truthy) Constraint {
-			if p := substitutePath(v.Path, args); !p.IsEmpty() {
-				return Truthy{Path: p}
-			}
-			return nil
-		},
-		Falsy: func(v Falsy) Constraint {
-			if p := substitutePath(v.Path, args); !p.IsEmpty() {
-				return Falsy{Path: p}
-			}
-			return nil
-		},
-		IsNil: func(v IsNil) Constraint {
-			if p := substitutePath(v.Path, args); !p.IsEmpty() {
-				return IsNil{Path: p}
-			}
-			return nil
-		},
-		NotNil: func(v NotNil) Constraint {
-			if p := substitutePath(v.Path, args); !p.IsEmpty() {
-				return NotNil{Path: p}
-			}
-			return nil
-		},
-		HasType: func(v HasType) Constraint {
-			if p := substitutePath(v.Path, args); !p.IsEmpty() {
-				return HasType{Path: p, Type: v.Type}
-			}
-			return nil
-		},
-		NotHasType: func(v NotHasType) Constraint {
-			if p := substitutePath(v.Path, args); !p.IsEmpty() {
-				return NotHasType{Path: p, Type: v.Type}
-			}
-			return nil
-		},
-		HasField: func(v HasField) Constraint {
-			if p := substitutePath(v.Path, args); !p.IsEmpty() {
-				return HasField{Path: p, Field: v.Field}
-			}
-			return nil
-		},
-		FieldEquals: func(v FieldEquals) Constraint {
-			if p := substitutePath(v.Target, args); !p.IsEmpty() {
-				return FieldEquals{Target: p, Field: v.Field, Value: v.Value}
-			}
-			return nil
-		},
-		FieldNotEquals: func(v FieldNotEquals) Constraint {
-			if p := substitutePath(v.Target, args); !p.IsEmpty() {
-				return FieldNotEquals{Target: p, Field: v.Field, Value: v.Value}
-			}
-			return nil
-		},
-		IndexEquals: func(v IndexEquals) Constraint {
-			if p := substitutePath(v.Target, args); !p.IsEmpty() {
-				return IndexEquals{Target: p, Key: v.Key, Value: v.Value}
-			}
-			return nil
-		},
-		IndexNotEquals: func(v IndexNotEquals) Constraint {
-			if p := substitutePath(v.Target, args); !p.IsEmpty() {
-				return IndexNotEquals{Target: p, Key: v.Key, Value: v.Value}
-			}
-			return nil
-		},
-		EqPath: func(v EqPath) Constraint {
-			left := substitutePath(v.Left, args)
-			right := substitutePath(v.Right, args)
-			if left.IsEmpty() && right.IsEmpty() {
-				return nil
-			}
-			if left.IsEmpty() {
-				left = v.Left
-			}
-			if right.IsEmpty() {
-				right = v.Right
-			}
-			return NewEqPath(left, right)
-		},
-		NotEqPath: func(v NotEqPath) Constraint {
-			left := substitutePath(v.Left, args)
-			right := substitutePath(v.Right, args)
-			if left.IsEmpty() && right.IsEmpty() {
-				return nil
-			}
-			if left.IsEmpty() {
-				left = v.Left
-			}
-			if right.IsEmpty() {
-				right = v.Right
-			}
-			return NewNotEqPath(left, right)
-		},
-		FieldEqualsPath: func(v FieldEqualsPath) Constraint {
-			target := substitutePath(v.Target, args)
-			value := substitutePath(v.Value, args)
-			if target.IsEmpty() && value.IsEmpty() {
-				return nil
-			}
-			if target.IsEmpty() {
-				target = v.Target
-			}
-			if value.IsEmpty() {
-				value = v.Value
-			}
-			return FieldEqualsPath{Target: target, Field: v.Field, Value: value}
-		},
-		FieldNotEqualsPath: func(v FieldNotEqualsPath) Constraint {
-			target := substitutePath(v.Target, args)
-			value := substitutePath(v.Value, args)
-			if target.IsEmpty() && value.IsEmpty() {
-				return nil
-			}
-			if target.IsEmpty() {
-				target = v.Target
-			}
-			if value.IsEmpty() {
-				value = v.Value
-			}
-			return FieldNotEqualsPath{Target: target, Field: v.Field, Value: value}
-		},
-		IndexEqualsPath: func(v IndexEqualsPath) Constraint {
-			target := substitutePath(v.Target, args)
-			value := substitutePath(v.Value, args)
-			if target.IsEmpty() && value.IsEmpty() {
-				return nil
-			}
-			if target.IsEmpty() {
-				target = v.Target
-			}
-			if value.IsEmpty() {
-				value = v.Value
-			}
-			return IndexEqualsPath{Target: target, Key: v.Key, Value: value}
-		},
-		IndexNotEqualsPath: func(v IndexNotEqualsPath) Constraint {
-			target := substitutePath(v.Target, args)
-			value := substitutePath(v.Value, args)
-			if target.IsEmpty() && value.IsEmpty() {
-				return nil
-			}
-			if target.IsEmpty() {
-				target = v.Target
-			}
-			if value.IsEmpty() {
-				value = v.Value
-			}
-			return IndexNotEqualsPath{Target: target, Key: v.Key, Value: value}
-		},
-		KeyOf: func(v KeyOf) Constraint {
-			table := substitutePath(v.Table, args)
-			key := substitutePath(v.Key, args)
-			if table.IsEmpty() && key.IsEmpty() {
-				return nil
-			}
-			if table.IsEmpty() {
-				table = v.Table
-			}
-			if key.IsEmpty() {
-				key = v.Key
-			}
-			return KeyOf{Table: table, Key: key}
-		},
-		Default: func(Constraint) Constraint {
-			return c
-		},
+	return MapPaths(c, func(p Path) (Path, bool) {
+		sub := substitutePath(p, args)
+		return sub, !sub.IsEmpty()
 	})
 }
 
@@ -927,12 +773,12 @@ func constraintHashesAndConjunctionHash(conj []Constraint) ([]uint64, uint64) {
 	return hashes, h
 }
 
-func conjunctionEqualsWithHashes(a []Constraint, aHashes []uint64, b []Constraint, bHashes []uint64) bool {
+func conjunctionEquals(a []Constraint, aHashes []uint64, b []Constraint, bHashes []uint64) bool {
 	if len(a) != len(b) {
 		return false
 	}
 	for i := range a {
-		if aHashes[i] != bHashes[i] {
+		if aHashes != nil && bHashes != nil && aHashes[i] != bHashes[i] {
 			return false
 		}
 		if !a[i].Equals(b[i]) {
@@ -984,7 +830,71 @@ func conjunctionSubsumesWithHashes(a []Constraint, aHashes []uint64, b []Constra
 	return true
 }
 
+// conjunctionImpossible recognizes contradictions whose meaning is fixed by
+// Lua's nil and truthiness rules, independent of the value's static type.
+func conjunctionImpossible(items []Constraint) bool {
+	for i, left := range items {
+		var leftPath Path
+		var leftKind uint8
+		switch v := left.(type) {
+		case IsNil:
+			leftPath, leftKind = v.Path, 1
+		case NotNil:
+			leftPath, leftKind = v.Path, 2
+		case Truthy:
+			leftPath, leftKind = v.Path, 3
+		case Falsy:
+			leftPath, leftKind = v.Path, 4
+		default:
+			continue
+		}
+		for _, right := range items[i+1:] {
+			var rightPath Path
+			var rightKind uint8
+			switch v := right.(type) {
+			case IsNil:
+				rightPath, rightKind = v.Path, 1
+			case NotNil:
+				rightPath, rightKind = v.Path, 2
+			case Truthy:
+				rightPath, rightKind = v.Path, 3
+			case Falsy:
+				rightPath, rightKind = v.Path, 4
+			default:
+				continue
+			}
+			if leftPath.Equal(rightPath) &&
+				(leftKind == 1 && (rightKind == 2 || rightKind == 3) ||
+					leftKind == 2 && rightKind == 1 ||
+					leftKind == 3 && (rightKind == 1 || rightKind == 4) ||
+					leftKind == 4 && rightKind == 3) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func normalizeCondition(c Condition) Condition {
+	return normalizeConditionWithWork(c, nil)
+}
+
+func normalizeConditionWithWork(c Condition, impossibilityChecks *int) Condition {
+	// Impossible nil/truthy combinations are generated when relational facts
+	// meet a guard. Drop those paths before joins can dilute narrowing.
+	if !c.normalized && len(c.Disjuncts) > 0 {
+		kept := make([][]Constraint, 0, len(c.Disjuncts))
+		for _, d := range c.Disjuncts {
+			if impossibilityChecks != nil {
+				(*impossibilityChecks)++
+			}
+			if !conjunctionImpossible(d) {
+				kept = append(kept, d)
+			}
+		}
+		c.Disjuncts = kept
+	}
+	c.normalized = true
 	n := len(c.Disjuncts)
 	if n == 0 {
 		return c
@@ -1022,7 +932,7 @@ func normalizeCondition(c Condition) Condition {
 	for _, dh := range withHash {
 		duplicate := false
 		for _, kh := range kept {
-			if dh.hash == kh.hash && conjunctionEqualsWithHashes(dh.conj, dh.hashes, kh.conj, kh.hashes) {
+			if dh.hash == kh.hash && conjunctionEquals(dh.conj, dh.hashes, kh.conj, kh.hashes) {
 				duplicate = true
 				break
 			}
@@ -1057,7 +967,7 @@ func normalizeCondition(c Condition) Condition {
 		if len(must) == 0 {
 			return TrueCondition()
 		}
-		return Condition{Disjuncts: [][]Constraint{must}}
+		return Condition{Disjuncts: [][]Constraint{must}, normalized: true}
 	}
 
 	// Extract final disjuncts
@@ -1070,7 +980,7 @@ func normalizeCondition(c Condition) Condition {
 	*withHashPtr = withHash[:0]
 	disjunctPool.Put(withHashPtr)
 
-	return Condition{Disjuncts: result}
+	return Condition{Disjuncts: result, normalized: true}
 }
 
 func conjunctionSubsumes(a, b []Constraint) bool {

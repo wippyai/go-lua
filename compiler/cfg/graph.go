@@ -42,6 +42,7 @@ type Graph struct {
 	declPoints         map[basecfg.SymbolID]Point              // symbol -> declaration point
 	symbolNames        map[basecfg.SymbolID]string             // symbol -> name (reverse lookup for display)
 	symbolKinds        map[basecfg.SymbolID]basecfg.SymbolKind // symbol -> kind (Param/Local/Global)
+	allSymbolIDs       map[basecfg.SymbolID]bool               // immutable set, computed at build time
 	directAliases      map[basecfg.SymbolID]basecfg.SymbolID   // target local symbol -> unambiguous direct source symbol
 
 	// Function parameters (precomputed for downstream use)
@@ -213,6 +214,7 @@ func BuildWithBindings(fn *ast.FunctionExpr, bindings *bind.BindingTable) *Graph
 	declPoints := b.StealDeclPoints()
 	symbolNames := b.StealSymbolNames()
 	symbolKinds := b.StealSymbolKinds()
+	allSymbolIDs := collectSymbolIDs(symbolNames, globalsMap)
 	paramSlots := buildParamSlots(fn, b.ParamNames, b.ParamSymbols, b.ParamDeclPoints, symbolNames)
 	size := b.Cfg.Size()
 	pointIdx := buildPointIndex(b.Info, size)
@@ -245,6 +247,7 @@ func BuildWithBindings(fn *ast.FunctionExpr, bindings *bind.BindingTable) *Graph
 		declPoints:            declPoints,
 		symbolNames:           symbolNames,
 		symbolKinds:           symbolKinds,
+		allSymbolIDs:          allSymbolIDs,
 		directAliases:         computeDirectAliasIndex(b.Info, bindings),
 		paramNames:            b.ParamNames,
 		paramSymbols:          b.ParamSymbols,
@@ -295,6 +298,7 @@ func BuildBlock(stmts []ast.Stmt, globals ...string) *Graph {
 	declPoints := b.StealDeclPoints()
 	symbolNames := b.StealSymbolNames()
 	symbolKinds := b.StealSymbolKinds()
+	allSymbolIDs := collectSymbolIDs(symbolNames, globalsMap)
 	paramSlots := buildParamSlots(syntheticFn, b.ParamNames, b.ParamSymbols, b.ParamDeclPoints, symbolNames)
 	size := b.Cfg.Size()
 	pointIdx := buildPointIndex(b.Info, size)
@@ -327,6 +331,7 @@ func BuildBlock(stmts []ast.Stmt, globals ...string) *Graph {
 		declPoints:            declPoints,
 		symbolNames:           symbolNames,
 		symbolKinds:           symbolKinds,
+		allSymbolIDs:          allSymbolIDs,
 		directAliases:         computeDirectAliasIndex(b.Info, bindings),
 		paramSlots:            paramSlots,
 	}
@@ -831,6 +836,30 @@ func (g *Graph) SuccessorsReadOnly(p Point) []Point {
 	return g.cfg.SuccessorsReadOnly(p)
 }
 
+// Reachable reports whether a successor path from from reaches to. A path must
+// contain at least one edge; allowCycleToStart controls whether a cycle back to
+// from counts when from == to.
+func (g *Graph) Reachable(from, to Point, allowCycleToStart bool) bool {
+	if g == nil || g.cfg == nil || from == to && !allowCycleToStart {
+		return false
+	}
+	seen := map[Point]bool{from: true}
+	work := append([]Point(nil), g.SuccessorsReadOnly(from)...)
+	for len(work) != 0 {
+		p := work[len(work)-1]
+		work = work[:len(work)-1]
+		if p == to {
+			return true
+		}
+		if seen[p] {
+			continue
+		}
+		seen[p] = true
+		work = append(work, g.SuccessorsReadOnly(p)...)
+	}
+	return false
+}
+
 // Successor returns single successor (for non-branch nodes).
 func (g *Graph) Successor(p Point) Point {
 	if g == nil || g.cfg == nil {
@@ -1171,20 +1200,39 @@ func (g *Graph) AllSymbolIDs() map[basecfg.SymbolID]bool {
 	if g == nil {
 		return nil
 	}
-
-	out := make(map[basecfg.SymbolID]bool, len(g.symbolNames))
-
-	for sym := range g.symbolNames {
+	out := make(map[basecfg.SymbolID]bool, len(g.allSymbolIDs))
+	for sym := range g.allSymbolIDs {
 		out[sym] = true
 	}
+	return out
+}
 
-	if g.globals != nil {
-		for _, sym := range g.globals {
-			out[sym] = true
+func collectSymbolIDs(names map[basecfg.SymbolID]string, globals map[string]basecfg.SymbolID) map[basecfg.SymbolID]bool {
+	out := make(map[basecfg.SymbolID]bool, len(names)+len(globals))
+	for sym := range names {
+		out[sym] = true
+	}
+	for _, sym := range globals {
+		out[sym] = true
+	}
+	return out
+}
+
+// HasSymbolID reports whether sym belongs to this immutable graph.
+func (g *Graph) HasSymbolID(sym basecfg.SymbolID) bool {
+	return g != nil && g.allSymbolIDs[sym]
+}
+
+// EachSymbolID visits every symbol in the immutable graph, stopping when fn returns true.
+func (g *Graph) EachSymbolID(fn func(basecfg.SymbolID) bool) {
+	if g == nil || fn == nil {
+		return
+	}
+	for sym := range g.allSymbolIDs {
+		if fn(sym) {
+			return
 		}
 	}
-
-	return out
 }
 
 // DirectAliasSymbol returns the source symbol for a direct local alias assignment.

@@ -1,0 +1,17 @@
+{
+  "description": "Exact app:trigger_service_test registry source; verifies the captured update at line 423.",
+  "files": [
+    "json.lua",
+    "trigger_resolver.lua",
+    "registry.lua",
+    "automations_lib.lua",
+    "trigger_service.lua",
+    "trigger_service_test.lua",
+    "contract.lua",
+    "main.lua",
+    "test.lua"
+  ],
+  "check": {
+    "errors": 0
+  }
+}

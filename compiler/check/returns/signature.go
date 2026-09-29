@@ -3,10 +3,15 @@ package returns
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/check/scope"
-	"github.com/wippyai/go-lua/compiler/check/synth"
 	phasecore "github.com/wippyai/go-lua/compiler/check/synth/phase/core"
 	"github.com/wippyai/go-lua/types/typ"
 )
+
+// TypeExprResolver resolves type expressions against a scope.
+type TypeExprResolver interface {
+	ResolveType(expr ast.TypeExpr, sc *scope.State) typ.Type
+	ResolveReturnTypes(exprs []ast.TypeExpr, sc *scope.State) []typ.Type
+}
 
 // BuildSeedFunctionTypeWithBindings builds a placeholder function type for an
 // SCC sibling that has no return summary yet.
@@ -14,7 +19,7 @@ import (
 // Optional binder metadata enables implicit-self detection in method definitions.
 func BuildSeedFunctionTypeWithBindings(
 	fn *ast.FunctionExpr,
-	engine *synth.Engine,
+	engine TypeExprResolver,
 	parentScope *scope.State,
 	bindings phasecore.ParamSymbolLookup,
 ) typ.Type {

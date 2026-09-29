@@ -1,0 +1,1 @@
+{"description": "Real spiralscout.estimation:writer source with typed dependencies.", "files": ["contract.lua", "security.lua", "ctx.lua", "json.lua", "uuid.lua", "component.lua", "types.lua", "canon.lua", "reader.lua", "main.lua"], "packages": ["process", "time", "sql"], "check": {"errors": 0}}

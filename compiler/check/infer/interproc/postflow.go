@@ -13,7 +13,9 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	"github.com/wippyai/go-lua/types/flow"
+	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/typ"
+	typjoin "github.com/wippyai/go-lua/types/typ/join"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
@@ -28,6 +30,7 @@ type Store interface {
 	UpdateInterprocFactsNext(key api.GraphKey, update func(*api.Facts))
 	StoreLiteralSigs(graphID uint64, sigs map[*ast.FunctionExpr]*typ.Function)
 	ParentGraphKeyForSymbol(sym cfg.SymbolID) (api.GraphKey, bool)
+	BindClassSelf(graph *cfg.Graph, at cfg.Point, sym cfg.SymbolID, name string, body typ.Type) typ.Type
 }
 
 // StoreFactsFromResult records post-flow interproc facts for the current iteration.
@@ -59,7 +62,7 @@ func StoreFactsFromResult(
 	if fnSym == 0 {
 		return
 	}
-	storeCapturedFactsFromResult(store, writer, fn, fnSym, result)
+	storeWriteEffectsFromResult(store, writer, fn, fnSym, result, parent)
 
 	fnType := narrowFunctionTypeFromResult(result, fn)
 	if fnType == nil {
@@ -73,26 +76,55 @@ func StoreFactsFromResult(
 		}
 	}
 	summaryFromSnapshot := returnSummarySnapshotForSymbol(store, result, parent, fnSym)
+	if tableSym, point := nested.ReturnedClassTable(result.Graph); tableSym != 0 && len(fnType.Returns) > 0 && (fn == nil || len(fn.ReturnTypes) == 0) {
+		ret, ok := result.Graph.Info(point).(*cfg.ReturnInfo)
+		if ok && len(ret.Exprs) > 0 {
+			atReturn := narrow.RemoveNil(result.NarrowSynth.TypeOf(ret.Exprs[0], point))
+			if _, ok := atReturn.(*typ.Record); ok {
+				bound := store.BindClassSelf(result.Graph, point, tableSym, result.Graph.NameOf(tableSym), atReturn)
+				returns := append([]typ.Type(nil), fnType.Returns...)
+				returns[0] = boundReturnedTable(fnType.Returns[0], bound)
+				fnType = typjoin.WithReturns(fnType, returns)
+				if len(narrowReturns) > 0 {
+					narrowReturns = append([]typ.Type(nil), narrowReturns...)
+					narrowReturns[0] = boundReturnedTable(narrowReturns[0], bound)
+				}
+				if len(summaryFromSnapshot) > 0 {
+					summaryFromSnapshot = append([]typ.Type(nil), summaryFromSnapshot...)
+					summaryFromSnapshot[0] = boundReturnedTable(summaryFromSnapshot[0], bound)
+				}
+			}
+		}
+	}
 
 	writer.updateParentFactsForSymbol(fnSym, func(facts *api.Facts) {
-		candidateFunc := fnType
-		if hinted := paramhints.MergeIntoSignature(fn, facts.ParamHints[fnSym], unwrap.Function(candidateFunc)); hinted != nil {
-			candidateFunc = hinted
-		}
-		returns.MergeFunctionFactIntoFacts(facts, fnSym, returns.FunctionFactCandidate{
+		returns.MergeCallable(facts, fn, api.FunctionFact{
 			Summary: summaryFromSnapshot,
 			Narrow:  narrowReturns,
-			Func:    candidateFunc,
+			Func:    fnType,
 		})
 	})
 }
 
-func storeCapturedFactsFromResult(
+func boundReturnedTable(previous, bound typ.Type) typ.Type {
+	if previous == nil || bound == nil {
+		return previous
+	}
+	if !typ.TypeEquals(narrow.RemoveNil(previous), previous) {
+		return typ.NewOptional(bound)
+	}
+	return bound
+}
+
+// storeWriteEffectsFromResult records the field writes and container
+// mutations fn may perform through its captured variables and parameters.
+func storeWriteEffectsFromResult(
 	store Store,
 	writer interprocFactWriter,
 	fn *ast.FunctionExpr,
 	fnSym cfg.SymbolID,
 	result *api.FuncResult,
+	parent *scope.State,
 ) {
 	if store == nil || fn == nil || fnSym == 0 || result == nil || result.Graph == nil || result.NarrowSynth == nil {
 		return
@@ -102,18 +134,35 @@ func storeCapturedFactsFromResult(
 		return
 	}
 	capturedSet := capturedSymbolSet(bindings, fn)
-	if len(capturedSet) == 0 {
+	targets := make(map[cfg.SymbolID]bool, len(capturedSet))
+	for sym := range capturedSet {
+		targets[sym] = true
+	}
+	for _, sym := range bindings.ParamSymbols(fn) {
+		if sym != 0 {
+			targets[sym] = true
+		}
+	}
+	if len(targets) == 0 {
 		return
 	}
 
-	fields := nested.CollectCapturedFieldAssignments(result.Graph, capturedSet, result.NarrowSynth.TypeOf)
+	graphParent := api.ParentScopeForGraph(store, result.Graph.ID(), parent)
+	fields := returns.CollectFieldWrites(
+		result.Graph,
+		bindings,
+		targets,
+		result.NarrowSynth.TypeOf,
+		store.GetFieldWritesSnapshot(result.Graph, graphParent),
+		&returns.StoreFieldWriteSource{Store: store, Bindings: bindings},
+	)
 	if len(fields) > 0 {
 		writer.updateParentFactsForSymbol(fnSym, func(facts *api.Facts) {
-			if facts.CapturedFields == nil {
-				facts.CapturedFields = make(api.CapturedFieldAssigns)
+			if facts.FieldWrites == nil {
+				facts.FieldWrites = make(api.FieldWrites)
 			}
-			existing := facts.CapturedFields[fnSym]
-			facts.CapturedFields[fnSym] = returns.MergeCapturedFieldSymbolMaps(existing, fields, typ.JoinPreferNonSoft)
+			existing := facts.FieldWrites[fnSym]
+			facts.FieldWrites[fnSym] = returns.MergeFieldWriteSymbolMaps(existing, fields, api.JoinFieldWrite)
 		})
 	}
 
@@ -180,7 +229,39 @@ func narrowFunctionTypeFromResult(result *api.FuncResult, fn *ast.FunctionExpr) 
 			}
 		}
 	}
-	return erreffect.AttachInferredErrorReturnSpec(fnType, result.Graph, result.FlowSolution, result.NarrowSynth)
+	return erreffect.AttachInferredErrorReturnSpec(callableParams(fnType, fn), result.Graph, result.FlowSolution, result.NarrowSynth)
+}
+
+// callableParams returns fnType with its unannotated parameters typed unknown.
+// The returns were inferred from the body, which sees unannotated parameters
+// with their call-site hints; the callable type does not, as for any
+// unannotated parameter the synthesizer types (core.ApplyParamList), so hints
+// are never enforced on the call sites they came from.
+func callableParams(fnType *typ.Function, fn *ast.FunctionExpr) *typ.Function {
+	if fnType == nil || fn == nil || fn.ParList == nil {
+		return fnType
+	}
+	offset := len(fnType.Params) - len(fn.ParList.Names)
+	if offset < 0 {
+		return fnType
+	}
+	changed := false
+	params := make([]typ.Param, len(fnType.Params))
+	copy(params, fnType.Params)
+	for i := range fn.ParList.Names {
+		if i < len(fn.ParList.Types) && fn.ParList.Types[i] != nil {
+			continue
+		}
+		p := &params[offset+i]
+		if !typ.IsUnknown(p.Type) {
+			p.Type = typ.Unknown
+			changed = true
+		}
+	}
+	if !changed {
+		return fnType
+	}
+	return fnType.WithParams(params)
 }
 
 func returnSummarySnapshotForSymbol(store Store, result *api.FuncResult, parent *scope.State, sym cfg.SymbolID) []typ.Type {
@@ -301,6 +382,7 @@ func CollectParamHintsFromResult(store Store, result *api.FuncResult, parent *sc
 		bindings = moduleBindings
 	}
 	preAssignTargets := checkcallsite.PreAssignmentTargetsByCall(graph)
+	unhintedParams := unhintedOwnParams(store, graph, parent)
 	hasFunctionRef := func(sym cfg.SymbolID) bool {
 		return sym != 0 && store.FunctionRefBySym(sym) != nil
 	}
@@ -310,6 +392,7 @@ func CollectParamHintsFromResult(store Store, result *api.FuncResult, parent *sc
 		}
 		callTargets := preAssignTargets[info]
 		argTypes := make([]typ.Type, len(info.Args))
+		uninformative := make([]bool, len(info.Args))
 		for i, arg := range info.Args {
 			if arg == nil {
 				continue
@@ -321,6 +404,13 @@ func CollectParamHintsFromResult(store Store, result *api.FuncResult, parent *sc
 			}
 			if argSym == 0 && bindings != nil {
 				argSym = checkcallsite.SymbolFromExpr(arg, bindings)
+			}
+			if unhintedParams[argSym] && typ.IsAny(argType) {
+				// An unannotated parameter no call site has typed yet reads as
+				// its any default, which says nothing about the values that
+				// flow in; passing it on contributes no hint.
+				uninformative[i] = true
+				continue
 			}
 			preType := checkcallsite.PreAssignmentTypeAtJoin(graph, p, argSym, func(point cfg.Point, id cfg.SymbolID) (typ.Type, bool) {
 				tv := result.EffectiveTypeAt(point, id)
@@ -355,7 +445,7 @@ func CollectParamHintsFromResult(store Store, result *api.FuncResult, parent *sc
 			copy(updated, argTypes)
 			changed := false
 			for i, arg := range info.Args {
-				if arg == nil {
+				if arg == nil || uninformative[i] {
 					continue
 				}
 				expected := infer.ExpectedArgType(i)
@@ -423,6 +513,9 @@ func CollectParamHintsFromResult(store Store, result *api.FuncResult, parent *sc
 					}
 				}
 
+				if uninformative[i] {
+					continue
+				}
 				argType := argTypes[i]
 				if argType == nil {
 					argType = result.NarrowSynth.TypeOf(arg, p)
@@ -435,98 +528,35 @@ func CollectParamHintsFromResult(store Store, result *api.FuncResult, parent *sc
 		})
 	}
 
-	graph.EachCallSite(func(p cfg.Point, info *cfg.CallInfo) {
-		collectCallHints(p, info)
-
-		seenNested := make(map[*ast.FuncCallExpr]struct{})
-		for _, arg := range info.Args {
-			collectNestedFuncCalls(arg, seenNested)
-		}
-		for nested := range seenNested {
-			nestedInfo := graph.CallSiteAt(p, nested)
-			if nestedInfo == nil {
-				nestedInfo = synthCallInfoFromExpr(nested, bindings)
-			}
-			collectCallHints(p, nestedInfo)
-		}
-	})
+	checkcallsite.EachCallSiteWithNested(graph, bindings, collectCallHints)
 }
 
-func synthCallInfoFromExpr(ex *ast.FuncCallExpr, bindings *bind.BindingTable) *cfg.CallInfo {
-	if ex == nil {
+// unhintedOwnParams returns the unannotated parameters of graph's function
+// that have no call-site hint in the current snapshot.
+func unhintedOwnParams(store Store, graph *cfg.Graph, parent *scope.State) map[cfg.SymbolID]bool {
+	fn := graph.Func()
+	if fn == nil {
 		return nil
 	}
-	info := &cfg.CallInfo{
-		Call:     ex,
-		Callee:   ex.Func,
-		Args:     ex.Args,
-		Method:   ex.Method,
-		Receiver: ex.Receiver,
-		IsStmt:   false,
+	var hints []typ.Type
+	if view := paramhints.BuildParamHintSigView(store, graph, parent, nil); view != nil {
+		hints = view[fn]
 	}
-	if id, ok := ex.Func.(*ast.IdentExpr); ok {
-		info.CalleeName = id.Value
-	}
-	if bindings != nil {
-		info.CalleeSymbol = checkcallsite.SymbolFromExpr(ex.Func, bindings)
-		if ex.Receiver != nil {
-			info.ReceiverSymbol = checkcallsite.SymbolFromExpr(ex.Receiver, bindings)
-			if id, ok := ex.Receiver.(*ast.IdentExpr); ok {
-				info.ReceiverName = id.Value
-			}
+	out := make(map[cfg.SymbolID]bool)
+	for _, slot := range graph.ParamSlotsReadOnly() {
+		if slot.Symbol == 0 || slot.TypeAnnotation != nil {
+			continue
 		}
-		info.ArgSymbols = make([]cfg.SymbolID, len(ex.Args))
-		for i, arg := range ex.Args {
-			info.ArgSymbols[i] = checkcallsite.SymbolFromExpr(arg, bindings)
+		idx, ok := slot.SourceParamIndex()
+		if !ok {
+			continue
 		}
-	}
-	return info
-}
-
-func collectNestedFuncCalls(expr ast.Expr, out map[*ast.FuncCallExpr]struct{}) {
-	if expr == nil || out == nil {
-		return
-	}
-	switch e := expr.(type) {
-	case *ast.FuncCallExpr:
-		out[e] = struct{}{}
-		collectNestedFuncCalls(e.Func, out)
-		collectNestedFuncCalls(e.Receiver, out)
-		for _, arg := range e.Args {
-			collectNestedFuncCalls(arg, out)
+		if idx < len(hints) && hints[idx] != nil {
+			continue
 		}
-	case *ast.AttrGetExpr:
-		collectNestedFuncCalls(e.Object, out)
-		collectNestedFuncCalls(e.Key, out)
-	case *ast.TableExpr:
-		for _, field := range e.Fields {
-			if field == nil {
-				continue
-			}
-			collectNestedFuncCalls(field.Key, out)
-			collectNestedFuncCalls(field.Value, out)
-		}
-	case *ast.LogicalOpExpr:
-		collectNestedFuncCalls(e.Lhs, out)
-		collectNestedFuncCalls(e.Rhs, out)
-	case *ast.RelationalOpExpr:
-		collectNestedFuncCalls(e.Lhs, out)
-		collectNestedFuncCalls(e.Rhs, out)
-	case *ast.StringConcatOpExpr:
-		collectNestedFuncCalls(e.Lhs, out)
-		collectNestedFuncCalls(e.Rhs, out)
-	case *ast.ArithmeticOpExpr:
-		collectNestedFuncCalls(e.Lhs, out)
-		collectNestedFuncCalls(e.Rhs, out)
-	case *ast.UnaryMinusOpExpr:
-		collectNestedFuncCalls(e.Expr, out)
-	case *ast.UnaryNotOpExpr:
-		collectNestedFuncCalls(e.Expr, out)
-	case *ast.UnaryLenOpExpr:
-		collectNestedFuncCalls(e.Expr, out)
-	case *ast.UnaryBNotOpExpr:
-		collectNestedFuncCalls(e.Expr, out)
+		out[slot.Symbol] = true
 	}
+	return out
 }
 
 func parentGraphKeyForCallee(store Store, result *api.FuncResult, parent *scope.State, calleeSym cfg.SymbolID) (api.GraphKey, bool) {

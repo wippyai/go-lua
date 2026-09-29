@@ -9,7 +9,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/synth/intercept"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	"github.com/wippyai/go-lua/compiler/check/synth/transform"
-	"github.com/wippyai/go-lua/internal"
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/contract"
@@ -81,6 +80,13 @@ func (q CallQuery) IsSubtype(ctx *db.QueryContext, sub, super typ.Type) bool {
 		return subtype.IsSubtype(sub, super)
 	}
 	return q.s.deps.Types.IsSubtype(ctx, sub, super)
+}
+
+func (q CallQuery) IsAssignable(ctx *db.QueryContext, sub, super typ.Type) bool {
+	if q.s == nil || q.s.deps.Types == nil {
+		return core.AssignabilityOf(ctx).Assignable(sub, super)
+	}
+	return q.s.deps.Types.IsAssignable(ctx, sub, super)
 }
 
 func (q CallQuery) ExpandInstantiated(ctx *db.QueryContext, t typ.Type) typ.Type {
@@ -155,12 +161,13 @@ func (s *Synthesizer) synthCallCoreWithCaptureTypes(
 	if specialized := s.specializedLocalFunctionCalleeType(ex, p, sc, calleeType, captureTypes); specialized != nil {
 		calleeType = specialized
 	}
-	args := synthArgs(ex.Args, recurse)
+	args := synthArgs(ex.Args, recurse, func(arg ast.Expr) []typ.Type { return s.SynthMulti(arg, p, narrower) })
 	typeArgs := s.resolveTypeArgs(ex.TypeArgs, sc)
 
 	def := ops.CallDef{
 		Callee:         calleeType,
 		Args:           args,
+		ExplicitArgs:   len(ex.Args),
 		TypeArgs:       typeArgs,
 		Query:          s.GetCallQuery(),
 		ExpectedReturn: expected,
@@ -230,78 +237,46 @@ func (s *Synthesizer) SynthCallCoreWithExpected(ex *ast.FuncCallExpr, p cfg.Poin
 
 // synthMethodCallCoreWithExpected synthesizes method call with optional expected return type.
 func (s *Synthesizer) synthMethodCallCoreWithExpected(ex *ast.FuncCallExpr, p cfg.Point, sc *scope.State, recurse ExprSynth, expected typ.Type) []typ.Type {
-	env := intercept.CallEnv{
-		Scope:      sc,
-		Recurse:    intercept.ExprSynth(recurse),
-		TypeLookup: s.declaredTypeLookup(sc),
-	}
-
-	chain := s.buildInterceptChain(sc)
-	if result := chain.InterceptMethodCall(ex, env); result.Skip {
-		return result.Types
-	}
-
-	recvType := recurse(ex.Receiver)
-	args := synthArgs(ex.Args, recurse)
-	calleeType := s.resolveMethodCallee(recvType, ex.Method)
-
-	def := ops.CallDef{
-		IsMethod:            true,
-		Receiver:            recvType,
-		MethodName:          ex.Method,
-		Args:                args,
-		Query:               s.GetCallQuery(),
-		ExpectedReturn:      expected,
-		ForceMethodReceiver: s.forceMethodReceiverAtPoint(p, ex),
-	}
-
-	pipeline := NewCallPipeline(s.deps.Ctx, def, ex.Args).
-		WithReSynth(s.callbackAwareReSynth(calleeType, sc))
-
-	if expected != nil {
-		pipeline = pipeline.WithExpected(expected)
-	}
-
-	result := pipeline.Run()
-	returns := unwrapCallResult(result)
-	returns = s.applyPostCallTransforms(calleeType, args, returns)
-
-	specOverride := s.specReturnOverride(calleeType, ex.Args, args)
-	return intercept.ApplyOverride(returns, specOverride)
+	return s.synthMethodCall(ex, p, sc, func() typ.Type { return recurse(ex.Receiver) }, recurse, expected)
 }
 
 // SynthCallWithReceiverType synthesizes method call with an explicit receiver type.
 func (s *Synthesizer) SynthCallWithReceiverType(ex *ast.FuncCallExpr, p cfg.Point, sc *scope.State, recvType typ.Type, recurse ExprSynth) []typ.Type {
+	return s.synthMethodCall(ex, p, sc, func() typ.Type { return recvType }, recurse, nil)
+}
+
+func (s *Synthesizer) synthMethodCall(ex *ast.FuncCallExpr, p cfg.Point, sc *scope.State, receiver func() typ.Type, recurse ExprSynth, expected typ.Type) []typ.Type {
 	env := intercept.CallEnv{
 		Scope:      sc,
 		Recurse:    intercept.ExprSynth(recurse),
 		TypeLookup: s.declaredTypeLookup(sc),
 	}
-
 	chain := s.buildInterceptChain(sc)
 	if result := chain.InterceptMethodCall(ex, env); result.Skip {
 		return result.Types
 	}
 
-	args := synthArgs(ex.Args, recurse)
+	recvType := receiver()
+	args := synthArgs(ex.Args, recurse, func(arg ast.Expr) []typ.Type { return s.SynthMulti(arg, p, nil) })
 	calleeType := s.resolveMethodCallee(recvType, ex.Method)
-
 	def := ops.CallDef{
 		IsMethod:            true,
 		Receiver:            recvType,
 		MethodName:          ex.Method,
 		Args:                args,
+		ExplicitArgs:        len(ex.Args),
 		Query:               s.GetCallQuery(),
+		ExpectedReturn:      expected,
 		ForceMethodReceiver: s.forceMethodReceiverAtPoint(p, ex),
 	}
-
 	pipeline := NewCallPipeline(s.deps.Ctx, def, ex.Args).
 		WithReSynth(s.callbackAwareReSynth(calleeType, sc))
-
+	if expected != nil {
+		pipeline = pipeline.WithExpected(expected)
+	}
 	result := pipeline.Run()
 	returns := unwrapCallResult(result)
 	returns = s.applyPostCallTransforms(calleeType, args, returns)
-
 	specOverride := s.specReturnOverride(calleeType, ex.Args, args)
 	return intercept.ApplyOverride(returns, specOverride)
 }
@@ -348,12 +323,8 @@ func (s *Synthesizer) buildInterceptChain(sc *scope.State) *intercept.Chain {
 }
 
 // synthArgs synthesizes types for argument expressions.
-func synthArgs(exprs []ast.Expr, recurse ExprSynth) []typ.Type {
-	args := make([]typ.Type, len(exprs))
-	for i, arg := range exprs {
-		args[i] = recurse(arg)
-	}
-	return args
+func synthArgs(exprs []ast.Expr, recurse ExprSynth, multi func(ast.Expr) []typ.Type) []typ.Type {
+	return callsite.ArgumentTypes(exprs, func(arg ast.Expr) typ.Type { return recurse(arg) }, multi)
 }
 
 // resolveTypeArgs resolves explicit type arguments.
@@ -481,7 +452,7 @@ func (s *Synthesizer) applyPostCallTransforms(calleeType typ.Type, args []typ.Ty
 
 	var result []typ.Type
 	for i := range returns {
-		transformed := transform.ApplyEffectTransform(fn, args, i, returns[i])
+		transformed := transform.ApplyEffectTransform(fn, args, i, returns)
 		transformed = applyTruthyIdentityReturn(fn, args, i, transformed)
 		if transformed == nil || transformed == returns[i] {
 			continue
@@ -536,100 +507,10 @@ func applyTruthyIdentityReturn(fn *typ.Function, args []typ.Type, returnIdx int,
 	for _, c := range refinement.OnReturn.MustConstraints() {
 		truthy, ok := c.(constraint.Truthy)
 		if ok && truthy.Path.Equal(paramPath) {
-			return narrowTruthyIdentity(result)
+			return narrow.ToTruthy(result)
 		}
 	}
 	return result
-}
-
-// narrowTruthyIdentity removes falsy members while retaining instantiated
-// types whose expanded shape is already definitely truthy. Generic
-// instantiations carry the identity used by type-level effects (for example,
-// Channel<Event> in channel.select); expanding one during a truthiness check
-// loses those type arguments and can turn a correlated value into any.
-func narrowTruthyIdentity(t typ.Type) typ.Type {
-	return narrowTruthyIdentityGuard(t, typ.NewGuard().WithSeen())
-}
-
-func narrowTruthyIdentityGuard(t typ.Type, guard internal.RecursionGuard) typ.Type {
-	if t == nil {
-		return nil
-	}
-	next, ok := guard.Enter(t)
-	if !ok {
-		return narrow.ToTruthy(t)
-	}
-
-	switch v := t.(type) {
-	case *typ.Instantiated:
-		expanded := unwrap.Instantiated(v)
-		if expanded == v {
-			return narrow.ToTruthy(t)
-		}
-		if definitelyTruthyExpanded(expanded) {
-			return t
-		}
-		return narrowTruthyIdentityGuard(expanded, next)
-	case *typ.Alias:
-		inner := narrowTruthyIdentityGuard(v.Target, next)
-		if inner == nil || inner.Kind().IsNever() {
-			return inner
-		}
-		if inner == v.Target {
-			return t
-		}
-		return typ.NewAlias(v.Name, inner)
-	case *typ.Optional:
-		return narrowTruthyIdentityGuard(v.Inner, next)
-	case *typ.Union:
-		members := make([]typ.Type, 0, len(v.Members))
-		for _, member := range v.Members {
-			narrowed := narrowTruthyIdentityGuard(member, next)
-			if narrowed != nil && !narrowed.Kind().IsNever() {
-				members = append(members, narrowed)
-			}
-		}
-		return typ.NewUnion(members...)
-	default:
-		return narrow.ToTruthy(t)
-	}
-}
-
-// definitelyTruthyExpanded checks truthiness after resolving transparent
-// generic wrappers, without treating an unresolved instantiation as a plain
-// concrete type. Union members are checked individually because an
-// instantiation nested in a union can itself expand to an optional value.
-func definitelyTruthyExpanded(t typ.Type) bool {
-	return definitelyTruthyExpandedGuard(t, typ.NewGuard().WithSeen())
-}
-
-func definitelyTruthyExpandedGuard(t typ.Type, guard internal.RecursionGuard) bool {
-	if t == nil {
-		return false
-	}
-	next, ok := guard.Enter(t)
-	if !ok {
-		return false
-	}
-
-	switch v := t.(type) {
-	case *typ.Instantiated:
-		expanded := unwrap.Instantiated(v)
-		return expanded != v && definitelyTruthyExpandedGuard(expanded, next)
-	case *typ.Alias:
-		return definitelyTruthyExpandedGuard(v.Target, next)
-	case *typ.Optional:
-		return false
-	case *typ.Union:
-		for _, member := range v.Members {
-			if !definitelyTruthyExpandedGuard(member, next) {
-				return false
-			}
-		}
-		return true
-	default:
-		return ops.IsTruthy(t)
-	}
 }
 
 // callbackAwareReSynth creates an ArgReSynth that applies EnvOverlay from callback specs.
@@ -698,6 +579,7 @@ func (s *Synthesizer) withEnvOverlay(overlay map[string]typ.Type) *Synthesizer {
 		Graphs:                 s.deps.Graphs,
 		Flow:                   s.deps.Flow,
 		Paths:                  s.deps.Paths,
+		Conditions:             s.deps.Conditions,
 		PreCache:               make(api.Cache),
 		NarrowCache:            make(api.Cache),
 		FunctionTypeInProgress: s.deps.FunctionTypeInProgress,

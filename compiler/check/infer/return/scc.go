@@ -4,8 +4,11 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/nested"
 	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/types/diag"
+	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -17,26 +20,39 @@ func (i *Inferencer) iterateSCCFixpoint(
 	localFuncs map[cfg.SymbolID]*returns.LocalFuncInfo,
 	summaries map[cfg.SymbolID][]typ.Type,
 ) bool {
+	for _, sym := range scc {
+		if (len(summaries[sym]) == 0 || len(summaries[sym]) == 1 && typ.IsUnresolved(summaries[sym][0])) && i.recursive(sym) {
+			summaries[sym] = returns.RecursionVariables(returnArity(localFuncs[sym]))
+		}
+	}
 	for iter := 0; iter < i.maxIterations; iter++ {
 		next, changed := i.runSCCIteration(run, scc, localFuncs, summaries)
 		applySCCIterationUpdates(summaries, scc, next)
 		if !changed {
+			if i.onSCC != nil {
+				i.onSCC(scc, iter+1)
+			}
 			return true
 		}
+	}
+	if i.onSCC != nil {
+		i.onSCC(scc, i.maxIterations)
 	}
 	return false
 }
 
-func (i *Inferencer) planLocalFunctionSCCs(localFuncs map[cfg.SymbolID]*returns.LocalFuncInfo) [][]cfg.SymbolID {
+func (i *Inferencer) planLocalFunctionSCCs(run RunContext, localFuncs map[cfg.SymbolID]*returns.LocalFuncInfo) [][]cfg.SymbolID {
 	// Propagate inter-procedural parameter hints across local call edges before
 	// SCC return inference so unannotated params get stable callsite-driven seeds.
-	returns.PropagateParamHintsFromCallGraph(localFuncs)
-
 	var moduleBindings *bind.BindingTable
-	if i != nil && i.store != nil {
-		moduleBindings = i.store.ModuleBindings()
+	if i != nil {
+		if i.store != nil {
+			moduleBindings = i.store.ModuleBindings()
+		}
 	}
-	adj := returns.BuildLocalCallGraph(localFuncs, moduleBindings)
+	env := returns.SignatureEnv{Manifests: run.Env.Manifests, ModuleAliases: run.Env.ModuleAliases}
+	returns.PropagateParamHintsFromCallGraph(localFuncs, env)
+	adj := returns.BuildLocalCallGraph(localFuncs, moduleBindings, env)
 	return returns.ComputeSymbolSCCs(adj)
 }
 
@@ -45,12 +61,12 @@ func seedSummariesFromSeed(
 	seed map[cfg.SymbolID][]typ.Type,
 ) map[cfg.SymbolID][]typ.Type {
 	summaries := make(map[cfg.SymbolID][]typ.Type, len(localFuncs))
-	if seed == nil {
-		return summaries
-	}
 	for _, sym := range cfg.SortedSymbolIDs(localFuncs) {
 		if seeded := seed[sym]; len(seeded) > 0 {
 			summaries[sym] = seeded
+		} else if info := localFuncs[sym]; info != nil && info.Fn != nil {
+			// Only this SCC's missing return slot is an inference hole.
+			summaries[sym] = []typ.Type{typ.Unresolved}
 		}
 	}
 	return summaries
@@ -74,6 +90,11 @@ func (i *Inferencer) processSCCSummaries(
 			diags = append(diags, *warn)
 		}
 	}
+	for _, sym := range cfg.SortedSymbolIDs(summaries) {
+		for slot, t := range summaries[sym] {
+			summaries[sym][slot] = typ.Finalize(t)
+		}
+	}
 	return diags
 }
 
@@ -91,8 +112,27 @@ func (i *Inferencer) runSCCIteration(
 			continue
 		}
 		newReturn := i.inferReturnWithSummary(run, info, summaries, localFuncs)
+		if binder, ok := i.store.(api.ClassSelfBinder); ok && info.Graph != nil && len(info.Fn.ReturnTypes) == 0 && len(newReturn) > 0 {
+			if tableSym, point := nested.ReturnedClassTable(info.Graph); tableSym != 0 {
+				present := narrow.RemoveNil(newReturn[0])
+				switch present.(type) {
+				case *typ.Record, *typ.Recursive:
+					bound := binder.BindClassSelf(info.Graph, point, tableSym, info.Graph.NameOf(tableSym), present)
+					newReturn = append([]typ.Type(nil), newReturn...)
+					if typ.TypeEquals(present, newReturn[0]) {
+						newReturn[0] = bound
+					} else {
+						newReturn[0] = typ.NewOptional(bound)
+					}
+				}
+			}
+		}
 		oldReturn := summaries[sym]
 		merged := returns.MergeReturnSummary(oldReturn, newReturn)
+		if i.recursive(sym) {
+			newReturn = returns.TieRecursiveReturns(oldReturn, newReturn)
+			merged = returns.AdvanceReturnSummary(oldReturn, newReturn)
+		}
 		next[sym] = merged
 		if !returns.ReturnTypesEqual(merged, oldReturn) {
 			changed = true
@@ -121,16 +161,7 @@ func (i *Inferencer) widenSCCToUnknown(
 	summaries map[cfg.SymbolID][]typ.Type,
 ) *diag.Diagnostic {
 	for _, sym := range scc {
-		existing := summaries[sym]
-		if len(existing) == 0 {
-			summaries[sym] = []typ.Type{typ.Unknown}
-		} else {
-			widened := make([]typ.Type, len(existing))
-			for i := range widened {
-				widened[i] = typ.Unknown
-			}
-			summaries[sym] = widened
-		}
+		summaries[sym] = typ.UnknownReturns(len(summaries[sym]))
 	}
 	if info := localFuncs[scc[0]]; info != nil && info.Fn != nil {
 		return &diag.Diagnostic{
@@ -141,4 +172,24 @@ func (i *Inferencer) widenSCCToUnknown(
 		}
 	}
 	return nil
+}
+
+// recursive reports whether the local function bound to sym can call itself.
+func (i *Inferencer) recursive(sym cfg.SymbolID) bool {
+	return returns.CallsItself(i.store, sym)
+}
+
+// returnArity returns the largest number of values a return statement of the
+// function lists, at least one.
+func returnArity(info *returns.LocalFuncInfo) int {
+	arity := 1
+	if info == nil || info.Graph == nil {
+		return arity
+	}
+	info.Graph.EachReturn(func(_ cfg.Point, ret *cfg.ReturnInfo) {
+		if ret != nil && len(ret.Exprs) > arity {
+			arity = len(ret.Exprs)
+		}
+	})
+	return arity
 }

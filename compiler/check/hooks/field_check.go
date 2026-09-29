@@ -23,6 +23,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	checksynth "github.com/wippyai/go-lua/compiler/check/synth"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
+	"github.com/wippyai/go-lua/internal"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/diag"
 	flowjoin "github.com/wippyai/go-lua/types/flow/join"
@@ -35,13 +36,13 @@ import (
 )
 
 // CheckFields validates field accesses on narrowed types.
-func CheckFields(graph *cfg.Graph, narrowSynth api.Synth, narrowView api.BaseSynth, sourceName string) []diag.Diagnostic {
+func CheckFields(graph *cfg.Graph, narrowSynth api.Synth, narrowView api.BaseSynth, solution api.FlowOps, conditions api.ConditionFromExprFunc, sourceName string) []diag.Diagnostic {
 	if graph == nil || narrowSynth == nil || narrowView == nil {
 		return nil
 	}
 
 	bindings := graph.Bindings()
-	resolver := fieldResolverImpl{view: narrowView, synth: narrowSynth, bindings: bindings}
+	resolver := fieldResolverImpl{view: narrowView, synth: narrowSynth, bindings: bindings, solution: solution, conditions: conditions, assumption: constraint.TrueCondition()}
 
 	var diags []diag.Diagnostic
 	seen := make(map[ast.Expr]bool)
@@ -84,9 +85,56 @@ func CheckFields(graph *cfg.Graph, narrowSynth api.Synth, narrowView api.BaseSyn
 }
 
 type fieldResolverImpl struct {
-	view     api.BaseSynth
-	synth    api.Synth
-	bindings *bind.BindingTable
+	view       api.BaseSynth
+	synth      api.Synth
+	bindings   *bind.BindingTable
+	solution   api.FlowOps
+	conditions api.ConditionFromExprFunc
+	assumption constraint.Condition
+}
+
+// conditionNarrowView reads the right operand under the same guard that
+// expression synthesis and CFG branches use for the left operand.
+type conditionNarrowView struct {
+	api.BaseSynth
+	bindings   *bind.BindingTable
+	solution   api.FlowOps
+	assumption constraint.Condition
+}
+
+func (v *conditionNarrowView) TypeOf(expr ast.Expr, p cfg.Point) typ.Type {
+	if v.bindings != nil && v.solution != nil {
+		if exprPath := path.FromExprWithBindings(expr, nil, v.bindings); !exprPath.IsEmpty() {
+			// Assignment sources run before the write at this point. Preserve the
+			// pre-write type installed by applyAssignPreStateNarrowing when a
+			// logical operand adds another condition to that same source.
+			if preType := assignmentPreStateType(v.BaseSynth, exprPath); preType != nil {
+				if narrower, ok := v.solution.(interface {
+					NarrowTypeAssuming(cfg.Point, constraint.Path, typ.Type, constraint.Condition) typ.Type
+				}); ok {
+					return narrower.NarrowTypeAssuming(p, exprPath, preType, v.assumption)
+				}
+				return preType
+			}
+			if narrowed := v.solution.NarrowedTypeAssuming(p, exprPath, v.assumption); narrowed != nil && !typ.IsUnknown(narrowed) {
+				return narrowed
+			}
+		}
+	}
+	return v.BaseSynth.TypeOf(expr, p)
+}
+
+func assignmentPreStateType(view api.BaseSynth, exprPath constraint.Path) typ.Type {
+	switch v := view.(type) {
+	case *localNarrowView:
+		if v.overrideType != nil && exprPath.Equal(v.overridePath) {
+			return v.overrideType
+		}
+		return assignmentPreStateType(v.base, exprPath)
+	case *conditionNarrowView:
+		return assignmentPreStateType(v.BaseSynth, exprPath)
+	}
+	return nil
 }
 
 func (r fieldResolverImpl) TypeOf(expr ast.Expr, p cfg.Point) typ.Type {
@@ -180,47 +228,66 @@ func checkFieldExpr(expr ast.Expr, p cfg.Point, narrowView api.BaseSynth, resolv
 	case *ast.AttrGetExpr:
 		diags = append(diags, checkAttrGet(e, p, narrowView, resolver, seen, sourceName)...)
 	case *ast.FuncCallExpr:
-		diags = append(diags, checkFieldExpr(e.Func, p, narrowView, resolver, seen, sourceName)...)
-		for _, arg := range e.Args {
-			diags = append(diags, checkFieldExpr(arg, p, narrowView, resolver, seen, sourceName)...)
-		}
+		ast.WalkExprChildren(e, func(child ast.Expr, index int) {
+			if index != 1 {
+				diags = append(diags, checkFieldExpr(child, p, narrowView, resolver, seen, sourceName)...)
+			}
+		})
 	case *ast.TableExpr:
-		for _, f := range e.Fields {
-			diags = append(diags, checkFieldExpr(f.Value, p, narrowView, resolver, seen, sourceName)...)
-		}
+		ast.WalkExprChildren(e, func(child ast.Expr, index int) {
+			if index%2 == 1 {
+				diags = append(diags, checkFieldExpr(child, p, narrowView, resolver, seen, sourceName)...)
+			}
+		})
 	case *ast.LogicalOpExpr:
-		diags = append(diags, checkFieldExpr(e.Lhs, p, narrowView, resolver, seen, sourceName)...)
-		lhsType := narrowView.TypeOf(e.Lhs, p)
-		if e.Operator == "and" && ops.IsFalsy(lhsType) {
-			return diags
-		}
-		if e.Operator == "or" && ops.IsTruthy(lhsType) {
-			return diags
-		}
-		rhsView, rhsResolver := applyLogicalOpNarrowing(e, p, narrowView, resolver)
-		diags = append(diags, checkFieldExpr(e.Rhs, p, rhsView, rhsResolver, seen, sourceName)...)
+		var skipRHS bool
+		var rhsView api.BaseSynth
+		var rhsResolver fieldResolverImpl
+		ast.WalkExprChildren(e, func(child ast.Expr, index int) {
+			if index == 0 {
+				diags = append(diags, checkFieldExpr(child, p, narrowView, resolver, seen, sourceName)...)
+				lhsType := narrowView.TypeOf(child, p)
+				skipRHS = e.Operator == "and" && ops.IsFalsy(lhsType) || e.Operator == "or" && ops.IsTruthy(lhsType)
+				if !skipRHS {
+					rhsView, rhsResolver = applyLogicalOpNarrowing(e, p, narrowView, resolver)
+				}
+				return
+			}
+			if index == 1 && !skipRHS {
+				diags = append(diags, checkFieldExpr(child, p, rhsView, rhsResolver, seen, sourceName)...)
+			}
+		})
 	case *ast.RelationalOpExpr:
-		diags = append(diags, checkFieldExpr(e.Lhs, p, narrowView, resolver, seen, sourceName)...)
-		diags = append(diags, checkFieldExpr(e.Rhs, p, narrowView, resolver, seen, sourceName)...)
+		ast.WalkExprChildren(e, func(child ast.Expr, _ int) {
+			diags = append(diags, checkFieldExpr(child, p, narrowView, resolver, seen, sourceName)...)
+		})
 		diags = append(diags, checkRelational(e, p, narrowView, sourceName)...)
 	case *ast.ArithmeticOpExpr:
-		diags = append(diags, checkFieldExpr(e.Lhs, p, narrowView, resolver, seen, sourceName)...)
-		diags = append(diags, checkFieldExpr(e.Rhs, p, narrowView, resolver, seen, sourceName)...)
+		ast.WalkExprChildren(e, func(child ast.Expr, _ int) {
+			diags = append(diags, checkFieldExpr(child, p, narrowView, resolver, seen, sourceName)...)
+		})
 		diags = append(diags, checkArithmetic(e, p, narrowView, sourceName)...)
 	case *ast.StringConcatOpExpr:
-		diags = append(diags, checkFieldExpr(e.Lhs, p, narrowView, resolver, seen, sourceName)...)
-		diags = append(diags, checkFieldExpr(e.Rhs, p, narrowView, resolver, seen, sourceName)...)
+		ast.WalkExprChildren(e, func(child ast.Expr, _ int) {
+			diags = append(diags, checkFieldExpr(child, p, narrowView, resolver, seen, sourceName)...)
+		})
 		diags = append(diags, checkStringConcat(e, p, narrowView, sourceName)...)
 	case *ast.UnaryMinusOpExpr:
-		diags = append(diags, checkFieldExpr(e.Expr, p, narrowView, resolver, seen, sourceName)...)
+		ast.WalkExprChildren(e, func(child ast.Expr, _ int) {
+			diags = append(diags, checkFieldExpr(child, p, narrowView, resolver, seen, sourceName)...)
+		})
 		diags = append(diags, checkUnaryMinus(e, p, narrowView, sourceName)...)
 	case *ast.UnaryLenOpExpr:
 		diags = append(diags, checkUnaryLength(e, p, narrowView, sourceName)...)
 	case *ast.UnaryBNotOpExpr:
-		diags = append(diags, checkFieldExpr(e.Expr, p, narrowView, resolver, seen, sourceName)...)
+		ast.WalkExprChildren(e, func(child ast.Expr, _ int) {
+			diags = append(diags, checkFieldExpr(child, p, narrowView, resolver, seen, sourceName)...)
+		})
 		diags = append(diags, checkUnaryBNot(e, p, narrowView, sourceName)...)
 	case *ast.UnaryNotOpExpr:
-		diags = append(diags, checkFieldExpr(e.Expr, p, narrowView, resolver, seen, sourceName)...)
+		ast.WalkExprChildren(e, func(child ast.Expr, _ int) {
+			diags = append(diags, checkFieldExpr(child, p, narrowView, resolver, seen, sourceName)...)
+		})
 	}
 
 	return diags
@@ -244,6 +311,23 @@ func applyLogicalOpNarrowing(
 	case "and", "or":
 	default:
 		return view, resolver
+	}
+	if resolver.conditions != nil && resolver.solution != nil {
+		onTrue, onFalse := resolver.conditions(p, expr.Lhs)
+		condition := onTrue
+		if expr.Operator == "or" {
+			condition = onFalse
+		}
+		if condition.HasConstraints() {
+			assumption := constraint.And(resolver.assumption, condition)
+			localView := &conditionNarrowView{
+				BaseSynth: view, bindings: resolver.bindings,
+				solution: resolver.solution, assumption: assumption,
+			}
+			resolver.view = localView
+			resolver.assumption = assumption
+			return localView, resolver
+		}
 	}
 
 	lhsType := view.TypeOf(expr.Lhs, p)
@@ -274,7 +358,8 @@ func applyLogicalOpNarrowing(
 		overrideType: narrowed,
 	}
 
-	return localView, fieldResolverImpl{view: localView, synth: resolver.synth, bindings: resolver.bindings}
+	resolver.view = localView
+	return localView, resolver
 }
 
 func applyAssignPreStateNarrowing(
@@ -324,9 +409,12 @@ func applyAssignPreStateNarrowing(
 		}
 		assignView = localView
 		assignResolver = fieldResolverImpl{
-			view:     localView,
-			synth:    resolver.synth,
-			bindings: resolver.bindings,
+			view:       localView,
+			synth:      resolver.synth,
+			bindings:   resolver.bindings,
+			solution:   resolver.solution,
+			conditions: resolver.conditions,
+			assumption: resolver.assumption,
 		}
 	}
 
@@ -533,7 +621,11 @@ func checkNumericFor(info *cfg.NumericForInfo, p cfg.Point, narrowView api.BaseS
 func checkAttrGet(e *ast.AttrGetExpr, p cfg.Point, narrowView api.BaseSynth, resolver fieldResolverImpl, seen map[ast.Expr]bool, sourceName string) []diag.Diagnostic {
 	var diags []diag.Diagnostic
 
-	diags = append(diags, checkFieldExpr(e.Object, p, narrowView, resolver, seen, sourceName)...)
+	ast.WalkExprChildren(e, func(child ast.Expr, index int) {
+		if index == 0 {
+			diags = append(diags, checkFieldExpr(child, p, narrowView, resolver, seen, sourceName)...)
+		}
+	})
 
 	objType := narrowView.TypeOf(e.Object, p)
 
@@ -571,6 +663,26 @@ func checkAttrGet(e *ast.AttrGetExpr, p cfg.Point, narrowView api.BaseSynth, res
 	}
 
 	if !result.Found {
+		// A read of an absent field is an error only when the receiver's shape
+		// came from a declaration. On an inferred record the field may be added
+		// later through an alias or a write, so the read stays gradual: the
+		// value type is unknown and no diagnostic is produced.
+		if !missingFieldIsClosedFor(objType, fieldName) {
+			return diags
+		}
+		// A table may acquire a field through an alias even when its inferred
+		// record shape does not list it. A live non-nil guard proves that this
+		// particular read succeeds; the flow path version invalidates the proof
+		// after a write.
+		if resolver.bindings != nil && resolver.solution != nil {
+			if guarded, ok := resolver.solution.(interface {
+				IsNonNilAt(cfg.Point, constraint.Path) bool
+			}); ok {
+				if fieldPath := path.FromExprWithBindings(e, nil, resolver.bindings); !fieldPath.IsEmpty() && guarded.IsNonNilAt(p, fieldPath) {
+					return diags
+				}
+			}
+		}
 		pos := diag.Position{File: sourceName, Line: e.Line(), Column: e.Column()}
 		span := ast.SpanOf(e)
 		if e.Key != nil && e.Key.Line() > 0 {
@@ -591,6 +703,109 @@ func checkAttrGet(e *ast.AttrGetExpr, p cfg.Point, narrowView api.BaseSynth, res
 	}
 
 	return diags
+}
+
+// missingFieldIsClosedFor reports whether a read of field is an error on t.
+// The record members of a union form one join that is closed only when every
+// record member is declared; a primitive member carries no table shape, so
+// its lack of the field is closed regardless of provenance.
+func missingFieldIsClosedFor(t typ.Type, field string) bool {
+	if missingFieldIsClosed(t) {
+		return true
+	}
+	u, ok := unwrap.Optional(unwrap.Alias(t)).(*typ.Union)
+	if !ok {
+		return false
+	}
+	for _, m := range u.Members {
+		if isPrimitiveValue(m) && !hasField(m, field) {
+			return true
+		}
+	}
+	return false
+}
+
+func isPrimitiveValue(t typ.Type) bool {
+	if t == nil {
+		return false
+	}
+	if lit, ok := t.(*typ.Literal); ok {
+		return lit.Base != kind.Nil
+	}
+	k := t.Kind()
+	return k.IsPrimitive() && k != kind.Nil
+}
+
+// missingFieldIsClosed reports whether an absent field read on t must be
+// rejected. Only a shape that came from a declaration (a type annotation, type
+// alias, or module manifest) is closed; an inferred record, and any composite
+// that is not entirely declared, reads the field gradually instead.
+func missingFieldIsClosed(t typ.Type) bool {
+	return missingFieldIsClosedDepth(t, typ.NewGuard())
+}
+
+func missingFieldIsClosedDepth(t typ.Type, guard internal.RecursionGuard) bool {
+	return typ.VisitWithGuard(t, guard, false, func(next internal.RecursionGuard) typ.Visitor[bool] {
+		return typ.Visitor[bool]{
+			Alias: func(a *typ.Alias) bool {
+				return missingFieldIsClosedDepth(a.UnaliasedTarget(), next)
+			},
+			Optional: func(o *typ.Optional) bool {
+				return missingFieldIsClosedDepth(o.Inner, next)
+			},
+			Record: func(r *typ.Record) bool {
+				return r.Declared
+			},
+			Recursive: func(rec *typ.Recursive) bool {
+				if rec.Body == nil || rec.Body == rec {
+					return false
+				}
+				return missingFieldIsClosedDepth(rec.Body, next)
+			},
+			Generic: func(g *typ.Generic) bool {
+				if g.Body == nil {
+					return false
+				}
+				return missingFieldIsClosedDepth(g.Body, next)
+			},
+			Instantiated: func(inst *typ.Instantiated) bool {
+				resolved, err := querycore.ResolveInstantiated(inst)
+				if err != nil || resolved == nil {
+					return false
+				}
+				return missingFieldIsClosedDepth(resolved, next)
+			},
+			Union: func(u *typ.Union) bool {
+				sawMember := false
+				for _, m := range u.Members {
+					if m != nil && m.Kind() == kind.Nil {
+						continue
+					}
+					sawMember = true
+					if !missingFieldIsClosedDepth(m, next) {
+						return false
+					}
+				}
+				return sawMember
+			},
+			Intersection: func(i *typ.Intersection) bool {
+				if len(i.Members) == 0 {
+					return false
+				}
+				for _, m := range i.Members {
+					if !missingFieldIsClosedDepth(m, next) {
+						return false
+					}
+				}
+				return true
+			},
+			Default: func(typ.Type) bool {
+				// Non-record receivers keep their existing diagnostics; only a
+				// record shape carries declaration provenance.
+				return true
+			},
+		}
+	})
 }
 
 func isStringKeyExpr(key ast.Expr) bool {
@@ -619,8 +834,9 @@ func checkIndexAccess(e *ast.AttrGetExpr, p cfg.Point, narrowView api.BaseSynth,
 	if rec := unwrap.Record(objType); rec != nil && !rec.HasMapComponent() && !rec.Open {
 		// Closed records support dynamic string indexing (Lua table semantics).
 		// Non-string keys remain invalid.
-		keyKind := keyType.Kind()
-		allowsStringIndex := keyKind.IsPlaceholder() || subtype.IsSubtype(keyType, typ.String)
+		presentKey := unwrap.Optional(keyType)
+		allowsStringIndex := keyType.Kind().IsPlaceholder() ||
+			presentKey != nil && subtype.IsSubtype(presentKey, typ.String)
 		if !allowsStringIndex {
 			return []diag.Diagnostic{indexError(objType, e, sourceName)}
 		}
@@ -634,6 +850,15 @@ func checkIndexAccess(e *ast.AttrGetExpr, p cfg.Point, narrowView api.BaseSynth,
 	}
 	if ok {
 		return nil
+	}
+	if rec := unwrap.Record(objType); rec != nil && !rec.HasMapComponent() {
+		// A computed string key can miss every field of a closed record.
+		// Lua returns nil for that read; a literal field name is checked by
+		// checkAttrGet above, and consumers still check the resulting value.
+		present := unwrap.Optional(keyType)
+		if present != nil && subtype.IsSubtype(present, typ.String) {
+			return nil
+		}
 	}
 
 	return []diag.Diagnostic{indexError(objType, e, sourceName)}

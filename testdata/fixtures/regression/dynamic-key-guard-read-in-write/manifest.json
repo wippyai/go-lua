@@ -1,0 +1,4 @@
+{
+  "description": "A guard on t[k] with a variable key narrows the read of t[k] on the right side of a write to t[k]: the statement reads its operands before it writes.",
+  "files": ["main.lua"]
+}

@@ -27,6 +27,14 @@ func TestIndex(t *testing.T) {
 		{"array with integer key", arr, typ.Integer, true, func(t typ.Type) bool { return t == typ.String }},
 		{"array with number key", arr, typ.Number, true, func(t typ.Type) bool { return t == typ.String }},
 		{"array with string key", arr, typ.String, false, nil},
+		{"array with unknown key placeholder", arr, typ.Unknown, true, func(t typ.Type) bool {
+			_, ok := t.(*typ.Optional)
+			return ok
+		}},
+		{"array with any key", arr, typ.Any, true, func(t typ.Type) bool {
+			_, ok := t.(*typ.Optional)
+			return ok
+		}},
 		{"map with matching key", m, typ.String, true, func(t typ.Type) bool {
 			_, ok := t.(*typ.Optional)
 			return ok
@@ -52,13 +60,17 @@ func TestIndex(t *testing.T) {
 		{"tuple with generic integer", tuple, typ.Integer, true, func(t typ.Type) bool {
 			return ContainsNil(t)
 		}},
+		{"tuple with unknown key placeholder", tuple, typ.Unknown, true, func(t typ.Type) bool {
+			return ContainsNil(t)
+		}},
 		{"empty tuple with integer", typ.NewTuple(), typ.Integer, false, nil},
 		{"record with string literal key", rec, typ.LiteralString("a"), true, func(t typ.Type) bool { return t == typ.String }},
 		{"record with generic string key", rec, typ.String, true, func(t typ.Type) bool {
 			return ContainsNil(t)
 		}},
-		{"empty record with string", typ.NewRecord().Build(), typ.String, true, func(t typ.Type) bool { return t == typ.Nil }},
-		{"builtin table marker", typ.NewInterface("table", nil), typ.String, true, func(t typ.Type) bool { return t == typ.Unknown }},
+		{"complete empty record with string", typ.NewRecord().SetComplete(true).Build(), typ.String, true, func(t typ.Type) bool { return t == typ.Nil }},
+		{"open empty record with string", typ.NewRecord().SetOpen(true).Build(), typ.String, true, func(t typ.Type) bool { return t == typ.Unknown }},
+		{"builtin table marker", typ.NewInterface("table", nil), typ.String, true, func(t typ.Type) bool { return t == typ.Any }},
 		{"any type", typ.Any, typ.String, true, func(t typ.Type) bool { return t == typ.Any }},
 		{"unknown type", typ.Unknown, typ.String, true, func(t typ.Type) bool { return t == typ.Unknown }},
 		{"never type", typ.Never, typ.String, true, func(t typ.Type) bool { return t == typ.Never }},
@@ -75,6 +87,43 @@ func TestIndex(t *testing.T) {
 				t.Errorf("checker failed for result %v", result)
 			}
 		})
+	}
+}
+
+func TestIndexDynamicRecordKeyWithOpaqueMapAlternative(t *testing.T) {
+	method := typ.Func().Param("self", typ.Any).Param("request", typ.String).Returns(typ.Boolean).Build()
+	record := typ.NewRecord().Field("run", method).SetComplete(true).MapComponent(typ.String, typ.Any).Build()
+	if named, ok := Index(record, typ.LiteralString("run")); !ok || !typ.TypeEquals(named, method) {
+		t.Fatalf("literal field lost its signature: %v, %v", named, ok)
+	}
+	if dynamic, ok := Index(record, typ.String); !ok || !typ.IsAny(typ.UnwrapAnnotated(dynamic)) {
+		t.Fatalf("opaque map alternative must dominate dynamic index: %v, %v", dynamic, ok)
+	}
+	if absent, ok := Index(record, typ.LiteralString("missing")); !ok || absent != typ.Nil {
+		t.Fatalf("complete record cannot contain absent literal key: %v, %v", absent, ok)
+	}
+}
+
+func TestIndexDynamicIncompleteRecordKeyIncludesUnlistedFields(t *testing.T) {
+	for _, open := range []bool{false, true} {
+		record := typ.NewRecord().Field("filename", typ.LiteralString("known.txt")).SetOpen(open).Build()
+		for _, key := range []typ.Type{typ.String, typ.Unknown} {
+			got, ok := Index(record, key)
+			if !ok || !typ.IsUnknown(got) {
+				t.Errorf("dynamic key %s on incomplete record (open=%v) = %v, %v; want unknown", key, open, got, ok)
+			}
+		}
+	}
+}
+
+func TestIndex_FiniteNumericMapWithGeneralNumber(t *testing.T) {
+	budget := typ.NewMap(typ.NewUnion(typ.LiteralInt(1), typ.LiteralInt(2)), typ.String)
+	result, ok := Index(budget, typ.Number)
+	if !ok || !typ.TypeEquals(result, typ.NewOptional(typ.String)) {
+		t.Fatalf("general number may miss a finite numeric key: %v, %v", result, ok)
+	}
+	if _, ok := Index(budget, typ.String); ok {
+		t.Fatal("string key cannot address a numeric map")
 	}
 }
 
@@ -316,5 +365,27 @@ func TestIsNumericKey(t *testing.T) {
 				t.Errorf("expected %v", tt.expect)
 			}
 		})
+	}
+}
+
+func TestIndex_UnresolvedKeyTypeResolvesNothing(t *testing.T) {
+	rec := typ.NewRecord().Field("a", typ.String).Build()
+	tuple := typ.NewTuple(typ.String, typ.Integer)
+	for name, container := range map[string]typ.Type{"record": rec, "tuple": tuple} {
+		if got, ok := Index(container, nil); ok {
+			t.Fatalf("%s indexed by an unresolved key type resolved to %v", name, got)
+		}
+	}
+}
+
+// A read with a key that may be nil yields the value or nil.
+func TestIndex_OptionalKeyReadsOptionalValue(t *testing.T) {
+	m := typ.NewMap(typ.String, typ.Integer)
+	got, ok := Index(m, typ.NewOptional(typ.String))
+	if !ok || !typ.TypeEquals(got, typ.NewOptional(typ.Integer)) {
+		t.Fatalf("map[string?] = %v, %v; want integer?", got, ok)
+	}
+	if _, ok := Index(m, typ.NewOptional(typ.Boolean)); ok {
+		t.Fatal("a key outside the map's key type must not resolve")
 	}
 }

@@ -3,10 +3,37 @@ package returns
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/types/contract"
+	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 	typjoin "github.com/wippyai/go-lua/types/typ/join"
 )
+
+func TestMergeFunctionFactType_OnlyKeepsGuaranteedReturnEffects(t *testing.T) {
+	returns := []typ.Type{typ.NewOptional(typ.String), typ.NewOptional(typ.String)}
+	withRelation := typ.Func().Returns(returns...).Spec(contract.NewSpec().WithEffects(effect.ErrorReturn{ValueIndex: 0, ErrorIndex: 1})).Build()
+	withoutRelation := typ.Func().Returns(typ.NewOptional(typ.Number), returns[1]).Build()
+	for _, pair := range [][2]typ.Type{{typ.NewUnion(withRelation, withoutRelation), withoutRelation}, {withoutRelation, typ.NewUnion(withRelation, withoutRelation)}} {
+		merged := MergeFunctionFactType(pair[0], pair[1])
+		if spec := contract.ExtractSpec(merged); spec != nil && spec.Effects.GetErrorReturn(0) != nil {
+			t.Fatalf("a relation absent from one alternative is not guaranteed: %v", merged)
+		}
+	}
+	merged := MergeFunctionFactType(withRelation, withRelation)
+	if spec := contract.ExtractSpec(merged); spec == nil || spec.Effects.GetErrorReturn(0) == nil {
+		t.Fatalf("common return relation was lost: %v", merged)
+	}
+	updated := MergeFunctionFactType(withoutRelation, withRelation)
+	if spec := contract.ExtractSpec(updated); spec == nil || spec.Effects.GetErrorReturn(0) == nil {
+		t.Fatalf("a later proof for the same function was lost: %v", updated)
+	}
+	incompleteEstimate := typ.Func().Returns(returns...).Spec(contract.NewSpec()).Build()
+	retained := MergeFunctionFactType(withRelation, incompleteEstimate)
+	if spec := contract.ExtractSpec(retained); spec == nil || spec.Effects.GetErrorReturn(0) == nil {
+		t.Fatalf("a proved relation was lost to an incomplete later estimate: %v", retained)
+	}
+}
 
 func TestJoinReturnVectors_Empty(t *testing.T) {
 	result := typjoin.ReturnVectors(nil, nil)
@@ -49,6 +76,15 @@ func TestTypJoinReturnSlot_PreservesUnknownOverNil(t *testing.T) {
 	got = typ.JoinReturnSlot(typ.Nil, typ.Unknown)
 	if !typ.TypeEquals(got, typ.Unknown) {
 		t.Fatalf("typ.JoinReturnSlot(nil, unknown) = %v, want unknown", got)
+	}
+}
+
+func TestMergeReturnSummaryResolvesPendingUnionFromCompleteLaterEvidence(t *testing.T) {
+	pending := []typ.Type{typ.NewUnion(typ.Unresolved, typ.LiteralString("application/octet-stream"))}
+	resolved := []typ.Type{typ.String}
+	got := MergeReturnSummary(pending, resolved)
+	if len(got) != 1 || !typ.TypeEquals(got[0], typ.String) {
+		t.Fatalf("pending return union retained after complete evidence: %v", got)
 	}
 }
 
@@ -263,6 +299,32 @@ func TestMergeReturnSummary_FillsNilSlotWithCandidateEvidence(t *testing.T) {
 	}
 	if !typ.TypeEquals(merged[1], typ.NewArray(typ.Unknown)) {
 		t.Fatalf("expected nil slot to be filled with array evidence, got %v", merged[1])
+	}
+}
+
+// The journal db_one helper returns a row assigned through a callback. Its
+// unresolved first estimate must remain open against a nil-only estimate.
+func TestMergeReturnSummary_KeepsUnresolvedValueOpenAgainstNil(t *testing.T) {
+	for _, pair := range [][2][]typ.Type{
+		{{typ.Unknown}, {typ.Nil}},
+		{{typ.Nil}, {typ.Unknown}},
+	} {
+		got := MergeReturnSummary(pair[0], pair[1])
+		if len(got) != 1 || !typ.IsUnknown(got[0]) {
+			t.Fatalf("MergeReturnSummary(%v, %v) = %v; unresolved value became nil", pair[0], pair[1], got)
+		}
+	}
+}
+
+func TestAdvanceReturnSummary_KeepsUnresolvedValueOpenAgainstNil(t *testing.T) {
+	for _, pair := range [][2][]typ.Type{
+		{{typ.Unknown}, {typ.Nil}},
+		{{typ.Nil}, {typ.Unknown}},
+	} {
+		got := AdvanceReturnSummary(pair[0], pair[1])
+		if len(got) != 1 || !typ.IsUnknown(got[0]) {
+			t.Fatalf("AdvanceReturnSummary(%v, %v) = %v; unresolved value became nil", pair[0], pair[1], got)
+		}
 	}
 }
 
@@ -709,6 +771,22 @@ func TestMergeReturnSummary_PrefersStructuredCollectionOverOpenTopRecordField(t 
 	}
 }
 
+func TestMergeReturnSummary_DoesNotRefineRuntimeAnyToEmptyRecord(t *testing.T) {
+	empty := typ.NewRecord().SetOpen(true).Build()
+	weak := []typ.Type{typ.NewRecord().Field("messages", empty).Build()}
+	dynamic := []typ.Type{typ.NewRecord().Field("messages", typ.Any).Build()}
+	for _, pair := range [][2][]typ.Type{{weak, dynamic}, {dynamic, weak}} {
+		merged := MergeReturnSummary(pair[0], pair[1])
+		if len(merged) != 1 {
+			t.Fatalf("merged return slots = %d, want 1", len(merged))
+		}
+		record, ok := merged[0].(*typ.Record)
+		if !ok || record.GetField("messages") == nil || !typ.TypeEquals(record.GetField("messages").Type, typ.Any) {
+			t.Fatalf("merge(%v, %v) = %v, want messages: any", pair[0], pair[1], merged)
+		}
+	}
+}
+
 func TestMergeReturnSummary_PromotesTopLevelStructuredOverOpenTop(t *testing.T) {
 	weak := []typ.Type{
 		typ.NewRecord().SetOpen(true).Build(),
@@ -723,5 +801,84 @@ func TestMergeReturnSummary_PromotesTopLevelStructuredOverOpenTop(t *testing.T) 
 	}
 	if _, ok := merged[0].(*typ.Array); !ok {
 		t.Fatalf("expected top-level array after merge, got %T (%v)", merged[0], merged[0])
+	}
+}
+
+func TestReturnTypesRefine_RecordWithoutDiscoveredFieldDoesNotRefine(t *testing.T) {
+	success := typ.NewRecord().Field("item", typ.Any).Field("result", typ.Any).Build()
+	failure := typ.NewRecord().Field("item", typ.Any).Field("error", typ.Any).Build()
+	stale := []typ.Type{typ.NewArray(failure)}
+	current := []typ.Type{typ.NewArray(typ.NewUnion(success, failure))}
+
+	if ReturnTypesRefine(stale, current) {
+		t.Error("an array of failures must not refine an array of successes or failures")
+	}
+	if !ReturnTypesRefine(current, current) {
+		t.Error("a vector refines itself")
+	}
+}
+
+func TestJoinIterationFact_KeepsRecordShapesTheCurrentFactDiscovered(t *testing.T) {
+	success := typ.NewRecord().Field("item", typ.Any).Field("result", typ.Any).Build()
+	failure := typ.NewRecord().Field("item", typ.Any).Field("error", typ.Any).Build()
+	stale := typ.NewMap(typ.Any, failure)
+	current := typ.NewUnion(typ.NewMap(typ.Any, success), typ.NewMap(typ.Any, failure))
+
+	joined := joinIterationFact(stale, current)
+	if !coversRecordFields(joined, current) {
+		t.Errorf("expected the join to keep the success entries, got %v", joined)
+	}
+}
+
+func TestReturnTypesRefine_OpenPartialRecordDoesNotBlockRefinement(t *testing.T) {
+	entry := typ.NewRecord().Field("id", typ.String).Field("name", typ.Any).Build()
+	partial := typ.NewRecord().SetOpen(true).Field("provider_metadata", typ.Any).Build()
+	complete := []typ.Type{typ.NewArray(entry)}
+	withPartial := []typ.Type{typ.NewArray(typ.NewUnion(entry, partial))}
+
+	if !ReturnTypesRefine(complete, withPartial) {
+		t.Error("an open record states fields of a value, not a shape the refinement must keep")
+	}
+}
+
+// A later snapshot of a class identity that refines an earlier one replaces it
+// in a merged return slot, in either merge order, directly and as a member.
+func TestMergeReturnSummary_RefiningSnapshotReplacesEarlierOne(t *testing.T) {
+	identity := typ.NewRecursivePlaceholder("Class")
+	earlier := typ.BindRecursiveSnapshot(identity, typ.NewRecord().
+		Field("name", typ.Unknown).
+		Field("with", typ.Func().Returns(identity).Build()).
+		Build())
+	current := typ.BindRecursiveSnapshot(identity, typ.NewRecord().
+		Field("name", typ.String).
+		Field("with", typ.Func().Returns(identity).Build()).
+		Build())
+
+	for _, got := range [][]typ.Type{
+		MergeReturnSummary([]typ.Type{earlier}, []typ.Type{current}),
+		MergeReturnSummary([]typ.Type{current}, []typ.Type{earlier}),
+	} {
+		if !typ.TypeEquals(got[0], current) {
+			t.Fatalf("expected %s, got %s", typ.FormatShort(current), typ.FormatShort(got[0]))
+		}
+	}
+	record := typ.NewRecord().Field("id", typ.Integer).Build()
+	got := MergeReturnSummary([]typ.Type{typ.NewUnion(earlier, record)}, []typ.Type{typ.NewUnion(current, record, typ.Nil)})
+	if want := typ.NewUnion(current, record, typ.Nil); !typ.TypeEquals(got[0], want) {
+		t.Fatalf("expected %s, got %s", typ.FormatShort(want), typ.FormatShort(got[0]))
+	}
+}
+
+// Snapshots whose bodies neither refines describe different states of the
+// table, so a merged slot keeps both.
+func TestMergeReturnSummary_IncomparableSnapshotsStay(t *testing.T) {
+	identity := typ.NewRecursivePlaceholder("Class")
+	a := typ.BindRecursiveSnapshot(identity, typ.NewRecord().Field("left", typ.String).Build())
+	b := typ.BindRecursiveSnapshot(identity, typ.NewRecord().Field("right", typ.Integer).Build())
+
+	got := MergeReturnSummary([]typ.Type{a}, []typ.Type{b})
+	u, ok := got[0].(*typ.Union)
+	if !ok || len(u.Members) != 2 {
+		t.Fatalf("expected both snapshots, got %s", typ.FormatShort(got[0]))
 	}
 }

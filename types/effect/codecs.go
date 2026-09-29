@@ -34,6 +34,8 @@ func init() {
 	Register(mutateCodec{})
 	Register(returnCodec{})
 	Register(errorReturnCodec{})
+	Register(truthyErrorReturnCodec{})
+	Register(guardedReturnTypeCodec{})
 	Register(returnLengthCodec{})
 	Register(iteratorCodec{})
 	Register(tableMutatorCodec{})
@@ -184,6 +186,56 @@ func (errorReturnCodec) Decode(r Reader) (Label, error) {
 		return nil, err
 	}
 	return ErrorReturn{ValueIndex: int(valIdx), ErrorIndex: int(errIdx)}, nil
+}
+
+// truthyErrorReturnCodec uses a separate key so old error-return payloads
+// remain readable without changing their binary layout.
+type truthyErrorReturnCodec struct{ errorReturnCodec }
+
+func (truthyErrorReturnCodec) Key() string { return KeyTruthyErrorReturn }
+
+func (truthyErrorReturnCodec) Decode(r Reader) (Label, error) {
+	label, err := (errorReturnCodec{}).Decode(r)
+	if err != nil {
+		return nil, err
+	}
+	relation := label.(ErrorReturn)
+	relation.ValueTruthy = true
+	return relation, nil
+}
+
+type guardedReturnTypeCodec struct{}
+
+func (guardedReturnTypeCodec) Key() string { return KeyGuardedReturnType }
+
+func (guardedReturnTypeCodec) Encode(l Label, w Writer) error {
+	g := l.(GuardedReturnType)
+	for _, part := range []int32{int32(g.GuardIndex), int32(g.TargetIndex), int32(g.TargetHash >> 32), int32(g.TargetHash)} {
+		if err := w.WriteInt32(part); err != nil {
+			return err
+		}
+	}
+	return w.WriteType(g.TargetType)
+}
+
+func (guardedReturnTypeCodec) Decode(r Reader) (Label, error) {
+	parts := [4]int32{}
+	for i := range parts {
+		part, err := r.ReadInt32()
+		if err != nil {
+			return nil, err
+		}
+		parts[i] = part
+	}
+	targetType, err := r.ReadType()
+	if err != nil {
+		return nil, err
+	}
+	return GuardedReturnType{
+		GuardIndex: int(parts[0]), TargetIndex: int(parts[1]),
+		TargetHash: uint64(uint32(parts[2]))<<32 | uint64(uint32(parts[3])),
+		TargetType: targetType,
+	}, nil
 }
 
 // returnLengthCodec handles ReturnLength effect serialization.
@@ -375,7 +427,8 @@ const (
 	returnTypeStringUnpackValue = 7
 	returnTypeSelectCaseOfParam = 8
 	returnTypeSelectResultCases = 9
-	returnTypeTypeValueOf       = 11 // 10 is reserved for WithMetatable
+	returnTypeWithMetatable     = 10
+	returnTypeTypeValueOf       = 11
 )
 
 func writeReturnType(w Writer, rt ReturnType) error {
@@ -446,6 +499,15 @@ func writeReturnType(w Writer, rt ReturnType) error {
 				return err
 			}
 			return w.WriteInt32(int32(v.Default.Index))
+		},
+		WithMetatable: func(v WithMetatable) error {
+			if err := w.WriteByte(returnTypeWithMetatable); err != nil {
+				return err
+			}
+			if err := w.WriteInt32(int32(v.Table.Index)); err != nil {
+				return err
+			}
+			return w.WriteInt32(int32(v.Metatable.Index))
 		},
 		Default: func(ReturnType) error {
 			return w.WriteByte(returnTypeNil)
@@ -538,6 +600,19 @@ func readReturnType(r Reader) (ReturnType, error) {
 		return SelectResultOfCases{
 			Cases:   ParamRef{Index: int(casesIdx)},
 			Default: ParamRef{Index: int(defaultIdx)},
+		}, nil
+	case returnTypeWithMetatable:
+		tableIdx, err := r.ReadInt32()
+		if err != nil {
+			return nil, err
+		}
+		metaIdx, err := r.ReadInt32()
+		if err != nil {
+			return nil, err
+		}
+		return WithMetatable{
+			Table:     ParamRef{Index: int(tableIdx)},
+			Metatable: ParamRef{Index: int(metaIdx)},
 		}, nil
 	default:
 		return nil, fmt.Errorf("unknown return type tag: %d", tag)

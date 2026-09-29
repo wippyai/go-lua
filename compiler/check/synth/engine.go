@@ -29,6 +29,7 @@ package synth
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
+	graphcfg "github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth/phase/extract"
@@ -46,19 +47,24 @@ import (
 //   - api.PhaseNarrowing: flow-refined (post-flow)
 //   - all earlier phases: declared-only (pre-flow)
 type Config struct {
-	Ctx            *db.QueryContext
-	Types          core.TypeOps
-	Scopes         api.ScopeMap
-	Manifests      io.ManifestQuerier
-	Env            api.BaseEnv
-	Flow           api.FlowOps
-	Paths          api.PathFromExprFunc
-	PreCache       api.Cache
-	NarrowCache    api.Cache
-	Graphs         api.GraphProvider
-	Phase          api.Phase
-	ModuleBindings *bind.BindingTable
-	ModuleAliases  map[cfg.SymbolID]string
+	Ctx             *db.QueryContext
+	Graph           *graphcfg.Graph
+	Fn              *ast.FunctionExpr
+	Types           core.TypeOps
+	Scopes          api.ScopeMap
+	Manifests       io.ManifestQuerier
+	GlobalTypes     map[string]typ.Type
+	Env             api.BaseEnv
+	Flow            api.FlowOps
+	Paths           api.PathFromExprFunc
+	Conditions      api.ConditionFromExprFunc
+	PreCache        api.Cache
+	NarrowCache     api.Cache
+	Graphs          api.GraphProvider
+	Phase           api.Phase
+	ModuleBindings  *bind.BindingTable
+	ModuleAliases   map[cfg.SymbolID]string
+	RefinementStore api.RefinementStore
 }
 
 // Engine provides type synthesis configured by compilation phase.
@@ -120,6 +126,7 @@ func New(cfg Config) *Engine {
 		Graphs:         graphs,
 		Flow:           cfg.Flow,
 		Paths:          cfg.Paths,
+		Conditions:     cfg.Conditions,
 		PreCache:       preCache,
 		NarrowCache:    narrowCache,
 		ModuleBindings: cfg.ModuleBindings,
@@ -144,11 +151,20 @@ func (e *Engine) TypeOf(expr ast.Expr, p cfg.Point) typ.Type {
 		if cached, ok := e.deps.NarrowCache.Get(expr, p); ok {
 			return cached
 		}
-		t := e.SynthExpr(expr, p, e.deps.Flow)
+		t := finalizeNarrowed(e.SynthExpr(expr, p, e.deps.Flow))
 		e.deps.NarrowCache.Put(expr, p, t)
 		return t
 	}
 	return e.Synthesizer.TypeOf(expr, p)
+}
+
+// finalizeNarrowed converts the pending positions of a narrowing-phase
+// result: narrowing is the final phase, so no inference remains to fill them.
+func finalizeNarrowed(t typ.Type) typ.Type {
+	if t == nil {
+		return nil
+	}
+	return typ.Finalize(t)
 }
 
 // TypeOfWithExpected synthesizes an expression type with an expected type hint.
@@ -173,7 +189,15 @@ func (e *Engine) TypeOfWithExpected(expr ast.Expr, p cfg.Point, expected typ.Typ
 // Returns nil for non-multi-valued expressions.
 func (e *Engine) MultiTypeOf(expr ast.Expr, p cfg.Point) []typ.Type {
 	if e.IsNarrowing() {
-		return e.SynthMulti(expr, p, e.deps.Flow)
+		multi := e.SynthMulti(expr, p, e.deps.Flow)
+		if len(multi) == 0 {
+			return multi
+		}
+		out := make([]typ.Type, len(multi))
+		for i, t := range multi {
+			out[i] = finalizeNarrowed(t)
+		}
+		return out
 	}
 	return e.Synthesizer.MultiTypeOf(expr, p)
 }
@@ -188,31 +212,13 @@ func (e *Engine) MultiTypeOf(expr ast.Expr, p cfg.Point) []typ.Type {
 // If more values are available than needed, truncates to needed.
 func (e *Engine) ExpandValues(exprs []ast.Expr, needed int, p cfg.Point) []typ.Type {
 	if e.IsNarrowing() {
-		return e.expandValuesNarrowed(exprs, needed, p)
+		return e.ExpandValuesUsing(exprs, needed,
+			func(expr ast.Expr) typ.Type { return e.TypeOf(expr, p) },
+			func(expr ast.Expr) []typ.Type { return e.MultiTypeOf(expr, p) },
+			e.deps.ScopeAt(p),
+		)
 	}
 	return e.Synthesizer.ExpandValues(exprs, needed, p)
-}
-
-func (e *Engine) expandValuesNarrowed(exprs []ast.Expr, needed int, p cfg.Point) []typ.Type {
-	if len(exprs) == 0 {
-		return nil
-	}
-	result := make([]typ.Type, 0, needed)
-
-	for i, expr := range exprs {
-		if i == len(exprs)-1 {
-			multi := e.MultiTypeOf(expr, p)
-			result = append(result, multi...)
-		} else {
-			result = append(result, e.TypeOf(expr, p))
-		}
-	}
-
-	for len(result) < needed {
-		result = append(result, typ.Nil)
-	}
-
-	return result
 }
 
 // SynthWithExpected synthesizes with expected type, using flow information.

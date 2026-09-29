@@ -1,0 +1,1 @@
+{"description":"A completed field dereference must not stay narrowed after the reset closure clears the field (app:accept_test).","check":{"errors":2}}

@@ -50,6 +50,10 @@ func (m mockTypeQuerier) IsSubtype(_ *db.QueryContext, sub, super typ.Type) bool
 	return false
 }
 
+func (m mockTypeQuerier) IsAssignable(_ *db.QueryContext, sub, super typ.Type) bool {
+	return false
+}
+
 func (m mockTypeQuerier) ExpandInstantiated(_ *db.QueryContext, t typ.Type) typ.Type {
 	return t
 }

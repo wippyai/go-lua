@@ -42,6 +42,7 @@ import (
 //  5. Registers the manifest with the database
 func Connect(database *db.DB, name string, exportType typ.Type, exportTypes map[string]typ.Type, graph *cfg.Graph, refinementsBySym map[cfg.SymbolID]*constraint.FunctionRefinement) *io.Manifest {
 	manifest := io.NewManifest(name)
+	manifest.BodyBacked = true
 	manifest.SetExport(exportType)
 
 	if len(exportTypes) > 0 {

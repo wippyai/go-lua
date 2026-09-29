@@ -991,35 +991,15 @@ func TestMultiReturnExpansion(t *testing.T) {
 		t.Error("r assignment not found")
 	}
 
-	// Verify sibling assignments track multi-return relationship
-	if inputs.SiblingAssignments == nil {
-		t.Fatal("SiblingAssignments should not be nil")
+	// An ordinary multi-return signature gives no runtime guarantee of a
+	// relation between its slots.
+	if len(inputs.Facts) != 0 {
+		t.Fatalf("unproved return relation: %v", inputs.Facts)
 	}
 
-	var verQ, verR int
-	for _, a := range inputs.Assignments {
-		switch a.TargetPath.Symbol {
-		case symQ:
-			verQ = graph.VisibleVersion(a.Point, symQ).ID
-		case symR:
-			verR = graph.VisibleVersion(a.Point, symR).ID
-		}
-	}
-	if verQ == 0 || verR == 0 {
-		t.Fatal("expected SSA versions for q and r")
-	}
-
-	siblingQ := inputs.SiblingAssignments[flow.SiblingKey{Symbol: symQ, VersionID: verQ}]
-	siblingR := inputs.SiblingAssignments[flow.SiblingKey{Symbol: symR, VersionID: verR}]
-	if siblingQ == nil || siblingR == nil {
-		t.Error("both q and r should be in SiblingAssignments")
-	}
-	if siblingQ != siblingR {
-		t.Error("q and r should reference the same SiblingAssignment")
-	}
 }
 
-func TestMultiReturnExpansion_TrailingCallBuildsTailSiblingAssignments(t *testing.T) {
+func TestMultiReturnExpansion_TrailingCallWithoutRelationHasNoFact(t *testing.T) {
 	code := `local a, q, r = 1, divmod(10, 3)`
 	chunk, err := parse.ParseString(code, "test.lua")
 	if err != nil {
@@ -1103,19 +1083,10 @@ func TestMultiReturnExpansion_TrailingCallBuildsTailSiblingAssignments(t *testin
 		t.Fatal("expected SSA versions for a, q, r")
 	}
 
-	siblingA := inputs.SiblingAssignments[flow.SiblingKey{Symbol: symA, VersionID: verA}]
-	if siblingA != nil {
-		t.Fatal("a should not be part of trailing-call sibling assignment")
+	if len(inputs.Facts) != 0 {
+		t.Fatalf("unproved return relation: %v", inputs.Facts)
 	}
 
-	siblingQ := inputs.SiblingAssignments[flow.SiblingKey{Symbol: symQ, VersionID: verQ}]
-	siblingR := inputs.SiblingAssignments[flow.SiblingKey{Symbol: symR, VersionID: verR}]
-	if siblingQ == nil || siblingR == nil {
-		t.Fatal("q and r should have sibling assignments for trailing call expansion")
-	}
-	if siblingQ != siblingR {
-		t.Fatal("q and r should share the same trailing-call sibling assignment")
-	}
 }
 
 // TestDiscardSlot verifies _ discard slots are handled correctly.
@@ -1398,4 +1369,8 @@ local msg = ch:receive()
 	if !foundCh {
 		t.Error("ch should be in Assignments")
 	}
+}
+
+func (s *testSynthAPI) TypeOfWithSpecTypes(expr ast.Expr, p cfg.Point, _ api.SpecTypes) typ.Type {
+	return s.TypeOf(expr, p)
 }

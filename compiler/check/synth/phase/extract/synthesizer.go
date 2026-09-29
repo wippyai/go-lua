@@ -162,6 +162,15 @@ func (s *Synthesizer) ExpandValuesWithSpecTypes(exprs []ast.Expr, needed int, p 
 	return s.expandValuesWithSpec(exprs, needed, p, specTypes)
 }
 
+// TypeOfWithSpecTypes synthesizes an expression with spec-narrowed type lookup
+// for every symbol it reads.
+func (s *Synthesizer) TypeOfWithSpecTypes(expr ast.Expr, p cfg.Point, specTypes api.SpecTypes) typ.Type {
+	if len(specTypes) == 0 {
+		return s.TypeOf(expr, p)
+	}
+	return s.synthExprWithSpec(expr, p, specTypes)
+}
+
 // InferIterVars infers iterator variable types (no narrowing).
 func (s *Synthesizer) InferIterVars(exprs []ast.Expr, count int, p cfg.Point) []typ.Type {
 	return s.inferIterVars(exprs, count, p, nil)
@@ -255,10 +264,10 @@ func (s *Synthesizer) synthExprCore(expr ast.Expr, sc *scope.State, p cfg.Point,
 		}
 		return typ.Nil
 	case *ast.FunctionExpr:
-		return s.FunctionType(ex, sc)
+		return s.functionTypeWithOwnerOverloads(ex, sc)
 	case *ast.LogicalOpExpr:
 		if s.IsNarrowing() && narrower != nil {
-			return s.synthLogicalOpWithNarrowing(ex, p, sc, narrower, recurse)
+			return s.synthLogicalOpWithNarrowing(ex, p, narrower, recurse)
 		}
 		return s.synthLogicalOpCore(ex, recurse)
 	case *ast.RelationalOpExpr:
@@ -277,7 +286,7 @@ func (s *Synthesizer) synthExprCore(expr ast.Expr, sc *scope.State, p cfg.Point,
 	case *ast.UnaryBNotOpExpr:
 		return typ.Integer
 	case *ast.CastExpr:
-		return s.ResolveType(ex.Type, sc)
+		return core.PreserveFunctionContracts(s.ResolveType(ex.Type, sc), recurse(ex.Expr))
 	case *ast.NonNilAssertExpr:
 		inner := recurse(ex.Expr)
 		return narrow.RemoveNil(inner)
@@ -294,8 +303,19 @@ func (s *Synthesizer) synthMultiCore(expr ast.Expr, sc *scope.State, synthSingle
 
 	switch ex := expr.(type) {
 	case *ast.FuncCallExpr:
-		return synthCall(ex)
+		results := synthCall(ex)
+		if ex.AdjustRet {
+			// A parenthesized call yields exactly its first value.
+			if len(results) == 0 {
+				return []typ.Type{typ.Nil}
+			}
+			return results[:1]
+		}
+		return results
 	case *ast.Comma3Expr:
+		if ex.AdjustRet {
+			return []typ.Type{synthSingle(expr)}
+		}
 		if vt := sc.VariadicType(); vt != nil {
 			return []typ.Type{vt}
 		}
@@ -340,7 +360,7 @@ func (s *Synthesizer) synthIdentCore(ex *ast.IdentExpr, p cfg.Point, sc *scope.S
 			}
 		}
 		if sc != nil {
-			if t, ok := sc.LookupType(ex.Value); ok && t != nil {
+			if t, ok := sc.LookupValueType(ex.Value); ok && t != nil {
 				return typ.NewMeta(t)
 			}
 		}
@@ -386,15 +406,16 @@ func (s *Synthesizer) synthIdentCore(ex *ast.IdentExpr, p cfg.Point, sc *scope.S
 	}
 
 fallback:
+	var primary, module flow.TypedValue
 	if types := ctx.Types(); types != nil {
-		tv := types.EffectiveTypeAt(p, sym)
-		if tv.State == flow.StateResolved && tv.Type != nil {
-			if specialized := s.stableLocalFunctionValueType(ex, p, sc, tv.Type, nil); specialized != nil {
+		primary = types.EffectiveTypeAt(p, sym)
+		if primary.State == flow.StateResolved && primary.Type != nil {
+			if specialized := s.stableLocalFunctionValueType(ex, p, sc, primary.Type, nil); specialized != nil {
 				return specialized
 			}
 			// Prefer concrete resolved types over module aliases.
 			// Allow module aliases to override unknown/any placeholders.
-			if tv.Type.Kind().IsPlaceholder() {
+			if primary.Type.Kind().IsPlaceholder() {
 				if types.IsAnnotated(sym) {
 					declared := types.DeclaredAt(p, sym)
 					if declared.State == flow.StateResolved && declared.Type != nil {
@@ -405,19 +426,19 @@ fallback:
 				}
 				// defer to module alias below if available
 			} else {
-				return tv.Type
+				return primary.Type
 			}
 		}
 		if moduleSym != 0 && moduleSym != sym {
-			moduleTV := types.EffectiveTypeAt(p, moduleSym)
-			if moduleTV.State == flow.StateResolved && moduleTV.Type != nil {
-				if specialized := s.stableLocalFunctionValueType(ex, p, sc, moduleTV.Type, nil); specialized != nil {
+			module = types.EffectiveTypeAt(p, moduleSym)
+			if module.State == flow.StateResolved && module.Type != nil {
+				if specialized := s.stableLocalFunctionValueType(ex, p, sc, module.Type, nil); specialized != nil {
 					return specialized
 				}
-				if moduleTV.Type.Kind().IsPlaceholder() {
+				if module.Type.Kind().IsPlaceholder() {
 					// keep looking for better sources
 				} else {
-					return moduleTV.Type
+					return module.Type
 				}
 			}
 		}
@@ -434,23 +455,11 @@ fallback:
 		}
 	}
 
-	if types := ctx.Types(); types != nil {
-		tv := types.EffectiveTypeAt(p, sym)
-		if tv.State == flow.StateResolved && tv.Type != nil {
-			if specialized := s.stableLocalFunctionValueType(ex, p, sc, tv.Type, nil); specialized != nil {
-				return specialized
-			}
-			return tv.Type
-		}
-		if moduleSym != 0 && moduleSym != sym {
-			moduleTV := types.EffectiveTypeAt(p, moduleSym)
-			if moduleTV.State == flow.StateResolved && moduleTV.Type != nil {
-				if specialized := s.stableLocalFunctionValueType(ex, p, sc, moduleTV.Type, nil); specialized != nil {
-					return specialized
-				}
-				return moduleTV.Type
-			}
-		}
+	if primary.State == flow.StateResolved && primary.Type != nil {
+		return primary.Type
+	}
+	if module.State == flow.StateResolved && module.Type != nil {
+		return module.Type
 	}
 
 	if t, ok := ctx.GlobalType(sym); ok && t != nil {
@@ -467,12 +476,37 @@ fallback:
 	// type values to flow through module exports as first-class values,
 	// supporting patterns like mylib.Config:is(data) across module boundaries.
 	if sc != nil {
-		if t, ok := sc.LookupType(ex.Value); ok && t != nil {
+		if t, ok := sc.LookupValueType(ex.Value); ok && t != nil {
 			return typ.NewMeta(t)
 		}
 	}
 
+	// Scope computation sees declarations only: a bound symbol whose value
+	// comes from flow has no evidence yet. A local of an enclosing function
+	// has no evidence until that function's solved flow is published.
+	if s.phase == api.PhaseScopeCompute || enclosingLocal(ctx, sym) {
+		return typ.Unresolved
+	}
 	return typ.Unknown
+}
+
+// enclosingLocal reports whether sym is a local or parameter of an enclosing
+// function that the analyzed function captures.
+func enclosingLocal(ctx api.BaseEnv, sym cfg.SymbolID) bool {
+	graph, ok := ctx.Graph().(interface{ Func() *ast.FunctionExpr })
+	bindings := ctx.Bindings()
+	if !ok || bindings == nil || graph.Func() == nil {
+		return false
+	}
+	if k, known := bindings.Kind(sym); !known || (k != cfg.SymbolLocal && k != cfg.SymbolParam) {
+		return false
+	}
+	for _, captured := range bindings.CapturedSymbols(graph.Func()) {
+		if captured == sym {
+			return true
+		}
+	}
+	return false
 }
 
 // synthComma3 synthesizes type for varargs (...).

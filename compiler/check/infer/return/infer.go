@@ -42,14 +42,14 @@ import (
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
-	"github.com/wippyai/go-lua/compiler/check/infer/paramhints"
+	"github.com/wippyai/go-lua/compiler/check/flowbuild/assign"
+	"github.com/wippyai/go-lua/compiler/check/infer/captured"
 	"github.com/wippyai/go-lua/compiler/check/modules"
 	"github.com/wippyai/go-lua/compiler/check/phase"
 	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth"
 	"github.com/wippyai/go-lua/types/constraint"
-	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/diag"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/io"
@@ -60,26 +60,32 @@ import (
 
 // Config holds dependencies for return inference.
 type Config struct {
-	Types         core.TypeOps
-	GlobalTypes   map[string]typ.Type
-	Manifests     io.ManifestQuerier
-	Stdlib        *scope.State
-	Store         api.StoreView
-	Graphs        api.GraphProvider
-	SourceName    string
-	MaxIterations int
+	Types               core.TypeOps
+	GlobalTypes         map[string]typ.Type
+	Manifests           io.ManifestQuerier
+	Stdlib              *scope.State
+	Store               api.StoreView
+	Graphs              api.GraphProvider
+	SourceName          string
+	MaxIterations       int
+	DisableLeafFastPath bool
+	OnSCC               func([]cfg.SymbolID, int)
 }
 
 // Inferencer computes pre-flow return summaries for local functions.
 type Inferencer struct {
-	types         core.TypeOps
-	globalTypes   map[string]typ.Type
-	manifests     io.ManifestQuerier
-	stdlib        *scope.State
-	store         api.StoreView
-	graphs        api.GraphProvider
-	sourceName    string
-	maxIterations int
+	specMemo            map[specMemoKey][]typ.Type
+	parentDeclared      flow.DeclaredTypes
+	types               core.TypeOps
+	globalTypes         map[string]typ.Type
+	manifests           io.ManifestQuerier
+	stdlib              *scope.State
+	store               api.StoreView
+	graphs              api.GraphProvider
+	sourceName          string
+	maxIterations       int
+	disableLeafFastPath bool
+	onSCC               func([]cfg.SymbolID, int)
 }
 
 // New creates a configured return inferencer.
@@ -89,75 +95,43 @@ func New(cfg Config) *Inferencer {
 		maxIter = 10
 	}
 	return &Inferencer{
-		types:         cfg.Types,
-		globalTypes:   cfg.GlobalTypes,
-		manifests:     cfg.Manifests,
-		stdlib:        cfg.Stdlib,
-		store:         cfg.Store,
-		graphs:        cfg.Graphs,
-		sourceName:    cfg.SourceName,
-		maxIterations: maxIter,
+		types:               cfg.Types,
+		globalTypes:         cfg.GlobalTypes,
+		manifests:           cfg.Manifests,
+		stdlib:              cfg.Stdlib,
+		store:               cfg.Store,
+		graphs:              cfg.Graphs,
+		sourceName:          cfg.SourceName,
+		maxIterations:       maxIter,
+		disableLeafFastPath: cfg.DisableLeafFastPath,
+		onSCC:               cfg.OnSCC,
 	}
 }
 
 // RunContext carries per-run inputs for return inference.
 type RunContext struct {
-	Ctx          *db.QueryContext
+	Env phase.PhaseEnv
+	// ParentFacts are the solved facts of the graph that defines the local
+	// functions, the parent of their bodies.
 	ParentFacts  flow.TypeFacts
 	EffectLookup constraint.RefinementLookupBySym
 }
 
-// collectLocalFunctions gathers local function definitions from assignments and FuncDef nodes.
+// collectLocalFunctions gathers the local functions of graph (see cfg.Graph.EachLocalFunction).
 func (i *Inferencer) collectLocalFunctions(
 	graph *cfg.Graph,
 	pointScopes map[cfg.Point]*scope.State,
 	parentFn *ast.FunctionExpr,
 ) map[cfg.SymbolID]*returns.LocalFuncInfo {
 	localFuncs := make(map[cfg.SymbolID]*returns.LocalFuncInfo)
-
-	graph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
-		if info == nil || !info.IsLocal || len(info.Targets) == 0 {
-			return
-		}
-		info.EachTargetSource(func(idx int, target cfg.AssignTarget, source ast.Expr) {
-			if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
-				return
-			}
-			fnExpr, ok := source.(*ast.FunctionExpr)
-			if !ok {
-				return
-			}
-
-			fnGraph := (*cfg.Graph)(nil)
-			if i.graphs != nil {
-				fnGraph = i.graphs.GetOrBuildCFG(fnExpr)
-			}
-			localFuncs[target.Symbol] = &returns.LocalFuncInfo{
-				Sym:         target.Symbol,
-				Fn:          fnExpr,
-				DefScope:    pointScopes[p],
-				Graph:       fnGraph,
-				ParentGraph: graph,
-				ParentFn:    parentFn,
-				DefPoint:    p,
-			}
-		})
-	})
-
-	graph.EachFuncDef(func(p cfg.Point, info *cfg.FuncDefInfo) {
-		if info == nil || info.Symbol == 0 || info.FuncExpr == nil {
-			return
-		}
-		if _, exists := localFuncs[info.Symbol]; exists {
-			return
-		}
+	graph.EachLocalFunction(func(p cfg.Point, sym cfg.SymbolID, fnExpr *ast.FunctionExpr) {
 		fnGraph := (*cfg.Graph)(nil)
 		if i.graphs != nil {
-			fnGraph = i.graphs.GetOrBuildCFG(info.FuncExpr)
+			fnGraph = i.graphs.GetOrBuildCFG(fnExpr)
 		}
-		localFuncs[info.Symbol] = &returns.LocalFuncInfo{
-			Sym:         info.Symbol,
-			Fn:          info.FuncExpr,
+		localFuncs[sym] = &returns.LocalFuncInfo{
+			Sym:         sym,
+			Fn:          fnExpr,
 			DefScope:    pointScopes[p],
 			Graph:       fnGraph,
 			ParentGraph: graph,
@@ -185,16 +159,11 @@ func (i *Inferencer) newReturnInferenceEngine(
 	scopes map[cfg.Point]*scope.State,
 	ctx api.DeclaredEnv,
 ) *synth.Engine {
-	return synth.New(synth.Config{
-		Ctx:            run.Ctx,
-		Types:          i.types,
-		Scopes:         scopes,
-		Manifests:      i.manifests,
-		Env:            ctx,
-		Phase:          api.PhaseScopeCompute,
-		ModuleBindings: i.store.ModuleBindings(),
-		ModuleAliases:  i.store.ModuleAliases(),
-	})
+	env := run.Env
+	env.Scopes = scopes
+	env.Env = ctx
+	env.Phase = api.PhaseScopeCompute
+	return synth.New(env)
 }
 
 // computeReturnSummariesForGraph computes return summaries for local functions in a graph
@@ -203,20 +172,47 @@ func (i *Inferencer) ComputeForGraph(
 	run RunContext,
 	graph *cfg.Graph,
 	parent *scope.State,
-) (api.ReturnSummaries, api.FuncTypes, []diag.Diagnostic) {
+) (api.ReturnSummaries, api.Callables, []diag.Diagnostic) {
 	if i == nil || i.store == nil || graph == nil || parent == nil {
+		return nil, nil, nil
+	}
+	i.specMemo = nil
+	// A graph without local functions or type definitions has no pre-flow
+	// return-inference work. Leaf functions visit this path on every round.
+	if !i.disableLeafFastPath && !HasReturnInferenceWork(graph) {
 		return nil, nil, nil
 	}
 
 	parentScope := api.ParentScopeForGraph(i.store, graph.ID(), parent)
 
-	engine := phase.CreateTypeResolutionEngine(run.Ctx, graph, i.globalTypes, nil, parentScope, i.types, i.manifests)
+	env := run.Env
+	env.Graph = graph
+	engine := phase.CreateTypeResolutionEngine(env, nil, parentScope)
 	pointScopes := scope.BuildTypeDefScopes(graph, parentScope, engine.ResolveTypeDef)
 	localFuncs := i.collectLocalFunctions(graph, pointScopes, graph.Func())
 	if len(localFuncs) == 0 {
 		return nil, nil, nil
 	}
 
+	// Captures can use parent declarations before the parent's flow is solved.
+	localAliases := modules.CollectAliases(graph)
+	parentEnv := run.Env
+	parentEnv.Graph = graph
+	parentEnv.Fn = graph.Func()
+	parentEnv.Scopes = pointScopes
+	parentEnv.ModuleAliases = modules.MergeAliases(run.Env.ModuleAliases, localAliases)
+	parentEnv.Env = phase.NewContextBuilder(parentEnv).WithBaseScope(parentScope).BuildDeclared()
+	parentEnv.Phase = api.PhaseScopeCompute
+	parentEngine := synth.New(parentEnv)
+	i.parentDeclared = synth.FunctionLiteralTypes(graph, parentEngine.TypeOf)
+	for sym, path := range localAliases {
+		if export := io.LookupEnrichedExport(run.Env.Manifests, path); export != nil {
+			if i.parentDeclared == nil {
+				i.parentDeclared = make(flow.DeclaredTypes)
+			}
+			i.parentDeclared[sym] = export
+		}
+	}
 	// Apply param hints from the stable snapshot (deterministic order).
 	if hints := i.store.GetParamHintsSnapshot(graph, parentScope); len(hints) > 0 {
 		for _, sym := range cfg.SortedSymbolIDs(localFuncs) {
@@ -231,21 +227,39 @@ func (i *Inferencer) ComputeForGraph(
 	}
 
 	seed := i.store.GetReturnSummariesSnapshot(graph, parentScope)
-	summaries, diags := i.computeReturnSummariesForGroup(run, parentScope.GroupHash(), localFuncs, seed)
-	funcTypes := i.buildLocalFuncTypes(localFuncs, summaries, engine, parentScope)
+	summaries, cases, diags := i.computeReturnSummariesForGroup(run, parentScope.GroupHash(), localFuncs, seed)
+	funcTypes := i.buildLocalFuncTypes(localFuncs, summaries, cases, engine, parentScope)
 	return summaries, funcTypes, diags
+}
+
+// HasReturnInferenceWork includes type definitions: resolving one may create
+// recursive type identities consumed by subsequent phases even when there are
+// no local function summaries to infer.
+func HasReturnInferenceWork(graph *cfg.Graph) bool {
+	if graph == nil {
+		return false
+	}
+	hasWork := false
+	graph.EachLocalFunction(func(_ cfg.Point, _ cfg.SymbolID, _ *ast.FunctionExpr) {
+		hasWork = true
+	})
+	graph.EachTypeDef(func(_ cfg.Point, _ *cfg.TypeDefInfo) {
+		hasWork = true
+	})
+	return hasWork
 }
 
 func (i *Inferencer) buildLocalFuncTypes(
 	localFuncs map[cfg.SymbolID]*returns.LocalFuncInfo,
 	summaries map[cfg.SymbolID][]typ.Type,
+	cases map[cfg.SymbolID][]dispatchReturnCase,
 	engine *synth.Engine,
 	parentScope *scope.State,
-) api.FuncTypes {
+) api.Callables {
 	if len(localFuncs) == 0 {
 		return nil
 	}
-	out := make(api.FuncTypes, len(localFuncs))
+	out := make(api.Callables, len(localFuncs))
 	for _, sym := range cfg.SortedSymbolIDs(localFuncs) {
 		info := localFuncs[sym]
 		if info == nil || info.Fn == nil {
@@ -270,17 +284,16 @@ func (i *Inferencer) buildLocalFuncTypes(
 		if fnType == nil {
 			continue
 		}
-		if len(info.ParamHints) > 0 {
-			if merged := paramhints.MergeIntoSignature(info.Fn, info.ParamHints, fnType); merged != nil {
-				fnType = merged
-			}
-		}
 		if summary := summaries[sym]; len(summary) > 0 {
 			if withSummary := returns.WithSummaryOrUnknown(fnType, summary); withSummary != nil {
 				fnType = withSummary
 			}
 		}
-		out[sym] = fnType
+		var callable typ.Type = fnType
+		if members := overloadMembers(fnType, cases[sym]); len(members) > 0 {
+			callable = typ.NewIntersection(append(members, fnType)...)
+		}
+		out[info.Fn] = api.FunctionFact{Summary: summaries[sym], Func: callable}
 	}
 	if len(out) == 0 {
 		return nil
@@ -311,19 +324,21 @@ func (i *Inferencer) computeReturnSummariesForGroup(
 	groupHash uint64,
 	localFuncs map[cfg.SymbolID]*returns.LocalFuncInfo,
 	seed map[cfg.SymbolID][]typ.Type,
-) (map[cfg.SymbolID][]typ.Type, []diag.Diagnostic) {
+) (map[cfg.SymbolID][]typ.Type, map[cfg.SymbolID][]dispatchReturnCase, []diag.Diagnostic) {
 	_ = groupHash
 	if len(localFuncs) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 
-	sccs := i.planLocalFunctionSCCs(localFuncs)
+	sccs := i.planLocalFunctionSCCs(run, localFuncs)
 	if len(sccs) == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	summaries := seedSummariesFromSeed(localFuncs, seed)
-	return summaries, i.processSCCSummaries(run, sccs, localFuncs, summaries)
+	diags := i.processSCCSummaries(run, sccs, localFuncs, summaries)
+	cases := i.buildBodyDerivedReturnCases(run, sccs, localFuncs, summaries)
+	return summaries, cases, diags
 }
 
 // returnInferenceContext holds shared state for return type inference phases.
@@ -356,7 +371,9 @@ func collectReturnTypes(
 		if retInfo == nil {
 			return
 		}
-		_ = deadPoints
+		if deadPoints != nil && deadPoints[p] {
+			return
+		}
 
 		types := synthesizeReturnExprs(synthEngine, retInfo, p)
 		if !seenReturn {
@@ -418,7 +435,7 @@ func joinReturnTypes(existing, incoming []typ.Type) []typ.Type {
 		} else {
 			t = typ.Nil
 		}
-		existing[i] = typ.JoinReturnSlot(existing[i], t)
+		existing[i] = typ.JoinReturnPaths(existing[i], t)
 	}
 	return existing
 }
@@ -435,24 +452,45 @@ func (i *Inferencer) inferReturnTypesFromBody(
 	if fnGraph == nil {
 		return narrowed
 	}
-	phaseReturnSummaries := summarizeWithoutCurrent(ctx.summaries, ctx.info)
 	declCheckCtx := api.NewReturnInferenceEnv(api.ReturnInferenceEnvConfig{
-		Graph:           fnGraph,
-		Bindings:        ctx.bindings,
-		BaseScope:       ctx.resolveScope,
-		DeclaredTypes:   finalOverlay,
-		GlobalTypes:     i.globalTypes,
-		ModuleAliases:   ctx.moduleAliases,
-		ReturnSummaries: phaseReturnSummaries,
+		Graph:         fnGraph,
+		Bindings:      ctx.bindings,
+		BaseScope:     ctx.resolveScope,
+		DeclaredTypes: finalOverlay,
+		GlobalTypes:   i.globalTypes,
+		ModuleAliases: ctx.moduleAliases,
+		Callables:     i.scratchCallables(ctx),
 	})
 	declSynth := i.newReturnInferenceEngine(
 		ctx.run,
-		uniformFunctionScopes(fnGraph, ctx.resolveScope),
+		assign.UniformScopes(fnGraph, ctx.resolveScope),
 		declCheckCtx,
 	)
-	declared := collectReturnTypes(fnGraph, declSynth, nil)
+	declared := collectReturnTypes(fnGraph, declSynth, state.deadPoints)
 
-	return returns.MergeReturnSummary(declared, narrowed)
+	// The solved flow at each return point is the evidence; the pre-solve
+	// estimate fills only positions the flow leaves pending.
+	return resolveReturnVector(narrowed, declared)
+}
+
+// resolveReturnVector fills the pending slots and positions of evidence from
+// estimate. A slot the evidence lacks takes the estimate's.
+func resolveReturnVector(evidence, estimate []typ.Type) []typ.Type {
+	if len(evidence) == 0 {
+		return estimate
+	}
+	out := append([]typ.Type(nil), evidence...)
+	for i := range out {
+		if i >= len(estimate) || estimate[i] == nil {
+			continue
+		}
+		if out[i] == nil {
+			out[i] = estimate[i]
+			continue
+		}
+		out[i] = typ.Resolve(out[i], estimate[i])
+	}
+	return out
 }
 
 // inferReturnWithSummary infers return types for a single function using available summaries.
@@ -488,11 +526,60 @@ func (i *Inferencer) inferReturnWithSummary(
 	}
 
 	fn := info.Fn
+
+	ctx := i.setupReturnContext(run, info, summaries, localFuncs)
+	if ctx == nil {
+		return nil
+	}
+
+	// Check for explicit return type annotations.
+	if len(fn.ReturnTypes) > 0 {
+		rets := ctx.engine.ResolveReturnTypes(fn.ReturnTypes, ctx.resolveScope)
+		if len(rets) > 0 {
+			return rets
+		}
+	}
+
+	// Build type overlay with parameter types.
+	overlay := i.buildParameterOverlay(ctx)
+
+	// Build the final overlay through enrichments and phase 1.
+	finalOverlay, untypedCapture := i.finalizeReturnOverlay(ctx, overlay)
+
+	// Phase 2: Infer return types from body.
+	rets := i.inferReturnTypesFromBody(ctx, finalOverlay)
+
+	// Captured types come from the parent's solved flow, so the first round has
+	// none. Returns reading an untyped capture are unknown, and the return-slot
+	// join drops unknown members, so the body result would omit those branches;
+	// the returns stay unknown until the captured types are known.
+	if untypedCapture && len(rets) > 0 {
+		return typ.UnknownReturns(len(rets))
+	}
+	return rets
+}
+
+// setupReturnContext builds the engine, scopes, and shared inference context
+// for one local function.
+func (i *Inferencer) setupReturnContext(
+	run RunContext,
+	info *returns.LocalFuncInfo,
+	summaries map[cfg.SymbolID][]typ.Type,
+	localFuncs map[cfg.SymbolID]*returns.LocalFuncInfo,
+) *returnInferenceContext {
+	if info == nil || info.Fn == nil || info.Graph == nil {
+		return nil
+	}
+
+	fn := info.Fn
 	fnGraph := info.Graph
 	parentScope := info.DefScope
-	moduleAliases := modules.MergeAliases(i.store.ModuleAliases(), modules.CollectAliases(fnGraph))
+	moduleAliases := modules.MergeAliases(run.Env.ModuleAliases, modules.CollectAliases(fnGraph))
 
-	engine := phase.CreateTypeResolutionEngine(run.Ctx, fnGraph, i.globalTypes, nil, parentScope, i.types, i.manifests)
+	env := run.Env
+	env.Graph = fnGraph
+	env.ModuleAliases = moduleAliases
+	engine := phase.CreateTypeResolutionEngine(env, nil, parentScope)
 
 	resolveScope := parentScope
 	if len(fn.TypeParams) > 0 {
@@ -507,22 +594,13 @@ func (i *Inferencer) inferReturnWithSummary(
 		resolveScope = resolveScope.WithTypeParams(typeParams)
 	}
 
-	// Check for explicit return type annotations.
-	if len(fn.ReturnTypes) > 0 {
-		rets := engine.ResolveReturnTypes(fn.ReturnTypes, resolveScope)
-		if len(rets) > 0 {
-			return rets
-		}
-	}
-
 	// Resolve bindings for this function.
 	bindings := fnGraph.Bindings()
 	if bindings == nil && i.store != nil {
 		bindings = i.store.ModuleBindings()
 	}
 
-	// Build inference context shared across all phases.
-	ctx := &returnInferenceContext{
+	return &returnInferenceContext{
 		run:           run,
 		info:          info,
 		summaries:     summaries,
@@ -533,10 +611,15 @@ func (i *Inferencer) inferReturnWithSummary(
 		bindings:      bindings,
 		parentFacts:   run.ParentFacts,
 	}
+}
 
-	// Build type overlay with parameter types.
-	overlay := i.buildParameterOverlay(ctx)
-
+// finalizeReturnOverlay runs overlay enrichments, phase 1 inference, and
+// mutation application. It reports whether the function reads untyped
+// captures from the parent scope.
+func (i *Inferencer) finalizeReturnOverlay(
+	ctx *returnInferenceContext,
+	overlay map[cfg.SymbolID]typ.Type,
+) (map[cfg.SymbolID]typ.Type, bool) {
 	// Add sibling function types from summaries.
 	i.enrichOverlayWithSiblings(ctx, overlay)
 
@@ -546,6 +629,7 @@ func (i *Inferencer) inferReturnWithSummary(
 
 	// Add captured variable types from parent.
 	i.enrichOverlayWithCaptured(ctx, overlay)
+	untypedCapture := captured.HasUntypedSelf(ctx.info.Graph.Bindings(), ctx.info.Fn, overlay) || captured.HasUntypedAliasCall(ctx.info.Graph, overlay)
 
 	// Add local declared types (annotations, loop variables) as overlay hints.
 	i.enrichOverlayWithLocalDeclarations(ctx, overlay)
@@ -554,8 +638,5 @@ func (i *Inferencer) inferReturnWithSummary(
 	inferred, _, synthAdapter := i.inferLocalVariableTypes(ctx, overlay)
 
 	// Collect field/indexer assignments and apply mutations.
-	finalOverlay := i.collectAndApplyMutations(ctx, overlay, inferred, synthAdapter)
-
-	// Phase 2: Infer return types from body.
-	return i.inferReturnTypesFromBody(ctx, finalOverlay)
+	return i.collectAndApplyMutations(ctx, overlay, inferred, synthAdapter), untypedCapture
 }

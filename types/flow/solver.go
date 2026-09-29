@@ -10,7 +10,9 @@ import (
 	"github.com/wippyai/go-lua/types/flow/pathkey"
 	"github.com/wippyai/go-lua/types/flow/propagate"
 	"github.com/wippyai/go-lua/types/narrow"
+	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 // Solution holds flow-narrowed types for all paths after solving.
@@ -32,6 +34,8 @@ type Solution struct {
 
 	edgeNumericConstraints map[edgeKey][]constraint.NumericConstraint
 	unsatEdges             map[edgeKey]bool // edges proven unreachable by constraints
+	typeUnsatEdges         map[edgeKey]bool // type-theory unsat edges driving dead closure
+	typeDeadPoints         map[cfg.Point]bool
 	pointConditions        map[cfg.Point]constraint.Condition
 	numericStates          map[cfg.Point]*numeric.State
 	iterations             int
@@ -47,8 +51,10 @@ type Solution struct {
 	scratchResolvedPathMap map[constraint.PathKey]constraint.PathKey
 	scratchParsedSuffixes  map[string][]constraint.Segment
 	fieldOverlayCache      map[string][]mergedField
+	childFieldCache        map[string]map[string]bool
 	pathAliases            map[string]string // canonical target path key -> canonical source path key
 	narrowedTypeCache      map[narrowedTypeCacheKey]narrowedTypeCacheValue
+	rebinds                map[cfg.Point]map[cfg.SymbolID]bool
 	queryCacheEnabled      bool
 
 	// Worklist/dependency scratch to reduce per-iteration allocations.
@@ -122,6 +128,8 @@ func Solve(inputs *Inputs, resolver narrow.Resolver) *Solution {
 	s.buildEdgeConditions()
 	s.buildEdgeNumericConstraints()
 	s.checkNumericConstraints()
+	s.checkTypeConstraints()
+	s.computeTypeDeadPoints()
 
 	// Propagate conditions using standalone propagate package
 	s.runPropagation()
@@ -150,23 +158,180 @@ func (s *Solution) runPropagation() {
 	assigns := make([]propagate.Assignment, 0, len(s.inputs.Assignments))
 	for _, a := range s.inputs.Assignments {
 		if a.TargetPath.Symbol != 0 {
+			var sourceSym cfg.SymbolID
+			if a.SourcePath.Symbol != 0 && len(a.SourcePath.Segments) == 0 &&
+				(a.TargetPath.Symbol != a.SourcePath.Symbol || len(a.TargetPath.Segments) != 0) {
+				sourceSym = a.SourcePath.Symbol
+			}
 			assigns = append(assigns, propagate.Assignment{
 				Point:      a.Point,
 				TargetSym:  a.TargetPath.Symbol,
+				SourceSym:  sourceSym,
 				TargetSegs: a.TargetPath.Segments,
 			})
 		}
+	}
+	for p, symbols := range s.inputs.CallAliasRoots {
+		for _, sym := range symbols {
+			assigns = append(assigns, propagate.Assignment{
+				Point: p, TargetSym: sym, SourceSym: sym, AliasEscape: true,
+			})
+			// The call may mutate the table through this alias. Facts about its
+			// children describe the pre-call value and cannot cross the call.
+			assigns = append(assigns, propagate.Assignment{
+				Point: p, TargetSym: sym, ChildrenOnly: true, IndexedChildrenOnly: true,
+			})
+		}
+	}
+	for _, write := range s.inputs.IndexerAssignments {
+		if write.Symbol != 0 {
+			assigns = append(assigns, propagate.Assignment{
+				Point: write.Point, TargetSym: write.Symbol,
+				TargetSegs: write.Segments, ChildrenOnly: true,
+			})
+		}
+	}
+	// A call can write a captured or parameter-reachable field without an
+	// assignment to the caller's local symbol. Those writes invalidate facts
+	// about the field just as a direct assignment does.
+	for _, write := range s.inputs.FieldWriteEffects {
+		if write.Target.Symbol == 0 {
+			continue
+		}
+		if write.Field == IndexerWriteField {
+			assigns = append(assigns, propagate.Assignment{
+				Point: write.Point, TargetSym: write.Target.Symbol,
+				TargetSegs: write.Target.Segments, ChildrenOnly: true,
+			})
+			continue
+		}
+		segments := append(append([]constraint.Segment(nil), write.Target.Segments...), constraint.Segment{
+			Kind: constraint.SegmentField, Name: write.Field,
+		})
+		assigns = append(assigns, propagate.Assignment{
+			Point:      write.Point,
+			TargetSym:  write.Target.Symbol,
+			TargetSegs: segments,
+		})
+	}
+	for _, write := range s.inputs.TableMutatorAssignments {
+		if write.Target.Symbol != 0 {
+			assigns = append(assigns, propagate.Assignment{
+				Point: write.Point, TargetSym: write.Target.Symbol,
+				TargetSegs: write.Target.Segments, ChildrenOnly: true,
+			})
+		}
+	}
+	// Facts produced while evaluating a statement describe values before its
+	// writes. A later argument or the assignment target may change those values
+	// before the outgoing edge is reached.
+	for edge, condition := range edgeConds {
+		edgeConds[edge] = propagate.KillRedefinedConditions(condition, edge.From, assigns)
 	}
 
 	propInputs := &propagate.Inputs{
 		Graph:          s.inputs.Graph,
 		EdgeConditions: edgeConds,
-		DeadPoints:     s.inputs.DeadPoints,
+		DeadPoints:     s.propagationDeadPoints(),
 		Assignments:    assigns,
+		Facts:          s.statementFacts(),
+		PhiRenames:     phiRenames(s.inputs.Graph.PhiNodes()),
 	}
 
 	result := propagate.Propagate(propInputs)
 	s.pointConditions = result.PointConditions
+}
+
+// statementFacts combines facts established by assignments and dynamic index writes.
+func (s *Solution) statementFacts() map[cfg.Point]constraint.Condition {
+	facts := s.indexerWriteFacts()
+	if facts == nil {
+		facts = make(map[cfg.Point]constraint.Condition, len(s.inputs.Facts))
+	}
+	for point, fact := range s.inputs.Facts {
+		if old, ok := facts[point]; ok {
+			facts[point] = constraint.And(old, fact)
+		} else {
+			facts[point] = fact
+		}
+	}
+	return facts
+}
+
+// indexerWriteFacts returns, per point, the KeyOf facts established by
+// dynamic-key writes t[k] = v whose value excludes nil: after the write, k is
+// a key of the version of t it creates.
+func (s *Solution) indexerWriteFacts() map[cfg.Point]constraint.Condition {
+	if s.inputs == nil || s.inputs.Graph == nil {
+		return nil
+	}
+	var facts map[cfg.Point]constraint.Condition
+	for _, ia := range s.inputs.IndexerAssignments {
+		if ia.Symbol == 0 || ia.KeySymbol == 0 || !excludesNil(ia.ValType) {
+			continue
+		}
+		tableVer := s.inputs.Graph.VisibleVersion(ia.Point, ia.Symbol)
+		keyVer := s.inputs.Graph.VisibleVersion(ia.Point, ia.KeySymbol)
+		if tableVer.IsZero() || keyVer.IsZero() || s.definesAt(ia.Point, ia.KeySymbol, keyVer) {
+			continue
+		}
+		keyOf := constraint.KeyOf{
+			Table: constraint.Path{Root: ia.Root, Symbol: ia.Symbol, Segments: ia.Segments, Version: tableVer.ID},
+			Key:   constraint.Path{Root: ia.KeyVar, Symbol: ia.KeySymbol, Version: keyVer.ID},
+		}
+		if facts == nil {
+			facts = make(map[cfg.Point]constraint.Condition)
+		}
+		fact := constraint.FromConstraints(keyOf)
+		if existing, ok := facts[ia.Point]; ok {
+			fact = constraint.And(existing, fact)
+		}
+		facts[ia.Point] = fact
+	}
+	return facts
+}
+
+// definesAt reports whether the statement at p assigns sym, making ver, the
+// version visible after p, differ from the one its operands were read at.
+func (s *Solution) definesAt(p cfg.Point, sym cfg.SymbolID, ver cfg.Version) bool {
+	for _, pred := range graphPredecessors(s.inputs.Graph, p) {
+		if s.inputs.Graph.VisibleVersion(pred, sym).ID != ver.ID {
+			return true
+		}
+	}
+	return false
+}
+
+// phiRenames maps each edge into a join point to the operand versions its phi
+// nodes merge from that edge, each renamed to the phi's version.
+func phiRenames(phis []cfg.PhiNode) map[propagate.EdgeKey]map[constraint.VersionRef]int {
+	if len(phis) == 0 {
+		return nil
+	}
+	out := make(map[propagate.EdgeKey]map[constraint.VersionRef]int)
+	for _, phi := range phis {
+		for _, op := range phi.Operands {
+			if op.Version.IsZero() || op.Version.ID == phi.Target.ID {
+				continue
+			}
+			edge := propagate.EdgeKey{From: op.From, To: phi.Point}
+			renames := out[edge]
+			if renames == nil {
+				renames = make(map[constraint.VersionRef]int)
+				out[edge] = renames
+			}
+			renames[constraint.VersionRef{Symbol: phi.Target.Symbol, Version: op.Version.ID}] = phi.Target.ID
+		}
+	}
+	return out
+}
+
+// excludesNil reports whether no value of t is nil.
+func excludesNil(t typ.Type) bool {
+	if t == nil || t.Kind().IsPlaceholder() {
+		return false
+	}
+	return !subtype.IsSubtype(typ.Nil, t)
 }
 
 // buildPointValueMap creates a type environment for constraint solving at a point.
@@ -632,6 +797,9 @@ func (s *Solution) addDependentPointsBatch(
 			addByKey(assignDeps, symKey)
 			addByKey(edgeDeps, symKey)
 		}
+		if base := versionBaseOfKey(key); base != "" {
+			addByKey(phiDeps, versionDependencyKey(base))
+		}
 	}
 
 	slices.Sort(pendingPts)
@@ -803,30 +971,51 @@ func (s *Solution) resolveTypeKey(key narrow.TypeKey) typ.Type {
 //
 // This enables gradual type construction for tables built incrementally.
 func (s *Solution) mergeFieldAssignments(baseType typ.Type, baseKey string) typ.Type {
+	return typ.WriteInto(baseType, func(t typ.Type) typ.Type {
+		return s.mergeFields(t, baseKey)
+	})
+}
+
+func (s *Solution) mergeFields(baseType typ.Type, baseKey string) typ.Type {
 	baseSym, baseVersion, _, ok := pathkey.ParseKeyUnchecked(constraint.PathKey(baseKey))
 	if !ok {
 		return baseType
 	}
-	fields := s.fieldAssignmentsForRoot(pathkey.SymbolVersionRoot(baseSym, baseVersion))
-	if len(fields) == 0 {
+	return s.mergeFieldsAt(baseType, pathkey.SymbolVersionRoot(baseSym, baseVersion), 0)
+}
+
+// mergeFieldsAt composes the child-path facts stored below prefix into
+// baseType, the value at prefix: a direct field fact replaces the field, and
+// a field with facts deeper below composes them into its own value.
+func (s *Solution) mergeFieldsAt(baseType typ.Type, prefix string, depth int) typ.Type {
+	if typ.DepthExceeded(depth) {
 		return baseType
+	}
+	fields := s.fieldAssignmentsForRoot(prefix)
+	deeper := s.childFieldsWithDeeperFacts(prefix)
+	if len(fields) == 0 && len(deeper) == 0 {
+		return baseType
+	}
+	if len(fields) == 0 {
+		return s.mergeDeeperFieldFacts(baseType, prefix, deeper, depth)
 	}
 
 	if baseType == nil {
 		baseType = typ.NewRecord().SetOpen(true).Build()
 	}
+	baseType = unwrap.TableTopAsMap(baseType)
 
 	// Merge fields into base type
 	return typ.Visit(baseType, typ.Visitor[typ.Type]{
 		Alias: func(a *typ.Alias) typ.Type {
-			merged := s.mergeFieldAssignments(a.Target, baseKey)
+			merged := typ.WriteInto(a.Target, func(t typ.Type) typ.Type { return s.mergeFieldsAt(t, prefix, depth+1) })
 			if merged == nil || typ.TypeEquals(merged, a.Target) {
 				return baseType
 			}
 			return typ.NewAlias(a.Name, merged)
 		},
 		Recursive: func(r *typ.Recursive) typ.Type {
-			mergedBody := s.mergeFieldAssignments(r.Body, baseKey)
+			mergedBody := typ.WriteInto(r.Body, func(t typ.Type) typ.Type { return s.mergeFieldsAt(t, prefix, depth+1) })
 			if mergedBody == nil || typ.TypeEquals(mergedBody, r.Body) {
 				return baseType
 			}
@@ -844,22 +1033,15 @@ func (s *Solution) mergeFieldAssignments(baseType typ.Type, baseKey string) typ.
 		Map: func(m *typ.Map) typ.Type {
 			// Map base: create Record(open) with MapComponent + merged fields
 			builder := typ.NewRecord().SetOpen(true)
-			builder.MapComponent(m.Key, m.Value)
+			builder.MapComponentWithFlags(m.Key, m.Value, m.InferredPresence, m.ExplicitNilWrite)
 			for _, f := range fields {
-				if f.Optional {
-					builder.OptField(f.Name, f.Type)
-				} else {
-					builder.Field(f.Name, f.Type)
-				}
+				builder.AddField(typ.Field{Name: f.Name, Type: f.Type, Optional: f.Optional})
 			}
 			return builder.Build()
 		},
 		Record: func(r *typ.Record) typ.Type {
 			// Build merged record: existing fields + new fields
-			builder := typ.NewRecord()
-			if r.Open {
-				builder.SetOpen(true)
-			}
+			builder := r.BuilderEmptyFields()
 			type pendingField struct {
 				t        typ.Type
 				optional bool
@@ -879,26 +1061,31 @@ func (s *Solution) mergeFieldAssignments(baseType typ.Type, baseKey string) typ.
 			for _, f := range r.Fields {
 				fieldType := f.Type
 				optional := f.Optional
+				inferredPresence := f.InferredPresence
 				if assigned, ok := assignedByName[f.Name]; ok {
 					// Child-path facts already represent the current value of the
 					// field at this program point. Rebuilding the root should
 					// project that current field value back into the record rather
 					// than re-join it with the declared/base slot as if it were a
-					// separate branch.
-					fieldType = assigned.t
-					optional = assigned.optional
+					// separate branch. A placeholder fact carries no information
+					// about the value of a concrete slot, matching how TypeAt reads
+					// the child path itself; its nilability still applies.
+					if assigned.t.Kind().IsPlaceholder() && !f.Type.Kind().IsPlaceholder() {
+						optional = optional || assigned.optional
+					} else {
+						fieldType = assigned.t
+						optional = assigned.optional
+						inferredPresence = false
+					}
 					delete(assignedByName, f.Name)
 				}
-				switch {
-				case optional && f.Readonly:
-					builder.OptReadonlyField(f.Name, fieldType)
-				case optional:
-					builder.OptField(f.Name, fieldType)
-				case f.Readonly:
-					builder.ReadonlyField(f.Name, fieldType)
-				default:
-					builder.Field(f.Name, fieldType)
+				if deeper[f.Name] && !r.Declared {
+					fieldType = s.mergeChildFieldFacts(fieldType, prefix, f.Name, depth)
 				}
+				f.Type = fieldType
+				f.Optional = optional
+				f.InferredPresence = inferredPresence && optional
+				builder.AddField(f)
 			}
 			for name, field := range assignedByName {
 				if field.optional {
@@ -907,27 +1094,91 @@ func (s *Solution) mergeFieldAssignments(baseType typ.Type, baseKey string) typ.
 					builder.Field(name, field.t)
 				}
 			}
-			if r.Metatable != nil {
-				builder.Metatable(r.Metatable)
-			}
-			if r.HasMapComponent() {
-				builder.MapComponent(r.MapKey, r.MapValue)
-			}
 			return builder.Build()
 		},
 		Default: func(t typ.Type) typ.Type {
 			// Base is not a record or map; create one with just the field assignments
 			builder := typ.NewRecord().SetOpen(true)
 			for _, f := range fields {
-				if f.Optional {
-					builder.OptField(f.Name, f.Type)
-				} else {
-					builder.Field(f.Name, f.Type)
-				}
+				builder.AddField(typ.Field{Name: f.Name, Type: f.Type, Optional: f.Optional})
 			}
 			return builder.Build()
 		},
 	})
+}
+
+// childFieldsWithDeeperFacts lists the direct fields below prefix that have
+// facts stored deeper than one segment.
+func (s *Solution) childFieldsWithDeeperFacts(prefix string) map[string]bool {
+	if s == nil || len(s.values) == 0 || prefix == "" {
+		return nil
+	}
+	if s.childFieldCache == nil {
+		s.childFieldCache = make(map[string]map[string]bool)
+	}
+	if names, ok := s.childFieldCache[prefix]; ok {
+		return names
+	}
+	var names map[string]bool
+	for key := range s.values {
+		if len(key) <= len(prefix) || key[:len(prefix)] != prefix {
+			continue
+		}
+		segs := pathkey.ParseSuffix(key[len(prefix):])
+		if len(segs) < 2 || segs[0].Kind != constraint.SegmentField {
+			continue
+		}
+		if names == nil {
+			names = make(map[string]bool)
+		}
+		names[segs[0].Name] = true
+	}
+	s.childFieldCache[prefix] = names
+	return names
+}
+
+// mergeChildFieldFacts composes the facts stored below field name of prefix
+// into fieldType, that field's value, when the value is a complete record: a
+// table literal of this module, whose fields the module's own flow writes. A
+// declared shape, a map, or a partial view is not rebuilt from them.
+func (s *Solution) mergeChildFieldFacts(fieldType typ.Type, prefix, name string, depth int) typ.Type {
+	if rec, ok := unwrap.Alias(fieldType).(*typ.Record); !ok || rec.Declared || !rec.Complete {
+		return fieldType
+	}
+	child := prefix + pathkey.SegmentsSuffix([]constraint.Segment{{Kind: constraint.SegmentField, Name: name}})
+	out := typ.WriteInto(fieldType, func(t typ.Type) typ.Type { return s.mergeFieldsAt(t, child, depth+1) })
+	return out
+}
+
+// mergeDeeperFieldFacts composes deeper child facts into the fields of a
+// record base that has no direct field facts below prefix.
+func (s *Solution) mergeDeeperFieldFacts(baseType typ.Type, prefix string, deeper map[string]bool, depth int) typ.Type {
+	switch v := baseType.(type) {
+	case *typ.Alias:
+		target := s.mergeDeeperFieldFacts(v.Target, prefix, deeper, depth)
+		if target == v.Target {
+			return baseType
+		}
+		return typ.NewAlias(v.Name, target)
+	case *typ.Record:
+		if v.Declared {
+			return baseType
+		}
+		out := v
+		for _, f := range v.Fields {
+			if !deeper[f.Name] {
+				continue
+			}
+			merged := s.mergeChildFieldFacts(f.Type, prefix, f.Name, depth)
+			if merged == nil || typ.TypeEquals(merged, f.Type) {
+				continue
+			}
+			f.Type = merged
+			out = out.WithField(f)
+		}
+		return out
+	}
+	return baseType
 }
 
 func (s *Solution) fieldAssignmentsForRoot(baseRoot string) []mergedField {

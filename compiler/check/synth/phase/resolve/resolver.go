@@ -501,7 +501,9 @@ func (r *Resolver) resolveIntersection(te *ast.IntersectionTypeExpr, sc *scope.S
 }
 
 func (r *Resolver) resolveRecord(te *ast.RecordTypeExpr, sc *scope.State, depth int) typ.Type {
-	builder := typ.NewRecord()
+	// A record written in a type annotation or type alias is a declaration:
+	// its field set is closed, so an absent field read is an error.
+	builder := typ.NewRecord().SetDeclared(true)
 	for _, f := range te.Fields {
 		fieldType := r.resolveTypeDepth(f.Type, sc, depth+1)
 		if len(f.Annotations) > 0 {
@@ -615,35 +617,51 @@ func (r *Resolver) resolveRef(te *ast.TypeRefExpr, sc *scope.State) typ.Type {
 	if len(te.Path) == 0 {
 		return typ.Unknown
 	}
-
+	if t, ok := r.lookupTypePath(te.Path, sc); ok {
+		return t
+	}
 	if len(te.Path) == 1 {
-		name := te.Path[0]
+		return typ.NewRef("", te.Path[0])
+	}
+	module, typeName := r.splitTypePath(te.Path)
+	return typ.NewRef(module, typeName)
+}
+
+// lookupTypePath resolves a type name or a module-qualified type path:
+// a single name through type parameters and the type scope, a qualified
+// path through the manifest of its module, with module aliases applied.
+func (r *Resolver) lookupTypePath(path []string, sc *scope.State) (typ.Type, bool) {
+	if len(path) == 1 {
+		name := path[0]
 		if sc != nil {
 			if tp, ok := sc.LookupTypeParam(name); ok {
-				return tp
+				return tp, true
 			}
 			if t, ok := sc.LookupType(name); ok {
-				return t
+				return t, true
 			}
 		}
-		return typ.NewRef("", name)
+		return nil, false
 	}
-
-	module := r.resolveModuleAliasPath(te.Path[0])
-	for i := 1; i < len(te.Path)-1; i++ {
-		module += "." + te.Path[i]
-	}
-	typeName := te.Path[len(te.Path)-1]
-
+	module, typeName := r.splitTypePath(path)
 	if r.manifests != nil {
 		if manifest := io.LookupManifest(r.manifests, module); manifest != nil {
 			if t, ok := manifest.LookupType(typeName); ok {
-				return t
+				return t, true
 			}
 		}
 	}
+	return nil, false
+}
 
-	return typ.NewRef(module, typeName)
+// splitTypePath splits a qualified type path into its module path, with
+// the leading module alias resolved, and the type name.
+func (r *Resolver) splitTypePath(path []string) (string, string) {
+	module := r.resolveModuleAliasPath(path[0])
+	for i := 1; i < len(path)-1; i++ {
+		module += "." + path[i]
+	}
+	return module, path[len(path)-1]
 }
 
 func (r *Resolver) resolveModuleAliasPath(name string) string {
@@ -682,16 +700,8 @@ func (r *Resolver) resolveGeneric(te *ast.GenericTypeExpr, sc *scope.State, dept
 		return typ.Unknown
 	}
 
-	name := te.Base.Path[0]
-	var baseType typ.Type
-
-	if sc != nil {
-		if t, ok := sc.LookupType(name); ok {
-			baseType = t
-		}
-	}
-
-	if baseType == nil {
+	baseType, ok := r.lookupTypePath(te.Base.Path, sc)
+	if !ok {
 		return typ.Unknown
 	}
 

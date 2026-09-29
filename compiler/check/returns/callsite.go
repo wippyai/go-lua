@@ -8,6 +8,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/api"
 	checkcallsite "github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/resolve"
+	"github.com/wippyai/go-lua/compiler/check/overlaymut"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/flow"
@@ -35,16 +36,15 @@ import (
 func CollectCalledNestedFieldAssignments(
 	parent *cfg.Graph,
 	bindings *bind.BindingTable,
-	capturedByCallee map[cfg.SymbolID]map[cfg.SymbolID]map[string]typ.Type,
+	capturedByCallee api.FieldWrites,
 	resolveCalleeType func(*cfg.CallInfo, cfg.Point) typ.Type,
-) map[cfg.SymbolID]map[string]typ.Type {
-	result := make(map[cfg.SymbolID]map[string]typ.Type)
+) map[cfg.SymbolID]api.FieldWriteSet {
+	result := make(map[cfg.SymbolID]api.FieldWriteSet)
 	if parent == nil || len(capturedByCallee) == 0 {
 		return result
 	}
 
 	// Gather all symbols known in the parent graph (avoid per-point merges).
-	parentSymbols := parent.AllSymbolIDs()
 
 	// Find which local functions are called in the parent graph.
 	trackedCallees := make(map[cfg.SymbolID]bool, len(capturedByCallee))
@@ -60,32 +60,15 @@ func CollectCalledNestedFieldAssignments(
 		}
 	})
 
-	// Collect field assignments from called nested functions and merge into result.
-	if len(calledSyms) == 0 {
-		return result
-	}
+	// Collect field writes of called nested functions and merge into result.
 	for _, sym := range cfg.SortedSymbolIDs(calledSyms) {
-		nestedFields := capturedByCallee[sym]
-		if len(nestedFields) == 0 {
-			continue
-		}
-		for _, baseSym := range cfg.SortedSymbolIDs(nestedFields) {
-			fields := nestedFields[baseSym]
-			if !parentSymbols[baseSym] {
-				continue
-			}
-			if result[baseSym] == nil {
-				result[baseSym] = make(map[string]typ.Type)
-			}
-			for _, fieldName := range cfg.SortedFieldNames(fields) {
-				fieldType := fields[fieldName]
-				if existing := result[baseSym][fieldName]; existing != nil {
-					result[baseSym][fieldName] = typ.JoinPreferNonSoft(existing, fieldType)
-				} else {
-					result[baseSym][fieldName] = fieldType
-				}
+		nestedWrites := make(map[cfg.SymbolID]api.FieldWriteSet)
+		for _, baseSym := range cfg.SortedSymbolIDs(capturedByCallee[sym]) {
+			if parent.HasSymbolID(baseSym) {
+				nestedWrites[baseSym] = capturedByCallee[sym][baseSym]
 			}
 		}
+		overlaymut.MergeFieldWriteSets(result, nestedWrites)
 	}
 
 	return result
@@ -107,7 +90,6 @@ func CollectCalledNestedContainerMutatorAssignments(
 		return nil
 	}
 
-	parentSymbols := parent.AllSymbolIDs()
 	trackedCallees := make(map[cfg.SymbolID]bool, len(capturedByCallee))
 	for calleeSym := range capturedByCallee {
 		trackedCallees[calleeSym] = true
@@ -133,7 +115,7 @@ func CollectCalledNestedContainerMutatorAssignments(
 			}
 			for _, targetSym := range cfg.SortedSymbolIDs(nestedMutations) {
 				mutations := nestedMutations[targetSym]
-				if !parentSymbols[targetSym] {
+				if !parent.HasSymbolID(targetSym) {
 					continue
 				}
 				root := resolve.RootNameFromGraphAndBindings(parent, bindings, targetSym, "")

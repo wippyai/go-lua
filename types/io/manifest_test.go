@@ -27,6 +27,51 @@ func TestNewManifest(t *testing.T) {
 	}
 }
 
+func TestManifest_CallWritesRoundTrip(t *testing.T) {
+	m := NewManifest("bridge")
+	m.CallWrites = map[string][]ModuleWrite{
+		"append": {{Module: "state", Path: ".state.witness", Field: "[]", Type: typ.NewMap(typ.Integer, typ.String)}},
+	}
+	m.MayCallWrites = map[string][]ModuleWrite{
+		"maybe": {{Module: "state", Path: ".state.witness", Field: "[]", Type: typ.NewMap(typ.Integer, typ.String)}},
+	}
+	data, err := m.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := DecodeManifest(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writes := decoded.CallWrites["append"]
+	if len(writes) != 1 || writes[0].Module != "state" || writes[0].Path != ".state.witness" || writes[0].Field != "[]" || !typ.TypeEquals(writes[0].Type, m.CallWrites["append"][0].Type) {
+		t.Fatalf("call writes changed across manifest encoding: %v", writes)
+	}
+	possible := decoded.MayCallWrites["maybe"]
+	if len(possible) != 1 || possible[0].Module != "state" || possible[0].Path != ".state.witness" || possible[0].Field != "[]" || !typ.TypeEquals(possible[0].Type, m.MayCallWrites["maybe"][0].Type) {
+		t.Fatalf("possible call writes changed across manifest encoding: %v", possible)
+	}
+}
+
+func TestManifest_TruthyCallbackCallsRoundTrip(t *testing.T) {
+	m := NewManifest("callback")
+	m.TruthyCallbackCalls = map[string][]CallbackCall{
+		"create": {{Field: "_tool_call", NonNilArgs: []int{1, 2}, PriorFields: []string{"_available"}}},
+	}
+	data, err := m.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := DecodeManifest(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	calls := decoded.TruthyCallbackCalls["create"]
+	if len(calls) != 1 || calls[0].Field != "_tool_call" || len(calls[0].NonNilArgs) != 2 || calls[0].NonNilArgs[0] != 1 || calls[0].NonNilArgs[1] != 2 || len(calls[0].PriorFields) != 1 || calls[0].PriorFields[0] != "_available" {
+		t.Fatalf("callback call changed across manifest encoding: %v", calls)
+	}
+}
+
 func TestNewSummary(t *testing.T) {
 	params := []typ.Type{typ.String, typ.Number}
 	returns := []typ.Type{typ.Boolean}
@@ -360,6 +405,7 @@ func TestDecodeManifest_RejectsCollectionLengthBeyondInput(t *testing.T) {
 	w.writeByte(manifestVersion)
 	w.writeUint64(0)
 	w.writeString("test")
+	w.writeBool(false) // Lua body provenance
 	w.writeBool(false)
 	w.writeUint32(1024)
 
@@ -493,5 +539,38 @@ func TestManifest_EnrichedExport_SummarySuffixAmbiguityDoesNotGuess(t *testing.T
 
 	if _, found := m.LookupSummary("eq"); found {
 		t.Fatal("expected LookupSummary to reject ambiguous suffix match")
+	}
+}
+
+func TestEnrichedExport_KeepsRecordShape(t *testing.T) {
+	m := NewManifest("shape")
+	add := typ.Func().Param("id", typ.String).Build()
+	exportRec := typ.NewRecord().
+		Field("add", add).
+		ReadonlyField("version", typ.Integer).
+		MapComponent(typ.String, typ.Number).
+		SetOpen(true).
+		Build()
+	m.SetExport(exportRec)
+
+	summary := NewSummary([]typ.Type{typ.String}, nil)
+	summary.Ensures = constraint.FromConstraints(constraint.NotNil{Path: constraint.Path{Root: "$0"}})
+	m.DefineSummary("add", summary)
+
+	rec, ok := m.EnrichedExport().(*typ.Record)
+	if !ok {
+		t.Fatalf("expected record export, got %T", m.EnrichedExport())
+	}
+	if fn, ok := rec.GetField("add").Type.(*typ.Function); !ok || fn.Refinement == nil {
+		t.Fatal("expected add to be enriched")
+	}
+	if !rec.Open {
+		t.Error("expected the enriched export to stay open")
+	}
+	if !rec.HasMapComponent() {
+		t.Error("expected the enriched export to keep its map component")
+	}
+	if f := rec.GetField("version"); f == nil || !f.Readonly {
+		t.Error("expected version to stay readonly")
 	}
 }

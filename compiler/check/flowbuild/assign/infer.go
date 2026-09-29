@@ -57,16 +57,17 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/path"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/predicate"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/resolve"
-	"github.com/wippyai/go-lua/compiler/check/returns"
+	"github.com/wippyai/go-lua/compiler/check/overlaymut"
 	"github.com/wippyai/go-lua/compiler/check/scope"
-	synthpkg "github.com/wippyai/go-lua/compiler/check/synth"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	"github.com/wippyai/go-lua/internal"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/flow"
+	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 // maxInferIterations limits fixpoint iterations per SCC.
@@ -83,9 +84,10 @@ func mergeSpecTypesSoftInto(out, base, override api.SpecTypes) api.SpecTypes {
 		out[k] = v
 	}
 	for k, v := range override {
-		// Unknown/nil overlays are uninformative and can poison downstream
+		// Pending and nil overlays are uninformative and can poison downstream
 		// inference (for example, trailing nil padding from unresolved calls).
-		if typ.IsUnknownOrNil(v) {
+		// A declared unknown is a final dynamic type and overrides.
+		if v == nil || typ.IsUnresolved(v) || v.Kind() == kind.Nil {
 			continue
 		}
 		if v != nil && typ.IsSoft(v, typ.SoftAnnotationPolicy) {
@@ -117,10 +119,10 @@ func CollectInferredTypes(fc *fbcore.FlowContext, specTypes api.SpecTypes, annot
 	if fc.Derived != nil {
 		symResolver = fc.Derived.SymResolver
 	}
-	preflowBranchSolution := buildPreflowBranchSolution(fc, inputs)
+	preflowBranchSolution := buildPreflowFacts(fc, inputs)
 	return collectInferredTypes(
 		fc.Graph, fc.Scopes, synth, fc.API, symResolver,
-		specTypes, annotated, inputs, fc.ModuleBindings, fc.CallCtx, fc.TypeOps, preflowBranchSolution, fc.Services,
+		specTypes, annotated, inputs, fc.ModuleBindings, fc.CallCtx, fc.TypeOps, preflowBranchSolution,
 	)
 }
 
@@ -143,8 +145,7 @@ func collectInferredTypes(
 	moduleBindings *bind.BindingTable,
 	callCtx *db.QueryContext,
 	typeOps core.TypeOps,
-	preflowBranchSolution *flow.Solution,
-	services fbcore.FlowServices,
+	preflowBranchSolution *preflowFacts,
 ) api.SpecTypes {
 	inferred := make(api.SpecTypes)
 	if graph == nil {
@@ -164,70 +165,6 @@ func collectInferredTypes(
 			paramSet[sym] = true
 		}
 	}
-	funcSigTypes := make(map[cfg.SymbolID]typ.Type)
-	seedEngine, _ := synthAPI.(*synthpkg.Engine)
-	if services != nil {
-		graph.EachFuncDef(func(p cfg.Point, info *cfg.FuncDefInfo) {
-			if info == nil || info.Symbol == 0 {
-				return
-			}
-			if info.TargetKind != cfg.FuncDefGlobal || info.FuncExpr == nil {
-				return
-			}
-			sc := scopes[p]
-			if sc == nil {
-				sc = scopes[graph.Entry()]
-			}
-			if inputs != nil && inputs.SiblingTypes != nil {
-				if sibling := inputs.SiblingTypes[info.Symbol]; sibling != nil {
-					funcSigTypes[info.Symbol] = sibling
-					return
-				}
-			}
-			if sig := services.ResolveFunctionSignature(info.FuncExpr, sc); sig != nil {
-				funcSigTypes[info.Symbol] = sig
-				return
-			}
-			if seed, ok := returns.BuildSeedFunctionTypeWithBindings(info.FuncExpr, seedEngine, sc, bindings).(*typ.Function); ok && seed != nil {
-				funcSigTypes[info.Symbol] = seed
-			}
-		})
-		graph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
-			if info == nil || !info.IsLocal || len(info.Targets) == 0 {
-				return
-			}
-			sc := scopes[p]
-			if sc == nil {
-				sc = scopes[graph.Entry()]
-			}
-			sources := info.Sources
-			for i, target := range info.Targets {
-				var source ast.Expr
-				if i < len(sources) {
-					source = sources[i]
-				}
-				if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
-					continue
-				}
-				if fnExpr, ok := source.(*ast.FunctionExpr); ok {
-					if inputs != nil && inputs.SiblingTypes != nil {
-						if sibling := inputs.SiblingTypes[target.Symbol]; sibling != nil {
-							funcSigTypes[target.Symbol] = sibling
-							continue
-						}
-					}
-					if sig := services.ResolveFunctionSignature(fnExpr, sc); sig != nil {
-						funcSigTypes[target.Symbol] = sig
-						continue
-					}
-					if seed, ok := returns.BuildSeedFunctionTypeWithBindings(fnExpr, seedEngine, sc, bindings).(*typ.Function); ok && seed != nil {
-						funcSigTypes[target.Symbol] = seed
-					}
-				}
-			}
-		})
-	}
-
 	type assignEntry struct {
 		p    cfg.Point
 		info *cfg.AssignInfo
@@ -455,15 +392,46 @@ func collectInferredTypes(
 			}
 		}
 
+		// An assignment or call can embed a symbol's own type only when its
+		// source refers to the SCC.
+		assignRefersSCC := make(map[int]bool, len(sccAssignIdx))
+		for _, idx := range sccAssignIdx {
+			info := assigns[idx].info
+			assignRefersSCC[idx] = exprsReferToSCC(info.Sources, bindings, sccSet) ||
+				exprsReferToSCC(info.IterExprs, bindings, sccSet)
+		}
+		selfPrev := func(refersSCC bool, sym cfg.SymbolID, overlay api.SpecTypes) typ.Type {
+			if !refersSCC {
+				return nil
+			}
+			if prev, ok := overlay[sym]; ok && prev != nil {
+				return prev
+			}
+			return typ.Unknown
+		}
+
 		// Fixpoint iteration for this SCC
 		converged := false
 		var overlayScratch api.SpecTypes
 		for iter := 0; iter < maxInferIterations; iter++ {
 			changed := false
+			previous := make(api.SpecTypes, len(sccSyms))
+			for _, sym := range sccSyms {
+				previous[sym] = inferred[sym]
+				// This round re-reads every value the previous round read
+				// while pending, so its result supersedes those alternatives.
+				if t, ok := inferred[sym]; ok && !typ.IsFinal(t) {
+					if evidence := typ.DropPendingAlternatives(t); evidence != nil {
+						inferred[sym] = evidence
+					} else {
+						delete(inferred, sym)
+					}
+				}
+			}
 			overlayScratch = mergeSpecTypesSoftInto(overlayScratch, inferred, specTypes)
 			overlay := overlayScratch
 
-			wrappedSynth := synthWithInferenceOverlay(graph, overlay, funcSigTypes, paramSet, annotated, bindings, inputs, callCtx, typeOps, preflowBranchSolution, synth)
+			wrappedSynth := synthWithInferenceOverlay(synthAPI, overlay, paramSet, annotated, bindings, inputs, callCtx, typeOps, preflowBranchSolution, synth)
 			callSynthFor := func(p cfg.Point, info *cfg.CallInfo) func(ast.Expr, cfg.Point) typ.Type {
 				if info == nil {
 					return wrappedSynth
@@ -488,10 +456,10 @@ func collectInferredTypes(
 						return t, true
 					}
 					return rhsResolver(point, sym)
-				})
+				}, preflowBranchSolution)
 				callOverlay = enrichStructuredOverlayAtPoint(graph, idom, structuredWrites, p, callOverlay, rhsResolver, wrappedSynth)
 
-				return synthWithInferenceOverlay(graph, callOverlay, funcSigTypes, paramSet, annotated, bindings, inputs, callCtx, typeOps, preflowBranchSolution, synth)
+				return synthWithInferenceOverlay(synthAPI, callOverlay, paramSet, annotated, bindings, inputs, callCtx, typeOps, preflowBranchSolution, synth)
 			}
 
 			// Infer expected argument types for a call using the call inference pipeline.
@@ -537,9 +505,6 @@ func collectInferredTypes(
 					}
 					calleeCandidates := callsite.CallableCalleeSymbolCandidates(info, graph, bindings, moduleBindings)
 					for _, calleeSym := range calleeCandidates {
-						if sig, ok := funcSigTypes[calleeSym]; ok && sig != nil {
-							setCallee(sig)
-						}
 						if symResolver != nil {
 							if t, ok := symResolver(p, calleeSym); ok && t != nil {
 								setCallee(t)
@@ -587,7 +552,7 @@ func collectInferredTypes(
 						continue
 					}
 					old := inferred[target.Symbol]
-					joined := joinInferredType(old, typ.Integer)
+					joined := joinInferredType(old, typ.Integer, nil)
 					if !typ.TypeEquals(old, joined) {
 						inferred[target.Symbol] = joined
 						changed = true
@@ -617,7 +582,7 @@ func collectInferredTypes(
 							continue
 						}
 						old := inferred[target.Symbol]
-						joined := joinInferredType(old, vt)
+						joined := joinInferredType(old, vt, selfPrev(assignRefersSCC[idx], target.Symbol, overlay))
 						if !typ.TypeEquals(old, joined) {
 							inferred[target.Symbol] = joined
 							changed = true
@@ -649,48 +614,36 @@ func collectInferredTypes(
 							continue
 						}
 						assignedType := typ.Unknown
-						// Canonical local-function policy: use the signature seed captured
-						// from declaration shape (params/annotations), not synthesized return
-						// summaries at this stage. Return summaries are reconciled in interproc
-						// channels and should not be re-injected through local assignment
-						// inference, which can reintroduce stale unions.
-						if _, isFnLiteral := source.(*ast.FunctionExpr); isFnLiteral {
-							if sig, ok := funcSigTypes[target.Symbol]; ok && sig != nil {
-								assignedType = sig
-							}
-						}
-						if typ.IsAbsentOrUnknown(assignedType) {
-							if !valuesComputed {
-								rhsResolver := symResolver
-								if rhsResolver == nil {
-									rhsResolver = func(_ cfg.Point, sym cfg.SymbolID) (typ.Type, bool) {
-										t, ok := overlay[sym]
-										return t, ok
-									}
+						if !valuesComputed {
+							rhsResolver := symResolver
+							if rhsResolver == nil {
+								rhsResolver = func(_ cfg.Point, sym cfg.SymbolID) (typ.Type, bool) {
+									t, ok := overlay[sym]
+									return t, ok
 								}
-								rhsOverlay := rhsSpecTypesAtAssignPoint(graph, info, p, overlay, func(point cfg.Point, sym cfg.SymbolID) (typ.Type, bool) {
-									if t, ok := overlay[sym]; ok && t != nil && !t.Kind().IsPlaceholder() {
-										return t, true
-									}
-									return rhsResolver(point, sym)
-								})
-								rhsOverlay = enrichStructuredOverlayAtPoint(graph, idom, structuredWrites, p, rhsOverlay, rhsResolver, wrappedSynth)
-								values = expandedAssignValues(synthAPI, info, p, rhsOverlay)
-								valuesComputed = true
 							}
-							if value := assignValueAt(values, i); !typ.IsAbsentOrUnknown(value) {
-								assignedType = value
-								assignedType = preferPreciseDirectSourceType(assignedType, source, p, sc, wrappedSynth, len(info.Targets) == 1)
-							} else if wrappedSynth != nil && source != nil {
-								assignedType = wrappedSynth(source, p)
-							}
+							rhsOverlay := rhsSpecTypesAtAssignPoint(graph, info, p, overlay, func(point cfg.Point, sym cfg.SymbolID) (typ.Type, bool) {
+								if t, ok := overlay[sym]; ok && t != nil && !t.Kind().IsPlaceholder() {
+									return t, true
+								}
+								return rhsResolver(point, sym)
+							}, preflowBranchSolution)
+							rhsOverlay = enrichStructuredOverlayAtPoint(graph, idom, structuredWrites, p, rhsOverlay, rhsResolver, wrappedSynth)
+							values = expandedAssignValues(synthAPI, info, p, rhsOverlay)
+							valuesComputed = true
+						}
+						if value := assignValueAt(values, i); !typ.IsAbsentOrUnknown(value) {
+							assignedType = value
+							assignedType = preferPreciseDirectSourceType(assignedType, source, p, sc, wrappedSynth, len(info.Targets) == 1)
+						} else if wrappedSynth != nil && source != nil {
+							assignedType = wrappedSynth(source, p)
 						}
 						assignedType = resolve.Ref(assignedType, sc)
 						if typ.IsAbsentOrUnknown(assignedType) {
 							continue
 						}
 						old := inferred[target.Symbol]
-						joined := joinInferredType(old, assignedType)
+						joined := joinInferredType(old, assignedType, selfPrev(assignRefersSCC[idx], target.Symbol, overlay))
 						if !typ.TypeEquals(old, joined) {
 							inferred[target.Symbol] = joined
 							changed = true
@@ -743,7 +696,7 @@ func collectInferredTypes(
 						continue
 					}
 					old := inferred[sym]
-					joined := joinInferredType(old, expected)
+					joined := meetParamExpectation(old, expected)
 					if !typ.TypeEquals(old, joined) {
 						inferred[sym] = joined
 						changed = true
@@ -777,13 +730,39 @@ func collectInferredTypes(
 					continue
 				}
 
-				// Handle indexed targets (t[k]) even when key is non-const.
+				// A statically located target (t, t.k) appends to the list at
+				// that path, as the flow extractor records it.
+				if !targetPath.IsEmpty() && targetPath.Symbol != 0 {
+					if !sccSet[targetPath.Symbol] {
+						continue
+					}
+					old := inferred[targetPath.Symbol]
+					var newType typ.Type
+					if len(targetPath.Segments) == 0 {
+						newType = flow.WidenArrayElementType(old, valueType, typ.JoinPreferNonSoft)
+					} else if old != nil {
+						newType = overlaymut.EditAtPath(old, targetPath.Segments, func(list typ.Type) typ.Type {
+							return flow.WidenArrayElementType(list, valueType, typ.JoinPreferNonSoft)
+						}, overlaymut.MergePathEdit)
+					}
+					if newType != nil && !typ.TypeEquals(old, newType) {
+						inferred[targetPath.Symbol] = newType
+						changed = true
+					}
+					continue
+				}
+
+				// A target indexed by a dynamic key (t[k]) widens t's map.
 				if attr, ok := targetExpr.(*ast.AttrGetExpr); ok {
 					baseSym := callsite.SymbolOrCreateFieldFromExpr(attr.Object, bindings)
 					if baseSym != 0 && sccSet[baseSym] {
 						keyType := wrappedSynth(attr.Key, p)
 						keyType = resolve.Ref(keyType, sc)
-						keyType = canonicalDynamicKeyType(keyType)
+						if keyType == nil {
+							keyType = typ.Unresolved
+						} else {
+							keyType = canonicalDynamicKeyType(keyType)
+						}
 						old := inferred[baseSym]
 						newType := flow.WidenMapValueArray(old, keyType, valueType)
 						if newType != nil && !typ.TypeEquals(old, newType) {
@@ -793,22 +772,19 @@ func collectInferredTypes(
 						continue
 					}
 				}
-
-				if targetPath.IsEmpty() || targetPath.Symbol == 0 {
-					continue
-				}
-				if !sccSet[targetPath.Symbol] {
-					continue
-				}
-				old := inferred[targetPath.Symbol]
-				newType := flow.WidenArrayElementType(old, valueType, typ.JoinPreferNonSoft)
-				if newType == nil || typ.TypeEquals(old, newType) {
-					continue
-				}
-				inferred[targetPath.Symbol] = newType
-				changed = true
 			}
 
+			// Replaying assignments and mutators can change intermediate types
+			// while leaving the SCC's complete round result unchanged.
+			if changed {
+				changed = false
+				for _, sym := range sccSyms {
+					if !typ.TypeEquals(previous[sym], inferred[sym]) {
+						changed = true
+						break
+					}
+				}
+			}
 			if !changed {
 				converged = true
 				break
@@ -847,6 +823,13 @@ func collectInferredTypes(
 		}
 	}
 
+	// Inferred types are published into the flow overlay: pending positions
+	// do not cross that boundary.
+	for sym, t := range inferred {
+		if !typ.IsFinal(t) {
+			inferred[sym] = typ.Finalize(t)
+		}
+	}
 	return inferred
 }
 
@@ -933,29 +916,20 @@ func dedupeSymbolIDs(refs []cfg.SymbolID) []cfg.SymbolID {
 }
 
 func synthWithInferenceOverlay(
-	graph *cfg.Graph,
+	synthAPI api.SynthAPI,
 	overlay map[cfg.SymbolID]typ.Type,
-	funcSigTypes map[cfg.SymbolID]typ.Type,
 	paramSet map[cfg.SymbolID]bool,
 	annotated map[cfg.SymbolID]bool,
 	bindings *bind.BindingTable,
 	inputs *flow.Inputs,
 	callCtx *db.QueryContext,
 	typeOps core.TypeOps,
-	preflow *flow.Solution,
+	preflow *preflowFacts,
 	base func(ast.Expr, cfg.Point) typ.Type,
 ) func(ast.Expr, cfg.Point) typ.Type {
-	_ = graph
-	mergedOverlay := make(map[cfg.SymbolID]typ.Type, len(overlay)+len(funcSigTypes))
-	for sym, t := range funcSigTypes {
-		if t != nil {
-			mergedOverlay[sym] = t
-		}
+	if base != nil {
+		base = overlaySynth(synthAPI, overlay, base)
 	}
-	for sym, t := range overlay {
-		mergedOverlay[sym] = t
-	}
-
 	wrappedBase := func(expr ast.Expr, p cfg.Point) typ.Type {
 		if ident, ok := expr.(*ast.IdentExpr); ok && bindings != nil {
 			if sym, ok := bindings.SymbolOf(ident); ok && sym != 0 {
@@ -970,7 +944,7 @@ func synthWithInferenceOverlay(
 		return base(expr, p)
 	}
 
-	return synthWithOverlayAndPreflow(mergedOverlay, bindings, inputs, callCtx, typeOps, preflow, wrappedBase)
+	return synthWithOverlayAndPreflow(overlay, bindings, inputs, callCtx, typeOps, preflow, wrappedBase)
 }
 
 func assignmentOwningSourceCall(assigns []*cfg.AssignInfo, call *cfg.CallInfo) *cfg.AssignInfo {
@@ -1011,107 +985,261 @@ func collectExprSymbols(expr ast.Expr, bindings *bind.BindingTable, refs *[]cfg.
 	if expr == nil || bindings == nil {
 		return
 	}
-
-	switch e := expr.(type) {
-	case *ast.IdentExpr:
-		if sym, ok := bindings.SymbolOf(e); ok && sym != 0 {
+	if ident, ok := expr.(*ast.IdentExpr); ok {
+		if sym, ok := bindings.SymbolOf(ident); ok && sym != 0 {
 			*refs = append(*refs, sym)
 		}
-
-	case *ast.AttrGetExpr:
-		if sym := callsite.SymbolFromExpr(e, bindings); sym != 0 {
-			*refs = append(*refs, sym)
-		}
-		collectExprSymbols(e.Object, bindings, refs)
-
-	case *ast.FuncCallExpr:
-		collectExprSymbols(e.Func, bindings, refs)
-		collectExprSymbols(e.Receiver, bindings, refs)
-		for _, arg := range e.Args {
-			collectExprSymbols(arg, bindings, refs)
-		}
-
-	case *ast.TableExpr:
-		for _, field := range e.Fields {
-			if field != nil {
-				collectExprSymbols(field.Key, bindings, refs)
-				collectExprSymbols(field.Value, bindings, refs)
-			}
-		}
-
-	case *ast.UnaryMinusOpExpr:
-		collectExprSymbols(e.Expr, bindings, refs)
-
-	case *ast.UnaryNotOpExpr:
-		collectExprSymbols(e.Expr, bindings, refs)
-
-	case *ast.UnaryLenOpExpr:
-		collectExprSymbols(e.Expr, bindings, refs)
-
-	case *ast.UnaryBNotOpExpr:
-		collectExprSymbols(e.Expr, bindings, refs)
-
-	case *ast.ArithmeticOpExpr:
-		collectExprSymbols(e.Lhs, bindings, refs)
-		collectExprSymbols(e.Rhs, bindings, refs)
-
-	case *ast.RelationalOpExpr:
-		collectExprSymbols(e.Lhs, bindings, refs)
-		collectExprSymbols(e.Rhs, bindings, refs)
-
-	case *ast.LogicalOpExpr:
-		collectExprSymbols(e.Lhs, bindings, refs)
-		collectExprSymbols(e.Rhs, bindings, refs)
-
-	case *ast.StringConcatOpExpr:
-		collectExprSymbols(e.Lhs, bindings, refs)
-		collectExprSymbols(e.Rhs, bindings, refs)
-
-	case *ast.CastExpr:
-		collectExprSymbols(e.Expr, bindings, refs)
-
-	case *ast.NonNilAssertExpr:
-		collectExprSymbols(e.Expr, bindings, refs)
-
-	case *ast.Comma3Expr:
-		// Varargs expression has no sub-expressions to traverse
 	}
+	if attr, ok := expr.(*ast.AttrGetExpr); ok {
+		if sym := callsite.SymbolFromExpr(attr, bindings); sym != 0 {
+			*refs = append(*refs, sym)
+		}
+	}
+	ast.WalkExprChildren(expr, func(child ast.Expr, index int) {
+		if _, isAttr := expr.(*ast.AttrGetExpr); isAttr && index == 1 {
+			return
+		}
+		collectExprSymbols(child, bindings, refs)
+	})
 }
 
-// joinInferredType merges inferred variable types while stabilizing recursive
-// self-embedding growth (e.g. t = {t}) in SCC fixpoint iteration.
-func joinInferredType(old, next typ.Type) typ.Type {
+// inferredSelfName names the recursive types that fold self-embedding
+// inferred types.
+const inferredSelfName = "self"
+
+// joinInferredType merges next into old, the symbol's type so far in this SCC
+// round. selfPrev is set when the source of next refers to the symbol's SCC:
+// it is the symbol's type at the start of the round, which is what the round's
+// sources observed. Without it next cannot embed the symbol; a next that
+// contains old is then joined as old.
+//
+// An assignment such as `if v then v = { k = v } end` embeds prev, narrowed by
+// the truthiness test, into next, so plain joins ascend forever:
+// T_(n+1) = T_n | { k: truthy(T_n) }. When next embeds such an approximation
+// of the symbol's own type, the join folds it into mu X. (old | next)[T' := X],
+// the limit of that chain; a round that adds nothing new then reproduces the
+// same recursive type and the SCC converges.
+func joinInferredType(old, next, selfPrev typ.Type) typ.Type {
 	if old == nil {
 		return next
 	}
 	if next == nil {
 		return old
 	}
-	if typeContains(next, old) {
-		if !typ.IsAbsentOrUnknown(old) {
+	if typ.IsAbsentOrUnknown(old) {
+		if typeContains(next, old) {
+			return subtype.WidenForInference(next)
+		}
+		return typ.JoinPreferNonSoft(old, next)
+	}
+	if selfPrev == nil {
+		if typeContains(next, old) {
 			return old
 		}
-		return subtype.WidenForInference(next)
+		return typ.JoinPreferNonSoft(old, next)
+	}
+	isSelf := func(node typ.Type) bool {
+		return isSelfApproximation(node, old, selfPrev)
+	}
+	if !typeContainsMatch(next, isSelf) {
+		return typ.JoinPreferNonSoft(old, next)
+	}
+	if coversMembers(old, next) {
+		return old
+	}
+	body := old
+	if rec, ok := old.(*typ.Recursive); ok && rec.Name == inferredSelfName && rec.Body != nil {
+		body = rec.Body
+	}
+	return typ.FoldApproximations(inferredSelfName, typ.JoinPreferNonSoft(body, next), isSelf)
+}
+
+// isSelfApproximation reports whether node approximates the symbol whose type
+// is old: it is old itself when old is a folded self type, which is how a
+// folded type refers to itself, or it
+// is prev refined by a truthiness test (prev with at most nil and false
+// removed). Types without a table, function or tuple constructor are never
+// approximations, since a scalar reached inside next is a value of the same
+// type rather than an embedding of the symbol.
+func isSelfApproximation(node, old, prev typ.Type) bool {
+	if !hasConstructorMember(node) {
+		return false
+	}
+	if isFoldedSelf(old) && (node == old || typ.TypeEquals(node, old)) {
+		return true
+	}
+	if prev == nil || typ.IsAbsentOrUnknown(prev) || !hasConstructorMember(prev) {
+		return false
+	}
+	return subtype.IsSubtype(node, prev) &&
+		subtype.IsSubtype(prev, typ.NewUnion(node, typ.Nil, typ.False))
+}
+
+// coversMembers reports whether every member of next is a subtype of a member
+// of old with the same shape, so joining next into old adds nothing. Plain
+// subtyping is too coarse here: a record whose fields old lacks is a subtype of
+// any record of old with only optional fields, and returning old would drop
+// those fields from the inferred type.
+func coversMembers(old, next typ.Type) bool {
+	oldMembers := joinMembers(old)
+	for _, m := range joinMembers(next) {
+		covered := false
+		for _, o := range oldMembers {
+			if sameShape(m, o) && subtype.IsSubtype(m, o) {
+				covered = true
+				break
+			}
+		}
+		if !covered {
+			return false
+		}
+	}
+	return true
+}
+
+// isFoldedSelf reports whether t is a recursive type joinInferredType folded.
+// Any other type that old happens to be, such as a module interface, can occur
+// inside next as an ordinary value type without embedding the symbol.
+func isFoldedSelf(t typ.Type) bool {
+	rec, ok := t.(*typ.Recursive)
+	return ok && rec.Name == inferredSelfName
+}
+
+// joinMembers lists the alternatives of t: the members of a union, the inner
+// type and nil of an optional, and the body alternatives of a recursive type.
+// A recursive type reached again inside its own body is listed as itself.
+func joinMembers(t typ.Type) []typ.Type {
+	return appendJoinMembers(nil, t, nil)
+}
+
+func appendJoinMembers(out []typ.Type, t typ.Type, expanding map[*typ.Recursive]bool) []typ.Type {
+	switch tt := unwrap.Alias(t).(type) {
+	case *typ.Union:
+		for _, m := range tt.Members {
+			out = appendJoinMembers(out, m, expanding)
+		}
+		return out
+	case *typ.Optional:
+		return append(appendJoinMembers(out, tt.Inner, expanding), typ.Nil)
+	case *typ.Recursive:
+		if tt.Body != nil && !expanding[tt] {
+			if expanding == nil {
+				expanding = make(map[*typ.Recursive]bool)
+			}
+			expanding[tt] = true
+			out = appendJoinMembers(out, tt.Body, expanding)
+			delete(expanding, tt)
+			return out
+		}
+	}
+	return append(out, t)
+}
+
+// sameShape reports whether a and b are records with the same field names, or
+// are of the same kind.
+func sameShape(a, b typ.Type) bool {
+	ra, aok := unwrap.Alias(a).(*typ.Record)
+	rb, bok := unwrap.Alias(b).(*typ.Record)
+	if aok || bok {
+		return aok && bok && ra.HasSameFieldNames(rb)
+	}
+	return a.Kind() == b.Kind()
+}
+
+// meetParamExpectation combines next, the type a call expects for an
+// unannotated parameter passed as its argument, with old, the parameter's type
+// inferred from the other calls. Every expectation constrains the same value,
+// so comparable expectations meet at the narrower one. Incomparable
+// expectations have no named common subtype, and the parameter admits either.
+func meetParamExpectation(old, next typ.Type) typ.Type {
+	if old == nil || typ.IsAbsentOrUnknown(old) {
+		return next
+	}
+	if next == nil {
+		return old
+	}
+	if subtype.IsSubtype(next, old) {
+		return next
+	}
+	if subtype.IsSubtype(old, next) {
+		return old
 	}
 	return typ.JoinPreferNonSoft(old, next)
 }
 
-func typeContains(haystack, needle typ.Type) bool {
-	if haystack == nil || needle == nil {
-		return false
+// exprsReferToSCC reports whether any of exprs refers to a symbol of the SCC.
+func exprsReferToSCC(exprs []ast.Expr, bindings *bind.BindingTable, sccSet map[cfg.SymbolID]bool) bool {
+	var refs []cfg.SymbolID
+	for _, e := range exprs {
+		if e != nil {
+			collectExprSymbols(e, bindings, &refs)
+		}
 	}
-	return typeContainsDepth(haystack, needle, typ.NewGuard())
+	for _, ref := range refs {
+		if sccSet[ref] {
+			return true
+		}
+	}
+	return false
 }
 
-func typeContainsDepth(haystack, needle typ.Type, guard internal.RecursionGuard) bool {
-	if haystack == nil || needle == nil {
+// hasConstructorMember reports whether t, or a member of t when it is a union
+// or optional, is built by a type constructor rather than being a scalar.
+func hasConstructorMember(t typ.Type) bool {
+	switch tt := unwrap.Alias(t).(type) {
+	case nil:
+		return false
+	case *typ.Union:
+		for _, m := range tt.Members {
+			if hasConstructorMember(m) {
+				return true
+			}
+		}
+		return false
+	case *typ.Optional:
+		return hasConstructorMember(tt.Inner)
+	case *typ.Record, *typ.Array, *typ.Map, *typ.Tuple, *typ.Function,
+		*typ.Intersection, *typ.Interface, *typ.Recursive:
+		return true
+	default:
 		return false
 	}
-	next, ok := guard.Enter(haystack)
-	if !ok {
+}
+
+// typeContains reports whether needle occurs anywhere inside haystack.
+//
+// Inferred types are DAGs: SCC inference of a local reassigned as `v = { k = v }`
+// on several branches builds each round's union from records that all share the
+// previous round's type, so the tree expansion is exponential in the number of
+// rounds while the DAG stays linear. The search is a reachability walk that
+// visits every node once; the visited set also terminates it on cyclic types.
+func typeContains(haystack, needle typ.Type) bool {
+	if needle == nil {
 		return false
 	}
-	if typ.TypeEquals(haystack, needle) {
+	return typeContainsMatch(haystack, func(node typ.Type) bool {
+		return typ.TypeEquals(node, needle)
+	})
+}
+
+// typeContainsMatch reports whether haystack, or a type nested in it, satisfies
+// match, visiting every node of the type once.
+func typeContainsMatch(haystack typ.Type, match func(typ.Type) bool) bool {
+	if haystack == nil {
+		return false
+	}
+	return typeContainsVisit(haystack, match, make(map[typ.Type]struct{}))
+}
+
+func typeContainsVisit(haystack typ.Type, match func(typ.Type) bool, visited map[typ.Type]struct{}) bool {
+	if haystack == nil {
+		return false
+	}
+	if _, seen := visited[haystack]; seen {
+		return false
+	}
+	visited[haystack] = struct{}{}
+	if match(haystack) {
 		return true
 	}
 
@@ -1127,72 +1255,72 @@ func typeContainsDepth(haystack, needle typ.Type, guard internal.RecursionGuard)
 
 	switch tt := node.(type) {
 	case *typ.Optional:
-		return typeContainsDepth(tt.Inner, needle, next)
+		return typeContainsVisit(tt.Inner, match, visited)
 	case *typ.Union:
 		for _, m := range tt.Members {
-			if typeContainsDepth(m, needle, next) {
+			if typeContainsVisit(m, match, visited) {
 				return true
 			}
 		}
 		return false
 	case *typ.Intersection:
 		for _, m := range tt.Members {
-			if typeContainsDepth(m, needle, next) {
+			if typeContainsVisit(m, match, visited) {
 				return true
 			}
 		}
 		return false
 	case *typ.Array:
-		return typeContainsDepth(tt.Element, needle, next)
+		return typeContainsVisit(tt.Element, match, visited)
 	case *typ.Map:
-		return typeContainsDepth(tt.Key, needle, next) || typeContainsDepth(tt.Value, needle, next)
+		return typeContainsVisit(tt.Key, match, visited) || typeContainsVisit(tt.Value, match, visited)
 	case *typ.Tuple:
 		for _, e := range tt.Elements {
-			if typeContainsDepth(e, needle, next) {
+			if typeContainsVisit(e, match, visited) {
 				return true
 			}
 		}
 		return false
 	case *typ.Function:
 		for _, p := range tt.Params {
-			if typeContainsDepth(p.Type, needle, next) {
+			if typeContainsVisit(p.Type, match, visited) {
 				return true
 			}
 		}
 		for _, r := range tt.Returns {
-			if typeContainsDepth(r, needle, next) {
+			if typeContainsVisit(r, match, visited) {
 				return true
 			}
 		}
 		if tt.Variadic != nil {
-			return typeContainsDepth(tt.Variadic, needle, next)
+			return typeContainsVisit(tt.Variadic, match, visited)
 		}
 		return false
 	case *typ.Record:
 		for _, f := range tt.Fields {
-			if typeContainsDepth(f.Type, needle, next) {
+			if typeContainsVisit(f.Type, match, visited) {
 				return true
 			}
 		}
-		if tt.Metatable != nil && typeContainsDepth(tt.Metatable, needle, next) {
+		if tt.Metatable != nil && typeContainsVisit(tt.Metatable, match, visited) {
 			return true
 		}
 		if tt.HasMapComponent() {
-			return typeContainsDepth(tt.MapKey, needle, next) || typeContainsDepth(tt.MapValue, needle, next)
+			return typeContainsVisit(tt.MapKey, match, visited) || typeContainsVisit(tt.MapValue, match, visited)
 		}
 		return false
 	case *typ.Alias:
-		return typeContainsDepth(tt.Target, needle, next)
+		return typeContainsVisit(tt.Target, match, visited)
 	case *typ.Instantiated:
 		for _, a := range tt.TypeArgs {
-			if typeContainsDepth(a, needle, next) {
+			if typeContainsVisit(a, match, visited) {
 				return true
 			}
 		}
 		return false
 	case *typ.Interface:
 		for _, m := range tt.Methods {
-			if m.Type != nil && typeContainsDepth(m.Type, needle, next) {
+			if m.Type != nil && typeContainsVisit(m.Type, match, visited) {
 				return true
 			}
 		}

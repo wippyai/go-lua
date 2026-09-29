@@ -78,14 +78,22 @@ func (m *mockFlowQuery) ExcludesTypeAt(cfg.Point, constraint.Path, typ.Type) boo
 
 type mockFlowOps struct{}
 
-func (m *mockFlowOps) NarrowedTypeAt(cfg.Point, constraint.Path) typ.Type { return nil }
-func (m *mockFlowOps) BoundsAt(cfg.Point, string) (int64, int64, bool)    { return 0, 0, false }
-func (m *mockFlowOps) ArrayLenBoundAt(cfg.Point, string) (string, bool)   { return "", false }
+func (m *mockFlowOps) NarrowedTypeAt(cfg.Point, constraint.Path) typ.Type      { return nil }
+func (m *mockFlowOps) BoundsAt(cfg.Point, string) (int64, int64, bool)         { return 0, 0, false }
+func (m *mockFlowOps) HasLengthAtLeast(cfg.Point, constraint.Path, int64) bool { return false }
+func (m *mockFlowOps) ExactLengthAt(cfg.Point, constraint.Path) (int64, bool)  { return 0, false }
+func (m *mockFlowOps) ArrayLenBoundAt(cfg.Point, string) (string, bool)        { return "", false }
 func (m *mockFlowOps) ArrayLenBoundWithOffsetAt(cfg.Point, string) (string, int64, bool) {
 	return "", 0, false
 }
 func (m *mockFlowOps) IsPointDead(cfg.Point) bool                                { return false }
 func (m *mockFlowOps) HasKeyOf(cfg.Point, constraint.Path, constraint.Path) bool { return false }
+func (m *mockFlowOps) NarrowedTypeAssuming(cfg.Point, constraint.Path, constraint.Condition) typ.Type {
+	return nil
+}
+func (m *mockFlowOps) HasKeyOfAssuming(cfg.Point, constraint.Path, constraint.Path, constraint.Condition) bool {
+	return false
+}
 
 type mockLiteralSynth struct{}
 
@@ -106,4 +114,8 @@ func (m *mockSynthAPI) ExpandValuesWithSpecTypes([]ast.Expr, int, cfg.Point, Spe
 }
 func (m *mockSynthAPI) InferIterVarsWithSpecTypes([]ast.Expr, int, cfg.Point, SpecTypes) []typ.Type {
 	return nil
+}
+
+func (s *mockSynthAPI) TypeOfWithSpecTypes(expr ast.Expr, p cfg.Point, _ SpecTypes) typ.Type {
+	return s.TypeOf(expr, p)
 }

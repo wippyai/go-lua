@@ -1,6 +1,8 @@
 package returns
 
 import (
+	"github.com/wippyai/go-lua/types/contract"
+	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/subtype"
@@ -35,7 +37,8 @@ func ReturnTypesAllNil(rets []typ.Type) bool {
 	return true
 }
 
-// ReturnTypesRefine reports whether a refines b (element-wise subtype).
+// ReturnTypesRefine reports whether a refines b: element-wise a subtype of b
+// that keeps the record fields b has (see coversRecordFields).
 func ReturnTypesRefine(a, b []typ.Type) bool {
 	if len(a) == 0 {
 		return false
@@ -55,7 +58,7 @@ func ReturnTypesRefine(a, b []typ.Type) bool {
 			}
 			return false
 		}
-		if !subtype.IsSubtype(ai, bi) {
+		if !subtype.IsSubtype(ai, bi) || !coversRecordFields(ai, bi) {
 			return false
 		}
 	}
@@ -333,7 +336,7 @@ func typeNeverRepairRelation(candidate, baseline typ.Type) (bool, bool) {
 		strict := false
 		for _, bf := range b.Fields {
 			cf := c.GetField(bf.Name)
-			if cf == nil || cf.Optional != bf.Optional || cf.Readonly != bf.Readonly {
+			if cf == nil || cf.Optional != bf.Optional || cf.InferredPresence != bf.InferredPresence || cf.Readonly != bf.Readonly {
 				return false, false
 			}
 			ok, repaired := typeNeverRepairRelation(cf.Type, bf.Type)
@@ -573,9 +576,9 @@ func recordSuperset(newRec, oldRec *typ.Record) bool {
 				return false
 			}
 			if of.Type != nil {
-				if isOpenTopRecordType(nf.Type) && isStructuredTableShape(of.Type) {
-					// Open-top table placeholders must not dominate structured
-					// collection/record fields when selecting preferred summaries.
+				if isOpenTopRecordType(nf.Type) && (isStructuredTableShape(of.Type) || typ.IsAny(of.Type)) {
+					// An open-top placeholder is not evidence that narrows a
+					// structured or dynamic value from another summary.
 					return false
 				}
 				if nf.Type == nil || !subtype.IsSubtype(nf.Type, of.Type) {
@@ -612,6 +615,14 @@ func NormalizeReturnVector(rets []typ.Type) []typ.Type {
 	if len(rets) == 0 {
 		return nil
 	}
+	for _, t := range rets {
+		if t == nil {
+			goto normalize
+		}
+	}
+	return rets
+
+normalize:
 	out := make([]typ.Type, len(rets))
 	for i, t := range rets {
 		if t == nil {
@@ -624,11 +635,14 @@ func NormalizeReturnVector(rets []typ.Type) []typ.Type {
 }
 
 func normalizeAndPruneReturnVector(rets []typ.Type) []typ.Type {
-	out := NormalizeReturnVector(rets)
-	if len(out) == 0 {
+	if len(rets) == 0 {
 		return nil
 	}
-	for i, ret := range out {
+	out := make([]typ.Type, len(rets))
+	for i, ret := range rets {
+		if ret == nil {
+			ret = typ.Nil
+		}
 		out[i] = typ.PruneSoftUnionMembers(ret)
 	}
 	return out
@@ -647,6 +661,11 @@ func MergeReturnSummary(existing, candidate []typ.Type) []typ.Type {
 	if len(candidate) == 0 {
 		return existing
 	}
+	existing, candidate = refineSnapshotSlots(existing, candidate)
+	existing = fillPendingSlots(existing, candidate)
+	candidate = fillPendingSlots(candidate, existing)
+	existing = fillUnknownSlots(existing, candidate)
+	candidate = fillUnknownSlots(candidate, existing)
 	// Canonical promotion: open-top record placeholders should not dominate
 	// concrete structured return evidence (array/map/record with fields).
 	if replaced, ok := replaceOpenTopWithStructured(existing, candidate); ok {
@@ -658,6 +677,15 @@ func MergeReturnSummary(existing, candidate []typ.Type) []typ.Type {
 	if ReturnTypesRepairNever(candidate, existing) {
 		return candidate
 	}
+	// A concrete record result can appear only after a forwarded callee is
+	// resolved. Keep that success branch alongside the earlier nil error arm;
+	// a nil subtype is not a reason to discard runtime value evidence.
+	if nilSlotGainsRecordEvidence(existing, candidate) {
+		return candidate
+	}
+	if nilSlotGainsRecordEvidence(candidate, existing) {
+		return existing
+	}
 
 	// Higher-order summaries are merged monotonically for fixpoint stability.
 	if shouldUseMonotoneReturnJoin(existing, candidate) {
@@ -668,7 +696,116 @@ func MergeReturnSummary(existing, candidate []typ.Type) []typ.Type {
 		return normalizeAndPruneReturnVector(preferred)
 	}
 
-	return normalizeAndPruneReturnVector(typjoin.ReturnVectors(existing, candidate))
+	return normalizeAndPruneReturnVector(refineSnapshotMembersVector(typjoin.ReturnVectors(existing, candidate)))
+}
+
+func nilSlotGainsRecordEvidence(old, next []typ.Type) bool {
+	if len(old) != len(next) {
+		return false
+	}
+	for i := range old {
+		if !unwrap.IsNilType(old[i]) || unwrap.IsNilType(next[i]) || !unwrap.IsOptionalLike(next[i]) {
+			continue
+		}
+		if record, ok := unwrap.Alias(narrow.RemoveNil(next[i])).(*typ.Record); ok && len(record.Fields) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+// AdvanceReturnSummary merges the previous estimate of a function's returns
+// with the estimate the next fixpoint iteration infers from it. The next
+// estimate supersedes a comparable previous one: it either refines it or adds
+// branches the previous iteration could not infer yet, such as those behind a
+// recursive call whose summary was still a placeholder. Incomparable estimates
+// join, and placeholder slots (nil-only, never artifacts, open-top records)
+// never displace evidence.
+func AdvanceReturnSummary(prev, next []typ.Type) []typ.Type {
+	prev = normalizeAndPruneReturnVector(prev)
+	next = normalizeAndPruneReturnVector(next)
+	if len(prev) == 0 {
+		return next
+	}
+	if len(next) == 0 {
+		return prev
+	}
+	prev = fillPendingSlots(prev, next)
+	next = fillPendingSlots(next, prev)
+	prev = fillUnknownSlots(prev, next)
+	next = fillUnknownSlots(next, prev)
+	if replaced, ok := replaceOpenTopWithStructured(prev, next); ok {
+		prev = normalizeAndPruneReturnVector(replaced)
+	}
+	if replaced, ok := replaceOpenTopWithStructured(next, prev); ok {
+		next = normalizeAndPruneReturnVector(replaced)
+	}
+	if ReturnTypesRepairNever(prev, next) {
+		return prev
+	}
+	if ReturnTypesRepairNever(next, prev) {
+		return next
+	}
+	if shouldUseMonotoneReturnJoin(prev, next) {
+		return normalizeAndPruneReturnVector(joinReturnVectorsMonotone(prev, next))
+	}
+	if ReturnTypesFillNilSlots(prev, next) || (ReturnTypesAllNil(next) && !ReturnTypesAllNil(prev)) {
+		return prev
+	}
+	if returnVectorsComparable(prev, next) {
+		return next
+	}
+	return normalizeAndPruneReturnVector(typjoin.ReturnVectors(prev, next))
+}
+
+// fillUnknownSlots replaces unresolved slots with concrete evidence from the
+// other estimate. A nil-only slot supplies no value evidence: replacing an
+// unknown return with nil would prematurely close an unresolved capture.
+func fillUnknownSlots(rets, other []typ.Type) []typ.Type {
+	var out []typ.Type
+	for i, t := range rets {
+		if i >= len(other) || !typ.IsUnknown(t) || other[i] == nil || typ.IsUnknown(other[i]) || other[i].Kind() == kind.Nil {
+			continue
+		}
+		if out == nil {
+			out = append([]typ.Type(nil), rets...)
+		}
+		out[i] = other[i]
+	}
+	if out == nil {
+		return rets
+	}
+	return out
+}
+
+// fillPendingSlots uses a later estimate of the same function return slot.
+// A nil-only estimate does not close a return path whose value is still pending.
+func fillPendingSlots(rets, other []typ.Type) []typ.Type {
+	var out []typ.Type
+	for i, t := range rets {
+		if i >= len(other) || typ.IsFinal(t) || other[i] == nil || typ.IsUnresolved(other[i]) || other[i].Kind() == kind.Nil {
+			continue
+		}
+		if out == nil {
+			out = append([]typ.Type(nil), rets...)
+		}
+		out[i] = typ.Resolve(t, other[i])
+	}
+	if out == nil {
+		return rets
+	}
+	return out
+}
+
+// returnVectorsComparable reports whether one vector refines the other.
+func returnVectorsComparable(a, b []typ.Type) bool {
+	for _, pair := range [2][2][]typ.Type{{a, b}, {b, a}} {
+		x, y := pair[0], pair[1]
+		if ReturnTypesRefine(x, y) || ReturnTypesFillNilSlots(x, y) || ReturnTypesExtendRecord(x, y) || ReturnTypesElideOptional(x, y) {
+			return true
+		}
+	}
+	return false
 }
 
 // MergeFunctionFactType merges function-type facts through one canonical policy.
@@ -681,12 +818,22 @@ func MergeFunctionFactType(existing, candidate typ.Type) typ.Type {
 	if candidate == nil {
 		return existing
 	}
+	if inter, ok := candidate.(*typ.Intersection); ok {
+		if prior := typ.GeneralMember(existing); prior != nil {
+			if general := typ.GeneralMember(candidate); general != nil {
+				return withOverloadGeneral(inter, MergeFunctionFactType(prior, general))
+			}
+		}
+		return candidate
+	}
+	if inter, ok := existing.(*typ.Intersection); ok {
+		if general := typ.GeneralMember(existing); general != nil {
+			return withOverloadGeneral(inter, MergeFunctionFactType(general, candidate))
+		}
+	}
 
 	existingFn := unwrap.Function(existing)
 	candidateFn := unwrap.Function(candidate)
-	if mergedFromVariants, ok := mergeFunctionFactVariants(existing, candidate); ok {
-		return mergedFromVariants
-	}
 	if existingFn != nil && candidateFn != nil {
 		if sameFunctionShapeForFactMerge(existingFn, candidateFn) {
 			return mergeFunctionFactsByShape(existingFn, candidateFn)
@@ -702,62 +849,18 @@ func MergeFunctionFactType(existing, candidate typ.Type) typ.Type {
 	return typ.JoinPreferNonSoft(existing, candidate)
 }
 
-func mergeFunctionFactVariants(existing, candidate typ.Type) (typ.Type, bool) {
-	existingFns := functionVariantsForFactMerge(existing)
-	candidateFns := functionVariantsForFactMerge(candidate)
-	if len(existingFns) == 0 || len(candidateFns) == 0 {
-		return nil, false
+func withOverloadGeneral(inter *typ.Intersection, general typ.Type) typ.Type {
+	prior := typ.GeneralMember(inter)
+	if prior == nil || general == nil {
+		return inter
 	}
-	all := make([]*typ.Function, 0, len(existingFns)+len(candidateFns))
-	all = append(all, existingFns...)
-	all = append(all, candidateFns...)
-	for i := 1; i < len(all); i++ {
-		if !sameFunctionShapeForFactMerge(all[0], all[i]) {
-			return nil, false
+	members := make([]typ.Type, 0, len(inter.Members))
+	for _, member := range inter.Members {
+		if member != prior {
+			members = append(members, member)
 		}
 	}
-	merged := all[0]
-	for i := 1; i < len(all); i++ {
-		next, _ := mergeFunctionFactsByShape(merged, all[i]).(*typ.Function)
-		if next == nil {
-			return nil, false
-		}
-		merged = next
-	}
-	return merged, true
-}
-
-func functionVariantsForFactMerge(t typ.Type) []*typ.Function {
-	if t == nil {
-		return nil
-	}
-	switch v := unwrap.Alias(t).(type) {
-	case *typ.Optional:
-		// Optional function values include nil. Do not collapse them to a plain
-		// function fact or we lose optionality in merged facts.
-		return nil
-	case *typ.Function:
-		return []*typ.Function{v}
-	case *typ.Union:
-		if len(v.Members) == 0 {
-			return nil
-		}
-		var out []*typ.Function
-		for _, m := range v.Members {
-			fn := unwrap.Function(m)
-			if fn == nil {
-				// Only collapse union variants when the union is function-only.
-				// Mixed unions (for example function|nil) must stay untouched.
-				return nil
-			}
-			out = append(out, fn)
-		}
-		return out
-	}
-	if fn := unwrap.Function(t); fn != nil {
-		return []*typ.Function{fn}
-	}
-	return nil
+	return typ.NewIntersection(append(members, general)...)
 }
 
 func sameFunctionShapeForFactMerge(a, b *typ.Function) bool {
@@ -820,12 +923,22 @@ func mergeFunctionFactsByShape(existing, candidate *typ.Function) typ.Type {
 	if effects != nil {
 		builder = builder.Effects(effects)
 	}
-	spec := existing.Spec
-	if spec == nil {
-		spec = candidate.Spec
-	}
-	if spec != nil {
-		builder = builder.Spec(spec)
+	// Repeated estimates for one function are updates to the same summary.
+	existingSpec := contract.ExtractSpec(existing)
+	candidateSpec := contract.ExtractSpec(candidate)
+	if existingSpec != nil || candidateSpec != nil {
+		var merged contract.Spec
+		if candidateSpec != nil {
+			merged = *candidateSpec
+		} else {
+			merged = *existingSpec
+		}
+		if existingSpec != nil && candidateSpec != nil {
+			// Repeated estimates describe one body. A round that cannot yet
+			// prove a return relation does not refute an earlier complete proof.
+			merged.Effects = effect.Union(existingSpec.Effects, candidateSpec.Effects)
+		}
+		builder = builder.Spec(&merged)
 	}
 	refinement := existing.Refinement
 	if refinement == nil {
@@ -866,13 +979,16 @@ func mergeFunctionParamFactType(existing, candidate typ.Type) typ.Type {
 	if typ.TypeEquals(existing, candidate) {
 		return existing
 	}
+	if joined, ok := refineSnapshotTypes(existing, candidate); ok {
+		return joined
+	}
 	if subtype.IsSubtype(existing, candidate) && !subtype.IsSubtype(candidate, existing) {
 		return candidate
 	}
 	if subtype.IsSubtype(candidate, existing) && !subtype.IsSubtype(existing, candidate) {
 		return existing
 	}
-	return typ.JoinPreferNonSoft(existing, candidate)
+	return refineSnapshotMembers(typ.JoinPreferNonSoft(existing, candidate))
 }
 
 func preferStructuredRecordParam(existing, candidate typ.Type) (typ.Type, bool) {
@@ -997,4 +1113,149 @@ func isStructuredTableShape(t typ.Type) bool {
 	default:
 		return false
 	}
+}
+
+// refineSnapshotSlots resolves the slots where both vectors hold snapshots of
+// one recursion identity and one refines the other: both vectors take the
+// refining snapshot in that slot.
+func refineSnapshotSlots(existing, candidate []typ.Type) ([]typ.Type, []typ.Type) {
+	var outE, outC []typ.Type
+	for i := 0; i < len(existing) && i < len(candidate); i++ {
+		refined, ok := refineSnapshotTypes(existing[i], candidate[i])
+		if !ok {
+			continue
+		}
+		if outE == nil {
+			outE = append([]typ.Type(nil), existing...)
+			outC = append([]typ.Type(nil), candidate...)
+		}
+		outE[i], outC[i] = refined, refined
+	}
+	if outE == nil {
+		return existing, candidate
+	}
+	return outE, outC
+}
+
+// refineSnapshotTypes returns the refining one of a and b when both are
+// snapshots of one recursion identity, directly or as the present value of an
+// optional.
+func refineSnapshotTypes(a, b typ.Type) (typ.Type, bool) {
+	if a == nil || b == nil {
+		return nil, false
+	}
+	ai, aOpt := splitOptionalSnapshot(a)
+	bi, bOpt := splitOptionalSnapshot(b)
+	if ai == nil || bi == nil || ai.ID != bi.ID || typ.TypeEquals(ai, bi) {
+		return nil, false
+	}
+	refined, ok := refinedSnapshot(ai, bi)
+	if !ok {
+		return nil, false
+	}
+	if aOpt || bOpt {
+		return typ.NewOptional(refined), true
+	}
+	return refined, true
+}
+
+// splitOptionalSnapshot returns the recursive snapshot t holds, directly or
+// as the present value of an optional, and whether t is optional.
+func splitOptionalSnapshot(t typ.Type) (*typ.Recursive, bool) {
+	if opt, ok := t.(*typ.Optional); ok {
+		r, _ := opt.Inner.(*typ.Recursive)
+		return r, true
+	}
+	r, _ := t.(*typ.Recursive)
+	return r, false
+}
+
+// refineSnapshotMembersVector refines, in every slot, the union members that
+// are snapshots of one recursion identity.
+func refineSnapshotMembersVector(ts []typ.Type) []typ.Type {
+	var out []typ.Type
+	for i, t := range ts {
+		refined := refineSnapshotMembers(t)
+		if refined != t && out == nil {
+			out = append([]typ.Type(nil), ts...)
+		}
+		if out != nil {
+			out[i] = refined
+		}
+	}
+	if out == nil {
+		return ts
+	}
+	return out
+}
+
+// refineSnapshotMembers keeps, among the members of union t that are
+// snapshots of one recursion identity, only those no other member refines. A
+// join of two estimates of a slot otherwise holds an earlier snapshot of a
+// table beside the one that refines it.
+func refineSnapshotMembers(t typ.Type) typ.Type {
+	u, ok := t.(*typ.Union)
+	if !ok {
+		if opt, ok := t.(*typ.Optional); ok {
+			if inner := refineSnapshotMembers(opt.Inner); inner != opt.Inner {
+				return typ.NewOptional(inner)
+			}
+		}
+		return t
+	}
+	byID := make(map[uint64]*typ.Recursive)
+	refinedAny := false
+	members := make([]typ.Type, 0, len(u.Members))
+	for _, m := range u.Members {
+		r, ok := m.(*typ.Recursive)
+		if !ok || r.Body == nil {
+			members = append(members, m)
+			continue
+		}
+		if existing, seen := byID[r.ID]; seen {
+			if refined, ok := refinedSnapshot(existing, r); ok {
+				byID[r.ID] = refined
+				refinedAny = true
+				continue
+			}
+			members = append(members, r)
+			continue
+		}
+		byID[r.ID] = r
+	}
+	if !refinedAny {
+		return t
+	}
+	for _, r := range byID {
+		members = append(members, r)
+	}
+	return typ.NewUnion(members...)
+}
+
+// refinedSnapshot returns the more informed of two snapshots of one recursion
+// identity: the one that absorbs the other under the iteration join, which
+// orders successive estimates of a table. Snapshots neither absorbs describe
+// different states of the table and are not merged.
+func refinedSnapshot(a, b *typ.Recursive) (*typ.Recursive, bool) {
+	if a == nil || b == nil || a.ID != b.ID || a.Body == nil || b.Body == nil {
+		return nil, false
+	}
+	variable := &typ.Recursive{ID: a.ID, Name: a.Name}
+	open := func(body typ.Type) typ.Type {
+		return typ.Rewrite(body, func(node typ.Type) (typ.Type, bool) {
+			if r, ok := node.(*typ.Recursive); ok && r.ID == variable.ID {
+				return variable, true
+			}
+			return nil, false
+		})
+	}
+	bodyA, bodyB := open(a.Body), open(b.Body)
+	joined := joinIterationFact(bodyA, bodyB)
+	if typ.TypeEquals(joined, bodyB) {
+		return b, true
+	}
+	if typ.TypeEquals(joined, bodyA) {
+		return a, true
+	}
+	return nil, false
 }

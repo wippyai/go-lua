@@ -3,6 +3,7 @@ package api
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/typ"
@@ -10,29 +11,20 @@ import (
 
 func TestFacts_Zero(t *testing.T) {
 	f := Facts{}
-	if f.FunctionFacts != nil {
-		t.Error("zero Facts should have nil FunctionFacts")
-	}
-	if f.ReturnSummaries != nil {
-		t.Error("zero Facts should have nil ReturnSummaries")
-	}
-	if f.NarrowReturns != nil {
-		t.Error("zero Facts should have nil NarrowReturns")
+	if f.Callables != nil {
+		t.Error("zero Facts should have nil Callables")
 	}
 	if f.ParamHints != nil {
 		t.Error("zero Facts should have nil ParamHints")
 	}
-	if f.FuncTypes != nil {
-		t.Error("zero Facts should have nil FuncTypes")
-	}
-	if f.LiteralSigs != nil {
-		t.Error("zero Facts should have nil LiteralSigs")
+	if f.Callables != nil {
+		t.Error("zero Facts should have nil Callables")
 	}
 	if f.CapturedTypes != nil {
 		t.Error("zero Facts should have nil CapturedTypes")
 	}
-	if f.CapturedFields != nil {
-		t.Error("zero Facts should have nil CapturedFields")
+	if f.FieldWrites != nil {
+		t.Error("zero Facts should have nil FieldWrites")
 	}
 	if f.CapturedContainers != nil {
 		t.Error("zero Facts should have nil CapturedContainers")
@@ -97,14 +89,14 @@ func TestCapturedTypes_Basic(t *testing.T) {
 }
 
 func TestCapturedFieldAssigns_Basic(t *testing.T) {
-	assigns := make(CapturedFieldAssigns)
+	assigns := make(FieldWrites)
 	nestedSym := cfg.SymbolID(1)
 	capturedSym := cfg.SymbolID(2)
 
-	assigns[nestedSym] = map[cfg.SymbolID]map[string]typ.Type{
+	assigns[nestedSym] = map[cfg.SymbolID]FieldWriteSet{
 		capturedSym: {
-			"foo": typ.String,
-			"bar": typ.Number,
+			{Field: "foo"}: typ.String,
+			{Field: "bar"}: typ.Number,
 		},
 	}
 
@@ -119,7 +111,7 @@ func TestCapturedFieldAssigns_Basic(t *testing.T) {
 	if len(fields) != 2 {
 		t.Errorf("expected 2 fields, got %d", len(fields))
 	}
-	if fields["foo"] != typ.String {
+	if fields[FieldWriteKey{Field: "foo"}] != typ.String {
 		t.Error("expected foo to be string")
 	}
 }
@@ -170,34 +162,22 @@ func TestContainerMutationKey(t *testing.T) {
 
 func TestFacts_WithData(t *testing.T) {
 	f := Facts{
-		FunctionFacts: FunctionFacts{
-			4: {
+		Callables: Callables{
+			&ast.FunctionExpr{}: {
 				Summary: []typ.Type{typ.Boolean},
 				Narrow:  []typ.Type{typ.Boolean},
 				Func:    typ.Func().Returns(typ.Boolean).Build(),
 			},
 		},
-		ReturnSummaries: ReturnSummaries{
-			1: []typ.Type{typ.String},
-		},
 		ParamHints: ParamHints{
 			2: []typ.Type{typ.Number},
 		},
-		FuncTypes: FuncTypes{
-			3: typ.Func().Build(),
-		},
 	}
 
-	if len(f.ReturnSummaries) != 1 {
-		t.Error("expected 1 return summary")
-	}
-	if len(f.FunctionFacts) != 1 {
+	if len(f.Callables) != 1 {
 		t.Error("expected 1 function fact")
 	}
 	if len(f.ParamHints) != 1 {
 		t.Error("expected 1 param hint")
-	}
-	if len(f.FuncTypes) != 1 {
-		t.Error("expected 1 func type")
 	}
 }

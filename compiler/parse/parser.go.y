@@ -982,6 +982,13 @@ primarytypeexpr:
             }
             $$.SetPosFromToken($1.Pos)
         } |
+        TIdent '.' TIdent '<' typeexprlist closegt {
+            $$ = &ast.GenericTypeExpr{
+                Base: &ast.TypeRefExpr{Path: []string{$1.Str, $3.Str}},
+                Args: $5,
+            }
+            $$.SetPosFromToken($1.Pos)
+        } |
         '{' typeexpr '}' {
             $$ = &ast.ArrayTypeExpr{Element: $2}
             $$.SetPosFromToken($1.Pos)

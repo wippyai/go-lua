@@ -1,0 +1,5 @@
+{
+  "description": "The real spiralscout market accept test captures writes to an unannotated table through callbacks.",
+  "files": ["market_accept.lua", "main.lua"],
+  "check": {"errors": 0}
+}

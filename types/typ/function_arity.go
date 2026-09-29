@@ -10,7 +10,7 @@ func MinRequiredArgs(f *Function) int {
 	}
 	lastRequired := -1
 	for i, p := range f.Params {
-		if !p.Optional {
+		if !ParamMayBeAbsent(p) {
 			lastRequired = i
 		}
 	}
@@ -18,4 +18,18 @@ func MinRequiredArgs(f *Function) int {
 		return 0
 	}
 	return lastRequired + 1
+}
+
+// ParamMayBeAbsent reports whether a call may omit the parameter: it has a
+// default or is declared nilable (T?). A parameter typed unknown or any is
+// still required.
+func ParamMayBeAbsent(p Param) bool {
+	if p.Optional {
+		return true
+	}
+	if p.Type == nil {
+		return false
+	}
+	_, nilable := SplitNilableFieldType(p.Type)
+	return nilable
 }

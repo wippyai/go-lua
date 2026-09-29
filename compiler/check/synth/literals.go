@@ -20,8 +20,6 @@ import (
 // Processing order (via CFG RPO traversal):
 //  1. Local assignments with function literal RHS: Synthesizes and records function type
 //  2. Local assignments with table literal RHS: Synthesizes and records table/record type
-//  3. Function definitions (function field assignments, method definitions):
-//     Extends receiver types with method fields
 //
 // The resulting map provides declared types that flow analysis uses as the base
 // types before applying any narrowing from control flow.
@@ -65,42 +63,6 @@ func FunctionLiteralTypes(graph *cfg.Graph, synth api.ExprSynth) flow.DeclaredTy
 		})
 	}
 
-	graph.EachFuncDef(func(p cfg.Point, info *cfg.FuncDefInfo) {
-		if info == nil {
-			return
-		}
-		if info.TargetKind == cfg.FuncDefGlobal {
-			if info.Symbol == 0 || info.FuncExpr == nil || len(info.FuncExpr.ReturnTypes) > 0 {
-				return
-			}
-			if t := synth(info.FuncExpr, p); t != nil {
-				types[info.Symbol] = t
-			}
-			return
-		}
-		if info.TargetKind != cfg.FuncDefField && info.TargetKind != cfg.FuncDefMethod {
-			return
-		}
-		if info.Name == "" {
-			return
-		}
-		receiverSym := info.ReceiverSymbol
-		if receiverSym == 0 {
-			return
-		}
-		fnType := typ.Unknown
-		if info.FuncExpr != nil {
-			if t := synth(info.FuncExpr, p); t != nil {
-				fnType = t
-			}
-		}
-		baseType := types[receiverSym]
-		if baseType == nil && info.Receiver != nil {
-			baseType = synth(info.Receiver, p)
-		}
-		types[receiverSym] = typ.ExtendRecordWithField(baseType, info.Name, fnType)
-	})
-
 	if len(types) == 0 {
 		return nil
 	}
@@ -126,7 +88,7 @@ func FunctionLiteralTypes(graph *cfg.Graph, synth api.ExprSynth) flow.DeclaredTy
 //   - For return expressions, uses declared return types as expected types
 //
 // Returns nil if graph or engine is nil, or if no function literals found.
-func FunctionLiteralSignatures(graph *cfg.Graph, engine LiteralSynth, declaredReturns []typ.Type) map[*ast.FunctionExpr]*typ.Function {
+func FunctionLiteralSignatures(graph *cfg.Graph, engine api.LiteralSynth, declaredReturns []typ.Type) map[*ast.FunctionExpr]*typ.Function {
 	if graph == nil || engine == nil {
 		return nil
 	}
@@ -175,27 +137,7 @@ func FunctionLiteralSignatures(graph *cfg.Graph, engine LiteralSynth, declaredRe
 		expectedFields := querycore.AllFieldTypesResolved(expected)
 		selfType := expected
 		if selfType == nil {
-			selfBuilder := typ.NewRecord()
-			fieldCount := 0
-			for _, field := range tbl.Fields {
-				if field.Key == nil {
-					continue
-				}
-				if _, ok := field.Value.(*ast.FunctionExpr); ok {
-					continue
-				}
-				switch k := field.Key.(type) {
-				case *ast.StringExpr:
-					selfBuilder.Field(k.Value, engine.TypeOf(field.Value, p))
-					fieldCount++
-				case *ast.IdentExpr:
-					selfBuilder.Field(k.Value, engine.TypeOf(field.Value, p))
-					fieldCount++
-				}
-			}
-			if fieldCount > 0 {
-				selfType = selfBuilder.Build()
-			}
+			selfType = phasecore.ImplicitSelfType(tbl, func(e ast.Expr) typ.Type { return engine.TypeOf(e, p) })
 		}
 
 		for _, field := range tbl.Fields {

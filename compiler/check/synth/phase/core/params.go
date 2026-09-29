@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	typecfg "github.com/wippyai/go-lua/types/cfg"
+	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -159,4 +160,48 @@ func ApplyParamList(builder *typ.FunctionBuilder, fn *ast.FunctionExpr, cfg Para
 		// Unannotated functions accept extra args; treat as variadic any.
 		builder.Variadic(typ.Any)
 	}
+}
+
+// ImplicitSelfType returns the receiver shape for methods defined in the
+// table constructor tbl: its named non-function fields. Field types are
+// widened because methods may reassign them. Returns nil when tbl has no
+// such fields.
+func ImplicitSelfType(tbl *ast.TableExpr, typeOf func(ast.Expr) typ.Type) typ.Type {
+	if tbl == nil {
+		return nil
+	}
+	builder := typ.NewRecord()
+	fieldCount := 0
+	for _, field := range tbl.Fields {
+		if field.Key == nil {
+			continue
+		}
+		if _, ok := field.Value.(*ast.FunctionExpr); ok {
+			continue
+		}
+		var name string
+		switch k := field.Key.(type) {
+		case *ast.StringExpr:
+			name = k.Value
+		case *ast.IdentExpr:
+			name = k.Value
+		default:
+			continue
+		}
+		ft := typeOf(field.Value)
+		if ft == nil {
+			ft = typ.Unknown
+		}
+		ft = subtype.WidenForInference(ft)
+		if inner, optional := typ.SplitNilableFieldType(ft); optional {
+			builder.OptField(name, inner)
+		} else {
+			builder.Field(name, ft)
+		}
+		fieldCount++
+	}
+	if fieldCount == 0 {
+		return nil
+	}
+	return builder.Build()
 }

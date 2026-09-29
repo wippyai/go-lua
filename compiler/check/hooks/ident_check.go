@@ -157,7 +157,7 @@ func (c *identChecker) checkIdent(ident *ast.IdentExpr) {
 	}
 
 	if c.scope != nil {
-		if _, isType := c.scope.LookupType(ident.Value); isType {
+		if _, isType := c.scope.LookupValueType(ident.Value); isType {
 			return
 		}
 	}

@@ -1,0 +1,1 @@
+{"description":"A return annotation naming a type through a module alias declared in the enclosing chunk resolves to that module type, so callers index and return the result as it.","files":["types.lua","main.lua"]}
