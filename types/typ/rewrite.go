@@ -46,143 +46,142 @@ func markDeclaredDepth(t Type, memo map[Type]Type, depth int) Type {
 		inner := markDeclaredDepth(ann.Inner, memo, depth+1)
 		return replaceOrKeep(t, inner == ann.Inner, func() Type { return NewAnnotated(inner, ann.Annotations) })
 	}
-	return VisitWithGuard(t, NewGuard(), t, func(next internal.RecursionGuard) Visitor[Type] {
-		return Visitor[Type]{
-			Optional: func(o *Optional) Type {
-				if o.Inner == nil {
-					return t
-				}
-				inner := markDeclaredDepth(o.Inner, memo, depth+1)
-				return replaceOrKeep(t, inner == o.Inner, func() Type { return NewOptional(inner) })
-			},
-			Union: func(u *Union) Type {
-				members := markDeclaredMembers(u.Members, memo, depth)
-				if members == nil {
-					return t
-				}
-				return NewUnion(members...)
-			},
-			Intersection: func(i *Intersection) Type {
-				members := markDeclaredMembers(i.Members, memo, depth)
-				if members == nil {
-					return t
-				}
-				return NewIntersection(members...)
-			},
-			Array: func(a *Array) Type {
-				elem := markDeclaredDepth(a.Element, memo, depth+1)
-				return replaceOrKeep(t, elem == a.Element, func() Type { return a.WithElement(elem) })
-			},
-			Map: func(m *Map) Type {
-				keyType := markDeclaredDepth(m.Key, memo, depth+1)
-				valueType := markDeclaredDepth(m.Value, memo, depth+1)
-				return replaceOrKeep(t, keyType == m.Key && valueType == m.Value, func() Type {
-					return m.WithTypes(keyType, valueType)
-				})
-			},
-			Tuple: func(tup *Tuple) Type {
-				elems := make([]Type, len(tup.Elements))
-				changed := false
-				for i, e := range tup.Elements {
-					elems[i] = markDeclaredDepth(e, memo, depth+1)
-					changed = changed || elems[i] != e
-				}
-				return replaceOrKeep(t, !changed, func() Type { return NewTuple(elems...) })
-			},
-			Function: func(fn *Function) Type {
-				return markDeclaredFunction(fn, t, memo, depth)
-			},
-			Record: func(r *Record) Type {
-				marked := markedRecord(r, memo)
-				memo[t] = marked
-				// Descend into the marked record's children so nested records
-				// are declared too, keeping the interned field types.
-				fields := make([]Field, len(marked.Fields))
-				changed := false
-				for i, f := range marked.Fields {
-					fields[i] = f
-					fields[i].Type = markDeclaredDepth(f.Type, memo, depth+1)
-					changed = changed || fields[i].Type != f.Type
-				}
-				metatable := marked.Metatable
-				if metatable != nil {
-					next := markDeclaredDepth(metatable, memo, depth+1)
-					changed = changed || next != metatable
-					metatable = next
-				}
-				mapKey, mapValue := marked.MapKey, marked.MapValue
-				if marked.HasMapComponent() {
-					key := markDeclaredDepth(marked.MapKey, memo, depth+1)
-					value := markDeclaredDepth(marked.MapValue, memo, depth+1)
-					changed = changed || key != mapKey || value != mapValue
-					mapKey, mapValue = key, value
-				}
-				if !changed {
-					return marked
-				}
-				return marked.WithChildren(fields, metatable, mapKey, mapValue)
-			},
-			Alias: func(a *Alias) Type {
-				target := markDeclaredDepth(a.Target, memo, depth+1)
-				return replaceOrKeep(t, target == a.Target, func() Type { return NewAlias(a.Name, target) })
-			},
-			Meta: func(m *Meta) Type {
-				of := markDeclaredDepth(m.Of, memo, depth+1)
-				return replaceOrKeep(t, of == m.Of, func() Type { return NewMeta(of) })
-			},
-			Instantiated: func(inst *Instantiated) Type {
-				args := make([]Type, len(inst.TypeArgs))
-				changed := false
-				for i, a := range inst.TypeArgs {
-					args[i] = markDeclaredDepth(a, memo, depth+1)
-					changed = changed || args[i] != a
-				}
-				if !changed {
-					return t
-				}
-				return Instantiate(inst.Generic, args...)
-			},
-			Interface: func(iface *Interface) Type {
-				methods := make([]Method, len(iface.Methods))
-				changed := false
-				for i, m := range iface.Methods {
-					methods[i] = m
-					if m.Type == nil {
-						continue
-					}
-					next := markDeclaredDepth(m.Type, memo, depth+1)
-					if nextFn, ok := next.(*Function); ok && nextFn != m.Type {
-						methods[i].Type = nextFn
-						changed = true
-					}
-				}
-				if !changed {
-					return t
-				}
-				return NewInterface(iface.Name, methods)
-			},
-			Recursive: func(rec *Recursive) Type {
-				if rec.Body == nil || rec.Body == rec {
-					return t
-				}
-				body := markDeclaredDepth(rec.Body, memo, depth+1)
-				if body == rec.Body {
-					return t
-				}
-				return NewRecursiveWithBody(rec.Name, body)
-			},
-			Generic: func(g *Generic) Type {
-				if g.Body == nil {
-					return t
-				}
-				body := markDeclaredDepth(g.Body, memo, depth+1)
-				return replaceOrKeep(t, body == g.Body, func() Type {
-					return NewGeneric(g.Name, g.TypeParams, body)
-				})
-			},
-			Default: func(Type) Type { return t },
+	switch tt := t.(type) {
+	case *Optional:
+		o := tt
+		if o.Inner == nil {
+			return t
 		}
-	})
+		inner := markDeclaredDepth(o.Inner, memo, depth+1)
+		return replaceOrKeep(t, inner == o.Inner, func() Type { return NewOptional(inner) })
+	case *Union:
+		u := tt
+		members := markDeclaredMembers(u.Members, memo, depth)
+		if members == nil {
+			return t
+		}
+		return NewUnion(members...)
+	case *Intersection:
+		i := tt
+		members := markDeclaredMembers(i.Members, memo, depth)
+		if members == nil {
+			return t
+		}
+		return NewIntersection(members...)
+	case *Array:
+		a := tt
+		elem := markDeclaredDepth(a.Element, memo, depth+1)
+		return replaceOrKeep(t, elem == a.Element, func() Type { return a.WithElement(elem) })
+	case *Map:
+		m := tt
+		keyType := markDeclaredDepth(m.Key, memo, depth+1)
+		valueType := markDeclaredDepth(m.Value, memo, depth+1)
+		return replaceOrKeep(t, keyType == m.Key && valueType == m.Value, func() Type {
+			return m.WithTypes(keyType, valueType)
+		})
+	case *Tuple:
+		tup := tt
+		elems := make([]Type, len(tup.Elements))
+		changed := false
+		for i, e := range tup.Elements {
+			elems[i] = markDeclaredDepth(e, memo, depth+1)
+			changed = changed || elems[i] != e
+		}
+		return replaceOrKeep(t, !changed, func() Type { return NewTuple(elems...) })
+	case *Function:
+		fn := tt
+		return markDeclaredFunction(fn, t, memo, depth)
+	case *Record:
+		r := tt
+		marked := markedRecord(r, memo)
+		memo[t] = marked
+		// Descend into the marked record's children so nested records
+		// are declared too, keeping the interned field types.
+		fields := make([]Field, len(marked.Fields))
+		changed := false
+		for i, f := range marked.Fields {
+			fields[i] = f
+			fields[i].Type = markDeclaredDepth(f.Type, memo, depth+1)
+			changed = changed || fields[i].Type != f.Type
+		}
+		metatable := marked.Metatable
+		if metatable != nil {
+			next := markDeclaredDepth(metatable, memo, depth+1)
+			changed = changed || next != metatable
+			metatable = next
+		}
+		mapKey, mapValue := marked.MapKey, marked.MapValue
+		if marked.HasMapComponent() {
+			key := markDeclaredDepth(marked.MapKey, memo, depth+1)
+			value := markDeclaredDepth(marked.MapValue, memo, depth+1)
+			changed = changed || key != mapKey || value != mapValue
+			mapKey, mapValue = key, value
+		}
+		if !changed {
+			return marked
+		}
+		return marked.WithChildren(fields, metatable, mapKey, mapValue)
+	case *Alias:
+		a := tt
+		target := markDeclaredDepth(a.Target, memo, depth+1)
+		return replaceOrKeep(t, target == a.Target, func() Type { return NewAlias(a.Name, target) })
+	case *Meta:
+		m := tt
+		of := markDeclaredDepth(m.Of, memo, depth+1)
+		return replaceOrKeep(t, of == m.Of, func() Type { return NewMeta(of) })
+	case *Instantiated:
+		inst := tt
+		args := make([]Type, len(inst.TypeArgs))
+		changed := false
+		for i, a := range inst.TypeArgs {
+			args[i] = markDeclaredDepth(a, memo, depth+1)
+			changed = changed || args[i] != a
+		}
+		if !changed {
+			return t
+		}
+		return Instantiate(inst.Generic, args...)
+	case *Interface:
+		iface := tt
+		methods := make([]Method, len(iface.Methods))
+		changed := false
+		for i, m := range iface.Methods {
+			methods[i] = m
+			if m.Type == nil {
+				continue
+			}
+			next := markDeclaredDepth(m.Type, memo, depth+1)
+			if nextFn, ok := next.(*Function); ok && nextFn != m.Type {
+				methods[i].Type = nextFn
+				changed = true
+			}
+		}
+		if !changed {
+			return t
+		}
+		return NewInterface(iface.Name, methods)
+	case *Recursive:
+		rec := tt
+		if rec.Body == nil || rec.Body == rec {
+			return t
+		}
+		body := markDeclaredDepth(rec.Body, memo, depth+1)
+		if body == rec.Body {
+			return t
+		}
+		return NewRecursiveWithBody(rec.Name, body)
+	case *Generic:
+		g := tt
+		if g.Body == nil {
+			return t
+		}
+		body := markDeclaredDepth(g.Body, memo, depth+1)
+		return replaceOrKeep(t, body == g.Body, func() Type {
+			return NewGeneric(g.Name, g.TypeParams, body)
+		})
+	default:
+		return t
+	}
 }
 
 // replaceOrKeep returns the original t when nothing changed, else the rebuilt
