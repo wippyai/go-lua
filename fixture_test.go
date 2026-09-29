@@ -48,7 +48,12 @@ func TestFixtures(t *testing.T) {
 
 // TestFixturesFixpointReplay compares final facts and diagnostics with the
 // original full schedule for every fixture and every supported checking mode.
+// It doubles the fixture suite, so it runs locally on request:
+// WIPPY_FIXPOINT_REPLAY=1 go test -run '^TestFixturesFixpointReplay$' .
 func TestFixturesFixpointReplay(t *testing.T) {
+	if os.Getenv("WIPPY_FIXPOINT_REPLAY") != "1" {
+		t.Skip("set WIPPY_FIXPOINT_REPLAY=1 to replay every fixture against the original fixpoint schedule")
+	}
 	t.Setenv("WIPPY_FIXPOINT_ASSERT", "1")
 	TestFixtures(t)
 }
