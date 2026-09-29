@@ -835,8 +835,10 @@ func (s *Solution) processIndexerAssignmentReturnKey(p cfg.Point, ia IndexerAssi
 
 	// Resolve key type from flow state or explicit override
 	keyType := ia.KeyType
-	if keyType == nil || typ.IsAbsentOrUnknown(keyType) {
-		keyType = s.resolveSymbolKeyType(p, ia.KeySymbol, ia.KeyVar)
+	if keyType == nil || typ.IsAbsentOrUnknown(keyType) || (len(ia.Segments) == 0 && typ.IsAny(keyType)) {
+		if resolved := s.resolveSymbolKeyType(p, ia.KeySymbol, ia.KeyVar); resolved != nil {
+			keyType = resolved
+		}
 	}
 	keyType = normalizeDynamicKeyType(keyType)
 
