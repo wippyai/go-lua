@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wippyai/go-lua/compiler/check"
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
 )
 
@@ -76,6 +77,10 @@ local count: number = builder:run({ kind = "active" })
 	result := testutil.Check(source, testutil.WithStdlib())
 	if result.HasError() {
 		t.Fatalf("metatable builder chain should type-check: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+	strict := testutil.Check(source, testutil.WithStdlib(), testutil.WithCheckOptions(check.Options{Strict: true}))
+	if messages := strings.Join(testutil.ErrorMessages(strict.Diagnostics), "\n"); !strings.Contains(messages, "cannot return QueryBuilder") {
+		t.Fatalf("strict mode must reject a method that promises an instance for an arbitrary receiver: %v", testutil.ErrorMessages(strict.Diagnostics))
 	}
 }
 
