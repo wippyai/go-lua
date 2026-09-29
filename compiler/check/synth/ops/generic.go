@@ -191,8 +191,8 @@ func normalizeArgForGenericInference(expected, arg typ.Type) typ.Type {
 // replaces all occurrences of type parameters with their corresponding
 // type arguments throughout parameter types, return types, and constraints.
 //
-// Returns the original function if it's not generic or if typeArgs length
-// doesn't match the number of type parameters.
+// The result has no type parameters. Returns the original function if it's
+// not generic or if typeArgs length doesn't match the number of type parameters.
 func InstantiateFunction(fn *typ.Function, typeArgs []typ.Type) *typ.Function {
 	if fn == nil || len(fn.TypeParams) == 0 {
 		return fn
@@ -204,7 +204,7 @@ func InstantiateFunction(fn *typ.Function, typeArgs []typ.Type) *typ.Function {
 
 	result := subst.Params(fn, fn.TypeParams, typeArgs)
 	if f, ok := result.(*typ.Function); ok {
-		return f
+		return f.Monomorphic()
 	}
 
 	return fn

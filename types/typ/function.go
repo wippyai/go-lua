@@ -105,13 +105,27 @@ func (b *FunctionBuilder) WithRefinement(r RefinementInfo) *FunctionBuilder {
 	return b
 }
 
-// Build creates the function type.
+// Build creates the function type. Build declares the function's type
+// parameters: references to them by name in the parameters, variadic and
+// returns bind to the declared parameters here, once.
 func (b *FunctionBuilder) Build() *Function {
+	params := append([]Param(nil), b.params...)
+	returns := append([]Type(nil), b.returns...)
+	variadic := b.variadic
+	if len(b.typeParams) > 0 {
+		for i := range params {
+			params[i].Type = bindTypeParams(params[i].Type, b.typeParams)
+		}
+		variadic = bindTypeParams(variadic, b.typeParams)
+		for i := range returns {
+			returns[i] = bindTypeParams(returns[i], b.typeParams)
+		}
+	}
 	return buildFunctionType(
 		b.typeParams,
-		b.params,
-		b.variadic,
-		b.returns,
+		params,
+		variadic,
+		returns,
 		b.effects,
 		b.spec,
 		b.refinement,
@@ -121,6 +135,15 @@ func (b *FunctionBuilder) Build() *Function {
 // WithParams returns f with its parameters replaced and everything else kept.
 func (f *Function) WithParams(params []Param) *Function {
 	return buildFunctionType(f.TypeParams, params, f.Variadic, f.Returns, f.Effects, f.Spec, f.Refinement)
+}
+
+// Monomorphic returns f without its type parameter binder. The caller has
+// already substituted every reference to the binder's parameters.
+func (f *Function) Monomorphic() *Function {
+	if len(f.TypeParams) == 0 {
+		return f
+	}
+	return buildFunctionType(nil, f.Params, f.Variadic, f.Returns, f.Effects, f.Spec, f.Refinement)
 }
 
 // WithSpec returns the same signature with the supplied behavioral contract.

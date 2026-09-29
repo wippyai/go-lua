@@ -103,3 +103,26 @@ func TestExpandInstantiated(t *testing.T) {
 		}
 	})
 }
+
+// A type argument may contain a type parameter of another binder with the
+// same name as the callee's; substitution keeps the two distinct.
+func TestParamsKeepsForeignSameNamedParam(t *testing.T) {
+	fn := typ.Func().TypeParam("T", nil).
+		Param("list", typ.NewArray(typ.NewTypeParam("T", nil))).
+		Returns(typ.NewTypeParam("T", nil)).
+		Build()
+	foreign := typ.NewTypeParam("T", typ.Number)
+	arg := typ.NewRecord().Field("v", foreign).Build()
+
+	result, ok := Params(fn, fn.TypeParams, []typ.Type{arg}).(*typ.Function)
+	if !ok {
+		t.Fatal("result should be a function")
+	}
+	elem := result.Params[0].Type.(*typ.Array).Element.(*typ.Record)
+	if got := elem.GetField("v").Type; got != foreign {
+		t.Fatalf("parameter element field: want the foreign %s, got %s", foreign, got)
+	}
+	if got := result.Returns[0].(*typ.Record).GetField("v").Type; got != foreign {
+		t.Fatalf("return field: want the foreign %s, got %s", foreign, got)
+	}
+}

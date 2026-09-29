@@ -177,7 +177,7 @@ func markDeclaredDepth(t Type, memo map[Type]Type, depth int) Type {
 		}
 		body := markDeclaredDepth(g.Body, memo, depth+1)
 		return replaceOrKeep(t, body == g.Body, func() Type {
-			return NewGeneric(g.Name, g.TypeParams, body)
+			return buildGeneric(g.Name, g.TypeParams, body)
 		})
 	default:
 		return t

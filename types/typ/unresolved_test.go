@@ -137,3 +137,36 @@ func TestPartialViewForgetsComplete(t *testing.T) {
 		t.Fatalf("deep partial view kept a complete record: %v", deep)
 	}
 }
+
+// Evidence for a generic function comes from another binder; the resolved
+// signature refers to the current binder's type parameters.
+func TestResolveGenericFunctionKeepsCurrentBinder(t *testing.T) {
+	current := Func().TypeParam("T", nil).
+		Param("x", NewTypeParam("T", nil)).
+		Returns(Unresolved).
+		Build()
+	evidence := Func().TypeParam("T", nil).
+		Param("x", NewTypeParam("T", nil)).
+		Returns(NewArray(NewTypeParam("T", nil))).
+		Build()
+
+	resolved, ok := Resolve(current, evidence).(*Function)
+	if !ok {
+		t.Fatal("resolved type should be a function")
+	}
+	binder := current.TypeParams[0]
+	if resolved.TypeParams[0] != binder {
+		t.Fatalf("resolved binder: want %p, got %p", binder, resolved.TypeParams[0])
+	}
+	if elem := resolved.Returns[0].(*Array).Element; elem != binder {
+		t.Fatalf("resolved return element should reference the current binder, got %s", elem)
+	}
+}
+
+func TestResolveGenericFunctionRejectsDifferentBinderArity(t *testing.T) {
+	current := Func().TypeParam("T", nil).Param("x", NewTypeParam("T", nil)).Returns(Unresolved).Build()
+	evidence := Func().Param("x", String).Returns(String).Build()
+	if got := Resolve(current, evidence); got != current {
+		t.Fatalf("evidence with another binder arity is not evidence for %s, got %s", current, got)
+	}
+}

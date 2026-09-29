@@ -310,9 +310,10 @@ func resolvePendingNode(current, evidence Type, seen map[resolvePair]Type) Type 
 		return current
 	case *Function:
 		b, ok := evidence.(*Function)
-		if !ok {
+		if !ok || len(a.TypeParams) != len(b.TypeParams) {
 			return current
 		}
+		b = renameTypeParams(b, a.TypeParams)
 		params := append([]Param(nil), a.Params...)
 		rets := append([]Type(nil), a.Returns...)
 		changed := false
