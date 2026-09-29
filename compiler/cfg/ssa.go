@@ -421,11 +421,6 @@ func (b *Builder) renameSSA(
 	}
 	visibleVersionByPoint := b.VisibleVersionByPoint
 	cfgSize := b.Cfg.Size()
-	// The list is consumed before descending into the next dominator-tree node.
-	// Reuse it across points rather than sizing each version map from all visible
-	// symbols, including those without an active SSA version.
-	var visibleAssignedBuffer [64]int
-	visibleAssignedScratch := visibleAssignedBuffer[:0]
 	if len(visibleVersionByPoint) < cfgSize {
 		visibleVersionByPoint = make([]map[basecfg.SymbolID]Version, cfgSize)
 	} else {
@@ -624,14 +619,18 @@ func (b *Builder) renameSSA(
 					}
 				}
 			} else {
-				visibleAssignedScratch = visibleAssignedScratch[:0]
+				estimatedCap := len(visLocal) + len(globalAssigned)
 				for name, resolvedSym := range visLocal {
 					symIdx, ok := lookupSymIndex(resolvedSym)
 					if !ok || rootByIndex[symIdx] != name {
 						continue
 					}
 					if stack := stacks[symIdx]; len(stack) > 0 {
-						visibleAssignedScratch = append(visibleAssignedScratch, symIdx)
+						if currentVersions == nil {
+							currentVersions = make(map[basecfg.SymbolID]Version, estimatedCap)
+							visibleVersionByPoint[pIdx] = currentVersions
+						}
+						currentVersions[symByIndex[symIdx]] = stack[len(stack)-1]
 					}
 				}
 				for _, globalInfo := range globalAssigned {
@@ -640,14 +639,10 @@ func (b *Builder) renameSSA(
 					}
 					symIdx := globalInfo.symIdx
 					if stack := stacks[symIdx]; len(stack) > 0 {
-						visibleAssignedScratch = append(visibleAssignedScratch, symIdx)
-					}
-				}
-				if len(visibleAssignedScratch) > 0 {
-					currentVersions = make(map[basecfg.SymbolID]Version, len(visibleAssignedScratch))
-					visibleVersionByPoint[pIdx] = currentVersions
-					for _, symIdx := range visibleAssignedScratch {
-						stack := stacks[symIdx]
+						if currentVersions == nil {
+							currentVersions = make(map[basecfg.SymbolID]Version, estimatedCap)
+							visibleVersionByPoint[pIdx] = currentVersions
+						}
 						currentVersions[symByIndex[symIdx]] = stack[len(stack)-1]
 					}
 				}

@@ -187,15 +187,12 @@ func NewWithCapacity(nodeCap, edgeCap int) *CFG {
 		edgeCap = 0
 	}
 
-	// Predecessor and successor headers have the same lifetime and capacity.
-	// Sharing one backing array saves an allocation for each graph.
-	adjacency := make([][]Point, 2*nodeCap)
 	c := &CFG{
 		id:    nextCFGID(),
 		Nodes: make([]Node, 0, nodeCap),
 		edges: make([]Edge, 0, edgeCap),
-		preds: adjacency[:0:nodeCap],
-		succs: adjacency[nodeCap : nodeCap : 2*nodeCap],
+		preds: make([][]Point, 0, nodeCap),
+		succs: make([][]Point, 0, nodeCap),
 	}
 	c.entry = c.AddNode(NodeEntry, 0, "")
 	c.exit = c.AddNode(NodeExit, 0, "")
