@@ -505,13 +505,14 @@ func (s *Solution) rebindsAt(p cfg.Point, sym cfg.SymbolID) bool {
 // condition.
 func (s *Solution) narrowedTypeUnder(p cfg.Point, path constraint.Path, condition constraint.Condition) typ.Type {
 	baseType := s.baseTypeAt(p, path)
+	if typ.IsUnresolved(baseType) {
+		// Pending solver evidence does not establish a value domain yet.
+		return baseType
+	}
 	if baseType == nil {
-		// A predicate carries evidence about its value even when a partial
-		// ancestor shape has no member to project for that path.
-		// A missing scalar value is pending solver evidence, not a projected
-		// absent member. Narrowing it as unknown would invent nil on falsy
-		// loop edges before its phi operands become available.
-		if len(path.Segments) > 0 && condition.HasConstraints() {
+		// Nil denotes a missing projection from an available ancestor. A
+		// predicate supplies member evidence even for a partial shape.
+		if condition.HasConstraints() {
 			if narrowed := s.applyCondition(p, typ.Unknown, path, condition, true); narrowed != nil && !typ.IsUnknown(narrowed) {
 				return s.refineExactLengthIndex(p, path, narrowed)
 			}
@@ -702,6 +703,8 @@ func (s *Solution) narrowedTypeCacheKey(p cfg.Point, path constraint.Path) (narr
 }
 
 // baseTypeAt returns the base type for a path at point p, for use in narrowing.
+// Unresolved denotes pending value evidence; nil denotes a missing member
+// projection from an available value.
 //
 // A child path has two sources: its own type at p (TypeAt) and the type derived
 // from its closest narrowed ancestor. When the own type is only a projection of
@@ -713,12 +716,21 @@ func (s *Solution) baseTypeAt(p cfg.Point, path constraint.Path) typ.Type {
 	explicit, origin := s.typeAtWithOrigin(p, path)
 
 	if len(path.Segments) == 0 {
+		if explicit == nil {
+			return typ.Unresolved
+		}
 		return explicit
 	}
 
 	derived := s.derivedTypeAt(p, path)
 
 	if explicit == nil {
+		if derived == nil {
+			root := constraint.Path{Root: path.Root, Symbol: path.Symbol, Version: path.Version}
+			if s.TypeAt(p, root) == nil {
+				return typ.Unresolved
+			}
+		}
 		return derived
 	}
 	if derived == nil {

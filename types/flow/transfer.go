@@ -2188,7 +2188,7 @@ func (s *Solution) phiOperandTypeAt(joinPoint cfg.Point, op cfg.PhiOperand, segm
 	if opType == nil {
 		opType = s.baseTypeAt(op.From, path)
 	}
-	if opType == nil {
+	if opType == nil || typ.IsUnresolved(opType) {
 		return nil
 	}
 

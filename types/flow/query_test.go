@@ -41,6 +41,49 @@ func TestTypeAt_EmptyPath(t *testing.T) {
 	}
 }
 
+func TestNarrowingDistinguishesPendingAndMissingMembers(t *testing.T) {
+	c := cfg.New()
+	g := newMockSSAGraph(c)
+	sym := setupSymbol(g, "value", []cfg.Point{c.Entry()})
+	setVersion(g, c.Entry(), sym, cfg.Version{Root: "value", Symbol: sym, ID: 1})
+	root := constraint.Path{Root: "value", Symbol: sym}
+	child := root.Field("member")
+	for _, tc := range []struct {
+		name    string
+		base    typ.Type
+		path    constraint.Path
+		pending bool
+	}{
+		{"pending_root", nil, root, true},
+		{"pending_child", nil, child, true},
+		{"pending_intermediate", typ.NewRecord().Field("member", typ.Unresolved).Build(), child.Field("leaf"), true},
+		{"missing_member", typ.NewRecord().Field("known", typ.String).Build(), child, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			inputs := newInputs(g)
+			if tc.base != nil {
+				inputs.DeclaredTypes[sym] = tc.base
+			}
+			s := Solve(inputs, testResolver())
+			base := s.baseTypeAt(c.Entry(), tc.path)
+			if tc.pending && !typ.IsUnresolved(base) {
+				t.Fatalf("pending base = %v, want unresolved", base)
+			}
+			if !tc.pending && base != nil {
+				t.Fatalf("missing projection = %v, want nil", base)
+			}
+			guard := constraint.FromConstraints(constraint.HasType{Path: tc.path, Type: narrow.BuiltinTypeKey("string")})
+			got := s.narrowedTypeUnder(c.Entry(), tc.path, guard)
+			if tc.pending && !typ.IsUnresolved(got) {
+				t.Fatalf("pending guard invents evidence: %v", got)
+			}
+			if !tc.pending && !typ.TypeEquals(got, typ.String) {
+				t.Fatalf("missing member guard = %v, want string", got)
+			}
+		})
+	}
+}
+
 func TestTypeAt_DeclaredType(t *testing.T) {
 	c := cfg.New()
 	g := newMockSSAGraph(c)
