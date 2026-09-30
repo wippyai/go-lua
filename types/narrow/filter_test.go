@@ -90,6 +90,35 @@ func TestFilterByMatch_Optional_Exclude(t *testing.T) {
 	}
 }
 
+func TestFilterByMatch_OptionalAliasUnion(t *testing.T) {
+	online := typ.NewRecord().Field("connected", typ.True).Field("address", typ.String).Build()
+	offline := typ.NewRecord().Field("connected", typ.False).Build()
+	state := typ.NewAlias("LinkState", typ.NewUnion(online, offline))
+	optional := typ.NewOptional(state)
+	matcher := func(t typ.Type) bool {
+		return typ.TypeEquals(t, online)
+	}
+	cases := []struct {
+		name     string
+		typeOf   typ.Type
+		excluded typ.Type
+	}{
+		{"optional", optional, typ.NewOptional(offline)},
+		{"alias_optional", typ.NewAlias("OptionalLink", optional), typ.NewOptional(offline)},
+		{"union_optional", typ.NewUnion(optional, typ.Number), typ.NewUnion(typ.NewOptional(offline), typ.Number)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := FilterByMatch(tc.typeOf, matcher, false); !typ.TypeEquals(got, online) {
+				t.Errorf("narrowed = %v, want %v", got, online)
+			}
+			if got := FilterByMatch(tc.typeOf, matcher, true); !typ.TypeEquals(got, tc.excluded) {
+				t.Errorf("excluded = %v, want %v", got, tc.excluded)
+			}
+		})
+	}
+}
+
 func TestByFieldLiteral_Nil(t *testing.T) {
 	result := ByFieldLiteral(nil, "field", typ.LiteralString("x"), nil)
 	if result != nil {
