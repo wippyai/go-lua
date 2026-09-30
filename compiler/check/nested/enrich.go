@@ -172,8 +172,7 @@ func NormalizeCapturedTableType(tableType typ.Type, mutation cfg.TableMutation, 
 		}
 		if bound != nil {
 			if slot := bound.GetField(f.Name); slot != nil {
-				// Structural equality does not preserve an alias's widening bound.
-				if f.Type != slot.Type || f.Optional != slot.Optional {
+				if !sameCapturedSlotType(f.Type, slot.Type) || f.Optional != slot.Optional {
 					fields[i] = *slot
 					changed = true
 				}
@@ -189,6 +188,25 @@ func NormalizeCapturedTableType(tableType typ.Type, mutation cfg.TableMutation, 
 		return tableType
 	}
 	return rec.WithChildren(fields, rec.Metatable, rec.MapKey, rec.MapValue)
+}
+
+// sameCapturedSlotType compares value domains and the names that bound
+// inference widening. Structural equality alone erases those alias names.
+func sameCapturedSlotType(a, b typ.Type) bool {
+	if !typ.TypeEquals(a, b) {
+		return false
+	}
+	a, b = typ.UnwrapAnnotated(a), typ.UnwrapAnnotated(b)
+	if optional, ok := a.(*typ.Optional); ok {
+		other, ok := b.(*typ.Optional)
+		return ok && sameCapturedSlotType(optional.Inner, other.Inner)
+	}
+	aa, aAlias := a.(*typ.Alias)
+	bb, bAlias := b.(*typ.Alias)
+	if aAlias || bAlias {
+		return aAlias && bAlias && aa.Name == bb.Name && sameCapturedSlotType(aa.Target, bb.Target)
+	}
+	return true
 }
 
 func mergeFieldsIntoSelfType(selfType typ.Type, fields map[string]typ.Type) typ.Type {

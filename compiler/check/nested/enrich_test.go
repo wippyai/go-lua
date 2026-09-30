@@ -21,6 +21,37 @@ func TestCollectCapturedFieldAssignments_NilGraph(t *testing.T) {
 	}
 }
 
+func TestCapturedSlotComparisonUsesSemanticAliasIdentity(t *testing.T) {
+	union := func() typ.Type { return typ.NewUnion(typ.LiteralString("ok"), typ.LiteralString("failed")) }
+	for _, tc := range []struct {
+		name           string
+		current, bound typ.Type
+		wantSame       bool
+	}{
+		{"equal_allocations", union(), union(), true},
+		{"same_alias", typ.NewAlias("Outcome", union()), typ.NewAlias("Outcome", union()), true},
+		{"restore_alias", union(), typ.NewAlias("Outcome", union()), false},
+		{"different_alias", typ.NewAlias("Other", union()), typ.NewAlias("Outcome", union()), false},
+		{"widen_domain", typ.LiteralString("ok"), typ.NewAlias("Outcome", union()), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			current := typ.NewRecord().Field("outcome", tc.current).Build()
+			bound := typ.NewRecord().Field("outcome", tc.bound).Build()
+			got := NormalizeCapturedTableType(current, cfg.TableMutation{Escaped: true}, bound)
+			if tc.wantSame && got != current {
+				t.Fatal("semantically identical bound rebuilds capture")
+			}
+			if !tc.wantSame {
+				field := got.(*typ.Record).GetField("outcome")
+				alias, ok := field.Type.(*typ.Alias)
+				if !ok || alias.Name != "Outcome" {
+					t.Fatalf("lost alias bound: %v", field.Type)
+				}
+			}
+		})
+	}
+}
+
 func TestCollectCapturedFieldAssignments_EmptyCapturedSyms(t *testing.T) {
 	result := CollectCapturedFieldAssignments(&cfg.Graph{}, map[cfg.SymbolID]bool{}, nil)
 	if result == nil {
