@@ -243,8 +243,17 @@ func TestRefineAnnotation_NarrowsSoftAnnotationOnlyWithinIt(t *testing.T) {
 	anyMap := typ.NewMap(typ.String, typ.Any)
 	row := typ.NewRecord().Field("binding_id", typ.String).Build()
 
-	if got := RefineAnnotation(anyMap, row); !typ.TypeEquals(got, row) {
-		t.Fatalf("a hint within the soft annotation must refine it, got %s", got)
+	openRow := typ.NewRecord().SetOpen(true).Field("binding_id", typ.String).Build()
+	refinedRow := typ.NewRecord().Field("binding_id", typ.String).MapComponent(typ.String, typ.Any).Build()
+	if got := RefineAnnotation(anyMap, row); !typ.TypeEquals(got, refinedRow) {
+		t.Fatalf("a hint within the soft annotation must refine it within the annotation's map, got %s", got)
+	}
+	if got := RefineAnnotation(anyMap, openRow); !typ.TypeEquals(got, refinedRow) {
+		t.Fatalf("an open hint record must be closed by the annotation's map component, got %s", got)
+	}
+	stringArray := typ.NewArray(typ.String)
+	if got := RefineAnnotation(typ.NewArray(typ.Any), stringArray); !typ.TypeEquals(got, stringArray) {
+		t.Fatalf("a hint within a soft array annotation must refine it unchanged, got %s", got)
 	}
 	if got := RefineAnnotation(anyMap, typ.NewOptional(row)); got != typ.Type(anyMap) {
 		t.Fatalf("a nilable hint must not replace a non-nilable annotation, got %s", got)

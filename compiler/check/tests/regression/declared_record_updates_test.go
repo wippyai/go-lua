@@ -134,3 +134,72 @@ func TestTableLiteralOmitsNilAdmittingField(t *testing.T) {
 	`, "cannot return")
 	})
 }
+
+// A call-site hint refines an annotated map parameter within the annotation:
+// keys the hint does not list keep the annotation's key and value types.
+func TestRefinedMapParameterKeepsAnnotationMap(t *testing.T) {
+	t.Run("returned_in_record", func(t *testing.T) {
+		checkBothModes(t, `
+		type Call = {input: {[string]: unknown}}
+		local function call(input: {[string]: unknown}): Call
+			local c = {input = input}
+			return c
+		end
+		local function run(): ()
+			call({alone = true})
+			call({alone = false, force = true})
+		end
+		return run
+	`, "")
+	})
+	t.Run("passed_as_annotation", func(t *testing.T) {
+		checkBothModes(t, `
+		local function take(m: {[string]: unknown}): () end
+		local function call(input: {[string]: unknown}): ()
+			take(input)
+		end
+		local function run(): ()
+			call({alone = true})
+		end
+		return run
+	`, "")
+	})
+	t.Run("hint_field_is_readable", func(t *testing.T) {
+		checkBothModes(t, `
+		local function call(input: {[string]: unknown}): boolean
+			local alone = input.alone
+			return alone == true
+		end
+		local function run(): ()
+			call({alone = true})
+		end
+		return run
+	`, "")
+	})
+	// Gradual mode reports unknown flowing into string as a hint.
+	t.Run("unknown_values_are_not_strings", func(t *testing.T) {
+		checkModes(t, `
+		local function take(m: {[string]: string}): () end
+		local function call(input: {[string]: unknown}): ()
+			take(input)
+		end
+		local function run(): ()
+			call({alone = "x"})
+		end
+		return run
+	`, "", "argument 1")
+	})
+	t.Run("record_value_is_not_string_map", func(t *testing.T) {
+		checkBothModes(t, `
+		type Call = {input: {[string]: string}}
+		local function call(input: {[string]: unknown}): Call
+			local c = {input = input}
+			return c
+		end
+		local function run(): ()
+			call({alone = "x"})
+		end
+		return run
+	`, "cannot return")
+	})
+}

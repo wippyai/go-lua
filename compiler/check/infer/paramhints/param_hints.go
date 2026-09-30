@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 type HintJoinFn func(prev, next typ.Type) typ.Type
@@ -51,7 +52,9 @@ func MergeIntoSignature(fn *ast.FunctionExpr, hints []typ.Type, sig *typ.Functio
 // RefineAnnotation returns the type the body sees for an annotated parameter
 // with a call-site hint. A soft top-like annotation (any, {[string]: any})
 // is narrowed to the hint when the hint fits within it; otherwise, and for
-// every other annotation, the annotation stands.
+// every other annotation, the annotation stands. A hint record refining a map
+// annotation keeps the annotation's key and value types for the keys it does
+// not list.
 func RefineAnnotation(annotation, hint typ.Type) typ.Type {
 	if annotation == nil || hint == nil || !typ.IsRefinableAnnotation(annotation) {
 		return annotation
@@ -60,7 +63,44 @@ func RefineAnnotation(annotation, hint typ.Type) typ.Type {
 	if refined == nil || typ.IsUnknown(refined) || !subtype.IsSubtype(refined, annotation) {
 		return annotation
 	}
+	if key, value, ok := annotationMapComponent(annotation); ok {
+		return withMapComponent(refined, key, value)
+	}
 	return refined
+}
+
+// annotationMapComponent returns the key and value types a map annotation, or
+// a record annotation with a map component, gives its unlisted keys.
+func annotationMapComponent(annotation typ.Type) (typ.Type, typ.Type, bool) {
+	switch v := unwrap.Alias(annotation).(type) {
+	case *typ.Map:
+		return v.Key, v.Value, true
+	case *typ.Record:
+		if v.HasMapComponent() {
+			return v.MapKey, v.MapValue, true
+		}
+	}
+	return nil, nil, false
+}
+
+// withMapComponent gives the hint records in t the map component key -> value.
+// The component covers every key the record does not list, so the record is
+// closed.
+func withMapComponent(t typ.Type, key, value typ.Type) typ.Type {
+	switch v := t.(type) {
+	case *typ.Record:
+		if v.HasMapComponent() {
+			return t
+		}
+		return v.Builder().SetOpen(false).MapComponent(key, value).Build()
+	case *typ.Union:
+		members := make([]typ.Type, len(v.Members))
+		for i, m := range v.Members {
+			members[i] = withMapComponent(m, key, value)
+		}
+		return typ.NewUnion(members...)
+	}
+	return t
 }
 
 func paramAnnotated(fn *ast.FunctionExpr, i int) bool {
