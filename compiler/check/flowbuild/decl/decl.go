@@ -90,6 +90,17 @@ func ExtractDeclaredTypes(fc *core.FlowContext, inputs *flow.Inputs) {
 	if fc.CheckCtx != nil && fc.CheckCtx.Bindings() != nil {
 		bindings = fc.CheckCtx.Bindings()
 	}
+	if bindings != nil {
+		for _, sym := range bindings.CapturedSymbols(fc.Graph.Func()) {
+			if bindings.TypeAnnotation(sym) == nil || typ.IsSoft(inputs.DeclaredTypes[sym], typ.SoftAnnotationPolicy) {
+				continue
+			}
+			if inputs.AnnotatedVars == nil {
+				inputs.AnnotatedVars = make(map[cfg.SymbolID]bool)
+			}
+			inputs.AnnotatedVars[sym] = true
+		}
+	}
 	for _, name := range cfg.SortedFieldNames(fc.Globals) {
 		t := fc.Globals[name]
 		if t == nil {
