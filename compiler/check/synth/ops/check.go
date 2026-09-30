@@ -340,7 +340,11 @@ func checkTableAsRecord(mode subtype.Assignability, fields []FieldDef, elems []t
 
 		pf := field.Type
 		compatible := mode.Assignable(pf, ef.Type)
-		if compatible && field.Shared && !ef.Readonly {
+		// Mutable map views retain v1.6.2's interim compatibility, including
+		// their alias hole (design-record-to-map.md); borrow/write capabilities
+		// are v1.7 work. Other shared table slots use record compatibility.
+		_, mapTarget := unwrap.Optional(ef.Type).(*typ.Map)
+		if compatible && field.Shared && !ef.Readonly && !mapTarget {
 			// Reuse record slot compatibility for values that have an existing
 			// identity. A fresh outer table does not make its children fresh.
 			sub := typ.NewRecord().AddField(typ.Field{Name: ef.Name, Type: pf, Optional: field.Optional}).Build()
