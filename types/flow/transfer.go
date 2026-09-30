@@ -747,6 +747,22 @@ func (s *Solution) mapElementTypeAt(p cfg.Point, src *MapElementSource) typ.Type
 		}
 	}
 
+	keyType := s.resolveSymbolKeyType(p, src.KeySymbol, src.KeyVar)
+	if keyType != nil && !typ.IsFinal(keyType) {
+		return typ.Unresolved
+	}
+	// A singleton string key reads one field, rather than every map value.
+	if key, ok := unwrap.Alias(keyType).(*typ.Literal); ok && key.Base == kind.String {
+		name := key.Value.(string)
+		segment := constraint.Segment{Kind: constraint.SegmentIndexString, Name: name}
+		if pathkey.IsIdentName(name) {
+			segment.Kind = constraint.SegmentField
+		}
+		if value := s.NarrowedTypeAt(p, src.MapPath.Append(segment)); value != nil {
+			return value
+		}
+	}
+
 	mapType := s.NarrowedTypeAt(p, src.MapPath)
 	if mapType == nil || mapType.Kind().IsPlaceholder() {
 		if preType := s.preAssignmentNarrowedTypeAt(p, src.MapPath); preType != nil {
@@ -761,6 +777,9 @@ func (s *Solution) mapElementTypeAt(p cfg.Point, src *MapElementSource) typ.Type
 			mapType = declType
 		}
 	}
+	if mapType != nil && !typ.IsFinal(mapType) {
+		return typ.Unresolved
+	}
 	if (mapType == nil || mapType.Kind().IsPlaceholder() || isEmptyRecordNoMapType(mapType)) &&
 		src.MapPath.Symbol != 0 && len(src.MapPath.Segments) == 0 {
 		if known := s.joinKnownRootTypes(src.MapPath.Symbol); known != nil {
@@ -773,6 +792,9 @@ func (s *Solution) mapElementTypeAt(p cfg.Point, src *MapElementSource) typ.Type
 	}
 	if mapType == nil {
 		return nil
+	}
+	if !typ.IsFinal(mapType) {
+		return typ.Unresolved
 	}
 	// A dynamic key may reach an unlisted value in an open or incomplete record.
 	// Decomposing only its listed fields would give an unsoundly narrow result.
@@ -790,6 +812,60 @@ func (s *Solution) mapElementTypeAt(p cfg.Point, src *MapElementSource) typ.Type
 	// This preserves Lua table semantics for missing keys and avoids placeholder
 	// fallback poisoning in loop fixpoint before map writes are observed.
 	return typ.Nil
+}
+
+// valueTypeAt resolves every read at the write point. Pending flow evidence
+// defers publication; extracted positions without flow evidence are finalized.
+func (s *Solution) valueTypeAt(p cfg.Point, v ValueSource) typ.Type {
+	valueType := v.ValueType
+	var evidence typ.Type
+	if v.ValuePath.HasSymbol() {
+		evidence = s.NarrowedTypeAt(p, v.ValuePath)
+	} else if v.MapElementSource != nil {
+		evidence = s.mapElementTypeAt(p, v.MapElementSource)
+	}
+	if evidence != nil {
+		if !typ.IsFinal(evidence) {
+			return nil
+		}
+		return evidence
+	}
+	if record, ok := unwrap.Alias(valueType).(*typ.Record); ok {
+		for _, field := range v.ValueFields {
+			resolved := s.valueTypeAt(p, field.ValueSource)
+			if resolved == nil {
+				return nil
+			}
+			if existing := record.GetField(field.Name); existing != nil {
+				updated := *existing
+				updated.Type = resolved
+				record = record.WithField(updated)
+			}
+		}
+		valueType = record
+	}
+	if len(v.ValueElements) > 0 {
+		elements := make([]typ.Type, 0, len(v.ValueElements))
+		for _, element := range v.ValueElements {
+			resolved := s.valueTypeAt(p, element)
+			if resolved == nil {
+				return nil
+			}
+			elements = append(elements, resolved)
+		}
+		switch shape := unwrap.Alias(valueType).(type) {
+		case *typ.Array:
+			valueType = shape.WithElement(join.Types(elements...))
+		case *typ.Map:
+			valueType = shape.WithTypes(shape.Key, join.Types(elements...))
+		case *typ.Tuple:
+			valueType = typ.NewTuple(elements...)
+		}
+	}
+	if valueType == nil {
+		return nil
+	}
+	return typ.Finalize(valueType)
 }
 
 // processIndexerAssignmentReturnKey handles dynamic index assignments like t[k] = v.
@@ -842,28 +918,7 @@ func (s *Solution) processIndexerAssignmentReturnKey(p cfg.Point, ia IndexerAssi
 	}
 	keyType = normalizeDynamicKeyType(keyType)
 
-	// Resolve value type from flow state or use fallback.
-	valueType := ia.ValType
-	if ia.ValuePath.HasSymbol() {
-		if resolved := s.NarrowedTypeAt(p, ia.ValuePath); !typ.IsAbsentOrUnknown(resolved) {
-			valueType = resolved
-		}
-	}
-	if record, ok := valueType.(*typ.Record); ok {
-		for _, source := range ia.ValueFieldPaths {
-			field := record.GetField(source.Name)
-			if field == nil || !typ.IsAbsentOrUnknown(field.Type) || !source.Path.HasSymbol() {
-				continue
-			}
-			resolved := s.NarrowedTypeAt(p, source.Path)
-			if !typ.IsAbsentOrUnknown(resolved) {
-				updated := *field
-				updated.Type = resolved
-				record = record.WithField(updated)
-			}
-		}
-		valueType = record
-	}
+	valueType := s.valueTypeAt(p, ia.ValueSource)
 	if valueType == nil {
 		return ""
 	}
@@ -1099,13 +1154,7 @@ func (s *Solution) processTableMutatorAssignmentReturnKey(p cfg.Point, tm TableM
 		return ""
 	}
 
-	// Resolve value type from flow state or use fallback
-	valueType := tm.ValueType
-	if tm.ValuePath.HasSymbol() {
-		if resolved := s.NarrowedTypeAt(p, tm.ValuePath); !typ.IsAbsentOrUnknown(resolved) {
-			valueType = resolved
-		}
-	}
+	valueType := s.valueTypeAt(p, tm.ValueSource)
 	if valueType == nil {
 		return ""
 	}
@@ -1164,7 +1213,7 @@ func normalizeDynamicKeyType(keyType typ.Type) typ.Type {
 // controlled by ContainerElementUnion effects in function specs.
 //
 // The method:
-//  1. Resolves value type from flow state (using ValuePath) or fallback
+//  1. Types the value from flow state at the call (see valueTypeAt)
 //  2. Applies WidenForInference to normalize the value type
 //  3. Skips annotated variables (explicit types are preserved)
 //  4. Widens the container's element type via union
@@ -1175,13 +1224,7 @@ func (s *Solution) processContainerMutatorAssignmentReturnKey(p cfg.Point, cm Co
 		return ""
 	}
 
-	// Resolve value type from flow state or use fallback
-	valueType := cm.ValueType
-	if cm.ValuePath.HasSymbol() {
-		if resolved := s.NarrowedTypeAt(p, cm.ValuePath); !typ.IsAbsentOrUnknown(resolved) {
-			valueType = resolved
-		}
-	}
+	valueType := s.valueTypeAt(p, cm.ValueSource)
 	if valueType == nil {
 		return ""
 	}

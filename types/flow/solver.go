@@ -273,7 +273,7 @@ func (s *Solution) indexerWriteFacts() map[cfg.Point]constraint.Condition {
 	}
 	var facts map[cfg.Point]constraint.Condition
 	for _, ia := range s.inputs.IndexerAssignments {
-		if ia.Symbol == 0 || ia.KeySymbol == 0 || !excludesNil(ia.ValType) {
+		if ia.Symbol == 0 || ia.KeySymbol == 0 || !excludesNil(ia.ValueType) {
 			continue
 		}
 		tableVer := s.inputs.Graph.VisibleVersion(ia.Point, ia.Symbol)

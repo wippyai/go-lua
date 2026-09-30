@@ -221,6 +221,21 @@ func (s *Solution) buildPhiDependencies() dependencyMap {
 func (s *Solution) buildAssignmentDependencies() dependencyMap {
 	deps := make(dependencyMap)
 
+	registerMapElement := func(p cfg.Point, src *MapElementSource) {
+		if src == nil {
+			return
+		}
+		if src.MapPath.Symbol != 0 {
+			deps.register(s.pkResolver.KeyAt(p, src.MapPath), p)
+			deps.registerSymbol(src.MapPath.Symbol, p)
+		}
+		if src.KeySymbol != 0 {
+			keyPath := constraint.Path{Root: src.KeyVar, Symbol: src.KeySymbol}
+			deps.register(s.pkResolver.KeyAt(p, keyPath), p)
+			deps.registerSymbol(src.KeySymbol, p)
+		}
+	}
+
 	// Regular assignments
 	for _, assign := range s.inputs.Assignments {
 		if assign.SourcePath.Symbol != 0 {
@@ -232,11 +247,7 @@ func (s *Solution) buildAssignmentDependencies() dependencyMap {
 			deps.register(srcKey, assign.Point)
 			deps.registerSymbol(assign.IterSource.Path.Symbol, assign.Point)
 		}
-		if assign.MapElementSource != nil && assign.MapElementSource.MapPath.Symbol != 0 {
-			srcKey := s.pkResolver.KeyAt(assign.Point, assign.MapElementSource.MapPath)
-			deps.register(srcKey, assign.Point)
-			deps.registerSymbol(assign.MapElementSource.MapPath.Symbol, assign.Point)
-		}
+		registerMapElement(assign.Point, assign.MapElementSource)
 		if assign.ContainerElementSource != nil && assign.ContainerElementSource.ContainerPath.Symbol != 0 {
 			srcKey := s.pkResolver.KeyAt(assign.Point, assign.ContainerElementSource.ContainerPath)
 			deps.register(srcKey, assign.Point)
@@ -244,12 +255,29 @@ func (s *Solution) buildAssignmentDependencies() dependencyMap {
 		}
 	}
 
-	// Table mutator value paths
-	for _, tm := range s.inputs.TableMutatorAssignments {
-		if tm.ValuePath.Symbol != 0 {
-			srcKey := s.pkResolver.KeyAt(tm.Point, tm.ValuePath)
-			deps.register(srcKey, tm.Point)
+	// Paths read by the values that writes publish.
+	var registerValue func(cfg.Point, ValueSource)
+	registerValue = func(p cfg.Point, v ValueSource) {
+		if v.ValuePath.Symbol != 0 {
+			deps.register(s.pkResolver.KeyAt(p, v.ValuePath), p)
+			deps.registerSymbol(v.ValuePath.Symbol, p)
 		}
+		registerMapElement(p, v.MapElementSource)
+		for _, field := range v.ValueFields {
+			registerValue(p, field.ValueSource)
+		}
+		for _, element := range v.ValueElements {
+			registerValue(p, element)
+		}
+	}
+	for _, tm := range s.inputs.TableMutatorAssignments {
+		registerValue(tm.Point, tm.ValueSource)
+	}
+	for _, cm := range s.inputs.ContainerMutatorAssignments {
+		registerValue(cm.Point, cm.ValueSource)
+	}
+	for _, ia := range s.inputs.IndexerAssignments {
+		registerValue(ia.Point, ia.ValueSource)
 	}
 
 	return deps

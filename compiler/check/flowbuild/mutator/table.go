@@ -51,16 +51,7 @@ func ExtractTableMutatorAssignments(fc *core.FlowContext, inputs *flow.Inputs) {
 		}
 		valueType = resolve.Ref(valueType, sc)
 
-		// Build value path for flow-resolved lookup at solve time
-		var valuePath constraint.Path
-		if ident, ok := valueExpr.(*ast.IdentExpr); ok && bindings != nil {
-			if sym, found := bindings.SymbolOf(ident); found && sym != 0 {
-				valuePath = constraint.Path{
-					Root:   resolve.RootNameFromBindings(bindings, sym, ident.Value),
-					Symbol: sym,
-				}
-			}
-		}
+		value := ValueSourceFromExpr(valueExpr, valueType, p, bindings, inputs)
 
 		constResolver := predicate.BuildConstResolver(inputs, p)
 
@@ -73,8 +64,7 @@ func ExtractTableMutatorAssignments(fc *core.FlowContext, inputs *flow.Inputs) {
 					Symbol:   path.Symbol,
 					Segments: path.Segments,
 				},
-				ValuePath:      valuePath,
-				ValueType:      valueType,
+				ValueSource:    value,
 				BeforeOperands: beforeOperands,
 			})
 			return
@@ -96,8 +86,7 @@ func ExtractTableMutatorAssignments(fc *core.FlowContext, inputs *flow.Inputs) {
 				Symbol:   basePath.Symbol,
 				Segments: basePath.Segments,
 			},
-			ValuePath:      valuePath,
-			ValueType:      valueType,
+			ValueSource:    value,
 			BeforeOperands: beforeOperands,
 		}
 

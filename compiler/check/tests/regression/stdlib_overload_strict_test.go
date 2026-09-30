@@ -9,14 +9,14 @@ import (
 )
 
 // checkBothModes expects the same outcome in gradual and strict mode.
-func checkBothModes(t *testing.T, code string, want string) {
+func checkBothModes(t *testing.T, code string, want string, opts ...testutil.Option) {
 	t.Helper()
-	checkModes(t, code, want, want)
+	checkModes(t, code, want, want, opts...)
 }
 
 // checkModes expects no error when the mode's want is empty, otherwise exactly
 // one error containing it.
-func checkModes(t *testing.T, code string, wantGradual, wantStrict string) {
+func checkModes(t *testing.T, code string, wantGradual, wantStrict string, opts ...testutil.Option) {
 	t.Helper()
 	for _, strict := range []bool{false, true} {
 		name, want := "gradual", wantGradual
@@ -24,7 +24,8 @@ func checkModes(t *testing.T, code string, wantGradual, wantStrict string) {
 			name, want = "strict", wantStrict
 		}
 		t.Run(name, func(t *testing.T) {
-			result := testutil.Check(code, testutil.WithStdlib(), testutil.WithCheckOptions(check.Options{Strict: strict}))
+			options := append([]testutil.Option{testutil.WithStdlib(), testutil.WithCheckOptions(check.Options{Strict: strict})}, opts...)
+			result := testutil.Check(code, options...)
 			messages := testutil.ErrorMessages(result.Diagnostics)
 			if want == "" {
 				if len(messages) != 0 {
