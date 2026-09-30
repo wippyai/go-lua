@@ -100,6 +100,10 @@ type Assignment struct {
 	// target. Passing an alias to a call can change indexed entries without
 	// changing the value or known static fields of the alias itself.
 	IndexedChildrenOnly bool
+	// BeforeOperands marks a call effect that can run before operand reads of
+	// its statement, as a call nested in an operand does. It kills facts on
+	// entry to the point; other writes kill them on its outgoing edges.
+	BeforeOperands bool
 }
 
 // Inputs provides all data needed for constraint propagation.
@@ -135,9 +139,10 @@ type Inputs struct {
 // disjunction of all path conditions that reach that point. Unreachable
 // points have False conditions or are absent from the map.
 type Result struct {
-	// PointConditions maps CFG points to the conditions that hold there.
-	// A point's condition is the OR of (predecessor condition AND edge condition)
-	// for all incoming edges.
+	// PointConditions maps CFG points to the conditions that hold when their
+	// statements read operands. A point's condition is the OR of (predecessor
+	// condition after the predecessor's writes AND edge condition) for all
+	// incoming edges.
 	PointConditions map[cfg.Point]constraint.Condition
 }
 
@@ -153,11 +158,15 @@ type Result struct {
 //
 // Condition computation at each point:
 //   - For each predecessor with non-False condition:
+//   - Kill constraints for paths the predecessor's statement writes
 //   - Combine predecessor condition with edge condition (AND)
 //   - Apply loop preheader reinforcement for loop headers
-//   - Kill constraints for reassigned variables
 //   - Merge all incoming conditions (OR)
+//   - Kill constraints for paths nested calls can write before operand reads
 //
+// A point's condition holds when its statement reads its operands: after
+// effects of calls nested in operands, before its own writes and the effects
+// of a call that forms the whole statement.
 // The result maps each point to its computed condition. Points unreachable
 // from entry have False conditions (or are absent).
 func Propagate(inputs *Inputs) *Result {
@@ -177,13 +186,14 @@ func Propagate(inputs *Inputs) *Result {
 
 	// Cache preheader conditions for monotonic convergence
 	preheaderConds := make(map[cfg.Point]constraint.Condition)
+	writes := IndexAssignments(inputs.Assignments)
 
 	for len(worklist) > 0 {
 		p := worklist[0]
 		worklist = worklist[1:]
 		inQueue[p] = false
 
-		newCond := computeConditionAtPoint(inputs, pointConditions, preheaderConds, p)
+		newCond := computeConditionAtPoint(inputs, writes, pointConditions, preheaderConds, p)
 		oldCond := pointConditions[p]
 
 		changed := false
@@ -211,16 +221,18 @@ func Propagate(inputs *Inputs) *Result {
 // computeConditionAtPoint computes the condition for a single CFG point.
 //
 // The condition is computed by combining all incoming paths:
-//   - For each predecessor, AND its condition with the edge condition
+//   - For each predecessor, kill constraints its statement's writes invalidate
+//   - AND the predecessor condition with the edge condition
 //   - Apply loop preheader reinforcement if at a loop header
 //   - OR all the incoming conditions together
-//   - Kill constraints for variables reassigned at this point
+//   - Kill constraints for paths nested calls at this point can write
 //
 // Special handling for loop headers: The preheader condition (before loop entry)
 // is reinforced on backedge paths to preserve invariants. Loop-variant variables
 // are filtered out to avoid unsound conclusions.
 func computeConditionAtPoint(
 	inputs *Inputs,
+	writes map[cfg.Point][]Assignment,
 	pointConditions map[cfg.Point]constraint.Condition,
 	preheaderConds map[cfg.Point]constraint.Condition,
 	p cfg.Point,
@@ -254,6 +266,9 @@ func computeConditionAtPoint(
 			continue
 		}
 
+		// The predecessor's statement writes between its entry and this edge.
+		predCond = KillWrittenConditions(predCond, writes[pred])
+
 		// Loop header preheader reinforcement
 		if node != nil && node.LoopPreheaderSet && pred != node.LoopPreheader {
 			preCond, cached := preheaderConds[p]
@@ -262,7 +277,7 @@ func computeConditionAtPoint(
 				if !ok {
 					goto skipPreheaderReinforcement
 				}
-				preCond = preheaderComputedCond
+				preCond = KillWrittenConditions(preheaderComputedCond, writes[node.LoopPreheader])
 				if preEdge, ok := inputs.EdgeConditions[EdgeKey{From: node.LoopPreheader, To: p}]; ok && preEdge.HasConstraints() {
 					preCond = constraint.And(preCond, preEdge)
 				}
@@ -328,9 +343,7 @@ func computeConditionAtPoint(
 		}
 	}
 
-	result = KillRedefinedConditions(result, p, inputs.Assignments)
-
-	return result
+	return KillOperandEffectConditions(result, writes[p])
 }
 
 // FilterConditionSymbols removes constraints that reference specified symbols.
@@ -406,13 +419,41 @@ func FilterConditionSymbols(cond constraint.Condition, syms []cfg.SymbolID) cons
 // The function checks each constraint path against each assignment at point p.
 // If any constraint path is affected by an assignment, that constraint is removed.
 func KillRedefinedConditions(cond constraint.Condition, p cfg.Point, assignments []Assignment) constraint.Condition {
+	return killConditions(cond, assignments, func(a Assignment) bool { return a.Point == p })
+}
+
+// IndexAssignments groups the assignments that name a target by point.
+func IndexAssignments(assignments []Assignment) map[cfg.Point][]Assignment {
+	byPoint := make(map[cfg.Point][]Assignment)
+	for _, assign := range assignments {
+		if assign.TargetSym != 0 {
+			byPoint[assign.Point] = append(byPoint[assign.Point], assign)
+		}
+	}
+	return byPoint
+}
+
+// KillWrittenConditions removes constraints for paths that writes, the
+// assignments of one statement, change after the statement reads its operands.
+func KillWrittenConditions(cond constraint.Condition, writes []Assignment) constraint.Condition {
+	return killConditions(cond, writes, func(a Assignment) bool { return !a.BeforeOperands })
+}
+
+// KillOperandEffectConditions removes constraints for paths that writes, the
+// assignments of one statement, can change before the statement reads its
+// operands.
+func KillOperandEffectConditions(cond constraint.Condition, writes []Assignment) constraint.Condition {
+	return killConditions(cond, writes, func(a Assignment) bool { return a.BeforeOperands })
+}
+
+func killConditions(cond constraint.Condition, assignments []Assignment, include func(Assignment) bool) constraint.Condition {
 	if !cond.HasConstraints() {
 		return cond
 	}
 
 	var assignedPaths []Assignment
 	for _, assign := range assignments {
-		if assign.Point == p && assign.TargetSym != 0 {
+		if assign.TargetSym != 0 && include(assign) {
 			assignedPaths = append(assignedPaths, assign)
 		}
 	}

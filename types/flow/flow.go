@@ -223,7 +223,7 @@ type Inputs struct {
 	FreshLocalTablePaths map[cfg.SymbolID]map[string]bool
 	// CallAliasRoots lists local table references passed to a call at each point.
 	// Calls can retain or mutate those references after a key fact is learned.
-	CallAliasRoots map[cfg.Point][]cfg.SymbolID
+	CallAliasRoots map[cfg.Point][]CallAliasRoot
 
 	Assignments    []UnifiedAssignment
 	ConstValues    map[cfg.SymbolID]map[cfg.Point]*ConstValue
@@ -356,6 +356,17 @@ type TableMutatorAssignment struct {
 	KeyType   typ.Type        // Optional explicit key type (overrides KeySymbol lookup)
 	ValuePath constraint.Path // Path to value expression for flow-resolved type lookup
 	ValueType typ.Type        // Fallback type if ValuePath doesn't resolve
+	// BeforeOperands marks a mutation by a call that completes before its
+	// statement reads another operand.
+	BeforeOperands bool
+}
+
+// CallAliasRoot is a local table reference passed to a call.
+type CallAliasRoot struct {
+	Symbol cfg.SymbolID
+	// BeforeOperands marks a reference passed to a call that completes before
+	// its statement reads another operand.
+	BeforeOperands bool
 }
 
 // ContainerMutatorAssignment describes container mutations (channel.send, etc.)
@@ -383,6 +394,11 @@ type FieldWriteEffect struct {
 	Field    string
 	Type     typ.Type
 	Definite bool // The call writes this field on every path before returning.
+	// BeforeOperands marks a write that can happen before the statement at
+	// Point reads another operand: the writing call completes first, or a
+	// closure created there can run in such a call. Other writes follow every
+	// operand read of the statement.
+	BeforeOperands bool
 }
 
 // ContainerElementSource tracks that an assignment's type should be derived

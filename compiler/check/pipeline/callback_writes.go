@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/cfg/analysis"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/resolve"
 	"github.com/wippyai/go-lua/compiler/check/modules"
 	"github.com/wippyai/go-lua/compiler/check/returns"
@@ -27,10 +28,12 @@ func (r *Runner) importedTruthyCallbackWrites(store api.StoreView, graph *cfg.Gr
 	var effects []flow.FieldWriteEffect
 	graph.EachAssign(func(p cfg.Point, assign *cfg.AssignInfo) {
 		for _, expr := range assign.Sources {
-			moduleSym, function, ok := assertedImportedCall(expr, bindings)
+			call, moduleSym, function, ok := assertedImportedCall(expr, bindings)
 			if !ok || aliases[moduleSym] == "" || bindings.IsReassigned(moduleSym) {
 				continue
 			}
+			// The callback runs inside the asserted call.
+			beforeOperands := callsite.CallsBeforeOperandReads(graph, p)[call]
 			manifest := r.manifests.Manifest(aliases[moduleSym])
 			if manifest == nil || !manifest.BodyBacked {
 				continue
@@ -76,7 +79,7 @@ func (r *Runner) importedTruthyCallbackWrites(store api.StoreView, graph *cfg.Gr
 							Point: p, Target: constraint.Path{
 								Root:   resolve.RootNameFromGraphAndBindings(graph, bindings, target, ""),
 								Symbol: target, Segments: key.Segments(),
-							}, Field: key.Field, Type: t, Definite: true,
+							}, Field: key.Field, Type: t, Definite: true, BeforeOperands: beforeOperands,
 						})
 					}
 				}
@@ -86,45 +89,45 @@ func (r *Runner) importedTruthyCallbackWrites(store api.StoreView, graph *cfg.Gr
 	return effects
 }
 
-func assertedImportedCall(expr ast.Expr, bindings *bind.BindingTable) (cfg.SymbolID, string, bool) {
+func assertedImportedCall(expr ast.Expr, bindings *bind.BindingTable) (*ast.FuncCallExpr, cfg.SymbolID, string, bool) {
 	outer, ok := expr.(*ast.FuncCallExpr)
 	if !ok || len(outer.Args) != 1 || outer.Method != "" || outer.Receiver != nil {
-		return 0, "", false
+		return nil, 0, "", false
 	}
 	name, ok := outer.Func.(*ast.IdentExpr)
 	if !ok || name.Value != "assert" {
-		return 0, "", false
+		return nil, 0, "", false
 	}
 	assertSym, ok := bindings.SymbolOf(name)
 	if !ok {
-		return 0, "", false
+		return nil, 0, "", false
 	}
 	if kind, ok := bindings.Kind(assertSym); !ok || kind != cfg.SymbolGlobal || bindings.IsReassigned(assertSym) {
-		return 0, "", false
+		return nil, 0, "", false
 	}
 	inner, ok := outer.Args[0].(*ast.FuncCallExpr)
 	if !ok || inner.Method != "" || inner.Receiver != nil {
-		return 0, "", false
+		return nil, 0, "", false
 	}
 	for _, arg := range inner.Args {
 		if !callbackArgumentSafe(arg) {
-			return 0, "", false
+			return nil, 0, "", false
 		}
 	}
 	attr, ok := inner.Func.(*ast.AttrGetExpr)
 	if !ok {
-		return 0, "", false
+		return nil, 0, "", false
 	}
 	root, ok := attr.Object.(*ast.IdentExpr)
 	if !ok {
-		return 0, "", false
+		return nil, 0, "", false
 	}
 	field, ok := attr.Key.(*ast.StringExpr)
 	if !ok || field.Value == "" {
-		return 0, "", false
+		return nil, 0, "", false
 	}
 	sym, ok := bindings.SymbolOf(root)
-	return sym, field.Value, ok && sym != 0
+	return inner, sym, field.Value, ok && sym != 0
 }
 
 func callbackArgumentSafe(expr ast.Expr) bool {

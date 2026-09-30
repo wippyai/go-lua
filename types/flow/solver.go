@@ -37,6 +37,7 @@ type Solution struct {
 	typeUnsatEdges         map[edgeKey]bool // type-theory unsat edges driving dead closure
 	typeDeadPoints         map[cfg.Point]bool
 	pointConditions        map[cfg.Point]constraint.Condition
+	conditionWrites        map[cfg.Point][]propagate.Assignment // writes of each statement that end facts
 	numericStates          map[cfg.Point]*numeric.State
 	iterations             int
 	capped                 bool
@@ -171,15 +172,17 @@ func (s *Solution) runPropagation() {
 			})
 		}
 	}
-	for p, symbols := range s.inputs.CallAliasRoots {
-		for _, sym := range symbols {
+	for p, roots := range s.inputs.CallAliasRoots {
+		for _, root := range roots {
 			assigns = append(assigns, propagate.Assignment{
-				Point: p, TargetSym: sym, SourceSym: sym, AliasEscape: true,
+				Point: p, TargetSym: root.Symbol, SourceSym: root.Symbol, AliasEscape: true,
+				BeforeOperands: root.BeforeOperands,
 			})
 			// The call may mutate the table through this alias. Facts about its
 			// children describe the pre-call value and cannot cross the call.
 			assigns = append(assigns, propagate.Assignment{
-				Point: p, TargetSym: sym, ChildrenOnly: true, IndexedChildrenOnly: true,
+				Point: p, TargetSym: root.Symbol, ChildrenOnly: true, IndexedChildrenOnly: true,
+				BeforeOperands: root.BeforeOperands,
 			})
 		}
 	}
@@ -201,7 +204,7 @@ func (s *Solution) runPropagation() {
 		if write.Field == IndexerWriteField {
 			assigns = append(assigns, propagate.Assignment{
 				Point: write.Point, TargetSym: write.Target.Symbol,
-				TargetSegs: write.Target.Segments, ChildrenOnly: true,
+				TargetSegs: write.Target.Segments, ChildrenOnly: true, BeforeOperands: write.BeforeOperands,
 			})
 			continue
 		}
@@ -209,9 +212,10 @@ func (s *Solution) runPropagation() {
 			Kind: constraint.SegmentField, Name: write.Field,
 		})
 		assigns = append(assigns, propagate.Assignment{
-			Point:      write.Point,
-			TargetSym:  write.Target.Symbol,
-			TargetSegs: segments,
+			Point:          write.Point,
+			TargetSym:      write.Target.Symbol,
+			TargetSegs:     segments,
+			BeforeOperands: write.BeforeOperands,
 		})
 	}
 	for _, write := range s.inputs.TableMutatorAssignments {
@@ -219,6 +223,7 @@ func (s *Solution) runPropagation() {
 			assigns = append(assigns, propagate.Assignment{
 				Point: write.Point, TargetSym: write.Target.Symbol,
 				TargetSegs: write.Target.Segments, ChildrenOnly: true,
+				BeforeOperands: write.BeforeOperands,
 			})
 		}
 	}
@@ -240,6 +245,7 @@ func (s *Solution) runPropagation() {
 
 	result := propagate.Propagate(propInputs)
 	s.pointConditions = result.PointConditions
+	s.conditionWrites = propagate.IndexAssignments(assigns)
 }
 
 // statementFacts combines facts established by assignments and dynamic index writes.

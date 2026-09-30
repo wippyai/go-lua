@@ -30,6 +30,7 @@ func ExtractTableMutatorAssignments(fc *core.FlowContext, inputs *flow.Inputs) {
 		if info == nil {
 			return
 		}
+		beforeOperands := callsite.CallsBeforeOperandReads(fc.Graph, p)[info.Call]
 		tm := TableMutatorFromCall(info, p, fc.Derived.Synth, fc.Derived.SymResolver, fc.Graph, bindings, fc.ModuleBindings)
 		if tm == nil {
 			return
@@ -72,8 +73,9 @@ func ExtractTableMutatorAssignments(fc *core.FlowContext, inputs *flow.Inputs) {
 					Symbol:   path.Symbol,
 					Segments: path.Segments,
 				},
-				ValuePath: valuePath,
-				ValueType: valueType,
+				ValuePath:      valuePath,
+				ValueType:      valueType,
+				BeforeOperands: beforeOperands,
 			})
 			return
 		}
@@ -94,8 +96,9 @@ func ExtractTableMutatorAssignments(fc *core.FlowContext, inputs *flow.Inputs) {
 				Symbol:   basePath.Symbol,
 				Segments: basePath.Segments,
 			},
-			ValuePath: valuePath,
-			ValueType: valueType,
+			ValuePath:      valuePath,
+			ValueType:      valueType,
+			BeforeOperands: beforeOperands,
 		}
 
 		if ident, ok := attr.Key.(*ast.IdentExpr); ok && ident.Value != "" {
