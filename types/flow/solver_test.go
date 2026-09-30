@@ -468,6 +468,9 @@ func TestMergeFieldAssignments_PreservesRecursiveAliasRootType(t *testing.T) {
 	if !ok {
 		t.Fatalf("alias target = %T, want *typ.Recursive", alias.Target)
 	}
+	if mergedRec.ID != rec.ID {
+		t.Fatalf("field projection changes recursion identity: got %d, want %d", mergedRec.ID, rec.ID)
+	}
 	body, ok := mergedRec.Body.(*typ.Record)
 	if !ok {
 		t.Fatalf("recursive body = %T, want *typ.Record", mergedRec.Body)

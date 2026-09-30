@@ -1037,15 +1037,7 @@ func (s *Solution) mergeFieldsAt(baseType typ.Type, prefix string, depth int) ty
 				return baseType
 			}
 
-			rebuilt := typ.NewRecursivePlaceholder(r.Name)
-			rebuiltBody := typ.Rewrite(mergedBody, func(n typ.Type) (typ.Type, bool) {
-				if typ.IsRecursiveRef(n, r) {
-					return rebuilt, true
-				}
-				return nil, false
-			})
-			rebuilt.SetBody(rebuiltBody)
-			return rebuilt
+			return typ.BindRecursiveSnapshot(r, mergedBody)
 		},
 		Map: func(m *typ.Map) typ.Type {
 			if len(fields) == 0 {
