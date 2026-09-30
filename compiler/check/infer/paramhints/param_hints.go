@@ -61,7 +61,7 @@ func RefineAnnotation(annotation, hint typ.Type) typ.Type {
 	}
 	refined := BodyParamType(hint)
 	if key, value, ok := annotationMapComponent(annotation); ok {
-		refined = withMapComponent(refined, key, value)
+		refined = typ.WithMapDomain(refined, key, value)
 	}
 	if refined == nil || typ.IsUnknown(refined) || !subtype.IsSubtype(refined, annotation) {
 		return annotation
@@ -81,26 +81,6 @@ func annotationMapComponent(annotation typ.Type) (typ.Type, typ.Type, bool) {
 		}
 	}
 	return nil, nil, false
-}
-
-// withMapComponent gives the hint records in t the map component key -> value.
-// The component covers every key the record does not list, so the record is
-// closed.
-func withMapComponent(t typ.Type, key, value typ.Type) typ.Type {
-	switch v := t.(type) {
-	case *typ.Record:
-		if v.HasMapComponent() {
-			return t
-		}
-		return v.Builder().SetOpen(false).MapComponent(key, value).Build()
-	case *typ.Union:
-		members := make([]typ.Type, len(v.Members))
-		for i, m := range v.Members {
-			members[i] = withMapComponent(m, key, value)
-		}
-		return typ.NewUnion(members...)
-	}
-	return t
 }
 
 func paramAnnotated(fn *ast.FunctionExpr, i int) bool {
