@@ -1078,6 +1078,9 @@ func (s *Solution) mergeFieldsAt(baseType typ.Type, prefix string, depth int) ty
 					// the child path itself; its nilability still applies.
 					if assigned.t.Kind().IsPlaceholder() && !f.Type.Kind().IsPlaceholder() {
 						optional = optional || assigned.optional
+					} else if r.Declared && declaredSlotRetains(r, f, assigned.t, assigned.optional) {
+						// The table remains of its declared type; the value stays a
+						// fact of the child path, where reads of the field see it.
 					} else {
 						fieldType = assigned.t
 						optional = assigned.optional
@@ -1111,6 +1114,23 @@ func (s *Solution) mergeFieldsAt(baseType typ.Type, prefix string, depth int) ty
 			return builder.Build()
 		},
 	})
+}
+
+// declaredSlotRetains reports whether field f of declared record r keeps its
+// declared type when it holds value. A record rebuilt from field facts
+// describes the same table, so it stays a subtype of r: a value within the
+// slot's type that would narrow the mutable slot out of r, such as one member
+// of a literal union, leaves the slot declared. A value outside the slot's
+// type is projected, so the rebuilt record shows the violation.
+func declaredSlotRetains(r *typ.Record, f typ.Field, value typ.Type, optional bool) bool {
+	if !subtype.IsSubtype(value, f.Type) {
+		return false
+	}
+	refined := f
+	refined.Type = value
+	refined.Optional = optional
+	refined.InferredPresence = false
+	return !subtype.IsSubtype(r.WithField(refined), r)
 }
 
 // childFieldsWithDeeperFacts lists the direct fields below prefix that have
