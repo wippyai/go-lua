@@ -366,14 +366,6 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 				// admits; the annotation's other keys stay possible.
 				if inputs != nil && inputs.RefinableAnnotatedVars[sym] {
 					assignedType = typ.PartialViewDeep(assignedType)
-					switch declared := unwrap.Alias(inputs.DeclaredTypes[sym]).(type) {
-					case *typ.Map:
-						assignedType = typ.WithMapDomain(assignedType, declared.Key, declared.Value)
-					case *typ.Record:
-						if declared.HasMapComponent() {
-							assignedType = typ.WithMapDomain(assignedType, declared.MapKey, declared.MapValue)
-						}
-					}
 				}
 
 				// Build source path with const resolution and bindings.

@@ -44,7 +44,6 @@ import (
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
-	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 // CheckAssignments validates assignment type annotations.
@@ -106,35 +105,17 @@ func CheckAssignments(graph *cfg.Graph, scopes map[cfg.Point]*scope.State, narro
 		sc := scopes[p]
 
 		info.EachTargetSource(func(i int, target cfg.AssignTarget, source ast.Expr) {
+			if target.Kind != cfg.TargetIdent || target.Name == "" {
+				return
+			}
+
 			sym := target.Symbol
 
 			var declaredType typ.Type
-			if target.Kind == cfg.TargetIdent && target.Name != "" {
-				if ann := info.TypeAnnotationAt(i); info.IsLocal && ann != nil {
-					declaredType = narrowSynth.ResolveType(ann, sc)
-				} else if !info.IsLocal && sym != 0 {
-					declaredType = annotated[sym]
-				}
-			} else if attr, ok := target.Expr.(*ast.AttrGetExpr); ok {
-				base, ok := attr.Object.(*ast.IdentExpr)
-				if !ok || graph.Bindings() == nil {
-					return
-				}
-				baseSym, _ := graph.Bindings().SymbolOf(base)
-				mapping, ok := unwrap.Alias(annotated[baseSym]).(*typ.Map)
-				if !ok {
-					return
-				}
-				keyType := narrowSynth.TypeOf(attr.Key, p)
-				if !mode.Assignable(keyType, mapping.Key) {
-					diags = append(diags, assignmentMismatchDiagnostic(keyType, mapping.Key, attr.Key, sourceName))
-					return
-				}
-				// Nil removes a key; all values that remain obey its declaration.
-				declaredType = typ.NewOptional(mapping.Value)
-				sym = 0
-			} else {
-				return
+			if ann := info.TypeAnnotationAt(i); info.IsLocal && ann != nil {
+				declaredType = narrowSynth.ResolveType(ann, sc)
+			} else if !info.IsLocal && sym != 0 {
+				declaredType = annotated[sym]
 			}
 
 			if typ.IsAbsentOrUnknown(declaredType) {
@@ -262,7 +243,18 @@ func CheckAssignments(graph *cfg.Graph, scopes map[cfg.Point]*scope.State, narro
 			}
 
 			if !mode.Assignable(valueType, declaredType) {
-				diags = append(diags, assignmentMismatchDiagnostic(valueType, declaredType, source, sourceName))
+				pos := diag.Position{File: sourceName, Line: source.Line(), Column: source.Column()}
+				span := ast.SpanOf(source)
+				msg := formatAssignMismatch(valueType, declaredType)
+				_, help := diag.ContextualHelp(diag.ErrTypeMismatch, msg, "")
+				diags = append(diags, diag.Diagnostic{
+					Severity: diag.SeverityError,
+					Code:     diag.ErrTypeMismatch,
+					Position: pos,
+					Span:     span,
+					Message:  msg,
+					Help:     help,
+				})
 			} else if subtype.ImplicitUnknownFlow(valueType, declaredType) {
 				pos := diag.Position{File: sourceName, Line: source.Line(), Column: source.Column()}
 				diags = append(diags, implicitUnknownHint(pos, ast.SpanOf(source), "", declaredType))
@@ -271,16 +263,6 @@ func CheckAssignments(graph *cfg.Graph, scopes map[cfg.Point]*scope.State, narro
 	})
 
 	return diags
-}
-
-func assignmentMismatchDiagnostic(value, declared typ.Type, source ast.Expr, sourceName string) diag.Diagnostic {
-	msg := formatAssignMismatch(value, declared)
-	_, help := diag.ContextualHelp(diag.ErrTypeMismatch, msg, "")
-	return diag.Diagnostic{
-		Severity: diag.SeverityError, Code: diag.ErrTypeMismatch,
-		Position: diag.Position{File: sourceName, Line: source.Line(), Column: source.Column()},
-		Span:     ast.SpanOf(source), Message: msg, Help: help,
-	}
 }
 
 func staleImportedFieldFact(source ast.Expr, graph *cfg.Graph, aliases map[cfg.SymbolID]string) bool {
