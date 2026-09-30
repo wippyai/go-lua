@@ -28,7 +28,7 @@ type FieldDef struct {
 func tableConstructor(fields []FieldDef, array []typ.Type) typ.Type {
 	// Empty table
 	if len(fields) == 0 && len(array) == 0 {
-		return typ.NewRecord().Build()
+		return typ.NewRecord().SetComplete(true).Build()
 	}
 
 	// Pure array
@@ -37,7 +37,7 @@ func tableConstructor(fields []FieldDef, array []typ.Type) typ.Type {
 	}
 
 	// Record with named fields
-	rec := typ.NewRecord()
+	rec := typ.NewRecord().SetComplete(true)
 	var mapKey, mapValue typ.Type
 
 	for _, f := range fields {
