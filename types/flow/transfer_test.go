@@ -448,3 +448,22 @@ func TestWidenFieldWrite_UnknownFieldAdmitsWrite(t *testing.T) {
 		t.Fatalf("an unknown field admits the write already, got %s", got)
 	}
 }
+
+func TestWidenWithIndexerInferredMapPresence(t *testing.T) {
+	for _, value := range []typ.Type{typ.String, typ.NewOptional(typ.String)} {
+		got := widenWithIndexer(typ.Unknown, typ.String, value, false)
+		m, ok := got.(*typ.Map)
+		if !ok || !m.InferredPresence {
+			t.Fatalf("map inferred from unknown = %v, want inferred presence", got)
+		}
+		if want := !typ.TypeEquals(value, typ.String); m.ExplicitNilWrite != want {
+			t.Fatalf("explicit nil write = %v, want %v", m.ExplicitNilWrite, want)
+		}
+	}
+
+	declared := typ.NewMap(typ.String, typ.String)
+	got := widenWithIndexer(declared, typ.String, typ.String, false)
+	if !typ.TypeEquals(got, declared) {
+		t.Fatalf("write to declared map = %v, want %v", got, declared)
+	}
+}

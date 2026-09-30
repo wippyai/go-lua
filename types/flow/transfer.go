@@ -2023,12 +2023,14 @@ func widenWithIndexer(t typ.Type, keyType, valType typ.Type, fresh bool) typ.Typ
 			return updated
 		},
 		Default: func(t typ.Type) typ.Type {
-			// An unresolved value becomes the map the write builds.
+			// The write introduces an inferred map shape. Its possible
+			// absence comes from inference, rather than a map declaration.
 			if t.Kind() == kind.Unknown {
-				if fresh {
-					return typ.NewInferredMap(keyType, valType)
+				m := typ.NewInferredMap(keyType, valType)
+				if nilable {
+					return m.WithExplicitNilWrite()
 				}
-				return typ.NewMap(keyType, valType)
+				return m
 			}
 			return t
 		},
