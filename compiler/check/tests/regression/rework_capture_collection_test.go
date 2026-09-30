@@ -22,3 +22,13 @@ local function run(fn: ({values: {string}}) -> ())
 end
 return run`, "expected")
 }
+
+func TestAnnotatedMapCaptureRetainsKnownWrites(t *testing.T) {
+	checkBothModes(t, `
+local function consume(value: string) return value end
+local values: {[string]: {[string]: unknown}} = {}
+values["key"] = {name = "ready"}
+local found = values["key"]
+if found ~= nil then return consume(found.name) end
+return nil`, "")
+}

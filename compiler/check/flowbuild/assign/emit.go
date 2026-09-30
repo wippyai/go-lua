@@ -337,7 +337,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 				if table, fresh := source.(*ast.TableExpr); fresh && len(table.Fields) == 0 && info.IsLocal && fc.Services != nil {
 					if annotation := info.TypeAnnotationAt(i); annotation != nil {
 						expected := fc.Services.ResolveTypeExpr(annotation, sc)
-						if expected != nil && !unwrap.Alias(expected).Kind().IsPlaceholder() {
+						if _, array := unwrap.Optional(expected).(*typ.Array); array {
 							checked := ops.CheckTable(querycore.AssignabilityOf(fc.CallCtx), nil, nil, expected)
 							if len(checked.Errors) == 0 {
 								assignedType = checked.Type
