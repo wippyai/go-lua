@@ -935,7 +935,9 @@ func (c *checker) canWidenTo(narrow, wide typ.Type, depth int) bool {
 		if supRec, ok := wide.(*typ.Record); ok {
 			return c.canWidenRecordTo(subRec, supRec, depth+1)
 		}
-		if tableMap, ok := wide.(*typ.Map); ok && !subRec.Open &&
+		// Widening uses the same key/value evidence as record-to-map
+		// subtyping. Open controls unknown field reads, not element domains.
+		if tableMap, ok := wide.(*typ.Map); ok &&
 			c.check(subRec, tableMap, depth+1) {
 			return true
 		}
