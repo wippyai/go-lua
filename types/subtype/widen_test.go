@@ -193,6 +193,26 @@ func TestWidenForInference_Record(t *testing.T) {
 	}
 }
 
+func TestWidenForInference_DeclaredRecordDomains(t *testing.T) {
+	record := typ.NewRecord().
+		Field("kind", typ.NewUnion(typ.LiteralString("enum"), typ.LiteralString("text"))).
+		Field("nested", typ.NewRecord().Field("tag", typ.LiteralString("blob")).Build()).
+		MapComponent(typ.String, typ.LiteralString("value")).
+		SetDeclared(true).
+		Build()
+	for _, source := range []typ.Type{
+		record,
+		typ.NewAlias("Row", record),
+		typ.NewArray(record),
+		typ.NewMap(typ.String, record),
+		typ.Func().Param("row", record).Returns(record).Build(),
+	} {
+		if got := WidenForInference(source); !typ.TypeEquals(got, source) {
+			t.Errorf("WidenForInference(%v) = %v, want declared domains unchanged", source, got)
+		}
+	}
+}
+
 func TestWidenForInference_RecordWithReadonly(t *testing.T) {
 	rec := typ.NewRecord().
 		ReadonlyField("x", typ.LiteralInt(42)).
