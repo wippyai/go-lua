@@ -729,7 +729,13 @@ func (c *checker) checkRecord(sub, super *typ.Record, depth int) bool {
 // fieldPresentType describes values left in a Lua table after nil deletes
 // the entry. It only strips nil at the field's outermost level.
 func fieldPresentType(t typ.Type) typ.Type {
-	return presentFieldType(t, false)
+	present := presentFieldType(t, false)
+	// A non-nil alias still supplies the identity used by local references.
+	// Remove absence without discarding that identity when its domain is intact.
+	if typ.TypeEquals(present, unwrap.Alias(t)) {
+		return t
+	}
+	return present
 }
 
 // preserveOptionalInner keeps v1.6.2's optional value normalization for interim
