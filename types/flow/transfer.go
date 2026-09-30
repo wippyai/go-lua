@@ -802,6 +802,14 @@ func (s *Solution) mapElementTypeAt(p cfg.Point, src *MapElementSource) typ.Type
 		return typ.Unknown
 	}
 
+	// A dynamic read uses the same key and presence rules as other index
+	// reads. Container decomposition describes stored values, not absence.
+	if keyType != nil && s.resolver != nil {
+		if value, ok := s.resolver.Index(mapType, keyType); ok {
+			return value
+		}
+	}
+
 	if valueType := s.inputs.Decomposer.ValueType(mapType); valueType != nil {
 		return valueType
 	}
@@ -2015,12 +2023,14 @@ func widenWithIndexer(t typ.Type, keyType, valType typ.Type, fresh bool) typ.Typ
 			return updated
 		},
 		Default: func(t typ.Type) typ.Type {
-			// An unresolved value becomes the map the write builds.
+			// The write introduces an inferred map shape. Its possible
+			// absence comes from inference, rather than a map declaration.
 			if t.Kind() == kind.Unknown {
-				if fresh {
-					return typ.NewInferredMap(keyType, valType)
+				m := typ.NewInferredMap(keyType, valType)
+				if nilable {
+					return m.WithExplicitNilWrite()
 				}
-				return typ.NewMap(keyType, valType)
+				return m
 			}
 			return t
 		},
@@ -2156,6 +2166,15 @@ func (s *Solution) phiOperandTypeAt(joinPoint cfg.Point, op cfg.PhiOperand, segm
 		Version: op.Version.ID,
 	}
 	if len(segments) > 0 {
+		// Child facts describe the field when its parent exists. An absent
+		// parent contributes no child value, rather than a missing field.
+		parent := path
+		for cut := 0; cut < len(segments); cut++ {
+			parent.Segments = segments[:cut]
+			if t := s.NarrowedTypeAt(op.From, parent); t != nil && (t.Kind() == kind.Nil || t.Kind() == kind.Never) {
+				return typ.Never
+			}
+		}
 		path.Segments = append(path.Segments, segments...)
 	}
 
