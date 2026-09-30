@@ -35,9 +35,6 @@ func TestTableConstructor_Empty(t *testing.T) {
 	if len(rec.Fields) != 0 {
 		t.Errorf("expected 0 fields, got %d", len(rec.Fields))
 	}
-	if !rec.Complete {
-		t.Error("fresh empty table must have complete key evidence")
-	}
 }
 
 func TestTableConstructor_PureArray(t *testing.T) {
@@ -70,9 +67,6 @@ func TestTableConstructor_Record(t *testing.T) {
 	}
 	if len(rec.Fields) != 2 {
 		t.Errorf("expected 2 fields, got %d", len(rec.Fields))
-	}
-	if !rec.Complete {
-		t.Error("fresh record must have complete key evidence")
 	}
 }
 

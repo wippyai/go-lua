@@ -97,9 +97,6 @@ func TestSynthTableLiteralWithWrapper_EmptyTable(t *testing.T) {
 	if result.Kind() != kind.Record {
 		t.Errorf("expected record kind, got %v", result.Kind())
 	}
-	if !result.(*typ.Record).Complete {
-		t.Error("fresh empty table must have complete key evidence")
-	}
 }
 
 func TestSynthTableLiteralWithWrapper_RecordFields(t *testing.T) {
