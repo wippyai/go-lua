@@ -163,14 +163,6 @@ func collectInferredTypes(
 	for _, sym := range paramSyms {
 		if sym != 0 {
 			paramSet[sym] = true
-			// Call-site parameter evidence already belongs to the body. Seed
-			// local expectation inference with it so a broader callee (such
-			// as a variadic logger) cannot replace that evidence with any.
-			if inputs != nil && (annotated == nil || !annotated[sym]) {
-				if t := inputs.DeclaredTypes[sym]; t != nil && !t.Kind().IsPlaceholder() {
-					inferred[sym] = t
-				}
-			}
 		}
 	}
 	type assignEntry struct {

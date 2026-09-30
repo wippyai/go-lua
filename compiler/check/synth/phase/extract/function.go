@@ -459,28 +459,22 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 			}
 		}
 		context := captured.ParentContext{
-			ParentGraph: pg,
-			ChildGraph:  fnGraph,
-			Point:       point,
-			Facts:       s.deps.CheckCtx.Types(),
-			Solution:    s.deps.CheckCtx.Consts(),
-			TypeOf:      s.TypeOf,
+			ParentGraph:   pg,
+			ChildGraph:    fnGraph,
+			Point:         point,
+			Facts:         s.deps.CheckCtx.Types(),
+			Solution:      s.deps.CheckCtx.Consts(),
+			Flow:          s.deps.Flow,
+			FallbackTypes: captureTypes,
+			TypeOf:        s.TypeOf,
 		}
 		store := api.StoreFrom(s.deps.Ctx)
 		context.Classes, _ = store.(api.ClassSelfSource)
 		context.Mutations, _ = store.(api.TableMutationSource)
 		for sym, t := range captured.Types(context) {
-			if override := captureTypes[sym]; override != nil {
-				t = override
-			}
 			if overlay[sym] == nil {
 				overlay[sym] = t
 			}
-		}
-	}
-	for sym, t := range captureTypes {
-		if t != nil && overlay[sym] == nil {
-			overlay[sym] = t
 		}
 	}
 
