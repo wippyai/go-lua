@@ -1013,6 +1013,20 @@ func (s *Solution) mergeFieldsAt(baseType typ.Type, prefix string, depth int) ty
 
 	// Merge fields into base type
 	return typ.Visit(baseType, typ.Visitor[typ.Type]{
+		Optional: func(o *typ.Optional) typ.Type {
+			return typ.NewOptional(s.mergeFieldsAt(o.Inner, prefix, depth+1))
+		},
+		Union: func(u *typ.Union) typ.Type {
+			members := make([]typ.Type, len(u.Members))
+			for i, member := range u.Members {
+				if member == typ.Nil {
+					members[i] = member
+				} else {
+					members[i] = s.mergeFieldsAt(member, prefix, depth+1)
+				}
+			}
+			return typ.NewUnion(members...)
+		},
 		Alias: func(a *typ.Alias) typ.Type {
 			merged := typ.WriteInto(a.Target, func(t typ.Type) typ.Type { return s.mergeFieldsAt(t, prefix, depth+1) })
 			if merged == nil || typ.TypeEquals(merged, a.Target) {
