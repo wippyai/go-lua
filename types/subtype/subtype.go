@@ -410,6 +410,28 @@ func (c *checker) deriveStructural(sub, super typ.Type, depth int) bool {
 		return false
 	}
 
+	// Sub intersection: some member must be subtype
+	if i, ok := sub.(*typ.Intersection); ok {
+		for _, m := range i.Members {
+			if c.check(m, super, depth+1) {
+				return true
+			}
+		}
+
+		return false
+	}
+
+	// Super intersection: sub must be subtype of all members
+	if i, ok := super.(*typ.Intersection); ok {
+		for _, m := range i.Members {
+			if !c.check(sub, m, depth+1) {
+				return false
+			}
+		}
+
+		return true
+	}
+
 	// Optional rules
 	if o, ok := super.(*typ.Optional); ok {
 		if subOpt, ok := sub.(*typ.Optional); ok {
@@ -426,28 +448,6 @@ func (c *checker) deriveStructural(sub, super typ.Type, depth int) bool {
 	if o, ok := sub.(*typ.Optional); ok {
 		// T? <: U only if T <: U and nil <: U
 		return c.checkNil(super, depth+1) && c.check(o.Inner, super, depth+1)
-	}
-
-	// Super intersection: sub must be subtype of all members
-	if i, ok := super.(*typ.Intersection); ok {
-		for _, m := range i.Members {
-			if !c.check(sub, m, depth+1) {
-				return false
-			}
-		}
-
-		return true
-	}
-
-	// Sub intersection: some member must be subtype
-	if i, ok := sub.(*typ.Intersection); ok {
-		for _, m := range i.Members {
-			if c.check(m, super, depth+1) {
-				return true
-			}
-		}
-
-		return false
 	}
 
 	// Builtin `table` annotation is modeled as a marker interface.
