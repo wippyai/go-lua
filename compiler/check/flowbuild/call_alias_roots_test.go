@@ -37,8 +37,8 @@ func TestBorrowOnlyCallDoesNotEscapeArgument(t *testing.T) {
 				if call == nil || len(call.ArgSymbols) == 0 || call.ArgSymbols[0] == 0 {
 					return
 				}
-				for _, sym := range roots[p] {
-					if sym == call.ArgSymbols[0] {
+				for _, root := range roots[p] {
+					if root.Symbol == call.ArgSymbols[0] {
 						found = true
 					}
 				}

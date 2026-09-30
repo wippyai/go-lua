@@ -13,11 +13,23 @@ import (
 
 // InferTypeArgsWithExpectedAndMode performs bidirectional inference with optional
 // forced receiver consumption for method calls.
+//
+// The expected return type is context: it settles type arguments together with
+// the arguments, and gives way when it contradicts them, so the call has the
+// type its arguments determine and the use site reports the mismatch.
 func InferTypeArgsWithExpectedAndMode(fn *typ.Function, args []typ.Type, isMethod bool, receiver typ.Type, expectedReturn typ.Type, forceMethodReceiver bool) ([]typ.Type, error) {
 	if fn == nil || len(fn.TypeParams) == 0 {
 		return nil, nil
 	}
+	if expectedReturn != nil {
+		if result, err := inferTypeArgs(fn, args, isMethod, receiver, expectedReturn, forceMethodReceiver); err == nil {
+			return result, nil
+		}
+	}
+	return inferTypeArgs(fn, args, isMethod, receiver, nil, forceMethodReceiver)
+}
 
+func inferTypeArgs(fn *typ.Function, args []typ.Type, isMethod bool, receiver typ.Type, expectedReturn typ.Type, forceMethodReceiver bool) ([]typ.Type, error) {
 	typeVars := make([]typ.Type, len(fn.TypeParams))
 	for i := range fn.TypeParams {
 		typeVars[i] = typ.NewTypeVar(i + 1)
@@ -105,9 +117,10 @@ func InferTypeArgsWithExpectedAndMode(fn *typ.Function, args []typ.Type, isMetho
 		}
 	}
 
-	// Validate that inferred type arguments satisfy their constraints
+	// Validate that inferred type arguments satisfy their constraints. A type
+	// argument with pending evidence is validated once its evidence is final.
 	for i, tp := range fn.TypeParams {
-		if tp.Constraint != nil && !typ.IsAbsentOrUnknown(result[i]) && !typ.IsAny(result[i]) {
+		if tp.Constraint != nil && typ.IsFinal(result[i]) && !typ.IsUnknown(result[i]) && !typ.IsAny(result[i]) {
 			if !subtype.IsSubtype(result[i], tp.Constraint) {
 				return nil, fmt.Errorf("infer: type argument %s does not satisfy constraint %s", result[i], tp.Constraint)
 			}
@@ -123,21 +136,6 @@ func normalizeArgForGenericInference(expected, arg typ.Type) typ.Type {
 	}
 	if _, ok := unwrap.Alias(expected).(*typ.Array); !ok {
 		return arg
-	}
-
-	joinElems := func(elems []typ.Type) typ.Type {
-		var joined typ.Type
-		for _, elem := range elems {
-			if elem == nil {
-				continue
-			}
-			if joined == nil {
-				joined = elem
-			} else {
-				joined = typ.JoinPreferNonSoft(joined, elem)
-			}
-		}
-		return joined
 	}
 
 	var collectElems func(t typ.Type, out *[]typ.Type) bool
@@ -178,11 +176,7 @@ func normalizeArgForGenericInference(expected, arg typ.Type) typ.Type {
 	if !collectElems(arg, &elems) {
 		return arg
 	}
-	elemType := joinElems(elems)
-	if elemType == nil {
-		return arg
-	}
-	return typ.NewArray(elemType)
+	return typ.NewArray(typ.JoinAllPreferNonSoft(elems))
 }
 
 // InstantiateFunction creates a concrete function type by substituting type arguments.
@@ -191,8 +185,8 @@ func normalizeArgForGenericInference(expected, arg typ.Type) typ.Type {
 // replaces all occurrences of type parameters with their corresponding
 // type arguments throughout parameter types, return types, and constraints.
 //
-// Returns the original function if it's not generic or if typeArgs length
-// doesn't match the number of type parameters.
+// The result has no type parameters. Returns the original function if it's
+// not generic or if typeArgs length doesn't match the number of type parameters.
 func InstantiateFunction(fn *typ.Function, typeArgs []typ.Type) *typ.Function {
 	if fn == nil || len(fn.TypeParams) == 0 {
 		return fn
@@ -204,7 +198,7 @@ func InstantiateFunction(fn *typ.Function, typeArgs []typ.Type) *typ.Function {
 
 	result := subst.Params(fn, fn.TypeParams, typeArgs)
 	if f, ok := result.(*typ.Function); ok {
-		return f
+		return f.Monomorphic()
 	}
 
 	return fn

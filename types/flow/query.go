@@ -5,6 +5,7 @@ import (
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow/join"
 	"github.com/wippyai/go-lua/types/flow/pathkey"
+	"github.com/wippyai/go-lua/types/flow/propagate"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/subtype"
@@ -138,19 +139,30 @@ func (s *Solution) conditionAtFallback(p cfg.Point, depth int) constraint.Condit
 	} else {
 		predCond = s.conditionAtFallback(pred, depth+1)
 	}
+	predCond = propagate.KillWrittenConditions(predCond, s.conditionWrites[pred])
 
 	edgeCond := constraint.TrueCondition()
 	if ec, ok := s.edgeConditions[edgeKey{from: pred, to: p}]; ok && (ec.HasConstraints() || ec.IsFalse()) {
-		edgeCond = ec
+		edgeCond = propagate.KillRedefinedConditions(ec, pred, s.conditionWrites[pred])
 	}
 
 	if predCond.IsFalse() {
 		return predCond
 	}
-	if edgeCond.IsTrue() {
-		return predCond
+	cond := predCond
+	if !edgeCond.IsTrue() {
+		cond = constraint.And(predCond, edgeCond)
 	}
-	return constraint.And(predCond, edgeCond)
+	return propagate.KillOperandEffectConditions(cond, s.conditionWrites[p])
+}
+
+// conditionFromPredecessor returns the condition that holds when the statement
+// at p reads its operands, as reached from pred: pred's condition after pred's
+// writes and after the effects of calls that p completes before later reads.
+// Edge conditions are left to the caller.
+func (s *Solution) conditionFromPredecessor(pred, p cfg.Point) constraint.Condition {
+	cond := propagate.KillWrittenConditions(s.ConditionAt(pred), s.conditionWrites[pred])
+	return propagate.KillOperandEffectConditions(cond, s.conditionWrites[p])
 }
 
 // IsNonNilAt reports whether the condition at p proves the value at path
@@ -619,7 +631,7 @@ func (s *Solution) NarrowTypeBeforeAssuming(p cfg.Point, path constraint.Path, t
 	}
 	narrowed := make([]typ.Type, 0, len(preds))
 	for _, pred := range preds {
-		entering := s.ConditionAt(pred)
+		entering := s.conditionFromPredecessor(pred, p)
 		if edge, ok := s.edgeConditions[edgeKey{from: pred, to: p}]; ok {
 			entering = constraint.And(entering, edge)
 		}

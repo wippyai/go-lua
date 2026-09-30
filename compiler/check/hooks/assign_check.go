@@ -290,7 +290,7 @@ func staleImportedFieldFact(source ast.Expr, graph *cfg.Graph, aliases map[cfg.S
 		}
 		return false
 	})
-	return imported != 0 && extract.ImportedFieldMayChange(graph, graph.Bindings(), imported, key.Value)
+	return imported != 0 && extract.ImportedFieldMayChange(graph, imported, key.Value)
 }
 
 func preferPreciseSourcePathType(current, narrowed typ.Type) typ.Type {

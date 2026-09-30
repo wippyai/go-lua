@@ -252,7 +252,7 @@ func TestTableMutatorAssignment_Fields(t *testing.T) {
 			Root:   "arr",
 			Symbol: 42,
 		},
-		ValueType: typ.String,
+		ValueSource: flow.ValueSource{ValueType: typ.String},
 	}
 	if assign.Point != 1 {
 		t.Errorf("expected point 1, got %d", assign.Point)
@@ -272,10 +272,10 @@ func TestTableMutatorAssignment_WithKeyInfo(t *testing.T) {
 			Root:   "obj",
 			Symbol: 42,
 		},
-		KeyVar:    "key",
-		KeySymbol: 10,
-		KeyType:   typ.String,
-		ValueType: typ.Integer,
+		KeyVar:      "key",
+		KeySymbol:   10,
+		KeyType:     typ.String,
+		ValueSource: flow.ValueSource{ValueType: typ.Integer},
 	}
 	if assign.KeyVar != "key" {
 		t.Errorf("expected key var 'key', got '%s'", assign.KeyVar)
@@ -292,11 +292,13 @@ func TestTableMutatorAssignment_WithValuePath(t *testing.T) {
 			Root:   "arr",
 			Symbol: 42,
 		},
-		ValuePath: constraint.Path{
-			Root:   "val",
-			Symbol: 100,
+		ValueSource: flow.ValueSource{
+			ValuePath: constraint.Path{
+				Root:   "val",
+				Symbol: 100,
+			},
+			ValueType: typ.String,
 		},
-		ValueType: typ.String,
 	}
 	if assign.ValuePath.Root != "val" {
 		t.Errorf("expected value path root 'val', got '%s'", assign.ValuePath.Root)

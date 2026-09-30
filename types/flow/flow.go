@@ -223,7 +223,7 @@ type Inputs struct {
 	FreshLocalTablePaths map[cfg.SymbolID]map[string]bool
 	// CallAliasRoots lists local table references passed to a call at each point.
 	// Calls can retain or mutate those references after a key fact is learned.
-	CallAliasRoots map[cfg.Point][]cfg.SymbolID
+	CallAliasRoots map[cfg.Point][]CallAliasRoot
 
 	Assignments    []UnifiedAssignment
 	ConstValues    map[cfg.SymbolID]map[cfg.Point]*ConstValue
@@ -329,19 +329,27 @@ type IndexerAssignment struct {
 	KeyVar    string               // Variable name if key is an identifier
 	KeySymbol cfg.SymbolID         // Symbol ID for the key variable (for SSA-aware lookup)
 	KeyType   typ.Type             // Optional explicit key type (overrides KeySymbol lookup)
-	ValuePath constraint.Path      // Path to value expression for flow-resolved type lookup
-	ValType   typ.Type             // Fallback type when ValuePath is unavailable
-	// Field paths inside a table literal value, resolved after call returns and
-	// branch facts are available to the flow solver.
-	ValueFieldPaths []IndexerValueFieldPath
-	// FieldUpdate identifies t[k].field = value: it updates an existing entry,
-	// whereas t[k] = value inserts or replaces an entry.
-	FieldUpdate string
+	ValueSource
+	// FieldUpdate is the static field path of t[k].a.b = value.
+	FieldUpdate []string
 }
 
-type IndexerValueFieldPath struct {
+// ValueSource describes the value a write publishes into the flow. Flow
+// evidence at the write point takes precedence over the extracted fallback.
+type ValueSource struct {
+	ValuePath        constraint.Path
+	ValueType        typ.Type
+	MapElementSource *MapElementSource
+	// ValueFields describe named fields of a table literal recursively.
+	ValueFields []ValueFieldSource
+	// ValueElements describe sequence entries or a wrapped map value.
+	ValueElements []ValueSource
+}
+
+// ValueFieldSource describes a named field and the value it reads.
+type ValueFieldSource struct {
 	Name string
-	Path constraint.Path
+	ValueSource
 }
 
 // TableMutatorAssignment describes table.insert-like mutations that widen
@@ -353,17 +361,26 @@ type TableMutatorAssignment struct {
 	KeyVar    string          // Variable name if key is an identifier
 	KeySymbol cfg.SymbolID    // Symbol ID for the key variable (for SSA-aware lookup)
 	KeyType   typ.Type        // Optional explicit key type (overrides KeySymbol lookup)
-	ValuePath constraint.Path // Path to value expression for flow-resolved type lookup
-	ValueType typ.Type        // Fallback type if ValuePath doesn't resolve
+	ValueSource
+	// BeforeOperands marks a mutation by a call that completes before its
+	// statement reads another operand.
+	BeforeOperands bool
+}
+
+// CallAliasRoot is a local table reference passed to a call.
+type CallAliasRoot struct {
+	Symbol cfg.SymbolID
+	// BeforeOperands marks a reference passed to a call that completes before
+	// its statement reads another operand.
+	BeforeOperands bool
 }
 
 // ContainerMutatorAssignment describes container mutations (channel.send, etc.)
 // that widen element types. Uses the ContainerElementUnion effect pattern from specs.
 type ContainerMutatorAssignment struct {
-	Point     cfg.Point
-	Target    constraint.Path // Container path (symbol-only, e.g., channel variable)
-	ValuePath constraint.Path // Path to value expression for flow-resolved type lookup
-	ValueType typ.Type        // Fallback type if ValuePath doesn't resolve
+	Point  cfg.Point
+	Target constraint.Path // Container path (symbol-only, e.g., channel variable)
+	ValueSource
 }
 
 // FieldWriteEffect records that the table at Target may gain Field of Type
@@ -382,6 +399,11 @@ type FieldWriteEffect struct {
 	Field    string
 	Type     typ.Type
 	Definite bool // The call writes this field on every path before returning.
+	// BeforeOperands marks a write that can happen before the statement at
+	// Point reads another operand: the writing call completes first, or a
+	// closure created there can run in such a call. Other writes follow every
+	// operand read of the statement.
+	BeforeOperands bool
 }
 
 // ContainerElementSource tracks that an assignment's type should be derived

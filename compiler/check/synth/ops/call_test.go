@@ -3,6 +3,8 @@ package ops
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -199,6 +201,31 @@ func TestCallWithGenericInference_MultiReturn(t *testing.T) {
 	}
 	if result.Returns[0] != typ.String || result.Returns[1] != typ.Boolean {
 		t.Fatalf("unexpected return vector: %v", result.Returns)
+	}
+}
+
+func TestGenericInferenceUsesExpandedSecondArgument(t *testing.T) {
+	typeParam := typ.NewTypeParam("T", nil)
+	fn := typ.Func().TypeParam("T", nil).
+		Param("first", typ.String).Param("second", typeParam).
+		Returns(typeParam).Build()
+	args := callsite.ArgumentTypes([]ast.Expr{&ast.FuncCallExpr{}},
+		func(ast.Expr) typ.Type { return fn },
+		func(ast.Expr) []typ.Type { return []typ.Type{typ.String, typ.Number} },
+	)
+	result := CallWithGenericInference(db.NewQueryContext(db.New()), CallDef{
+		Callee: fn, Args: args.Types, OpenTail: args.OpenTail,
+	})
+	if len(result.Errors) != 0 || !typ.TypeEquals(result.Type, typ.Number) {
+		t.Fatalf("expected T inferred as number from spread, got type %v and errors %v", result.Type, result.Errors)
+	}
+
+	result = CallWithGenericInference(db.NewQueryContext(db.New()), CallDef{
+		Callee: typ.NewIntersection(fn, typ.Func().Param("first", typ.Boolean).Param("second", typ.Boolean).Returns(typ.Boolean).Build()),
+		Args:   args.Types, OpenTail: args.OpenTail,
+	})
+	if len(result.Errors) != 0 || !typ.TypeEquals(result.Type, typ.Number) {
+		t.Fatalf("expected generic overload inferred from spread, got type %v and errors %v", result.Type, result.Errors)
 	}
 }
 
@@ -682,7 +709,9 @@ func TestCallFunction_MethodOnLiteralReceiverConsumesSelf(t *testing.T) {
 		nil,
 		fn,
 		[]typ.Type{typ.Integer, typ.Integer},
+		false,
 		0,
+		false,
 		typ.LiteralString("abc"),
 		true,
 		false,
@@ -704,7 +733,7 @@ func TestCallFunction_UnknownParamStillRequired(t *testing.T) {
 		Build()
 
 	ctx := db.NewQueryContext(db.New())
-	result := callFunction(ctx, nil, fn, nil, 0, nil, false, false, nil)
+	result := callFunction(ctx, nil, fn, nil, false, 0, false, nil, false, false, nil)
 
 	if len(result.Errors) == 0 {
 		t.Fatal("expected arity error for missing required unknown param")
@@ -719,7 +748,7 @@ func TestCallFunction_RequiredAfterOptionalStillRequiresPosition(t *testing.T) {
 		Build()
 
 	ctx := db.NewQueryContext(db.New())
-	result := callFunction(ctx, nil, fn, []typ.Type{typ.Number}, 0, nil, false, false, nil)
+	result := callFunction(ctx, nil, fn, []typ.Type{typ.Number}, false, 0, false, nil, false, false, nil)
 
 	if len(result.Errors) == 0 {
 		t.Fatal("expected arity error when required param appears after optional")
@@ -738,7 +767,9 @@ func TestCallFunction_MethodAlwaysConsumesReceiver(t *testing.T) {
 		nil,
 		fn,
 		[]typ.Type{typ.Number},
+		false,
 		0,
+		false,
 		typ.String,
 		true,
 		true,
@@ -756,7 +787,7 @@ func TestCallFunction_ZeroParamAllowsExtraArgs(t *testing.T) {
 		Build()
 
 	ctx := db.NewQueryContext(db.New())
-	result := callFunction(ctx, nil, fn, []typ.Type{typ.Number, typ.String}, 0, nil, false, false, nil)
+	result := callFunction(ctx, nil, fn, []typ.Type{typ.Number, typ.String}, false, 0, false, nil, false, false, nil)
 
 	if len(result.Errors) != 0 {
 		t.Fatalf("zero-param function should accept extra args, got: %v", result.Errors)

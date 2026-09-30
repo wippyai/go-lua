@@ -718,28 +718,16 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 					}
 					keyType = canonicalDynamicKeyType(keyType)
 					valType := narrowTableFieldsAtPoint(assignedType, source, p, bindings, inputs, preflowBranchSolution)
-					valuePath := constraint.Path{}
-					if source != nil {
-						if sp := path.FromExprWithKeyTypes(source, constResolver, bindings, keyTypeAt); !sp.IsEmpty() {
-							valuePath = constraint.Path{
-								Root:     resolve.RootNameFromBindings(bindings, sp.Symbol, sp.Root),
-								Symbol:   sp.Symbol,
-								Segments: sp.Segments,
-							}
-						}
-					}
 					resolved := resolve.Ref(valType, sc)
 					inputs.IndexerAssignments = append(inputs.IndexerAssignments, flow.IndexerAssignment{
-						Point:           p,
-						Root:            basePath.Root,
-						Symbol:          basePath.Symbol,
-						Segments:        basePath.Segments,
-						KeyVar:          keyVar,
-						KeySymbol:       keySym,
-						KeyType:         keyType,
-						ValuePath:       valuePath,
-						ValueFieldPaths: tableValueFieldPaths(source, p, bindings, inputs),
-						ValType:         resolved,
+						Point:       p,
+						Root:        basePath.Root,
+						Symbol:      basePath.Symbol,
+						Segments:    basePath.Segments,
+						KeyVar:      keyVar,
+						KeySymbol:   keySym,
+						KeyType:     keyType,
+						ValueSource: mutator.ValueSourceFromExpr(source, resolved, p, bindings, inputs),
 					})
 					continue
 				}
@@ -906,41 +894,36 @@ func buildLiftedDynamicIndexerAssignment(
 		valType = typ.Unknown
 	}
 
+	value := mutator.ValueSourceFromExpr(source, valType, p, bindings, inputs)
 	for i := len(steps) - 1; i > firstDynamic; i-- {
 		valType = wrapStepValue(steps[i], valType, graph, bindings, synth, symResolver, p)
-	}
-	fieldUpdate := ""
-	if firstDynamic == len(steps)-2 && steps[len(steps)-1].Static && steps[len(steps)-1].Seg.Kind == constraint.SegmentField {
-		fieldUpdate = steps[len(steps)-1].Seg.Name
-	}
-
-	// The source value is the entry itself only when the dynamic step is the
-	// last one; otherwise the entry is the wrapped shape built above, and
-	// resolving the source path at solve time would replace it with the
-	// field's value.
-	valuePath := constraint.Path{}
-	if source != nil && firstDynamic == len(steps)-1 {
-		if sp := path.FromExprWithKeyTypes(source, constResolver, bindings, keyTypeAt); !sp.IsEmpty() {
-			valuePath = constraint.Path{
-				Root:     resolve.RootNameFromBindings(bindings, sp.Symbol, sp.Root),
-				Symbol:   sp.Symbol,
-				Segments: sp.Segments,
-			}
+		wrapped := flow.ValueSource{ValueType: valType}
+		if steps[i].Static && steps[i].Seg.Kind == constraint.SegmentField {
+			wrapped.ValueFields = []flow.ValueFieldSource{{Name: steps[i].Seg.Name, ValueSource: value}}
+		} else {
+			wrapped.ValueElements = []flow.ValueSource{value}
 		}
+		value = wrapped
+	}
+	var fieldUpdate []string
+	for _, step := range steps[firstDynamic+1:] {
+		if !step.Static || step.Seg.Kind != constraint.SegmentField {
+			fieldUpdate = nil
+			break
+		}
+		fieldUpdate = append(fieldUpdate, step.Seg.Name)
 	}
 
 	return flow.IndexerAssignment{
-		Point:           p,
-		Root:            rootPath.Root,
-		Symbol:          rootPath.Symbol,
-		Segments:        rootPath.Segments,
-		KeyVar:          keyVar,
-		KeySymbol:       keySym,
-		KeyType:         keyType,
-		ValuePath:       valuePath,
-		ValueFieldPaths: tableValueFieldPaths(source, p, bindings, inputs),
-		ValType:         valType,
-		FieldUpdate:     fieldUpdate,
+		Point:       p,
+		Root:        rootPath.Root,
+		Symbol:      rootPath.Symbol,
+		Segments:    rootPath.Segments,
+		KeyVar:      keyVar,
+		KeySymbol:   keySym,
+		KeyType:     keyType,
+		ValueSource: value,
+		FieldUpdate: fieldUpdate,
 	}, true
 }
 

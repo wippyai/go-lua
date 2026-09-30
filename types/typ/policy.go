@@ -48,6 +48,16 @@ func JoinPreferNonSoft(a, b Type) Type {
 	return PruneSoftUnionMembers(NewUnion(a, b))
 }
 
+// JoinAllPreferNonSoft joins ts with JoinPreferNonSoft. The join of no types
+// is never.
+func JoinAllPreferNonSoft(ts []Type) Type {
+	joined := Never
+	for _, t := range ts {
+		joined = JoinPreferNonSoft(joined, t)
+	}
+	return joined
+}
+
 // UnknownReturns returns a return vector of the given arity whose every slot is
 // unknown. An arity below one yields a single unknown slot.
 func UnknownReturns(arity int) []Type {
@@ -423,6 +433,12 @@ func JoinBranchOutcome(a, b Type) Type {
 	// unknown one does not already admit.
 	if IsUnknown(a) || IsUnknown(b) {
 		return Unknown
+	}
+
+	// A falsy outcome and a table outcome describe different runtime
+	// values. Soft element types do not erase the table alternative.
+	if a.Kind() == kind.Nil || b.Kind() == kind.Nil || TypeEquals(a, False) || TypeEquals(b, False) {
+		return NewUnion(a, b)
 	}
 
 	if IsSoft(a, SoftPlaceholderPolicy) && !IsSoft(b, SoftPlaceholderPolicy) && b.Kind() != kind.Nil {

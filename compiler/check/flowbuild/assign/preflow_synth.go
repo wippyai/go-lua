@@ -321,28 +321,3 @@ func narrowTableFieldsAtPoint(recType typ.Type, source ast.Expr, p cfg.Point, bi
 	}
 	return out
 }
-
-// tableValueFieldPaths records paths read by a table literal stored through a
-// dynamic index. Its fields can be resolved again during the full flow solve,
-// after call result types have replaced preflow placeholders.
-func tableValueFieldPaths(source ast.Expr, p cfg.Point, bindings *bind.BindingTable, inputs *flow.Inputs) []flow.IndexerValueFieldPath {
-	tbl, ok := source.(*ast.TableExpr)
-	if !ok || bindings == nil || inputs == nil {
-		return nil
-	}
-	constResolver := predicate.BuildConstResolver(inputs, p)
-	var paths []flow.IndexerValueFieldPath
-	for _, field := range tbl.Fields {
-		if field == nil || field.Key == nil {
-			continue
-		}
-		name := ast.KeyName(field.Key)
-		if name == "" {
-			continue
-		}
-		if valuePath := fbpath.FromExprWithBindings(field.Value, constResolver, bindings); !valuePath.IsEmpty() {
-			paths = append(paths, flow.IndexerValueFieldPath{Name: name, Path: valuePath})
-		}
-	}
-	return paths
-}

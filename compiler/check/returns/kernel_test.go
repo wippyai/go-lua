@@ -5,6 +5,7 @@ import (
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -185,5 +186,31 @@ func TestReconcileFunctionFact_NarrowSummaryRepairsNeverArtifact(t *testing.T) {
 	}
 	if !ReturnTypesEqual(fn.Returns, good) {
 		t.Fatalf("func returns mismatch: got %v want %v", fn.Returns, good)
+	}
+}
+
+func TestReconcileFunctionFact_SolvedReturnBoundsAreMonotone(t *testing.T) {
+	bound := typ.Func().Returns(typ.Func().Returns(typ.Number).Build()).Build()
+	flowReturn := typ.NewRecord().Field("result", typ.String).Build()
+	prior := ReconcileFunctionFactInput{
+		ExistingNarrow:  []typ.Type{flowReturn},
+		ExistingFunc:    typ.Func().Returns(bound).Build(),
+		CandidateNarrow: []typ.Type{flowReturn},
+		CandidateFunc:   typ.Func().Returns(bound).Build(),
+	}
+	out := ReconcileFunctionFact(prior)
+	fn := typ.GeneralMember(out.Func)
+	if fn == nil || len(fn.Returns) != 1 || !subtype.IsSubtype(bound, fn.Returns[0]) || !subtype.IsSubtype(flowReturn, fn.Returns[0]) {
+		t.Fatalf("a solved function fact loses its return bound: %v", out.Func)
+	}
+	again := ReconcileFunctionFact(ReconcileFunctionFactInput{
+		ExistingSummary: out.Summary,
+		ExistingNarrow:  out.Narrow,
+		ExistingFunc:    out.Func,
+		CandidateNarrow: prior.CandidateNarrow,
+		CandidateFunc:   prior.CandidateFunc,
+	})
+	if !typ.TypeEquals(out.Func, again.Func) || !ReturnTypesEqual(out.Narrow, again.Narrow) || !ReturnTypesEqual(out.Summary, again.Summary) {
+		t.Fatalf("repeating solved return evidence changes the fact: first=%+v next=%+v", out, again)
 	}
 }

@@ -650,7 +650,7 @@ func TestExtractAssignments_NestedDynamicIndex_LiftsToRootIndexer(t *testing.T) 
 		if assign.Symbol != subscribersSym || assign.KeySymbol != cidSym || len(assign.Segments) != 0 {
 			continue
 		}
-		if _, ok := assign.ValType.(*typ.Map); ok {
+		if _, ok := assign.ValueType.(*typ.Map); ok {
 			lifted = assign
 			break
 		}

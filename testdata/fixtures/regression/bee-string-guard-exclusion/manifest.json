@@ -1,0 +1,4 @@
+{
+  "description": "bee.host:binding_protocol: a predicate whose string arm can return truthy keeps string after a successful call",
+  "check": {"errors": 0, "modes": ["gradual", "strict"]}
+}

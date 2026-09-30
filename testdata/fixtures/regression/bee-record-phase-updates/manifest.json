@@ -1,0 +1,6 @@
+{
+  "description": "Phase field writes on a local holding a declared Child keep it a Child for Child parameters (bee.launch:desktop_lifecycle).",
+  "check": {
+    "errors": 0
+  }
+}

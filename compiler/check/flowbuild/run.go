@@ -42,11 +42,13 @@
 package flowbuild
 
 import (
+	"cmp"
 	"slices"
 
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	checkcallsite "github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/assign"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/cond"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/constprop"
@@ -183,7 +185,7 @@ func Run(fc *fbcore.FlowContext) *flow.Inputs {
 	return inputs
 }
 
-func collectCallAliasRoots(fc *fbcore.FlowContext) map[cfg.Point][]cfg.SymbolID {
+func collectCallAliasRoots(fc *fbcore.FlowContext) map[cfg.Point][]flow.CallAliasRoot {
 	if fc == nil {
 		return nil
 	}
@@ -193,6 +195,7 @@ func collectCallAliasRoots(fc *fbcore.FlowContext) map[cfg.Point][]cfg.SymbolID 
 	}
 	bindings := graph.Bindings()
 	byPoint := make(map[cfg.Point]map[cfg.SymbolID]bool)
+	early := make(map[cfg.Point]map[*ast.FuncCallExpr]bool)
 	record := func(p cfg.Point, expr ast.Expr) {
 		visitCalls(expr, func(call *ast.FuncCallExpr) {
 			// A closed borrow-all contract cannot retain or mutate an argument.
@@ -211,9 +214,14 @@ func collectCallAliasRoots(fc *fbcore.FlowContext) map[cfg.Point][]cfg.SymbolID 
 				roots = make(map[cfg.SymbolID]bool)
 				byPoint[p] = roots
 			}
-			collectAliasedRoots(call.Receiver, bindings, roots)
+			before, ok := early[p]
+			if !ok {
+				before = checkcallsite.CallsBeforeOperandReads(graph, p)
+				early[p] = before
+			}
+			collectAliasedRoots(call.Receiver, bindings, roots, before[call])
 			for _, arg := range call.Args {
-				collectAliasedRoots(arg, bindings, roots)
+				collectAliasedRoots(arg, bindings, roots, before[call])
 			}
 		})
 	}
@@ -244,12 +252,12 @@ func collectCallAliasRoots(fc *fbcore.FlowContext) map[cfg.Point][]cfg.SymbolID 
 			record(p, info.Condition)
 		}
 	})
-	result := make(map[cfg.Point][]cfg.SymbolID, len(byPoint))
+	result := make(map[cfg.Point][]flow.CallAliasRoot, len(byPoint))
 	for p, roots := range byPoint {
-		for sym := range roots {
-			result[p] = append(result[p], sym)
+		for sym, before := range roots {
+			result[p] = append(result[p], flow.CallAliasRoot{Symbol: sym, BeforeOperands: before})
 		}
-		slices.Sort(result[p])
+		slices.SortFunc(result[p], func(a, b flow.CallAliasRoot) int { return cmp.Compare(a.Symbol, b.Symbol) })
 	}
 	return result
 }
@@ -302,25 +310,27 @@ func visitCalls(expr ast.Expr, visit func(*ast.FuncCallExpr)) {
 
 // Only expressions that can carry the table reference itself are recorded.
 // Indexing and scalar operations yield values rather than the source table.
-func collectAliasedRoots(expr ast.Expr, bindings *bind.BindingTable, roots map[cfg.SymbolID]bool) {
+// A root passed to any call that completes before a later operand read is
+// marked beforeOperands.
+func collectAliasedRoots(expr ast.Expr, bindings *bind.BindingTable, roots map[cfg.SymbolID]bool, beforeOperands bool) {
 	switch e := expr.(type) {
 	case *ast.IdentExpr:
 		if sym, ok := bindings.SymbolOf(e); ok {
-			roots[sym] = true
+			roots[sym] = roots[sym] || beforeOperands
 		}
 	case *ast.TableExpr:
 		for _, field := range e.Fields {
 			if field != nil {
-				collectAliasedRoots(field.Value, bindings, roots)
+				collectAliasedRoots(field.Value, bindings, roots, beforeOperands)
 			}
 		}
 	case *ast.CastExpr:
-		collectAliasedRoots(e.Expr, bindings, roots)
+		collectAliasedRoots(e.Expr, bindings, roots, beforeOperands)
 	case *ast.NonNilAssertExpr:
-		collectAliasedRoots(e.Expr, bindings, roots)
+		collectAliasedRoots(e.Expr, bindings, roots, beforeOperands)
 	case *ast.LogicalOpExpr:
-		collectAliasedRoots(e.Lhs, bindings, roots)
-		collectAliasedRoots(e.Rhs, bindings, roots)
+		collectAliasedRoots(e.Lhs, bindings, roots, beforeOperands)
+		collectAliasedRoots(e.Rhs, bindings, roots, beforeOperands)
 	}
 }
 

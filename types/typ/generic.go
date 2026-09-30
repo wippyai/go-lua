@@ -79,7 +79,11 @@ type Generic struct {
 // NewGeneric creates a generic type definition.
 // Named generics use nominal identity, anonymous generics use structural identity.
 func NewGeneric(name string, params []*TypeParam, body Type) *Generic {
-	body = bindTypeParams(body, params)
+	return buildGeneric(name, params, bindTypeParams(body, params))
+}
+
+// buildGeneric assembles a generic whose body references are already bound.
+func buildGeneric(name string, params []*TypeParam, body Type) *Generic {
 	h := internal.HashCombine(uint64(kind.Generic), internal.FnvString(name))
 	for _, p := range params {
 		h = internal.HashCombine(h, p.Hash())
@@ -118,6 +122,41 @@ func bindTypeParams(body Type, params []*TypeParam) Type {
 		}
 		return nil, false
 	})
+}
+
+// renameTypeParams returns fn with its type parameters replaced by to, which
+// has the same length: an alpha-equivalent signature bound by to.
+func renameTypeParams(fn *Function, to []*TypeParam) *Function {
+	if len(fn.TypeParams) == 0 {
+		return fn
+	}
+	from := make(map[*TypeParam]*TypeParam, len(to))
+	for i, p := range fn.TypeParams {
+		from[p] = to[i]
+	}
+	rename := func(t Type) Type {
+		return Rewrite(t, func(n Type) (Type, bool) {
+			if ref, ok := n.(*TypeParam); ok {
+				if target, ok := from[ref]; ok {
+					return target, true
+				}
+			}
+			return nil, false
+		})
+	}
+	params := make([]Param, len(fn.Params))
+	for i, p := range fn.Params {
+		params[i] = Param{Name: p.Name, Type: rename(p.Type), Optional: p.Optional}
+	}
+	returns := make([]Type, len(fn.Returns))
+	for i, r := range fn.Returns {
+		returns[i] = rename(r)
+	}
+	var variadic Type
+	if fn.Variadic != nil {
+		variadic = rename(fn.Variadic)
+	}
+	return buildFunctionType(to, params, variadic, returns, fn.Effects, fn.Spec, fn.Refinement)
 }
 
 func (g *Generic) Kind() kind.Kind { return kind.Generic }

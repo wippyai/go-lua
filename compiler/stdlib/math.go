@@ -62,7 +62,11 @@ var mathMethods = typ.NewRecord().
 	Field("pi", typ.Number).
 	Field("pow", typ.Func().Param("x", typ.Number).Param("y", typ.Number).Returns(typ.Number).Build()).
 	Field("rad", typ.Func().Param("x", typ.Number).Returns(typ.Number).Build()).
-	Field("random", typ.Func().OptParam("m", typ.Integer).OptParam("n", typ.Integer).Returns(typ.Number).Build()).
+	Field("random", typ.NewIntersection(
+		typ.Func().Returns(typ.Number).Build(),
+		typ.Func().Param("m", typ.Integer).Returns(typ.Number).Build(),
+		typ.Func().Param("m", typ.Integer).Param("n", typ.Integer).Returns(typ.Number).Build(),
+	)).
 	Field("randomseed", typ.Func().OptParam("x", typ.Integer).OptParam("y", typ.Integer).Build()).
 	Field("sin", typ.Func().Param("x", typ.Number).Returns(typ.Number).Build()).
 	Field("sinh", typ.Func().Param("x", typ.Number).Returns(typ.Number).Build()).

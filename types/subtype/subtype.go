@@ -868,6 +868,22 @@ func (c *checker) canWidenTo(narrow, wide typ.Type, depth int) bool {
 		}
 	}
 
+	// Each source branch widens independently. Destination literal tags still
+	// require the same reverse check as a single source branch.
+	if u, ok := narrow.(*typ.Union); ok {
+		if len(u.Members) == 0 {
+			return false
+		}
+		_, wideUnion := wide.(*typ.Union)
+		for _, m := range u.Members {
+			if (!wideUnion && c.check(m, wide, depth+1)) || c.canWidenTo(m, wide, depth+1) {
+				continue
+			}
+			return false
+		}
+		return true
+	}
+
 	// Allow widening into unions when narrow fits at least one member.
 	if u, ok := wide.(*typ.Union); ok {
 		for _, m := range u.Members {
@@ -881,21 +897,6 @@ func (c *checker) canWidenTo(narrow, wide typ.Type, depth int) bool {
 			}
 		}
 		return false
-	}
-
-	// Literal unions can widen to a primitive supertype when each branch widens.
-	// Example: 0|8000 can widen to integer for mutable record fields.
-	if u, ok := narrow.(*typ.Union); ok {
-		if len(u.Members) == 0 {
-			return false
-		}
-		for _, m := range u.Members {
-			if c.check(m, wide, depth+1) || c.canWidenTo(m, wide, depth+1) {
-				continue
-			}
-			return false
-		}
-		return true
 	}
 
 	// Integer can widen to number

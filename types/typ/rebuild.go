@@ -12,6 +12,9 @@ var (
 	recordMapValueHash = internal.FnvString("$mapValue")
 )
 
+// buildFunctionType assembles a function from parts whose type parameter
+// references are already bound. Rebuilding keeps every reference's binder, so a
+// type parameter of another binder that shares a name stays distinct.
 func buildFunctionType(
 	typeParams []*TypeParam,
 	params []Param,
@@ -23,22 +26,12 @@ func buildFunctionType(
 ) *Function {
 	paramsCopy := append([]Param(nil), params...)
 	returnsCopy := append([]Type(nil), returns...)
-	params, returns = paramsCopy, returnsCopy
-	if len(typeParams) > 0 {
-		for i := range params {
-			params[i].Type = bindTypeParams(params[i].Type, typeParams)
-		}
-		variadic = bindTypeParams(variadic, typeParams)
-		for i := range returns {
-			returns[i] = bindTypeParams(returns[i], typeParams)
-		}
-	}
 	h := uint64(kind.Function)
 	for _, tp := range typeParams {
 		h = internal.HashCombine(h, tp.Hash())
 	}
 
-	for _, p := range params {
+	for _, p := range paramsCopy {
 		h = internal.HashCombine(h, p.Type.Hash())
 		if p.Optional {
 			h = internal.HashCombine(h, 1)
@@ -49,7 +42,7 @@ func buildFunctionType(
 		h = internal.HashCombine(h, variadic.Hash())
 	}
 
-	for _, r := range returns {
+	for _, r := range returnsCopy {
 		if r == nil {
 			panic("FunctionBuilder.Build: nil entry in returns; normalize before building")
 		}

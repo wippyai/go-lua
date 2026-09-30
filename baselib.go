@@ -53,8 +53,14 @@ func OpenBase(L *LState) int {
 	return 1
 }
 
+// baseAssert raises its message, a string or an Error; an Error is raised as
+// the error value itself.
 func baseAssert(L *LState) int {
 	if !L.ToBool(1) {
+		if msg, ok := L.Get(2).(*Error); ok {
+			L.Error(msg, 1)
+			return 0
+		}
 		L.RaiseError(L.OptString(2, "assertion failed!"))
 		return 0
 	}

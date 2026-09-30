@@ -37,6 +37,7 @@ type Solution struct {
 	typeUnsatEdges         map[edgeKey]bool // type-theory unsat edges driving dead closure
 	typeDeadPoints         map[cfg.Point]bool
 	pointConditions        map[cfg.Point]constraint.Condition
+	conditionWrites        map[cfg.Point][]propagate.Assignment // writes of each statement that end facts
 	numericStates          map[cfg.Point]*numeric.State
 	iterations             int
 	capped                 bool
@@ -171,15 +172,17 @@ func (s *Solution) runPropagation() {
 			})
 		}
 	}
-	for p, symbols := range s.inputs.CallAliasRoots {
-		for _, sym := range symbols {
+	for p, roots := range s.inputs.CallAliasRoots {
+		for _, root := range roots {
 			assigns = append(assigns, propagate.Assignment{
-				Point: p, TargetSym: sym, SourceSym: sym, AliasEscape: true,
+				Point: p, TargetSym: root.Symbol, SourceSym: root.Symbol, AliasEscape: true,
+				BeforeOperands: root.BeforeOperands,
 			})
 			// The call may mutate the table through this alias. Facts about its
 			// children describe the pre-call value and cannot cross the call.
 			assigns = append(assigns, propagate.Assignment{
-				Point: p, TargetSym: sym, ChildrenOnly: true, IndexedChildrenOnly: true,
+				Point: p, TargetSym: root.Symbol, ChildrenOnly: true, IndexedChildrenOnly: true,
+				BeforeOperands: root.BeforeOperands,
 			})
 		}
 	}
@@ -201,7 +204,7 @@ func (s *Solution) runPropagation() {
 		if write.Field == IndexerWriteField {
 			assigns = append(assigns, propagate.Assignment{
 				Point: write.Point, TargetSym: write.Target.Symbol,
-				TargetSegs: write.Target.Segments, ChildrenOnly: true,
+				TargetSegs: write.Target.Segments, ChildrenOnly: true, BeforeOperands: write.BeforeOperands,
 			})
 			continue
 		}
@@ -209,9 +212,10 @@ func (s *Solution) runPropagation() {
 			Kind: constraint.SegmentField, Name: write.Field,
 		})
 		assigns = append(assigns, propagate.Assignment{
-			Point:      write.Point,
-			TargetSym:  write.Target.Symbol,
-			TargetSegs: segments,
+			Point:          write.Point,
+			TargetSym:      write.Target.Symbol,
+			TargetSegs:     segments,
+			BeforeOperands: write.BeforeOperands,
 		})
 	}
 	for _, write := range s.inputs.TableMutatorAssignments {
@@ -219,6 +223,7 @@ func (s *Solution) runPropagation() {
 			assigns = append(assigns, propagate.Assignment{
 				Point: write.Point, TargetSym: write.Target.Symbol,
 				TargetSegs: write.Target.Segments, ChildrenOnly: true,
+				BeforeOperands: write.BeforeOperands,
 			})
 		}
 	}
@@ -240,6 +245,7 @@ func (s *Solution) runPropagation() {
 
 	result := propagate.Propagate(propInputs)
 	s.pointConditions = result.PointConditions
+	s.conditionWrites = propagate.IndexAssignments(assigns)
 }
 
 // statementFacts combines facts established by assignments and dynamic index writes.
@@ -267,7 +273,7 @@ func (s *Solution) indexerWriteFacts() map[cfg.Point]constraint.Condition {
 	}
 	var facts map[cfg.Point]constraint.Condition
 	for _, ia := range s.inputs.IndexerAssignments {
-		if ia.Symbol == 0 || ia.KeySymbol == 0 || !excludesNil(ia.ValType) {
+		if ia.Symbol == 0 || ia.KeySymbol == 0 || !excludesNil(ia.ValueType) {
 			continue
 		}
 		tableVer := s.inputs.Graph.VisibleVersion(ia.Point, ia.Symbol)
@@ -1072,6 +1078,9 @@ func (s *Solution) mergeFieldsAt(baseType typ.Type, prefix string, depth int) ty
 					// the child path itself; its nilability still applies.
 					if assigned.t.Kind().IsPlaceholder() && !f.Type.Kind().IsPlaceholder() {
 						optional = optional || assigned.optional
+					} else if r.Declared && declaredSlotRetains(r, f, assigned.t, assigned.optional) {
+						// The table remains of its declared type; the value stays a
+						// fact of the child path, where reads of the field see it.
 					} else {
 						fieldType = assigned.t
 						optional = assigned.optional
@@ -1105,6 +1114,23 @@ func (s *Solution) mergeFieldsAt(baseType typ.Type, prefix string, depth int) ty
 			return builder.Build()
 		},
 	})
+}
+
+// declaredSlotRetains reports whether field f of declared record r keeps its
+// declared type when it holds value. A record rebuilt from field facts
+// describes the same table, so it stays a subtype of r: a value within the
+// slot's type that would narrow the mutable slot out of r, such as one member
+// of a literal union, leaves the slot declared. A value outside the slot's
+// type is projected, so the rebuilt record shows the violation.
+func declaredSlotRetains(r *typ.Record, f typ.Field, value typ.Type, optional bool) bool {
+	if !subtype.IsSubtype(value, f.Type) {
+		return false
+	}
+	refined := f
+	refined.Type = value
+	refined.Optional = optional
+	refined.InferredPresence = false
+	return !subtype.IsSubtype(r.WithField(refined), r)
 }
 
 // childFieldsWithDeeperFacts lists the direct fields below prefix that have

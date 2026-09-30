@@ -65,16 +65,20 @@ const (
 type CallDef struct {
 	Callee typ.Type   // The function being called
 	Args   []typ.Type // Argument types
-	// ExplicitArgs is the number of arguments written at the call site. When the
-	// last argument is a call or vararg, Args also holds its expanded values; the
-	// ones no parameter receives are dropped, as Lua drops them. Zero means every
-	// value in Args is written explicitly.
-	ExplicitArgs int
-	TypeArgs     []typ.Type   // Explicit type arguments for generic calls
-	IsMethod     bool         // True if this is a method call (obj:method)
-	Receiver     typ.Type     // Receiver type for method calls
-	MethodName   string       // Method name for method calls
-	Query        core.TypeOps // Method/field resolver
+	// OpenTail means the final call or vararg can produce more values than Args
+	// describes. Its final type is a representative, not a definite argument.
+	OpenTail bool
+	// Written counts the argument positions produced by written expressions;
+	// zero means every value in Args was written. Values past it come from
+	// expanding the final expression and never count as extra arguments.
+	Written int
+	// IsOverload restricts a zero-parameter overload to its declared arity.
+	IsOverload bool
+	TypeArgs   []typ.Type   // Explicit type arguments for generic calls
+	IsMethod   bool         // True if this is a method call (obj:method)
+	Receiver   typ.Type     // Receiver type for method calls
+	MethodName string       // Method name for method calls
+	Query      core.TypeOps // Method/field resolver
 	// ForceMethodReceiver consumes receiver as first runtime argument even when
 	// function shape alone does not imply explicit self.
 	ForceMethodReceiver bool
@@ -131,7 +135,8 @@ type InferResult struct {
 	// TypeArgs contains the type arguments (explicit or inferred).
 	TypeArgs []typ.Type
 
-	// Instantiated is the function after generic instantiation (nil if not generic).
+	// Instantiated is the function to call: the callee itself when it is not
+	// generic, its instance when type arguments are known, nil when inference fails.
 	Instantiated *typ.Function
 
 	// Function is the base function (before or after instantiation).
@@ -260,7 +265,7 @@ func inferAndCall(ctx *db.QueryContext, fn *typ.Function, def CallDef, isMethod 
 
 	instantiated := InstantiateFunction(fn, typeArgs)
 
-	return callFunction(ctx, def.Query, instantiated, def.Args, def.ExplicitArgs, receiver, isMethod, def.ForceMethodReceiver, errors)
+	return callFunction(ctx, def.Query, instantiated, def.Args, def.OpenTail, def.Written, def.IsOverload, receiver, isMethod, def.ForceMethodReceiver, errors)
 }
 
 // InferCall performs the first phase of call synthesis: callee resolution,
@@ -419,11 +424,12 @@ func inferUnion(ctx *db.QueryContext, u *typ.Union, def CallDef, isMethod bool, 
 		found       bool
 	)
 	for _, member := range u.Members {
+		member = unwrapCallee(member)
 		if inter, ok := member.(*typ.Intersection); ok {
 			hasIntersection = true
 			if fn := typ.GeneralMember(inter); fn != nil {
 				expectedArgs, expectedVariadic := computeExpectedArgs(ctx, def.Query, fn, isMethod, receiver, def.ForceMethodReceiver)
-				called := callIntersection(ctx, def.Query, inter, def.Args, def.ExplicitArgs, receiver, isMethod, def.ForceMethodReceiver, nil)
+				called := callIntersection(ctx, def.Query, inter, def.Args, def.OpenTail, def.Written, receiver, isMethod, def.ForceMethodReceiver, nil)
 				if !hasHardErrors(called.Errors) {
 					candidates = append(candidates, unionCallCandidate{fn: fn, inst: fn, expected: expectedArgs, variadic: expectedVariadic})
 				}
@@ -459,7 +465,7 @@ func inferUnion(ctx *db.QueryContext, u *typ.Union, def CallDef, isMethod bool, 
 		}
 
 		expectedArgs, expectedVariadic := computeExpectedArgs(ctx, def.Query, instantiated, isMethod, receiver, def.ForceMethodReceiver)
-		candidateResult := callFunction(ctx, def.Query, instantiated, def.Args, def.ExplicitArgs, receiver, isMethod, def.ForceMethodReceiver, nil)
+		candidateResult := callFunction(ctx, def.Query, instantiated, def.Args, def.OpenTail, def.Written, def.IsOverload, receiver, isMethod, def.ForceMethodReceiver, nil)
 		if !hasHardErrors(candidateResult.Errors) {
 			candidates = append(candidates, unionCallCandidate{
 				fn:       fn,
@@ -646,17 +652,16 @@ func FinishCall(ctx *db.QueryContext, def CallDef, infer InferResult) CallResult
 		)
 
 	case InferKindIntersection:
-		return callIntersection(ctx, def.Query, infer.Callee.(*typ.Intersection), def.Args, def.ExplicitArgs, infer.Receiver, infer.IsMethod, infer.ForceMethodReceiver, infer.Errors)
+		return callIntersection(ctx, def.Query, infer.Callee.(*typ.Intersection), def.Args, def.OpenTail, def.Written, infer.Receiver, infer.IsMethod, infer.ForceMethodReceiver, infer.Errors)
 
 	case InferKindFunction:
+		// Without an instance, type argument inference failed and reported
+		// why; the generic signature's own parameters never reach the caller.
 		fn := infer.Instantiated
-		if fn == nil {
-			fn = infer.Function
-		}
 		if fn == nil {
 			return singleValueCallResult(typ.Unknown, infer.Errors)
 		}
-		return callFunction(ctx, def.Query, fn, def.Args, def.ExplicitArgs, infer.Receiver, infer.IsMethod, infer.ForceMethodReceiver, infer.Errors)
+		return callFunction(ctx, def.Query, fn, def.Args, def.OpenTail, def.Written, def.IsOverload, infer.Receiver, infer.IsMethod, infer.ForceMethodReceiver, infer.Errors)
 	}
 
 	return singleValueCallResult(typ.Unknown, infer.Errors)
@@ -710,7 +715,7 @@ func (r *InferResult) ExpectedArgType(idx int) typ.Type {
 // callIntersection handles calling an intersection type.
 // Matching function members contribute to the return intersection unless one
 // has a strictly more specific literal match.
-func callIntersection(ctx *db.QueryContext, query core.TypeOps, inter *typ.Intersection, args []typ.Type, explicit int, receiver typ.Type, isMethod bool, forceMethodReceiver bool, baseErrors []CallError) CallResult {
+func callIntersection(ctx *db.QueryContext, query core.TypeOps, inter *typ.Intersection, args []typ.Type, openTail bool, written int, receiver typ.Type, isMethod bool, forceMethodReceiver bool, baseErrors []CallError) CallResult {
 	var returnTypes []typ.Type
 	var returnVectors [][]typ.Type
 	var literalMatches []int
@@ -723,7 +728,7 @@ func callIntersection(ctx *db.QueryContext, query core.TypeOps, inter *typ.Inter
 		if alternatives, ok := unwrap.Alias(typ.UnwrapAnnotated(member)).(*typ.Union); ok {
 			// A union member represents runtime alternatives. Other intersection
 			// members cannot establish which alternative supplied the value.
-			return callUnionWithGenericInference(ctx, alternatives, CallDef{Args: args, ExplicitArgs: explicit, Query: query}, isMethod, receiver, forceMethodReceiver, baseErrors)
+			return callUnionWithGenericInference(ctx, alternatives, CallDef{Args: args, OpenTail: openTail, Written: written, Query: query}, isMethod, receiver, forceMethodReceiver, baseErrors)
 		}
 
 		if unwrap.IsOptionalLike(member) {
@@ -762,9 +767,17 @@ func callIntersection(ctx *db.QueryContext, query core.TypeOps, inter *typ.Inter
 		if literalMismatch {
 			continue
 		}
-		result := callFunction(ctx, query, fn, args, explicit, receiver, isMethod, forceMethodReceiver, seedErrors)
+		var result CallResult
+		if len(fn.TypeParams) > 0 {
+			result = inferAndCall(ctx, fn, CallDef{Args: args, OpenTail: openTail, Written: written, IsOverload: true, Query: query, ForceMethodReceiver: forceMethodReceiver}, isMethod, receiver, seedErrors)
+		} else {
+			result = callFunction(ctx, query, fn, args, openTail, written, true, receiver, isMethod, forceMethodReceiver, seedErrors)
+		}
 		if hasHardErrors(result.Errors[len(seedErrors):]) {
-			if rejected == nil {
+			// When no overload accepts the call, report the type error from an
+			// arity-compatible overload before an unrelated arity error.
+			if rejected == nil || hasCallErrorKind(rejected.Errors[len(baseErrors):], ErrWrongArity) &&
+				!hasCallErrorKind(result.Errors[len(seedErrors):], ErrWrongArity) {
 				rejected = &result
 			}
 			continue
@@ -810,9 +823,10 @@ func callUnionWithGenericInference(ctx *db.QueryContext, u *typ.Union, def CallD
 	var hardErrors []CallError
 
 	for _, member := range u.Members {
+		member = unwrapCallee(member)
 		if inter, ok := member.(*typ.Intersection); ok {
 			seedErrors := append([]CallError(nil), baseErrors...)
-			result := callIntersection(ctx, def.Query, inter, def.Args, def.ExplicitArgs, receiver, isMethod, forceMethodReceiver, seedErrors)
+			result := callIntersection(ctx, def.Query, inter, def.Args, def.OpenTail, def.Written, receiver, isMethod, forceMethodReceiver, seedErrors)
 			allReturns = append(allReturns, normalizedCallReturns(result))
 			if hasHardErrors(result.Errors[len(seedErrors):]) {
 				hardErrors = append(hardErrors, result.Errors...)
@@ -828,7 +842,7 @@ func callUnionWithGenericInference(ctx *db.QueryContext, u *typ.Union, def CallD
 		seedErrors := append([]CallError(nil), baseErrors...)
 		var result CallResult
 		if len(fn.TypeParams) == 0 {
-			result = callFunction(ctx, def.Query, fn, def.Args, def.ExplicitArgs, receiver, isMethod, forceMethodReceiver, seedErrors)
+			result = callFunction(ctx, def.Query, fn, def.Args, def.OpenTail, def.Written, def.IsOverload, receiver, isMethod, forceMethodReceiver, seedErrors)
 		} else {
 			result = inferAndCall(ctx, fn, def, isMethod, receiver, seedErrors)
 		}
@@ -912,7 +926,7 @@ func methodConsumesReceiverSimple(fn *typ.Function, receiver typ.Type, isMethod 
 	return hasExplicitSelfSimple(fn, receiver)
 }
 
-func callFunction(ctx *db.QueryContext, query core.TypeOps, fn *typ.Function, args []typ.Type, explicit int, receiver typ.Type, isMethod bool, forceMethodReceiver bool, errors []CallError) CallResult {
+func callFunction(ctx *db.QueryContext, query core.TypeOps, fn *typ.Function, args []typ.Type, openTail bool, written int, isOverload bool, receiver typ.Type, isMethod bool, forceMethodReceiver bool, errors []CallError) CallResult {
 	if fn == nil {
 		return singleValueCallResult(typ.Unknown, append(errors, CallError{Kind: ErrNotCallable, Message: "nil function"}))
 	}
@@ -923,28 +937,24 @@ func callFunction(ctx *db.QueryContext, query core.TypeOps, fn *typ.Function, ar
 		receiverSlots = 1
 	}
 	hasVariadic := fn.Variadic != nil
-	if !hasVariadic && explicit > 0 && explicit < len(args) {
-		// Values expanded from the last argument that no parameter receives are
-		// dropped at runtime; only explicitly written arguments can be surplus.
-		keep := len(fn.Params) - receiverSlots
-		if keep < explicit {
-			keep = explicit
-		}
-		if keep < len(args) {
-			args = args[:keep]
-		}
+	knownArgs := len(args)
+	if openTail && knownArgs > 0 {
+		// The last type represents an unknown number of values. It cannot
+		// establish arity, but the parameter at its position is checked
+		// against it.
+		knownArgs--
 	}
-	argCount := len(args) + receiverSlots
+	argCount := knownArgs + receiverSlots
 
 	minArgs := typ.MinRequiredArgs(fn)
-	allowExtraArgs := len(fn.Params) == 0 && !hasVariadic
+	allowExtraArgs := len(fn.Params) == 0 && !hasVariadic && !isOverload
 
-	if argCount < minArgs {
+	if !openTail && argCount < minArgs {
 		errors = append(errors, CallError{
 			Kind:    ErrWrongArity,
 			Message: "not enough arguments",
 		})
-	} else if !hasVariadic && !allowExtraArgs && argCount > len(fn.Params) {
+	} else if !hasVariadic && !allowExtraArgs && suppliedArgCount(args, written, openTail, isOverload)+receiverSlots > len(fn.Params) {
 		errors = append(errors, CallError{
 			Kind:    ErrWrongArity,
 			Message: "too many arguments",
@@ -991,19 +1001,12 @@ func callFunction(ctx *db.QueryContext, query core.TypeOps, fn *typ.Function, ar
 			expectedType = subst.Self(expectedType, receiver)
 		}
 
-		// Compatibility boundary: a value expanded from the trailing call is
-		// type-checked where it fills a required parameter. On an optional
-		// parameter or the variadic tail it is not checked, matching checkers
-		// that truncated expanded values, so existing code such as
-		// assert(f()) and test.ok(f()) keeps checking clean. This can miss a
-		// wrong-typed forwarded value there; full checking belongs to a strict
-		// mode.
-		if explicit > 0 && i >= explicit && (paramIdx >= len(fn.Params) || typ.ParamMayBeAbsent(fn.Params[paramIdx])) {
-			continue
-		}
-
 		if expectedType != nil && arg != nil {
-			if !isAssignableCheck(ctx, query, arg, expectedType) {
+			compatibleType := expectedType
+			if paramIdx < len(fn.Params) && typ.ParamMayBeAbsent(fn.Params[paramIdx]) {
+				compatibleType = typ.NewOptional(expectedType)
+			}
+			if !isAssignableCheck(ctx, query, arg, compatibleType) {
 				errors = append(errors, CallError{
 					Kind:    ErrTypeMismatch,
 					Message: fmt.Sprintf("argument %d: expected %s, got %s", i+1, typ.FormatShort(expectedType), typ.FormatShort(arg)),
@@ -1112,6 +1115,15 @@ func hasHardErrors(errors []CallError) bool {
 		}
 	}
 
+	return false
+}
+
+func hasCallErrorKind(errors []CallError, kind CallErrorKind) bool {
+	for _, err := range errors {
+		if err.Kind == kind {
+			return true
+		}
+	}
 	return false
 }
 
@@ -1351,4 +1363,20 @@ func joinTypeNames(names []string) string {
 	}
 
 	return result
+}
+
+// suppliedArgCount is the number of argument positions that count toward arity.
+// A plain function ignores values expanded from the final expression past its
+// declared parameters, so only written positions count. An overload member
+// declares arity-dependent behaviour, so every expanded value counts: the
+// callee receives all of them.
+func suppliedArgCount(args []typ.Type, written int, openTail bool, isOverload bool) int {
+	count := len(args)
+	if openTail && count > 0 {
+		count--
+	}
+	if !isOverload && written > 0 && written < count {
+		return written
+	}
+	return count
 }

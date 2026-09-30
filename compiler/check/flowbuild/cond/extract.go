@@ -1193,8 +1193,8 @@ func capturedTableMayHaveAlias(inputs *flow.Inputs, graph *cfg.Graph, callPoint 
 		if point != callPoint && !graph.Reachable(point, callPoint, true) {
 			continue
 		}
-		for _, sym := range roots {
-			if sym == tableSym {
+		for _, root := range roots {
+			if root.Symbol == tableSym {
 				return true
 			}
 		}

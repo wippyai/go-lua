@@ -129,7 +129,7 @@ func CollectCalledNestedContainerMutatorAssignments(
 							Symbol:   targetSym,
 							Segments: segs,
 						},
-						ValueType: mutation.ValueType,
+						ValueSource: flow.ValueSource{ValueType: mutation.ValueType},
 					})
 				}
 			}
