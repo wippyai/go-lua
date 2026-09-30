@@ -27,8 +27,10 @@ func TestAnnotatedMapCaptureRetainsKnownWrites(t *testing.T) {
 	checkBothModes(t, `
 local function consume(value: string) return value end
 local values: {[string]: {[string]: unknown}} = {}
-values["key"] = {name = "ready"}
-local found = values["key"]
+local names = {KEY = "key"}
+values[tostring(names.KEY)] = {name = "ready"}
+local key: string = "key"
+local found = values[key]
 if found ~= nil then return consume(found.name) end
 return nil`, "")
 }
