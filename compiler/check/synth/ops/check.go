@@ -346,10 +346,6 @@ func checkTableAsRecord(mode subtype.Assignability, fields []FieldDef, elems []t
 			sub := typ.NewRecord().AddField(typ.Field{Name: ef.Name, Type: pf, Optional: field.Optional}).Build()
 			super := typ.NewRecord().AddField(ef).Build()
 			compatible = mode.Assignable(sub, super)
-			for _, alternative := range field.SharedAlternatives {
-				branch := typ.NewRecord().Field(ef.Name, alternative).Build()
-				compatible = compatible && mode.Assignable(branch, super)
-			}
 		}
 		if !compatible {
 			errors = append(errors, CheckError{

@@ -256,7 +256,7 @@ func (s *Synthesizer) synthExprCore(expr ast.Expr, sc *scope.State, p cfg.Point,
 	case *ast.AttrGetExpr:
 		return s.synthAttrGetCore(ex, p, sc, narrower, recurse)
 	case *ast.TableExpr:
-		return s.synthTableWithExpectedAt(ex, sc, p, recurse, nil)
+		return s.SynthTableCore(ex, sc, recurse)
 	case *ast.FuncCallExpr:
 		types := s.SynthCallCore(ex, p, sc, narrower, recurse)
 		if len(types) > 0 {

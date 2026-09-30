@@ -139,7 +139,7 @@ func extractTableFields(mode subtype.Assignability, table *ast.TableExpr, expect
 		if ft == nil {
 			ft = typ.Unknown
 		}
-		fields = append(fields, ops.FieldDef{Name: name, Type: ft, Shared: phasecore.SharedTableValue(field.Value, ft), SharedAlternatives: phasecore.SharedTableAlternatives(field.Value, func(expr ast.Expr) typ.Type { return synth.TypeOf(expr, p) })})
+		fields = append(fields, ops.FieldDef{Name: name, Type: ft, Shared: phasecore.SharedTableValue(field.Value, ft)})
 	}
 
 	return fields, arrayElems, recordOnly, false
