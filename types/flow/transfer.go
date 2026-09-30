@@ -2156,6 +2156,15 @@ func (s *Solution) phiOperandTypeAt(joinPoint cfg.Point, op cfg.PhiOperand, segm
 		Version: op.Version.ID,
 	}
 	if len(segments) > 0 {
+		// Child facts describe the field when its parent exists. An absent
+		// parent contributes no child value, rather than a missing field.
+		parent := path
+		for cut := 0; cut < len(segments); cut++ {
+			parent.Segments = segments[:cut]
+			if t := s.NarrowedTypeAt(op.From, parent); t != nil && (t.Kind() == kind.Nil || t.Kind() == kind.Never) {
+				return typ.Never
+			}
+		}
 		path.Segments = append(path.Segments, segments...)
 	}
 
