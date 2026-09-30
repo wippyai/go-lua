@@ -467,10 +467,10 @@ func (c *checker) deriveStructural(sub, super typ.Type, depth int) bool {
 		}
 	}
 
-	// Empty record can satisfy array shapes, but should still flow through
+	// Empty record can satisfy array/map shapes, but should still flow through
 	// regular record subtyping for record supers (e.g. all-optional records).
 	if r, ok := sub.(*typ.Record); ok && len(r.Fields) == 0 {
-		if super.Kind() == kind.Array {
+		if super.Kind() == kind.Array || super.Kind() == kind.Map {
 			return true
 		}
 	}
@@ -906,9 +906,9 @@ func (c *checker) canWidenTo(narrow, wide typ.Type, depth int) bool {
 		if supRec, ok := wide.(*typ.Record); ok {
 			return c.canWidenRecordTo(subRec, supRec, depth+1)
 		}
-		// Widening uses the same key/value evidence as record-to-map
-		// subtyping. Open controls unknown field reads, not element domains.
-		if tableMap, ok := wide.(*typ.Map); ok &&
+		// Preserve v1.6.2 mutable-slot widening during the v1.6.3 interim
+		// period (design-record-to-map.md), including the closed lookup guard.
+		if tableMap, ok := wide.(*typ.Map); ok && !subRec.Open &&
 			c.check(subRec, tableMap, depth+1) {
 			return true
 		}
@@ -1141,10 +1141,13 @@ func (c *checker) checkRecordToMap(sub *typ.Record, super *typ.Map, depth int) b
 	return c.checkRecordMapDomain(sub, super.Key, super.Value, nil, depth)
 }
 
-// checkRecordMapDomain checks all keys a record can contain. Open controls
-// unknown reads; only completeness or a map component supplies key evidence.
+// checkRecordMapDomain preserves the interim v1.6.2 rules for the two target
+// forms: typ.Map checks known entries; a record map component requires
+// completeness or a component. This deliberate difference is frozen for
+// v1.6.3 by design-record-to-map.md; semantic exactness and write capabilities
+// are v1.7 work. Open remains a lookup policy, not proof of key closure.
 func (c *checker) checkRecordMapDomain(sub *typ.Record, key, valueType typ.Type, declared *typ.Record, depth int) bool {
-	if !sub.Complete && !sub.HasMapComponent() {
+	if declared != nil && !sub.Complete && !sub.HasMapComponent() {
 		return false
 	}
 

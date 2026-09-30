@@ -1433,7 +1433,7 @@ func TestRecordFieldTypeSubtype(t *testing.T) {
 
 func TestRecordToMap(t *testing.T) {
 	// {name: string, age: number} <: Map<string, string|number>
-	rec := typ.NewRecord().Field("name", typ.String).Field("age", typ.Number).SetComplete(true).Build()
+	rec := typ.NewRecord().Field("name", typ.String).Field("age", typ.Number).Build()
 	mapType := typ.NewMap(typ.String, typ.NewUnion(typ.String, typ.Number))
 
 	if !IsSubtype(rec, mapType) {
@@ -1443,7 +1443,7 @@ func TestRecordToMap(t *testing.T) {
 
 func TestRecursiveRecordToMap(t *testing.T) {
 	rec := typ.NewRecursive("Node", func(self typ.Type) typ.Type {
-		return typ.NewRecord().Field("child", self).SetComplete(true).Build()
+		return typ.NewRecord().Field("child", self).Build()
 	})
 	mapType := typ.NewMap(typ.String, rec)
 
@@ -1489,7 +1489,7 @@ func TestRecordWithMapComponentIncompatible(t *testing.T) {
 }
 
 func TestEmptyRecordToMap(t *testing.T) {
-	rec := typ.NewRecord().SetComplete(true).Build()
+	rec := typ.NewRecord().Build()
 	mapType := typ.NewMap(typ.String, typ.Number)
 
 	if !IsSubtype(rec, mapType) {
@@ -2325,7 +2325,7 @@ func TestNormalizeIntersectionDeepDistribution(t *testing.T) {
 // is a subtype only if the map member is.
 func TestUnionWithAnyValuedMapMember(t *testing.T) {
 	anyMap := typ.NewMap(typ.String, typ.Any)
-	shape := typ.NewRecord().Field("kind", typ.String).SetComplete(true).Build()
+	shape := typ.NewRecord().Field("kind", typ.String).Build()
 
 	if !IsSubtype(shape, anyMap) {
 		t.Fatal("record with string keys must subtype {[string]: any}")

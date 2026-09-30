@@ -60,11 +60,11 @@ func RefineAnnotation(annotation, hint typ.Type) typ.Type {
 		return annotation
 	}
 	refined := BodyParamType(hint)
-	if key, value, ok := annotationMapComponent(annotation); ok {
-		refined = withMapComponent(refined, key, value)
-	}
 	if refined == nil || typ.IsUnknown(refined) || !subtype.IsSubtype(refined, annotation) {
 		return annotation
+	}
+	if key, value, ok := annotationMapComponent(annotation); ok {
+		return withMapComponent(refined, key, value)
 	}
 	return refined
 }
@@ -156,13 +156,11 @@ func WidenParamHintType(t typ.Type) typ.Type {
 			return typ.NewUnion(members...)
 		}
 	case *typ.Record:
-		// Hints permit unknown fields, while a concrete caller supplies the
-		// key domain. Retain that domain as a map component when widening.
+		// A call-site hint describes only part of an unannotated parameter.
+		// Explicitly discard completeness when widening, so absent fields stay
+		// unknown; the copied builder retains all other semantic metadata.
 		builder := v.BuilderEmptyFields().SetOpen(true).SetComplete(false)
 		changed := !v.Open || v.Complete
-		if v.Complete && !v.Declared && len(v.Fields) > 0 && !v.HasMapComponent() {
-			builder.MapComponentWithFlags(typ.String, typ.Unknown, true, false)
-		}
 		for _, f := range v.Fields {
 			ft := WidenParamHintType(f.Type)
 			if ft != f.Type {

@@ -125,16 +125,6 @@ func TestWidenParamHintType_CompleteRecordBecomesPartial(t *testing.T) {
 	}
 }
 
-func TestWidenParamHintType_ConcreteCallerRetainsKeyEvidence(t *testing.T) {
-	for _, complete := range []bool{false, true} {
-		input := typ.NewRecord().Field("id", typ.LiteralString("id")).SetComplete(complete).Build()
-		got := WidenParamHintType(input).(*typ.Record)
-		if !got.Open || got.Complete || got.HasMapComponent() != complete {
-			t.Fatalf("caller completeness=%v, got %#v", complete, got)
-		}
-	}
-}
-
 func TestBuildParamHintSigView_NilInputs(t *testing.T) {
 	result := BuildParamHintSigView(nil, nil, nil, nil)
 	if result != nil {
