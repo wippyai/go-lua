@@ -119,12 +119,18 @@ type ClassSelfBinder interface {
 	BindClassReceiver(graph *cfg.Graph, at cfg.Point, sym cfg.SymbolID, name string, body typ.Type) typ.Type
 }
 
+// TableMutationSource provides the module-wide mutation analysis of a table.
+type TableMutationSource interface {
+	TableMutation(sym cfg.SymbolID) cfg.TableMutation
+}
+
 // NestedStore is the store interface required by nested processing.
 type NestedStore interface {
 	StoreView
 	ConstructorFieldStore
 	InterprocFactSink
 	ClassSelfBinder
+	TableMutationSource
 }
 
 // LiteralSigSource is used by phase runners to supply literal signatures.

@@ -135,6 +135,15 @@ func inferFunctionRefinementCore(
 	var exitCond constraint.Condition
 
 	returnsBool := isBooleanReturnType(returnType)
+	// A predicate's truthy and falsy conditions are disjunctions over every
+	// exit that can produce that outcome, so each return contributes to them.
+	predicate := returnsBool || hasPredicateReturn(src.returnConstraints)
+	fallsThrough := false
+	for _, pred := range graphPredecessors(g, g.Exit()) {
+		if n := g.Node(pred); n != nil && n.Kind != cfg.NodeReturn {
+			fallsThrough = true
+		}
+	}
 
 	for _, p := range g.RPO() {
 		node := g.Node(p)
@@ -156,44 +165,39 @@ func inferFunctionRefinementCore(
 			baseCond = src.conditionAt(p)
 		}
 
-		// Check for return expression constraints from predicate/assert calls
-		if src.returnConstraints != nil {
-			if rc, ok := src.returnConstraints[p]; ok {
-				isPredicate := rc.Predicate || (rc.OnTrue.HasConstraints() && rc.OnFalse.HasConstraints())
-				if returnsBool || isPredicate {
-					if rc.OnTrue.HasConstraints() {
-						cond := constraint.And(baseCond, rc.OnTrue)
-						onTrueCond = orCondition(onTrueCond, cond)
-					}
-					if rc.OnFalse.HasConstraints() {
-						cond := constraint.And(baseCond, rc.OnFalse)
-						onFalseCond = orCondition(onFalseCond, cond)
-					}
-				} else {
-					if rc.OnTrue.HasConstraints() {
-						cond := constraint.And(baseCond, rc.OnTrue)
-						onReturnCond = orCondition(onReturnCond, cond)
-					}
+		if predicate {
+			if node.Kind == cfg.NodeExit {
+				// Falling off the end returns nil.
+				if fallsThrough {
+					onFalseCond = orCondition(onFalseCond, baseCond)
+					onReturnCond = orCondition(onReturnCond, baseCond)
 				}
 				continue
 			}
-		}
-
-		// For explicit boolean returns, check for literal true/false return statements
-		if returnsBool && src.returnKinds != nil {
-			switch src.returnKinds[p] {
-			case ReturnTrue:
-				onTrueCond = orCondition(onTrueCond, baseCond)
-				continue
-			case ReturnFalse:
-				onFalseCond = orCondition(onFalseCond, baseCond)
-				continue
+			rc := src.returnConstraints[p]
+			kind := src.returnKinds[p]
+			if kind != ReturnFalse {
+				onTrueCond = orCondition(onTrueCond, andConstrained(baseCond, rc.OnTrue))
 			}
+			if kind != ReturnTrue {
+				onFalseCond = orCondition(onFalseCond, andConstrained(baseCond, rc.OnFalse))
+			}
+			onReturnCond = orCondition(onReturnCond, baseCond)
+			continue
 		}
 
-		// For non-boolean or unclassified returns at NodeReturn (not NodeExit),
-		// collect baseCond only if no return expression constraint was found.
-		// Exit nodes don't represent actual return statements with expressions.
+		// Check for return expression constraints from assert-style calls
+		if rc, ok := src.returnConstraints[p]; ok {
+			if rc.OnTrue.HasConstraints() {
+				cond := constraint.And(baseCond, rc.OnTrue)
+				onReturnCond = orCondition(onReturnCond, cond)
+			}
+			continue
+		}
+
+		// For unclassified returns at NodeReturn (not NodeExit), collect
+		// baseCond. Exit nodes don't represent actual return statements with
+		// expressions.
 		if node.Kind == cfg.NodeReturn && src.conditionAt != nil {
 			onReturnCond = orCondition(onReturnCond, baseCond)
 		}
@@ -466,6 +470,26 @@ func substituteToPlaceholdersCondition(cond constraint.Condition, paramIndex map
 //
 // If either condition is False (zero disjuncts), returns the other unchanged.
 // This avoids polluting the result with unreachable return point conditions.
+// hasPredicateReturn reports whether some return expression constrains the
+// function's parameters on its truthy and falsy outcomes.
+func hasPredicateReturn(returns map[cfg.Point]ReturnExprConstraints) bool {
+	for _, rc := range returns {
+		if rc.Predicate || (rc.OnTrue.HasConstraints() && rc.OnFalse.HasConstraints()) {
+			return true
+		}
+	}
+	return false
+}
+
+// andConstrained narrows base by the outcome constraints of a return
+// expression, if it has any.
+func andConstrained(base, outcome constraint.Condition) constraint.Condition {
+	if !outcome.HasConstraints() {
+		return base
+	}
+	return constraint.And(base, outcome)
+}
+
 func orCondition(acc, next constraint.Condition) constraint.Condition {
 	if acc.IsFalse() {
 		return next
