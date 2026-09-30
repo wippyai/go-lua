@@ -23,6 +23,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	flowpath "github.com/wippyai/go-lua/compiler/check/flowbuild/path"
 	"github.com/wippyai/go-lua/compiler/check/infer/captured"
 	"github.com/wippyai/go-lua/compiler/check/nested"
 	"github.com/wippyai/go-lua/compiler/check/returns"
@@ -32,6 +33,7 @@ import (
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 // CheckFunc analyzes a nested function with a given parent scope.
@@ -51,13 +53,14 @@ type Config struct {
 
 // Processor analyzes nested functions for a parent graph.
 type Processor struct {
-	stdlib        *scope.State
-	store         api.NestedStore
-	graphs        api.GraphProvider
-	check         CheckFunc
-	resultForFunc ResultFunc
-	classSelf     map[cfg.SymbolID]typ.Type
-	classReceiver map[cfg.SymbolID]typ.Type
+	stdlib           *scope.State
+	store            api.NestedStore
+	graphs           api.GraphProvider
+	check            CheckFunc
+	resultForFunc    ResultFunc
+	classSelf        map[cfg.SymbolID]typ.Type
+	classReceiver    map[cfg.SymbolID]typ.Type
+	instanceContexts map[cfg.SymbolID]map[string]bool
 }
 
 // New creates a nested processor.
@@ -112,9 +115,11 @@ func (p *Processor) ProcessNestedFunctions(graph *cfg.Graph, parentResult *api.F
 func (p *Processor) bindClassTables(graph *cfg.Graph, children []nested.Child, parentResult *api.FuncResultView) {
 	p.classSelf = make(map[cfg.SymbolID]typ.Type)
 	p.classReceiver = make(map[cfg.SymbolID]typ.Type)
+	p.instanceContexts = make(map[cfg.SymbolID]map[string]bool)
 	if p.store == nil || graph == nil || graph.Bindings() == nil || parentResult == nil {
 		return
 	}
+	p.instanceContexts = p.instanceFieldContexts(graph, children, parentResult.NarrowSynth)
 	ordered := append([]nested.Child(nil), children...)
 	sort.SliceStable(ordered, func(i, j int) bool { return ordered[i].NF.Point < ordered[j].NF.Point })
 	for _, child := range ordered {
@@ -302,15 +307,35 @@ func (p *Processor) processNestedFunction(
 		return
 	}
 
-	// Detect constructor pattern and store instance fields.
+	// Constructors and methods contribute to the same instance field facts.
 	if result.Graph != nil && p.store != nil {
 		classSym, selfSym := nested.DetectConstructorPattern(result.Graph, graph, info.NF.Func, info.FuncDef)
-		if classSym != 0 && selfSym != 0 {
-			var synthFn func(ast.Expr, cfg.Point) typ.Type
-			if result.NarrowSynth != nil {
-				synthFn = result.NarrowSynth.TypeOf
+		isConstructor := classSym != 0
+		if classSym == 0 && !hasDeclaredMethodSelf(info) && p.methodSelfType(graph, info) != nil {
+			classSym = nested.MethodOwner(graph, info.NF.Func, info.FuncDef, info.NF.Point)
+			for _, slot := range result.Graph.ParamSlotsReadOnly() {
+				if slot.IsImplicitSelf || slot.Name == "self" {
+					selfSym = slot.Symbol
+					break
+				}
 			}
-			fields := nested.CollectConstructorFields(result.Graph, selfSym, synthFn)
+		}
+		if classSym != 0 && selfSym != 0 {
+			previous := p.store.LookupConstructorFields(classSym)
+			context := make(map[string]typ.Type)
+			for name, eligible := range p.instanceContexts[classSym] {
+				if eligible {
+					context[name] = previous[name]
+				}
+			}
+			fields := nested.CollectInstanceFields(result.Graph, selfSym, result.NarrowSynth, context)
+			if !isConstructor {
+				for name := range fields {
+					if !p.instanceContexts[classSym][name] {
+						delete(fields, name)
+					}
+				}
+			}
 			if len(fields) > 0 {
 				p.store.StoreConstructorFields(classSym, fields)
 			}
@@ -452,4 +477,91 @@ func (p *Processor) buildSiblingTypesForGroup(
 	}
 
 	return siblings.Build(buildCfg)
+}
+
+// instanceFieldContexts proves that an inferred receiver slot starts in fresh
+// constructor literals and every replacement is fresh or has a declared domain.
+// A shared unannotated source keeps the original constructor-only inference.
+func (p *Processor) instanceFieldContexts(parent *cfg.Graph, children []nested.Child, synth api.BaseSynth) map[cfg.SymbolID]map[string]bool {
+	result := make(map[cfg.SymbolID]map[string]bool)
+	freshInitializers := make(map[cfg.SymbolID]map[string]bool)
+	blocked := make(map[cfg.SymbolID]bool)
+	if p.graphs == nil {
+		return result
+	}
+	for _, child := range children {
+		g := p.graphs.GetOrBuildCFG(child.NF.Func)
+		if g == nil {
+			continue
+		}
+		class, self := nested.DetectConstructorPattern(g, parent, child.NF.Func, child.FuncDef)
+		constructor := class != 0
+		if !constructor {
+			info := &nested.FuncInfo{Child: child}
+			if hasDeclaredMethodSelf(info) || child.FuncDef == nil || !child.FuncDef.IsMethod {
+				continue
+			}
+			class = nested.MethodOwner(parent, child.NF.Func, child.FuncDef, child.NF.Point)
+			for _, slot := range g.ParamSlotsReadOnly() {
+				if slot.IsImplicitSelf {
+					self = slot.Symbol
+					break
+				}
+			}
+		}
+		if class == 0 || self == 0 {
+			continue
+		}
+		if result[class] == nil {
+			result[class] = make(map[string]bool)
+			freshInitializers[class] = make(map[string]bool)
+		}
+		declared := make(map[cfg.SymbolID]bool)
+		for _, slot := range g.ParamSlotsReadOnly() {
+			if slot.TypeAnnotation != nil && synth != nil {
+				declared[slot.Symbol] = unwrap.IsContainer(unwrap.Optional(synth.ResolveType(slot.TypeAnnotation, child.DefScope)))
+			}
+		}
+		g.EachAssign(func(_ cfg.Point, assignment *cfg.AssignInfo) {
+			assignment.EachTargetSource(func(_ int, target cfg.AssignTarget, source ast.Expr) {
+				if target.BaseSymbol != self {
+					return
+				}
+				if target.Kind == cfg.TargetField && len(target.FieldPath) > 1 {
+					return // A member write does not replace the containing slot.
+				}
+				if target.Kind == cfg.TargetIndex && len(flowpath.FromExprWithBindings(target.Base, nil, g.Bindings()).Segments) > 0 {
+					return
+				}
+				if target.Kind != cfg.TargetField || len(target.FieldPath) != 1 {
+					blocked[class] = true
+					return
+				}
+				name := target.FieldPath[0]
+				_, fresh := source.(*ast.TableExpr)
+				safe := fresh
+				if !constructor {
+					if ident, ok := source.(*ast.IdentExpr); ok && g.Bindings() != nil {
+						if sym, ok := g.Bindings().SymbolOf(ident); ok {
+							safe = declared[sym]
+						}
+					}
+				}
+				if existing, seen := result[class][name]; !seen {
+					result[class][name] = safe
+				} else {
+					result[class][name] = existing && safe
+				}
+				if constructor {
+					freshInitializers[class][name] = fresh
+				}
+			})
+		})
+	}
+	for class, fields := range result {
+		for name := range fields {
+			fields[name] = fields[name] && freshInitializers[class][name] && !blocked[class]
+		}
+	}
+	return result
 }

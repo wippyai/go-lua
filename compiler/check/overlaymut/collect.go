@@ -24,6 +24,21 @@ func CollectFieldAssignments(
 	synth func(ast.Expr, cfg.Point) typ.Type,
 	filterSyms map[cfg.SymbolID]bool,
 ) map[cfg.SymbolID]map[string]typ.Type {
+	return CollectFieldAssignmentsWithContext(graph, func(expr ast.Expr, point cfg.Point, _ cfg.SymbolID, _ string) typ.Type {
+		if synth == nil {
+			return nil
+		}
+		return synth(expr, point)
+	}, filterSyms)
+}
+
+// CollectFieldAssignmentsWithContext supplies the assigned slot to synthesis,
+// so fresh initializers can use its inferred type without changing alias domains.
+func CollectFieldAssignmentsWithContext(
+	graph *cfg.Graph,
+	synth func(ast.Expr, cfg.Point, cfg.SymbolID, string) typ.Type,
+	filterSyms map[cfg.SymbolID]bool,
+) map[cfg.SymbolID]map[string]typ.Type {
 	result := make(map[cfg.SymbolID]map[string]typ.Type)
 	if graph == nil {
 		return result
@@ -64,7 +79,7 @@ func CollectFieldAssignments(
 
 		var fieldType typ.Type
 		if write.source != nil && synth != nil {
-			fieldType = synth(write.source, write.point)
+			fieldType = synth(write.source, write.point, write.target.BaseSymbol, write.field)
 		}
 		record(write.target.BaseSymbol, write.field, fieldType)
 	})
@@ -79,7 +94,7 @@ func CollectFieldAssignments(
 		}
 		var fieldType typ.Type
 		if synth != nil {
-			fieldType = synth(info.FuncExpr, p)
+			fieldType = synth(info.FuncExpr, p, sym, name)
 		}
 		record(sym, name, fieldType)
 	})
