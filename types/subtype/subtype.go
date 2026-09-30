@@ -685,10 +685,17 @@ func (c *checker) checkRecord(sub, super *typ.Record, depth int) bool {
 		if (sf.Optional || unwrap.IsOptionalLike(sf.Type)) && unwrap.IsNilType(subField.Type) {
 			continue
 		}
+		// Lua removes nil-valued keys. Compare present value domains separately
+		// from presence, regardless of whether nilability is written T? or f?: T.
+		subValue, subNilable := typ.SplitNilableFieldType(subField.Type)
+		superValue, superNilable := typ.SplitNilableFieldType(sf.Type)
+		if !sf.Optional && !superNilable && (subField.Optional || subNilable) {
+			return false
+		}
 
 		if sf.Readonly {
 			// Readonly in super: covariant check is sound (no writes through supertype)
-			if !c.check(subField.Type, sf.Type, depth+1) {
+			if !c.check(subValue, superValue, depth+1) {
 				return false
 			}
 		} else {
@@ -698,12 +705,12 @@ func (c *checker) checkRecord(sub, super *typ.Record, depth int) bool {
 			}
 
 			// Forward check: sub field type must be subtype of super field type
-			if !c.check(subField.Type, sf.Type, depth+1) {
+			if !c.check(subValue, superValue, depth+1) {
 				return false
 			}
 			// Reverse check with widening: allow literal/refinement types to widen
 			// This is sound for fresh record literals where no narrower-typed alias exists
-			if !c.check(sf.Type, subField.Type, depth+1) && !c.canWidenTo(subField.Type, sf.Type, depth+1) {
+			if !c.check(superValue, subValue, depth+1) && !c.canWidenTo(subValue, superValue, depth+1) {
 				return false
 			}
 		}
