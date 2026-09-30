@@ -17,7 +17,8 @@ type structuredWrite struct {
 	source    ast.Expr
 }
 
-// indexStructuredWrites collects static field/index writes keyed by base symbol.
+// indexStructuredWrites collects static field/index writes keyed by base
+// symbol, including field function definitions (function T.f / T:f).
 func indexStructuredWrites(graph *cfg.Graph) map[cfg.SymbolID][]structuredWrite {
 	result := make(map[cfg.SymbolID][]structuredWrite)
 	if graph == nil {
@@ -36,8 +37,41 @@ func indexStructuredWrites(graph *cfg.Graph) map[cfg.SymbolID][]structuredWrite 
 			result[sym] = append(result[sym], write)
 		}
 	})
+	graph.EachFuncDef(func(p cfg.Point, info *cfg.FuncDefInfo) {
+		write, sym, ok := structuredWriteForFuncDef(graph, p, info)
+		if !ok {
+			return
+		}
+		result[sym] = append(result[sym], write)
+	})
 
 	return result
+}
+
+func structuredWriteForFuncDef(graph *cfg.Graph, p cfg.Point, info *cfg.FuncDefInfo) (structuredWrite, cfg.SymbolID, bool) {
+	if info == nil || info.FuncExpr == nil || (info.TargetKind != cfg.FuncDefField && info.TargetKind != cfg.FuncDefMethod) {
+		return structuredWrite{}, 0, false
+	}
+	sym := info.TargetPath.Symbol
+	segments := info.TargetPath.Segments
+	if sym == 0 || len(segments) == 0 {
+		return structuredWrite{}, 0, false
+	}
+	for _, seg := range segments {
+		if seg.Kind != constraint.SegmentField || seg.Name == "" {
+			return structuredWrite{}, 0, false
+		}
+	}
+	version := graph.VisibleVersion(p, sym)
+	if version.ID == 0 {
+		return structuredWrite{}, 0, false
+	}
+	return structuredWrite{
+		point:     p,
+		versionID: version.ID,
+		segments:  segments,
+		source:    info.FuncExpr,
+	}, sym, true
 }
 
 // enrichStructuredOverlayAtPoint applies dominating visible field writes for the
