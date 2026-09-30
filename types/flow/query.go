@@ -634,11 +634,6 @@ func (s *Solution) NarrowAscribedTypeAssuming(p cfg.Point, path constraint.Path,
 	if s == nil || t == nil || path.IsEmpty() {
 		return t
 	}
-	// A write on this exact path supplies current value evidence. Ancestor
-	// projections still describe the operand, rather than its asserted type.
-	if written, origin := s.typeAtWithOrigin(p, path); origin == pathTypeRecorded && written != nil && subtype.IsSubtype(written, t) {
-		t = written
-	}
 	return s.applyCondition(p, t, path, constraint.And(s.ConditionAt(p), extra), false)
 }
 

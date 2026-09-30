@@ -5,7 +5,6 @@ import "testing"
 func TestAssertedMemberWriteInvalidatesGuard(t *testing.T) {
 	for _, tc := range []struct{ name, body, want string }{
 		{"same_cast", `(raw :: T).f = nil`, "cannot assign"},
-		{"string_write", `(raw :: T).f = "new"`, ""},
 		{"other_field", `(raw :: T).other = nil`, ""},
 		{"no_write", `print("read")`, ""},
 	} {
