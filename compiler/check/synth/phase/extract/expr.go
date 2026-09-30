@@ -628,9 +628,10 @@ func (s *Synthesizer) synthLogicalOpWithNarrowing(ex *ast.LogicalOpExpr, p cfg.P
 	cond := constraint.TrueCondition()
 	if s.IsNarrowing() && narrower != nil && s.deps.Conditions != nil {
 		onTrue, onFalse := s.deps.Conditions(p, ex.Lhs)
-		if ex.Operator == "and" {
+		switch ex.Operator {
+		case "and":
 			cond = onTrue
-		} else if ex.Operator == "or" {
+		case "or":
 			cond = onFalse
 		}
 	}
