@@ -44,7 +44,7 @@ func (s *Synthesizer) SynthTableWithExpected(ex *ast.TableExpr, sc *scope.State,
 		return typ.NewRecord().SetOpen(true).SetComplete(true).Build()
 	}
 
-	if _, isUnion := unwrap.Alias(expected).(*typ.Union); isUnion {
+	if _, isUnion := unwrap.Optional(expected).(*typ.Union); isUnion {
 		if match := querycore.TryDiscriminatedUnionMember(ex, expected); match != nil {
 			return s.SynthTableWithExpected(ex, sc, recurse, match.Member)
 		}
@@ -182,11 +182,11 @@ func (s *Synthesizer) resolveExpectedFields(expected typ.Type) map[string]typ.Ty
 		return nil
 	}
 
-	if _, isUnion := unwrap.Alias(expected).(*typ.Union); !isUnion {
+	if _, isUnion := unwrap.Optional(expected).(*typ.Union); !isUnion {
 		return querycore.AllFieldTypesResolved(expected)
 	}
 
-	union := unwrap.Alias(expected).(*typ.Union)
+	union := unwrap.Optional(expected).(*typ.Union)
 	result := make(map[string]typ.Type)
 
 	fieldNames := make(map[string]struct{})
