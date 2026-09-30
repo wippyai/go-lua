@@ -776,6 +776,12 @@ func coversMemberFields(a, b typ.Type, visiting map[[2]typ.Type]bool) bool {
 	if isOpenTopRecordType(a) && typ.IsAny(b) {
 		return false
 	}
+	// An empty table estimate has no element evidence. Its assignability to
+	// a collection does not make it an inference refinement of that collection.
+	if unwrap.IsEmptyRecord(a) && isStructuredTableShape(b) {
+		return false
+	}
+
 	ar, aRecord := a.(*typ.Record)
 	br, bRecord := b.(*typ.Record)
 	if aRecord && bRecord {
@@ -792,6 +798,19 @@ func coversMemberFields(a, b typ.Type, visiting map[[2]typ.Type]bool) bool {
 			}
 		}
 	}
+	if bRecord && len(br.Fields) > 0 && !aRecord {
+		return false
+	}
+	if bf, ok := b.(*typ.Function); ok {
+		if af, ok := a.(*typ.Function); ok {
+			for idx, ret := range bf.Returns {
+				if idx >= len(af.Returns) || !coversFieldsAt(af.Returns[idx], ret, visiting) {
+					return false
+				}
+			}
+		}
+	}
+
 	aValue, aOK := containerValue(a)
 	bValue, bOK := containerValue(b)
 	if aOK && bOK {

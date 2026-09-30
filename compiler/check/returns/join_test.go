@@ -882,3 +882,23 @@ func TestMergeReturnSummary_IncomparableSnapshotsStay(t *testing.T) {
 		t.Fatalf("expected both snapshots, got %s", typ.FormatShort(got[0]))
 	}
 }
+
+func TestReturnRefinementKeepsCollectionElementEvidence(t *testing.T) {
+	empty := typ.NewRecord().SetComplete(true).Build()
+	element := typ.NewRecord().Field("id", typ.String).Build()
+	array := typ.NewArray(element)
+	nilMap := typ.NewRecord().SetOpen(true).MapComponent(typ.Integer, typ.Nil).Build()
+	for _, pair := range [][2]typ.Type{
+		{empty, array},
+		{typ.NewRecord().Field("children", empty).Build(), typ.NewRecord().Field("children", array).Build()},
+		{nilMap, typ.NewRecord().SetOpen(true).MapComponent(typ.Integer, typ.NewOptional(element)).Build()},
+		{typ.Func().Returns(nilMap).Build(), typ.Func().Returns(array).Build()},
+	} {
+		if ReturnTypesRefine([]typ.Type{pair[0]}, []typ.Type{pair[1]}) {
+			t.Errorf("vacant estimate must not refine collection evidence: %v", pair)
+		}
+	}
+	if !ReturnTypesRefine([]typ.Type{array}, []typ.Type{array}) {
+		t.Error("identical element evidence must still refine")
+	}
+}
