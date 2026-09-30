@@ -24,7 +24,7 @@ func (s *Synthesizer) synthExprWithUnionExpected(
 
 	if table, ok := expr.(*ast.TableExpr); ok {
 		if match := core.TryDiscriminatedUnionMember(table, expected); match != nil {
-			return s.synthTableWithExpectedAt(table, sc, p, recurse, match.Member)
+			return s.SynthTableWithExpected(table, sc, recurse, match.Member)
 		}
 	}
 
@@ -72,7 +72,7 @@ func (s *Synthesizer) synthExprWithExpectedSingle(
 ) typ.Type {
 	switch ex := expr.(type) {
 	case *ast.TableExpr:
-		return s.synthTableWithExpectedAt(ex, sc, p, recurse, expected)
+		return s.SynthTableWithExpected(ex, sc, recurse, expected)
 	case *ast.FunctionExpr:
 		var expectedFn *typ.Function
 		if expected != nil {
