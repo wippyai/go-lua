@@ -451,23 +451,23 @@ type DeclaredEnvConfig struct {
 	GlobalTypes     map[string]typ.Type
 	SiblingTypes    map[cfg.SymbolID]typ.Type
 	LiteralTypes    flow.DeclaredTypes
-	Callables Callables
+	Callables       Callables
 }
 
 // NarrowEnvConfig holds inputs for building a narrowing-phase Env.
 type NarrowEnvConfig struct {
-	Graph                 cfg.VersionedGraph
-	Bindings              *bind.BindingTable
-	DeclaredTypes         flow.DeclaredTypes
-	AnnotatedVars         map[cfg.SymbolID]bool
-	Solution              *flow.Solution
-	BaseScope             *scope.State
-	RefinementStore       RefinementStore
-	ModuleAliases         map[cfg.SymbolID]string
-	GlobalTypes           map[string]typ.Type
-	SiblingTypes          map[cfg.SymbolID]typ.Type
-	LiteralTypes          flow.DeclaredTypes
-	Callables Callables
+	Graph           cfg.VersionedGraph
+	Bindings        *bind.BindingTable
+	DeclaredTypes   flow.DeclaredTypes
+	AnnotatedVars   map[cfg.SymbolID]bool
+	Solution        *flow.Solution
+	BaseScope       *scope.State
+	RefinementStore RefinementStore
+	ModuleAliases   map[cfg.SymbolID]string
+	GlobalTypes     map[string]typ.Type
+	SiblingTypes    map[cfg.SymbolID]typ.Type
+	LiteralTypes    flow.DeclaredTypes
+	Callables       Callables
 }
 
 func newEnvBase(
@@ -534,13 +534,13 @@ func NewNarrowEnv(cfg NarrowEnvConfig) *NarrowEnvImpl {
 
 // ReturnInferenceEnvConfig holds inputs for return type inference.
 type ReturnInferenceEnvConfig struct {
-	Graph           cfg.VersionedGraph
-	Bindings        *bind.BindingTable
-	BaseScope       *scope.State
-	DeclaredTypes   flow.DeclaredTypes
-	GlobalTypes     map[string]typ.Type
-	ModuleAliases   map[cfg.SymbolID]string
-	Callables Callables
+	Graph         cfg.VersionedGraph
+	Bindings      *bind.BindingTable
+	BaseScope     *scope.State
+	DeclaredTypes flow.DeclaredTypes
+	GlobalTypes   map[string]typ.Type
+	ModuleAliases map[cfg.SymbolID]string
+	Callables     Callables
 }
 
 // NewReturnInferenceEnv creates a declared-phase Env for return inference.

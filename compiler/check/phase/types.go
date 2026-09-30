@@ -173,7 +173,7 @@ type LiteralInput struct {
 	PhaseEnv
 	Scope        ScopeOutput
 	SiblingTypes map[cfg.SymbolID]typ.Type
-	Callables api.Callables
+	Callables    api.Callables
 }
 
 // LiteralOutput contains outputs from the function literal synthesis phase.
@@ -191,7 +191,7 @@ type FlowExtractInput struct {
 	Scope        ScopeOutput
 	SiblingTypes map[cfg.SymbolID]typ.Type
 	LiteralTypes flow.DeclaredTypes
-	Callables api.Callables
+	Callables    api.Callables
 }
 
 // FlowExtractOutput contains outputs from the flow extraction phase.
@@ -228,7 +228,7 @@ type NarrowInput struct {
 	Solve        FlowSolveOutput
 	SiblingTypes map[cfg.SymbolID]typ.Type
 	LiteralTypes flow.DeclaredTypes
-	Callables api.Callables
+	Callables    api.Callables
 }
 
 // NarrowOutput contains outputs from the narrowing phase.
@@ -242,15 +242,15 @@ type NarrowOutput struct {
 // ContextBuilder constructs Env instances from phase outputs.
 // Centralizes the wiring that was previously duplicated across phase run files.
 type ContextBuilder struct {
-	env                   PhaseEnv
-	bindings              *bind.BindingTable
-	baseScope             *scope.State
-	declaredTypes         flow.DeclaredTypes
-	annotatedVars         map[cfg.SymbolID]bool
-	siblingTypes          map[cfg.SymbolID]typ.Type
-	literalTypes          flow.DeclaredTypes
-	solution              *flow.Solution
-	callables api.Callables
+	env           PhaseEnv
+	bindings      *bind.BindingTable
+	baseScope     *scope.State
+	declaredTypes flow.DeclaredTypes
+	annotatedVars map[cfg.SymbolID]bool
+	siblingTypes  map[cfg.SymbolID]typ.Type
+	literalTypes  flow.DeclaredTypes
+	solution      *flow.Solution
+	callables     api.Callables
 }
 
 // NewContextBuilder creates a builder pre-populated from the shared phase environment.
@@ -342,24 +342,24 @@ func (b *ContextBuilder) BuildDeclared() *api.DeclaredEnvImpl {
 		RefinementStore: b.env.RefinementStore,
 		ModuleAliases:   b.env.ModuleAliases,
 		GlobalTypes:     b.env.GlobalTypes,
-		Callables: b.callables,
+		Callables:       b.callables,
 	})
 }
 
 // BuildNarrow constructs a narrowing-phase Env from accumulated fields.
 func (b *ContextBuilder) BuildNarrow() *api.NarrowEnvImpl {
 	return api.NewNarrowEnv(api.NarrowEnvConfig{
-		Graph:                 b.env.Graph,
-		Bindings:              b.bindings,
-		DeclaredTypes:         b.declaredTypes,
-		SiblingTypes:          b.siblingTypes,
-		LiteralTypes:          b.literalTypes,
-		AnnotatedVars:         b.annotatedVars,
-		Solution:              b.solution,
-		BaseScope:             b.baseScope,
-		RefinementStore:       b.env.RefinementStore,
-		ModuleAliases:         b.env.ModuleAliases,
-		GlobalTypes:           b.env.GlobalTypes,
-		Callables: b.callables,
+		Graph:           b.env.Graph,
+		Bindings:        b.bindings,
+		DeclaredTypes:   b.declaredTypes,
+		SiblingTypes:    b.siblingTypes,
+		LiteralTypes:    b.literalTypes,
+		AnnotatedVars:   b.annotatedVars,
+		Solution:        b.solution,
+		BaseScope:       b.baseScope,
+		RefinementStore: b.env.RefinementStore,
+		ModuleAliases:   b.env.ModuleAliases,
+		GlobalTypes:     b.env.GlobalTypes,
+		Callables:       b.callables,
 	})
 }
