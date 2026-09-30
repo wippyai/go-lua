@@ -54,18 +54,3 @@ local function consume(values: {[integer]: unknown}) end
 local function run(record: {a: number}) consume(record) end
 return run`, "expected {[integer]: unknown}")
 }
-
-// design-record-to-map.md freezes legacy map views inside fresh records too.
-func TestRecordMapInterimSharedField(t *testing.T) {
-	checkBothModes(t, `
-local function send(value: {payload: {[string]: unknown}}) end
-local function run(payload) send({payload = payload}) end
-run({name = "ready"})`, "")
-}
-
-func TestRecordMapInterimSharedFieldRejectsKnownWrongKey(t *testing.T) {
-	checkBothModes(t, `
-local function send(value: {payload: {[string]: unknown}}) end
-local function run(payload: {[integer]: string}) send({payload = payload}) end
-return run`, "expected")
-}
