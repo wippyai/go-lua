@@ -806,6 +806,12 @@ func (s *Solution) mapElementTypeAt(p cfg.Point, src *MapElementSource) typ.Type
 	// reads. Container decomposition describes stored values, not absence.
 	if keyType != nil && s.resolver != nil {
 		if value, ok := s.resolver.Index(mapType, keyType); ok {
+			keyPath := constraint.Path{Root: src.KeyVar, Symbol: src.KeySymbol}
+			if src.KeySymbol != 0 && s.HasKeyOf(p, src.MapPath, keyPath) {
+				if present := narrow.RemoveNil(value); !typ.IsNever(present) {
+					value = present
+				}
+			}
 			return value
 		}
 	}
