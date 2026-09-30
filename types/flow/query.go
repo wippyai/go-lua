@@ -508,7 +508,10 @@ func (s *Solution) narrowedTypeUnder(p cfg.Point, path constraint.Path, conditio
 	if baseType == nil {
 		// A predicate carries evidence about its value even when a partial
 		// ancestor shape has no member to project for that path.
-		if condition.HasConstraints() {
+		// A missing scalar value is pending solver evidence, not a projected
+		// absent member. Narrowing it as unknown would invent nil on falsy
+		// loop edges before its phi operands become available.
+		if len(path.Segments) > 0 && condition.HasConstraints() {
 			if narrowed := s.applyCondition(p, typ.Unknown, path, condition, true); narrowed != nil && !typ.IsUnknown(narrowed) {
 				return s.refineExactLengthIndex(p, path, narrowed)
 			}
