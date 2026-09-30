@@ -478,6 +478,7 @@ func (s *Session) ExportManifest(modulePath string) *io.Manifest {
 	s.exportModuleCallWrites(manifest)
 	s.exportPossibleModuleCallWrites(manifest)
 	s.exportTruthyCallbackCalls(manifest)
+	manifest.ArgumentContracts = s.exportArgumentContracts()
 	return manifest
 }
 

@@ -40,12 +40,18 @@ type FunctionProto struct {
 	// Use types/io.EncodeManifest/DecodeManifest to work with this data.
 	// Stored on the root FunctionProto and propagated to nested functions.
 	TypeInfo []byte
+	// ArgumentInfo is the declaration-only contract for this specific callable.
+	// Unlike TypeInfo it is never propagated to child prototypes.
+	ArgumentInfo []byte
 
 	stringConstants []string
 
 	typeInfoOnce       sync.Once
 	typeBindings       []typeBinding
 	typeBindingsByName map[string]*LType
+	argumentOnce       sync.Once
+	argumentContract   *runtimeArgumentContract
+	argumentError      string
 }
 
 /* Upvalue {{{ */
