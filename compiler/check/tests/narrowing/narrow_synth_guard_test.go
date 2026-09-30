@@ -35,7 +35,7 @@ func TestHooksRequireNarrowSynth_ReturnHook(t *testing.T) {
 	graph := cfg.Build(fn)
 	baseScope := scope.New()
 
-	diags := hooks.CheckReturns(fn, graph, map[cfg.Point]*scope.State{}, baseScope, nil, nil, "test.lua")
+	diags := hooks.CheckReturns(fn, graph, map[cfg.Point]*scope.State{}, baseScope, nil, nil, nil, "test.lua")
 
 	if len(diags) != 0 {
 		t.Errorf("return hook should return empty diagnostics when declared synth is nil, got %d", len(diags))
