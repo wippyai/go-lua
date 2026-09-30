@@ -10,26 +10,29 @@ import (
 func TestExtraGateChannelWorkerKeepsWorkItemFields(t *testing.T) {
 	checkBothModes(t, `
 local channel = require("channel")
-local function consume(item: {chunk: string, index: integer}) end
-local function worker(work_ch, result_ch)
+local function consume(item: {chunk: string, index: integer, worker_id: integer}) end
+local function worker(worker_id, work_ch, result_ch)
  local work, ok = work_ch:receive()
  if not ok then return end
  local success, result = pcall(function()
-  return {chunk = work.chunk, index = work.index, error = nil}
+  return {chunk = work.chunk, index = work.index, error = nil, worker_id = worker_id}
  end)
  if success then
   consume(result)
   result_ch:send(result)
  else
-  result_ch:send({chunk = work.chunk, index = work.index, error = tostring(result)})
+  print(string.format("worker %d", worker_id))
+  result_ch:send({chunk = work.chunk, index = work.index, error = tostring(result), worker_id = worker_id})
  end
 end
 local function run(chunks: string[])
  local work_ch = channel.new(1)
  local result_ch = channel.new(1)
- local function spawn() worker(work_ch, result_ch) end
  for i = 1, #chunks do work_ch:send({index = i, chunk = chunks[i]}) end
- spawn()
+ for worker_id = 1, 2 do
+  local function spawn() worker(worker_id, work_ch, result_ch) end
+  spawn()
+ end
 end
 return run`, "", testutil.WithManifest("channel", testutil.ChannelManifest()))
 }
