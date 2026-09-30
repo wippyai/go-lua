@@ -712,7 +712,7 @@ func (c *checker) checkRecord(sub, super *typ.Record, depth int) bool {
 			}
 			// Reverse check with widening: allow literal/refinement types to widen
 			// This is sound for fresh record literals where no narrower-typed alias exists
-			if !c.checkInvariantSlot(subValue, superValue, depth+1) && !c.canWidenTo(subValue, superValue, depth+1) {
+			if !c.checkInvariantSlot(subValue, superValue, depth+1) && !c.canWidenTo(subValue, sf.Type, depth+1) {
 				return false
 			}
 		}
@@ -1030,7 +1030,7 @@ func (c *checker) canWidenRecordTo(narrow, wide *typ.Record, depth int) bool {
 		}
 		// Forward presence and value compatibility was checked by checkRecord.
 		// Apply its present-value rule to recursive mutable widening as well.
-		if !c.checkInvariantSlot(narrowValue, wideValue, depth+1) && !c.canWidenTo(narrowValue, wideValue, depth+1) {
+		if !c.checkInvariantSlot(narrowValue, wideValue, depth+1) && !c.canWidenTo(narrowValue, wf.Type, depth+1) {
 			return false
 		}
 	}
