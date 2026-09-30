@@ -423,7 +423,7 @@ func (s *Solution) carryForwardStructuredVersionFacts(p cfg.Point, targetPath co
 			}
 			pred := predBasePoints[i]
 			predPath := constraint.Path{Root: targetPath.Root, Symbol: targetPath.Symbol, Version: predBaseVersions[i]}
-			baseTypes = append(baseTypes, s.applyCondition(pred, t, predPath, s.conditionFromPredecessor(pred, p)))
+			baseTypes = append(baseTypes, s.applyCondition(pred, t, predPath, s.conditionFromPredecessor(pred, p), true))
 		}
 		if len(baseTypes) > 0 {
 			joinedBase := join.Types(baseTypes...)
@@ -2194,7 +2194,7 @@ func (s *Solution) phiOperandTypeAt(joinPoint cfg.Point, op cfg.PhiOperand, segm
 
 	edgeK := edgeKey{from: op.From, to: joinPoint}
 	if cond, ok := s.edgeConditions[edgeK]; ok && cond.HasConstraints() {
-		if narrowed := s.applyCondition(op.From, opType, path, cond); narrowed != nil {
+		if narrowed := s.applyCondition(op.From, opType, path, cond, true); narrowed != nil {
 			opType = narrowed
 		}
 	}

@@ -193,6 +193,10 @@ type FlowOps interface {
 	// operand establishes, as a branch is typed under its guard.
 	NarrowedTypeAssuming(p cfg.Point, path constraint.Path, extra constraint.Condition) typ.Type
 
+	// NarrowAscribedTypeAssuming applies flow conditions to an ascribed type.
+	// Assertions supply the read type while paths retain the value's identity.
+	NarrowAscribedTypeAssuming(p cfg.Point, path constraint.Path, t typ.Type, extra constraint.Condition) typ.Type
+
 	// HasKeyOfAssuming is HasKeyOf with extra holding at p as well.
 	HasKeyOfAssuming(p cfg.Point, tablePath, keyPath constraint.Path, extra constraint.Condition) bool
 }
