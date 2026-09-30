@@ -435,6 +435,12 @@ func JoinBranchOutcome(a, b Type) Type {
 		return Unknown
 	}
 
+	// A falsy outcome and a table outcome describe different runtime
+	// values. Soft element types do not erase the table alternative.
+	if a.Kind() == kind.Nil || b.Kind() == kind.Nil || TypeEquals(a, False) || TypeEquals(b, False) {
+		return NewUnion(a, b)
+	}
+
 	if IsSoft(a, SoftPlaceholderPolicy) && !IsSoft(b, SoftPlaceholderPolicy) && b.Kind() != kind.Nil {
 		return b
 	}

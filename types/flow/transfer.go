@@ -802,6 +802,14 @@ func (s *Solution) mapElementTypeAt(p cfg.Point, src *MapElementSource) typ.Type
 		return typ.Unknown
 	}
 
+	// A dynamic read uses the same key and presence rules as other index
+	// reads. Container decomposition describes stored values, not absence.
+	if keyType != nil && s.resolver != nil {
+		if value, ok := s.resolver.Index(mapType, keyType); ok {
+			return value
+		}
+	}
+
 	if valueType := s.inputs.Decomposer.ValueType(mapType); valueType != nil {
 		return valueType
 	}

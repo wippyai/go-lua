@@ -211,3 +211,15 @@ func TestJoinBranchOutcome_UnresolvedOperandStaysPending(t *testing.T) {
 		t.Fatalf("JoinBranchOutcome(unresolved, string) = %v, want union keeping unresolved", got)
 	}
 }
+
+func TestJoinBranchOutcome_FalsyAlternativeKeepsSoftTable(t *testing.T) {
+	value := NewMap(String, NewMap(String, Unknown))
+	for _, falsy := range []Type{False, Nil} {
+		want := NewUnion(falsy, value)
+		for _, operands := range [][2]Type{{falsy, value}, {value, falsy}} {
+			if got := JoinBranchOutcome(operands[0], operands[1]); !TypeEquals(got, want) {
+				t.Fatalf("JoinBranchOutcome(%v, %v) = %v, want %v", operands[0], operands[1], got, want)
+			}
+		}
+	}
+}
