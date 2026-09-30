@@ -2,6 +2,41 @@ package regression
 
 import "testing"
 
+func TestAssertedMemberWriteInvalidatesGuard(t *testing.T) {
+	for _, tc := range []struct{ name, body, want string }{
+		{"same_cast", `(raw :: T).f = nil`, "cannot assign"},
+		{"string_write", `(raw :: T).f = "new"`, ""},
+		{"other_field", `(raw :: T).other = nil`, ""},
+		{"no_write", `print("read")`, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			checkBothModes(t, `
+type T = {f: string?, other: string?}
+local function g(raw: unknown)
+ if (raw :: T).f then
+ `+tc.body+`
+ local s: string = (raw :: T).f
+ return s
+ end
+end
+return g`, tc.want)
+		})
+	}
+}
+
+func TestAssertedNestedMemberWriteInvalidatesGuard(t *testing.T) {
+	checkBothModes(t, `
+type T = {child: {f: string?}}
+local function g(raw: unknown)
+ if (raw :: T).child.f then
+  (raw :: T).child.f = nil
+  local s: string = (raw :: T).child.f
+  return s
+ end
+end
+return g`, "cannot assign")
+}
+
 func TestAssertedRecordMemberUsesDeclaredType(t *testing.T) {
 	checkBothModes(t, `
 type Blob = {bytes: string, digest: string}

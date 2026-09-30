@@ -615,7 +615,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 						Symbol: sym,
 					}
 				} else if target.Base != nil {
-					if bp := path.FromExprWithKeyTypes(target.Base, constResolver, bindings, keyTypeAt); !bp.IsEmpty() && bp.Symbol != 0 {
+					if bp := path.FromExprWithKeyTypesThroughCasts(target.Base, constResolver, bindings, keyTypeAt); !bp.IsEmpty() && bp.Symbol != 0 {
 						basePath = constraint.Path{
 							Root:     resolve.RootNameFromBindings(bindings, bp.Symbol, bp.Root),
 							Symbol:   bp.Symbol,
