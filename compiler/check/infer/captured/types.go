@@ -31,6 +31,9 @@ func Types(input ParentContext) map[cfg.SymbolID]typ.Type {
 	if nestedGraph == nil || nestedGraph.Bindings() == nil {
 		return nil
 	}
+	isAnnotated := func(sym cfg.SymbolID) bool {
+		return input.Facts != nil && input.Facts.IsAnnotated(sym) && nestedGraph.Bindings().TypeAnnotation(sym) != nil
+	}
 	// When synthesis runs inside the closure's own graph, its declarations
 	// already include the captures supplied by nested body checking.
 	if input.ParentGraph == nestedGraph {
@@ -62,7 +65,7 @@ func Types(input ParentContext) map[cfg.SymbolID]typ.Type {
 			if len(capturedSyms) > 0 {
 				capturedSet := make(map[cfg.SymbolID]bool, len(capturedSyms))
 				for _, sym := range capturedSyms {
-					if sym != 0 && classTypes[sym] == nil {
+					if sym != 0 && classTypes[sym] == nil && !isAnnotated(sym) {
 						capturedSet[sym] = true
 					}
 				}
@@ -134,7 +137,11 @@ func Types(input ParentContext) map[cfg.SymbolID]typ.Type {
 				continue
 			}
 			if t := capturedTypes[sym]; t != nil && input.Mutations != nil {
-				capturedTypes[sym] = nested.NormalizeCapturedTableType(t, input.Mutations.TableMutation(sym))
+				var declared typ.Type
+				if isAnnotated(sym) {
+					declared = input.Facts.DeclaredAt(input.Point, sym).Type
+				}
+				capturedTypes[sym] = nested.NormalizeCapturedTableType(t, input.Mutations.TableMutation(sym), declared)
 			}
 		}
 	}

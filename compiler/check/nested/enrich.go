@@ -11,6 +11,7 @@ import (
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 // CollectCapturedFieldAssignments scans a nested function's graph for field assignments
@@ -155,17 +156,28 @@ func NormalizeClassTableType(tableType typ.Type, mutation cfg.TableMutation) typ
 
 // NormalizeCapturedTableType widens the fields of a captured table that code
 // can change after the closure observes them, so the closure reads every value
-// such a field may hold. Stable fields keep their observed types.
-func NormalizeCapturedTableType(tableType typ.Type, mutation cfg.TableMutation) typ.Type {
+// such a field may hold. Declared slots bound mutable fields; stable fields
+// keep their observed types.
+func NormalizeCapturedTableType(tableType typ.Type, mutation cfg.TableMutation, declaredType typ.Type) typ.Type {
 	rec, ok := tableType.(*typ.Record)
 	if !ok {
 		return tableType
 	}
 	fields := append([]typ.Field(nil), rec.Fields...)
+	declared, _ := unwrap.Optional(declaredType).(*typ.Record)
 	changed := false
 	for i, f := range fields {
 		if mutation.FieldStable(f.Name) {
 			continue
+		}
+		if declared != nil {
+			if slot := declared.GetField(f.Name); slot != nil {
+				if !typ.TypeEquals(f.Type, slot.Type) || f.Optional != slot.Optional {
+					fields[i] = *slot
+					changed = true
+				}
+				continue
+			}
 		}
 		if widened := subtype.WidenForInference(f.Type); widened != f.Type {
 			fields[i].Type = widened

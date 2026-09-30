@@ -49,6 +49,8 @@ import (
 // BindingTable is the primary output of the binding phase and is consumed
 // by type checking and CFG construction phases.
 type BindingTable struct {
+	// typeAnnotations keeps declaration provenance across closure boundaries.
+	typeAnnotations map[cfg.SymbolID]ast.TypeExpr
 	// freshTablePaths records unannotated local table literals and nested
 	// literal tables, intersected across direct reassignments.
 	freshTablePaths map[cfg.SymbolID]map[string]bool
@@ -358,6 +360,29 @@ func (t *BindingTable) SetParamSymbols(fn *ast.FunctionExpr, syms []cfg.SymbolID
 		return
 	}
 	t.paramSymbols[fn] = syms
+	if fn.ParList != nil {
+		offset := len(syms) - len(fn.ParList.Names)
+		for i, annotation := range fn.ParList.Types {
+			if index := i + offset; index >= 0 && index < len(syms) {
+				t.setTypeAnnotation(syms[index], annotation)
+			}
+		}
+	}
+}
+
+// TypeAnnotation returns the explicit annotation at a symbol's declaration.
+func (t *BindingTable) TypeAnnotation(sym cfg.SymbolID) ast.TypeExpr {
+	return t.typeAnnotations[sym]
+}
+
+func (t *BindingTable) setTypeAnnotation(sym cfg.SymbolID, annotation ast.TypeExpr) {
+	if sym == 0 || annotation == nil {
+		return
+	}
+	if t.typeAnnotations == nil {
+		t.typeAnnotations = make(map[cfg.SymbolID]ast.TypeExpr)
+	}
+	t.typeAnnotations[sym] = annotation
 }
 
 // ParamSymbols returns the parameter symbols for a function in declaration order.
@@ -372,6 +397,11 @@ func (t *BindingTable) SetLocalSymbols(stmt *ast.LocalAssignStmt, syms []cfg.Sym
 		return
 	}
 	delete(t.localSymbolSingle, stmt)
+	for i, sym := range syms {
+		if i < len(stmt.Types) {
+			t.setTypeAnnotation(sym, stmt.Types[i])
+		}
+	}
 
 	switch len(syms) {
 	case 0:
@@ -394,6 +424,9 @@ func (t *BindingTable) SetLocalSymbol(stmt *ast.LocalAssignStmt, sym cfg.SymbolI
 		return
 	}
 	t.localSymbolSingle[stmt] = sym
+	if len(stmt.Types) > 0 {
+		t.setTypeAnnotation(sym, stmt.Types[0])
+	}
 	delete(t.localSymbolsMulti, stmt)
 }
 
