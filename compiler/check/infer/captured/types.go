@@ -117,7 +117,9 @@ func Types(input ParentContext) map[cfg.SymbolID]typ.Type {
 			if len(capturedSyms) > 0 {
 				capturedSet := make(map[cfg.SymbolID]bool, len(capturedSyms))
 				for _, sym := range capturedSyms {
-					if sym != 0 && classTypes[sym] == nil && !isAnnotated(sym) {
+					// Supplied capture values already incorporate their preceding writes.
+					// Aggregated writes also include non-dominating later assignments.
+					if sym != 0 && classTypes[sym] == nil && !isAnnotated(sym) && input.FallbackTypes[sym] == nil {
 						capturedSet[sym] = true
 					}
 				}
