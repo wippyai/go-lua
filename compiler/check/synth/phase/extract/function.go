@@ -112,6 +112,24 @@ func (s *Synthesizer) synthFunctionTypeWithCapturePoint(
 	if fn == nil {
 		return nil
 	}
+	// A synthesis overlay contains the caller's locals as well as captures.
+	// Only the closure's free variables can override its lexical environment.
+	if len(captureTypes) > 0 {
+		selected := make(map[cfg.SymbolID]typ.Type)
+		if graph := s.getOrBuildFunctionGraph(fn); graph != nil && graph.Bindings() != nil {
+			for _, sym := range graph.Bindings().CapturedSymbols(fn) {
+				// Recursion uses the owner's summary, not a snapshot of that
+				// same function embedded in its own environment.
+				if own, ok := graph.Bindings().FuncLitBySymbol(sym); ok && own == fn {
+					continue
+				}
+				if t := captureTypes[sym]; t != nil {
+					selected[sym] = t
+				}
+			}
+		}
+		captureTypes = selected
+	}
 	var owner api.FunctionFact
 	if ctx, ok := s.deps.CheckCtx.(interface{ Callables() api.Callables }); ok {
 		if pg, ok := s.deps.CheckCtx.Graph().(*cfg.Graph); ok && localFunctionSymbol(pg, fn) != 0 {
@@ -231,7 +249,10 @@ func (s *Synthesizer) synthFunctionTypeWithCapturePoint(
 // contextual signature. Only the literal discriminant comes from the owner;
 // every other parameter comes from the current synthesis context.
 func (s *Synthesizer) functionTypeWithOwnerOverloads(fn *ast.FunctionExpr, sc *scope.State) typ.Type {
-	general := s.FunctionType(fn, sc)
+	return s.withOwnerOverloads(fn, s.FunctionType(fn, sc))
+}
+
+func (s *Synthesizer) withOwnerOverloads(fn *ast.FunctionExpr, general *typ.Function) typ.Type {
 	if general == nil || s.deps.CheckCtx == nil {
 		return general
 	}

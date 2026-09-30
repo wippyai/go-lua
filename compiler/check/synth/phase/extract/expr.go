@@ -757,6 +757,9 @@ func (s *Synthesizer) synthExprWithSpec(expr ast.Expr, p cfg.Point, specTypes ap
 		}
 	}
 	sc := s.deps.ScopeAt(p)
+	if fn, ok := expr.(*ast.FunctionExpr); ok {
+		return s.withOwnerOverloads(fn, s.synthFunctionTypeWithCapturePoint(fn, sc, nil, 0, specTypes))
+	}
 	recurse := func(ex ast.Expr) typ.Type { return s.synthExprWithSpec(ex, p, specTypes) }
 	return s.synthExprCore(expr, sc, p, nil, recurse)
 }
@@ -771,7 +774,7 @@ func (s *Synthesizer) synthMultiWithSpec(expr ast.Expr, p cfg.Point, specTypes a
 				if recvIdent, ok := call.Receiver.(*ast.IdentExpr); ok {
 					if sym := s.LookupSymbol(recvIdent); sym != 0 {
 						if recvType, exists := specTypes[sym]; exists {
-							return s.SynthCallWithReceiverType(call, p, sc, recvType, recurse)
+							return s.synthMethodCall(call, p, sc, func() typ.Type { return recvType }, recurse, nil, specTypes)
 						}
 					}
 				}
