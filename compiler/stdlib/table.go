@@ -42,7 +42,7 @@ var tableMethods = typ.NewRecord().
 	Field("create", typ.Func().
 		Param("narray", typ.Integer).
 		OptParam("nhash", typ.Integer).
-		Returns(typ.NewRecord().SetComplete(true).Build()).
+		Returns(typ.NewRecord().Build()).
 		Build()).
 	Field("freeze", func() typ.Type {
 		tp := typ.NewTypeParam("T", nil)
