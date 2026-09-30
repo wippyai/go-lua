@@ -636,10 +636,34 @@ func (s *Solution) NarrowAscribedTypeAssuming(p cfg.Point, path constraint.Path,
 	}
 	// A write on this exact path supplies current value evidence. Ancestor
 	// projections still describe the operand, rather than its asserted type.
-	if written, origin := s.typeAtWithOrigin(p, path); origin == pathTypeRecorded && written != nil && subtype.IsSubtype(written, t) {
+	if written, origin := s.typeAtWithOrigin(p, path); origin == pathTypeRecorded && written != nil &&
+		subtype.IsSubtype(written, t) && s.ascribedWriteSurvivesCalls(p, path) {
 		t = written
 	}
 	return s.applyCondition(p, t, path, constraint.And(s.ConditionAt(p), extra), false)
+}
+
+// An escaped alias can change a recorded child value without redefining its
+// root. Reuse the call alias roots and SSA versions used by condition killing;
+// a subsequent write establishes a new version and supplies fresh evidence.
+func (s *Solution) ascribedWriteSurvivesCalls(p cfg.Point, path constraint.Path) bool {
+	if s.inputs == nil || s.inputs.Graph == nil || len(path.Segments) == 0 {
+		return true
+	}
+	root := constraint.Path{Root: path.Root, Symbol: path.Symbol, Version: path.Version}
+	key := s.pkResolver.KeyAt(p, root)
+	root.Version = 0
+	for point, aliases := range s.inputs.CallAliasRoots {
+		for _, alias := range aliases {
+			if alias.Symbol != path.Symbol || s.pkResolver.KeyAt(point, root) != key {
+				continue
+			}
+			if point == p && alias.BeforeOperands || flowPathExists(s.inputs.Graph, point, p) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // NarrowTypeBeforeAssuming narrows t, a type the caller holds for path on

@@ -453,3 +453,61 @@ func TestIsFalseLiteral(t *testing.T) {
 		})
 	}
 }
+
+func TestAscribedWriteEvidenceAcrossCalls(t *testing.T) {
+	for _, test := range []struct {
+		name           string
+		freshWrite     bool
+		callAtRead     bool
+		beforeOperands bool
+		wantOptional   bool
+	}{
+		{name: "earlier write can change", wantOptional: true},
+		{name: "later write is current", freshWrite: true},
+		{name: "read precedes call", callAtRead: true},
+		{name: "operand call precedes read", callAtRead: true, beforeOperands: true, wantOptional: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			c := cfg.New()
+			write := c.AddNode(cfg.NodeAssign, 0, "")
+			call := c.AddNode(cfg.NodeAssign, 0, "")
+			later := c.AddNode(cfg.NodeAssign, 0, "")
+			read := c.AddNode(cfg.NodeAssign, 0, "")
+			points := []cfg.Point{c.Entry(), write, call, later, read, c.Exit()}
+			for i := 1; i < len(points); i++ {
+				c.AddEdge(points[i-1], points[i], true)
+			}
+			g := newMockSSAGraph(c)
+			sym := setupSymbol(g, "raw", points)
+			for i, point := range points {
+				version := 1
+				if test.freshWrite && i >= 3 {
+					version = 2
+				}
+				setVersion(g, point, sym, cfg.Version{Root: "raw", Symbol: sym, ID: version})
+			}
+			root := constraint.Path{Root: "raw", Symbol: sym}
+			member := root.Field("f")
+			inputs := newInputs(g)
+			inputs.DeclaredTypes[sym] = typ.Unknown
+			inputs.Assignments = []UnifiedAssignment{{Point: write, TargetPath: member, Type: typ.String}}
+			if test.freshWrite {
+				inputs.Assignments = append(inputs.Assignments, UnifiedAssignment{Point: later, TargetPath: member, Type: typ.String})
+			}
+			if test.callAtRead {
+				call = read
+			}
+			inputs.CallAliasRoots = map[cfg.Point][]CallAliasRoot{call: {{Symbol: sym, BeforeOperands: test.beforeOperands}}}
+			s := Solve(inputs, testResolver())
+			// A versioned read must still resolve the version visible at the call.
+			member.Version = g.VisibleVersion(read, sym).ID
+			want := typ.Type(typ.String)
+			if test.wantOptional {
+				want = typ.NewOptional(typ.String)
+			}
+			if got := s.NarrowAscribedTypeAssuming(read, member, typ.NewOptional(typ.String), constraint.TrueCondition()); !typ.TypeEquals(got, want) {
+				t.Fatalf("member = %v, want %v", got, want)
+			}
+		})
+	}
+}
