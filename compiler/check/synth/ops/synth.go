@@ -21,7 +21,8 @@ type FieldDef struct {
 	Type     typ.Type
 	Optional bool
 	// Shared values retain their existing mutable slot domains.
-	Shared bool
+	Shared             bool
+	SharedAlternatives []typ.Type
 }
 
 // tableConstructor synthesizes type for table constructor {}.
