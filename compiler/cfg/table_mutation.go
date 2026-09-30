@@ -25,12 +25,27 @@ type TableMutation struct {
 	// Captured reports that a function nested in the analyzed graphs holds an
 	// alias as an upvalue.
 	Captured bool
+	// Decl is the graph that declares the table's symbol as a local or a
+	// parameter; nil when no analyzed graph declares it.
+	Decl *Graph
 }
 
 // FieldWriteSite is one static-key field write.
 type FieldWriteSite struct {
 	Graph *Graph
 	Point Point
+}
+
+// FieldStable reports whether field holds the value of its one definition for
+// as long as the table lives: the table neither escapes, nor takes
+// dynamic-key writes, nor is reassigned, and the field has at most one
+// definition, made in the declaring graph.
+func (m TableMutation) FieldStable(field string) bool {
+	if m.Escaped || m.Dynamic || m.Reassigned {
+		return false
+	}
+	sites := m.Writes[field]
+	return len(sites) == 0 || len(sites) == 1 && m.Decl != nil && sites[0].Graph == m.Decl
 }
 
 // FieldWritten reports whether any tracked write can change field.
@@ -53,6 +68,11 @@ func AnalyzeTableMutation(graphs []*Graph, sym basecfg.SymbolID, export *Graph) 
 		if bindings == nil {
 			continue
 		}
+		for _, param := range graph.ParamSymbols() {
+			if param == sym {
+				out.Decl = graph
+			}
+		}
 		graph.EachAssign(func(point Point, info *AssignInfo) {
 			if info == nil {
 				return
@@ -62,6 +82,9 @@ func AnalyzeTableMutation(graphs []*Graph, sym basecfg.SymbolID, export *Graph) 
 				case TargetIdent:
 					if !aliases[target.Symbol] {
 						break
+					}
+					if info.IsLocal && target.Symbol == sym {
+						out.Decl = graph
 					}
 					if !info.IsLocal {
 						out.Reassigned = true

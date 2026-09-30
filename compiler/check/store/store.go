@@ -36,7 +36,7 @@ type SessionStore struct {
 	// GraphParentHash records the parent scope hash for each graph ID.
 	GraphParentHash     map[uint64]uint64
 	classSelfIdentities map[classSelfKey]*typ.Recursive
-	classStableFields   map[classSelfKey]map[string]bool
+	tableMutations      map[cfg.SymbolID]cfg.TableMutation
 	// classSnapshots holds the snapshot each class identity is bound to in
 	// the current fixpoint round.
 	classSnapshots map[uint64]*typ.Recursive
@@ -287,7 +287,7 @@ func (s *SessionStore) bindClass(graph *cfg.Graph, at cfg.Point, sym cfg.SymbolI
 	if receiver {
 		body = typ.PartialView(nested.NormalizeMethodSelfType(body))
 	} else {
-		body = nested.NormalizeClassTableType(body, s.stableClassFields(graph, sym))
+		body = nested.NormalizeClassTableType(body, s.TableMutation(sym))
 	}
 	if typ.IsAny(body) || typ.IsUnknown(body) {
 		return body
@@ -317,12 +317,11 @@ func (s *SessionStore) bindClass(graph *cfg.Graph, at cfg.Point, sym cfg.SymbolI
 	return snapshot
 }
 
-// stableClassFields caches nested.StableClassFields for the class table sym
-// declared in graph. The module's graphs are fixed once registered.
-func (s *SessionStore) stableClassFields(graph *cfg.Graph, sym cfg.SymbolID) map[string]bool {
-	key := classSelfKey{graphID: graph.ID(), symbol: sym}
-	if fields, ok := s.classStableFields[key]; ok {
-		return fields
+// TableMutation returns the module-wide mutation analysis of the table held
+// by sym. The module's graphs are fixed once registered, so it is computed once.
+func (s *SessionStore) TableMutation(sym cfg.SymbolID) cfg.TableMutation {
+	if mutation, ok := s.tableMutations[sym]; ok {
+		return mutation
 	}
 	ids := make([]uint64, 0, len(s.Module.Graphs))
 	for id := range s.Module.Graphs {
@@ -338,12 +337,12 @@ func (s *SessionStore) stableClassFields(graph *cfg.Graph, sym cfg.SymbolID) map
 			export = g
 		}
 	}
-	fields := nested.StableClassFields(graphs, graph, export, sym)
-	if s.classStableFields == nil {
-		s.classStableFields = make(map[classSelfKey]map[string]bool)
+	mutation := cfg.AnalyzeTableMutation(graphs, sym, export)
+	if s.tableMutations == nil {
+		s.tableMutations = make(map[cfg.SymbolID]cfg.TableMutation)
 	}
-	s.classStableFields[key] = fields
-	return fields
+	s.tableMutations[sym] = mutation
+	return mutation
 }
 
 // directSelfFields finds fields definitely assigned the table itself before

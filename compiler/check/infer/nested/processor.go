@@ -348,6 +348,10 @@ func (p *Processor) processNestedFunction(
 					capturedTypes = make(map[cfg.SymbolID]typ.Type)
 				}
 				capturedTypes[sym] = bound
+				continue
+			}
+			if t := capturedTypes[sym]; t != nil && p.store != nil {
+				capturedTypes[sym] = nested.NormalizeCapturedTableType(t, p.store.TableMutation(sym))
 			}
 		}
 	}

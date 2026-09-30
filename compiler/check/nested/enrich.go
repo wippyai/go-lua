@@ -125,32 +125,14 @@ func NormalizeMethodSelfType(selfType typ.Type) typ.Type {
 	return subtype.WidenForInference(selfType)
 }
 
-// StableClassFields lists the fields of class table sym that hold the value of
-// their one definition in decl for the whole module: the table neither escapes,
-// nor takes dynamic-key writes, nor is reassigned, and no other definition of
-// the field exists in graphs. Returns of export publish the table.
-func StableClassFields(graphs []*cfg.Graph, decl, export *cfg.Graph, sym cfg.SymbolID) map[string]bool {
-	mutation := cfg.AnalyzeTableMutation(graphs, sym, export)
-	if mutation.Escaped || mutation.Dynamic || mutation.Reassigned {
-		return nil
-	}
-	stable := make(map[string]bool)
-	for name, sites := range mutation.Writes {
-		if len(sites) == 1 && sites[0].Graph == decl {
-			stable[name] = true
-		}
-	}
-	return stable
-}
-
 // NormalizeClassTableType widens the class table type as NormalizeMethodSelfType
 // does, except that a stable field keeps its own literal type. Literals nested
 // inside a field value stay widened because references to that value are not
 // tracked.
-func NormalizeClassTableType(tableType typ.Type, stable map[string]bool) typ.Type {
+func NormalizeClassTableType(tableType typ.Type, mutation cfg.TableMutation) typ.Type {
 	widened := NormalizeMethodSelfType(tableType)
 	rec, ok := tableType.(*typ.Record)
-	if !ok || len(stable) == 0 {
+	if !ok {
 		return widened
 	}
 	wideRec, ok := widened.(*typ.Record)
@@ -160,7 +142,7 @@ func NormalizeClassTableType(tableType typ.Type, stable map[string]bool) typ.Typ
 	fields := append([]typ.Field(nil), wideRec.Fields...)
 	kept := false
 	for i, f := range rec.Fields {
-		if stable[f.Name] && fields[i].Name == f.Name && typ.TypeEquals(fields[i].Type, subtype.Widen(f.Type)) {
+		if mutation.FieldStable(f.Name) && fields[i].Name == f.Name && typ.TypeEquals(fields[i].Type, subtype.Widen(f.Type)) {
 			fields[i].Type = f.Type
 			kept = true
 		}
@@ -169,6 +151,31 @@ func NormalizeClassTableType(tableType typ.Type, stable map[string]bool) typ.Typ
 		return widened
 	}
 	return wideRec.WithChildren(fields, wideRec.Metatable, wideRec.MapKey, wideRec.MapValue)
+}
+
+// NormalizeCapturedTableType widens the fields of a captured table that code
+// can change after the closure observes them, so the closure reads every value
+// such a field may hold. Stable fields keep their observed types.
+func NormalizeCapturedTableType(tableType typ.Type, mutation cfg.TableMutation) typ.Type {
+	rec, ok := tableType.(*typ.Record)
+	if !ok {
+		return tableType
+	}
+	fields := append([]typ.Field(nil), rec.Fields...)
+	changed := false
+	for i, f := range fields {
+		if mutation.FieldStable(f.Name) {
+			continue
+		}
+		if widened := subtype.WidenForInference(f.Type); widened != f.Type {
+			fields[i].Type = widened
+			changed = true
+		}
+	}
+	if !changed {
+		return tableType
+	}
+	return rec.WithChildren(fields, rec.Metatable, rec.MapKey, rec.MapValue)
 }
 
 func mergeFieldsIntoSelfType(selfType typ.Type, fields map[string]typ.Type) typ.Type {
