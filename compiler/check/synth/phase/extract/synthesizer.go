@@ -267,7 +267,7 @@ func (s *Synthesizer) synthExprCore(expr ast.Expr, sc *scope.State, p cfg.Point,
 		return s.functionTypeWithOwnerOverloads(ex, sc)
 	case *ast.LogicalOpExpr:
 		if s.IsNarrowing() && narrower != nil {
-			return s.synthLogicalOpWithNarrowing(ex, p, narrower, recurse)
+			return s.synthLogicalOpWithNarrowing(ex, p, narrower, recurse, nil)
 		}
 		return s.synthLogicalOpCore(ex, recurse)
 	case *ast.RelationalOpExpr:
@@ -521,6 +521,9 @@ func (s *Synthesizer) synthComma3(sc *scope.State) typ.Type {
 
 // SynthExprWithExpectedCore synthesizes expression with expected type context.
 func (s *Synthesizer) SynthExprWithExpectedCore(expr ast.Expr, sc *scope.State, p cfg.Point, recurse ExprSynth, expected typ.Type) typ.Type {
+	if logical, ok := expr.(*ast.LogicalOpExpr); ok {
+		return s.synthLogicalOpWithNarrowing(logical, p, s.deps.Flow, recurse, expected)
+	}
 	if _, ok := unwrap.Alias(expected).(*typ.Union); ok {
 		return s.synthExprWithUnionExpected(expr, sc, p, recurse, expected)
 	}

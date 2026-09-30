@@ -83,7 +83,7 @@ func (s *Synthesizer) SynthTableWithExpected(ex *ast.TableExpr, sc *scope.State,
 			if ft == nil {
 				ft = typ.Unknown
 			}
-			fieldDefs = append(fieldDefs, ops.FieldDef{Name: k.Value, Type: ft})
+			fieldDefs = append(fieldDefs, ops.FieldDef{Name: k.Value, Type: ft, Shared: phasecore.SharedTableValue(field.Value, ft)})
 			if inner, optional := typ.SplitNilableFieldType(ft); optional {
 				builder.OptField(k.Value, inner)
 			} else {
@@ -95,7 +95,7 @@ func (s *Synthesizer) SynthTableWithExpected(ex *ast.TableExpr, sc *scope.State,
 			if ft == nil {
 				ft = typ.Unknown
 			}
-			fieldDefs = append(fieldDefs, ops.FieldDef{Name: k.Value, Type: ft})
+			fieldDefs = append(fieldDefs, ops.FieldDef{Name: k.Value, Type: ft, Shared: phasecore.SharedTableValue(field.Value, ft)})
 			if inner, optional := typ.SplitNilableFieldType(ft); optional {
 				builder.OptField(k.Value, inner)
 			} else {
@@ -164,7 +164,16 @@ func (s *Synthesizer) synthFieldValueWithExpected(value ast.Expr, sc *scope.Stat
 		}
 		return s.SynthFunctionTypeWithExpected(fn, sc, expectedFn)
 	}
-	return recurse(value)
+	inferred := recurse(value)
+	// Literal values have no narrower mutable alias. Context supplies their
+	// slot domain, including finite literal unions.
+	switch value.(type) {
+	case *ast.StringExpr, *ast.NumberExpr, *ast.TrueExpr, *ast.FalseExpr, *ast.NilExpr:
+		if expected != nil && s.isAssignable(inferred, expected) {
+			return expected
+		}
+	}
+	return inferred
 }
 
 // resolveExpectedFields extracts expected field types from the expected type.

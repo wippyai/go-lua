@@ -316,14 +316,14 @@ func checkTableAsRecord(mode subtype.Assignability, fields []FieldDef, elems []t
 	}
 
 	// Build a map of provided fields
-	provided := make(map[string]typ.Type)
+	provided := make(map[string]FieldDef)
 	for _, f := range fields {
-		provided[f.Name] = f.Type
+		provided[f.Name] = f
 	}
 
 	// Check each expected field
 	for _, ef := range expected.Fields {
-		pf, ok := provided[ef.Name]
+		field, ok := provided[ef.Name]
 		if !ok {
 			// An absent key reads as nil, so a field whose type admits nil
 			// may be omitted.
@@ -338,7 +338,16 @@ func checkTableAsRecord(mode subtype.Assignability, fields []FieldDef, elems []t
 			continue
 		}
 
-		if !mode.Assignable(pf, ef.Type) {
+		pf := field.Type
+		compatible := mode.Assignable(pf, ef.Type)
+		if compatible && field.Shared && !ef.Readonly {
+			// Reuse record slot compatibility for values that have an existing
+			// identity. A fresh outer table does not make its children fresh.
+			sub := typ.NewRecord().AddField(typ.Field{Name: ef.Name, Type: pf, Optional: field.Optional}).Build()
+			super := typ.NewRecord().AddField(ef).Build()
+			compatible = mode.Assignable(sub, super)
+		}
+		if !compatible {
 			errors = append(errors, CheckError{
 				Message:  "field type mismatch",
 				Expected: ef.Type,
