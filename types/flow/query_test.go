@@ -154,6 +154,41 @@ func TestBaseTypeAt_NoSegments(t *testing.T) {
 	}
 }
 
+func TestNarrowAscribedTypeAssumingKeepsMemberDomain(t *testing.T) {
+	c := cfg.New()
+	branch := c.AddNode(cfg.NodeBranch, 0, "")
+	thenNode := c.AddNode(cfg.NodeAssign, 0, "")
+	c.AddEdge(c.Entry(), branch, true)
+	c.AddEdge(branch, thenNode, true)
+	c.AddEdge(thenNode, c.Exit(), true)
+	g := newMockSSAGraph(c)
+	points := []cfg.Point{c.Entry(), branch, thenNode}
+	sym := setupSymbol(g, "module", points)
+	for _, point := range points {
+		setVersion(g, point, sym, cfg.Version{Root: "module", Symbol: sym, ID: 1})
+	}
+	root := constraint.Path{Root: "module", Symbol: sym}
+	member := root.Field("invoke")
+	fn := typ.Func().Returns(typ.Boolean).Build()
+	inputs := newInputs(g)
+	inputs.DeclaredTypes[sym] = typ.NewOptional(typ.NewRecord().OptField("invoke", fn).SetDeclared(true).Build())
+	inputs.EdgeConditions = []EdgeCondition{{
+		From: branch, To: thenNode,
+		Condition: constraint.FromConstraints(constraint.Truthy{Path: root}),
+	}}
+	s := Solve(inputs, testResolver())
+	if got := s.NarrowedTypeAt(thenNode, member); !typ.TypeEquals(got, typ.NewOptional(fn)) {
+		t.Fatalf("solution member = %v, want optional function", got)
+	}
+	if got := s.NarrowAscribedTypeAssuming(thenNode, member, typ.Any, constraint.TrueCondition()); !typ.IsAny(got) {
+		t.Fatalf("supplied member = %v, want any", got)
+	}
+	guard := constraint.FromConstraints(constraint.NotNil{Path: member})
+	if got := s.NarrowAscribedTypeAssuming(thenNode, member, typ.NewOptional(fn), guard); !typ.TypeEquals(got, fn) {
+		t.Fatalf("guarded supplied member = %v, want function", got)
+	}
+}
+
 func TestBaseTypeAt_WithSegments_ExplicitPreferred(t *testing.T) {
 	c := cfg.New()
 	g := newMockSSAGraph(c)

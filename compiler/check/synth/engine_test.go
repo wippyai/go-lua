@@ -105,6 +105,10 @@ func (m mockFlowOps) NarrowedTypeAssuming(p cfg.Point, path constraint.Path, _ c
 	return m.NarrowedTypeAt(p, path)
 }
 
+func (m mockFlowOps) NarrowAscribedTypeAssuming(_ cfg.Point, _ constraint.Path, t typ.Type, _ constraint.Condition) typ.Type {
+	return t
+}
+
 func (m mockFlowOps) HasKeyOfAssuming(cfg.Point, constraint.Path, constraint.Path, constraint.Condition) bool {
 	return false
 }

@@ -74,11 +74,13 @@ func (s *Synthesizer) synthAttrGetCore(ex *ast.AttrGetExpr, p cfg.Point, sc *sco
 	if narrower != nil && s.deps.Paths != nil {
 		path := s.deps.Paths(p, ex, sc, recurse)
 		if !path.IsEmpty() {
+			if attributePathHasCast(ex) {
+				// Project the asserted type before applying guards on the same value.
+				projected := s.synthAttrGetCore(ex, p, sc, nil, recurse)
+				return narrower.NarrowAscribedTypeAssuming(p, path, projected, constraint.TrueCondition())
+			}
 			narrowed := narrower.NarrowedTypeAt(p, path)
 			if narrowed != nil {
-				if _, cast := ex.Object.(*ast.CastExpr); cast && typ.IsAny(unwrap.Alias(objType)) && querycore.AssignabilityOf(s.deps.Ctx) != subtype.Strict {
-					goto skipNarrowedAttr
-				}
 				if specialized := s.stableLocalFunctionValueType(ex, p, sc, narrowed, nil); specialized != nil {
 					return specialized
 				}
@@ -229,6 +231,20 @@ skipNarrowedAttr:
 	}
 
 	return typ.Unknown
+}
+
+// attributePathHasCast reports an assertion in an attribute's object chain.
+func attributePathHasCast(expr ast.Expr) bool {
+	for {
+		switch ex := expr.(type) {
+		case *ast.CastExpr:
+			return true
+		case *ast.AttrGetExpr:
+			expr = ex.Object
+		default:
+			return false
+		}
+	}
 }
 
 // A writable imported field cannot remain a singleton after a write in the
@@ -562,6 +578,10 @@ func (a *assumingFlowOps) NarrowedTypeAt(p cfg.Point, path constraint.Path) typ.
 
 func (a *assumingFlowOps) NarrowedTypeAssuming(p cfg.Point, path constraint.Path, extra constraint.Condition) typ.Type {
 	return a.inner.NarrowedTypeAssuming(p, path, constraint.And(a.extra, extra))
+}
+
+func (a *assumingFlowOps) NarrowAscribedTypeAssuming(p cfg.Point, path constraint.Path, t typ.Type, extra constraint.Condition) typ.Type {
+	return a.inner.NarrowAscribedTypeAssuming(p, path, t, constraint.And(a.extra, extra))
 }
 
 func (a *assumingFlowOps) BoundsAt(p cfg.Point, name string) (int64, int64, bool) {
