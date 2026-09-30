@@ -774,9 +774,9 @@ func (s *Solution) mapElementTypeAt(p cfg.Point, src *MapElementSource) typ.Type
 	if mapType == nil {
 		return nil
 	}
-	// A dynamic key may reach an unlisted value in an incomplete record.
+	// A dynamic key may reach an unlisted value in an open or incomplete record.
 	// Decomposing only its listed fields would give an unsoundly narrow result.
-	if record, ok := unwrap.Alias(mapType).(*typ.Record); ok && !record.Complete && !record.HasMapComponent() {
+	if record, ok := unwrap.Alias(mapType).(*typ.Record); ok && (record.Open || !record.Complete) && !record.HasMapComponent() {
 		return typ.Unknown
 	}
 
