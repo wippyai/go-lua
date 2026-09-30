@@ -40,7 +40,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/diag"
-	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -57,7 +56,6 @@ func CheckReturns(
 	baseScope *scope.State,
 	declared api.Synth,
 	narrowView api.BaseSynth,
-	flowSolution *flow.Solution,
 	sourceName string,
 ) []diag.Diagnostic {
 	if fn == nil || graph == nil {
@@ -132,8 +130,7 @@ func CheckReturns(
 	}
 
 	graph.EachReturn(func(p cfg.Point, info *cfg.ReturnInfo) {
-		// Reuse solved reachability: dead exits have no flow value to validate.
-		if info == nil || flowSolution.IsPointDead(p) {
+		if info == nil {
 			return
 		}
 		if len(info.Exprs) == 0 {

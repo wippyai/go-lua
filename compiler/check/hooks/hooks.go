@@ -73,7 +73,7 @@ func WithReturn() check.Option {
 			return nil
 		}
 		narrowView := result.NarrowSynth.Narrow()
-		return CheckReturns(fn, result.Graph, result.Scopes, result.BaseScope, result.NarrowSynth, narrowView, result.FlowSolution, sess.SourceName)
+		return CheckReturns(fn, result.Graph, result.Scopes, result.BaseScope, result.NarrowSynth, narrowView, sess.SourceName)
 	})
 }
 
