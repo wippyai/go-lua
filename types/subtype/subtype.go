@@ -935,14 +935,13 @@ func (c *checker) canWidenTo(narrow, wide typ.Type, depth int) bool {
 			c.check(subRec, tableMap, depth+1) {
 			return true
 		}
-		// An empty table literal is represented by an open record until it
-		// receives writes. It can initialize an unknown-valued collection:
-		// there are no current elements to violate the contextual shape.
-		if len(subRec.Fields) == 0 && !subRec.HasMapComponent() {
-			if array, ok := wide.(*typ.Array); ok && typ.IsUnknown(array.Element) {
+		// An empty table literal has no present elements. It can initialize
+		// any collection shape that its forward subtype check accepts.
+		if len(subRec.Fields) == 0 && !subRec.HasMapComponent() && subRec.Complete {
+			if _, ok := wide.(*typ.Array); ok {
 				return true
 			}
-			if tableMap, ok := wide.(*typ.Map); ok && typ.IsUnknown(tableMap.Value) {
+			if _, ok := wide.(*typ.Map); ok {
 				return true
 			}
 		}
