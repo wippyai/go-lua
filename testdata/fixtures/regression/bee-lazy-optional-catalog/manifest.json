@@ -1,0 +1,1 @@
+{"description": "bee.gov:activation_profile_decoder: a lazily initialized optional catalog is present after its guarded initialization; the decoded value over an unknown-typed local alias keeps a final type", "files": ["main.lua"], "check": {"errors": 0}}

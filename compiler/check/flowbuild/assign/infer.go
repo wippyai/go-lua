@@ -639,7 +639,9 @@ func collectInferredTypes(
 							assignedType = wrappedSynth(source, p)
 						}
 						assignedType = resolve.Ref(assignedType, sc)
-						if typ.IsAbsentOrUnknown(assignedType) {
+						// Unknown is a converged type; only a pending value waits
+						// for another round.
+						if assignedType == nil || typ.IsUnresolved(assignedType) {
 							continue
 						}
 						old := inferred[target.Symbol]
