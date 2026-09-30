@@ -80,3 +80,57 @@ func TestNestedIndexedFieldWriteKeepsDeclaredElement(t *testing.T) {
 	`, "to integer")
 	})
 }
+
+// A table literal may omit a field whose declared type admits nil: an absent
+// key reads as nil. The literal then takes the expected record type.
+func TestTableLiteralOmitsNilAdmittingField(t *testing.T) {
+	t.Run("bee_owner_stop_call", func(t *testing.T) {
+		checkBothModes(t, `
+		type OwnerRef = {node_id: string, service_id: string, resource_ref: string?}
+		type Call = {protocol_revision: string, request_id: string, idempotency_key: string, deadline: string?, owner_ref: OwnerRef, target: {operation_ref: string?, interface_ref: string?}, input: {[string]: unknown}}
+		local types = {REVISION = "bee.hive@1"}
+		local owner_stop = {SERVICE = "bee.hive.owner", STOP = "bee.hive.owner:stop"}
+		function owner_stop.decode(call: Call): boolean return true end
+		local test = {}
+		function test.it(name: string, run: () -> ()) run() end
+		local function call(input: {[string]: unknown}, operation: string?, owner: OwnerRef?): Call
+			return {protocol_revision = types.REVISION, request_id = "request-1", idempotency_key = "key-1", owner_ref = owner or {node_id = "owner-node", service_id = owner_stop.SERVICE},
+				target = {operation_ref = operation or owner_stop.STOP}, input = input}
+		end
+		local function run(): ()
+			test.it("decode", function()
+				owner_stop.decode(call({alone = true}))
+				owner_stop.decode(call({alone = false, force = true}))
+			end)
+		end
+		return run
+	`, "")
+	})
+	t.Run("literal_union_field", func(t *testing.T) {
+		checkBothModes(t, `
+		type Call = {phase: "a" | "b", deadline: string?}
+		local function make(): Call
+			return {phase = "a"}
+		end
+		return make
+	`, "")
+	})
+	t.Run("required_field_missing", func(t *testing.T) {
+		checkBothModes(t, `
+		type Call = {phase: "a" | "b", deadline: string}
+		local function make(): Call
+			return {phase = "a"}
+		end
+		return make
+	`, "cannot return")
+	})
+	t.Run("nil_admitting_field_wrong_value", func(t *testing.T) {
+		checkBothModes(t, `
+		type Call = {phase: "a" | "b", deadline: string?}
+		local function make(): Call
+			return {phase = "a", deadline = 5}
+		end
+		return make
+	`, "cannot return")
+	})
+}
