@@ -1383,10 +1383,10 @@ func maybeWidenTypeForConvergence(t typ.Type) typ.Type {
 	if t == nil {
 		return nil
 	}
-	if !hasHigherOrderGrowthRisk(t) {
-		return t
+	if hasHigherOrderGrowthRisk(t) {
+		t = subtype.WidenForInference(t)
 	}
-	return foldSelfRecursiveRecords(subtype.WidenForInference(t))
+	return foldSelfRecursiveRecords(t)
 }
 
 // selfRecursiveRecordName names the recursive types produced by
