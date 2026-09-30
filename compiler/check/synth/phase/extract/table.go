@@ -2,6 +2,7 @@ package extract
 
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	phasecore "github.com/wippyai/go-lua/compiler/check/synth/phase/core"
@@ -36,6 +37,10 @@ func (s *Synthesizer) SynthTableCore(ex *ast.TableExpr, sc *scope.State, recurse
 //
 // Empty tables return an open record (can have any additional fields assigned).
 func (s *Synthesizer) SynthTableWithExpected(ex *ast.TableExpr, sc *scope.State, recurse ExprSynth, expected typ.Type) typ.Type {
+	return s.synthTableWithExpectedAt(ex, sc, 0, recurse, expected)
+}
+
+func (s *Synthesizer) synthTableWithExpectedAt(ex *ast.TableExpr, sc *scope.State, p cfg.Point, recurse ExprSynth, expected typ.Type) typ.Type {
 	if len(ex.Fields) == 0 {
 		if expected != nil && !unwrap.Alias(expected).Kind().IsPlaceholder() &&
 			len(ops.CheckTable(querycore.AssignabilityOf(s.deps.Ctx), nil, nil, expected).Errors) == 0 {
@@ -46,7 +51,7 @@ func (s *Synthesizer) SynthTableWithExpected(ex *ast.TableExpr, sc *scope.State,
 
 	if _, isUnion := unwrap.Alias(expected).(*typ.Union); isUnion {
 		if match := querycore.TryDiscriminatedUnionMember(ex, expected); match != nil {
-			return s.SynthTableWithExpected(ex, sc, recurse, match.Member)
+			return s.synthTableWithExpectedAt(ex, sc, p, recurse, match.Member)
 		}
 	}
 
@@ -69,7 +74,7 @@ func (s *Synthesizer) SynthTableWithExpected(ex *ast.TableExpr, sc *scope.State,
 				hasVararg = true
 			}
 			elemExpected := ops.ExpectedTableElementType(expected, len(arrayElements))
-			elemType := s.synthFieldValueWithExpected(field.Value, sc, recurse, elemExpected, selfType)
+			elemType := s.synthFieldValueWithExpected(field.Value, sc, p, recurse, elemExpected, selfType)
 			if elemType == nil {
 				elemType = typ.Unknown
 			}
@@ -79,11 +84,11 @@ func (s *Synthesizer) SynthTableWithExpected(ex *ast.TableExpr, sc *scope.State,
 
 		switch k := field.Key.(type) {
 		case *ast.StringExpr:
-			ft := s.synthFieldValueWithExpected(field.Value, sc, recurse, expectedFields[k.Value], selfType)
+			ft := s.synthFieldValueWithExpected(field.Value, sc, p, recurse, expectedFields[k.Value], selfType)
 			if ft == nil {
 				ft = typ.Unknown
 			}
-			fieldDefs = append(fieldDefs, ops.FieldDef{Name: k.Value, Type: ft, Shared: phasecore.SharedTableValue(field.Value, ft)})
+			fieldDefs = append(fieldDefs, ops.FieldDef{Name: k.Value, Type: ft, Shared: phasecore.SharedTableValue(field.Value, ft), SharedAlternatives: phasecore.SharedTableAlternatives(field.Value, recurse)})
 			if inner, optional := typ.SplitNilableFieldType(ft); optional {
 				builder.OptField(k.Value, inner)
 			} else {
@@ -91,11 +96,11 @@ func (s *Synthesizer) SynthTableWithExpected(ex *ast.TableExpr, sc *scope.State,
 			}
 			fieldCount++
 		case *ast.IdentExpr:
-			ft := s.synthFieldValueWithExpected(field.Value, sc, recurse, expectedFields[k.Value], selfType)
+			ft := s.synthFieldValueWithExpected(field.Value, sc, p, recurse, expectedFields[k.Value], selfType)
 			if ft == nil {
 				ft = typ.Unknown
 			}
-			fieldDefs = append(fieldDefs, ops.FieldDef{Name: k.Value, Type: ft, Shared: phasecore.SharedTableValue(field.Value, ft)})
+			fieldDefs = append(fieldDefs, ops.FieldDef{Name: k.Value, Type: ft, Shared: phasecore.SharedTableValue(field.Value, ft), SharedAlternatives: phasecore.SharedTableAlternatives(field.Value, recurse)})
 			if inner, optional := typ.SplitNilableFieldType(ft); optional {
 				builder.OptField(k.Value, inner)
 			} else {
@@ -111,7 +116,7 @@ func (s *Synthesizer) SynthTableWithExpected(ex *ast.TableExpr, sc *scope.State,
 			if m, ok := unwrap.Alias(expected).(*typ.Map); ok {
 				valueExpected = m.Value
 			}
-			valueType := s.synthFieldValueWithExpected(field.Value, sc, recurse, valueExpected, selfType)
+			valueType := s.synthFieldValueWithExpected(field.Value, sc, p, recurse, valueExpected, selfType)
 			if valueType == nil {
 				valueType = typ.Unknown
 			}
@@ -146,9 +151,9 @@ func (s *Synthesizer) SynthTableWithExpected(ex *ast.TableExpr, sc *scope.State,
 }
 
 // synthFieldValueWithExpected synthesizes type for a table field value with optional expected type.
-func (s *Synthesizer) synthFieldValueWithExpected(value ast.Expr, sc *scope.State, recurse ExprSynth, expected typ.Type, selfType typ.Type) typ.Type {
+func (s *Synthesizer) synthFieldValueWithExpected(value ast.Expr, sc *scope.State, p cfg.Point, recurse ExprSynth, expected typ.Type, selfType typ.Type) typ.Type {
 	if tbl, ok := value.(*ast.TableExpr); ok {
-		return s.SynthTableWithExpected(tbl, sc, recurse, expected)
+		return s.synthTableWithExpectedAt(tbl, sc, p, recurse, expected)
 	}
 	if fn, ok := value.(*ast.FunctionExpr); ok {
 		var expectedFn *typ.Function
@@ -163,6 +168,9 @@ func (s *Synthesizer) synthFieldValueWithExpected(value ast.Expr, sc *scope.Stat
 			expectedFn = typ.Func().Param("self", selfType).Build()
 		}
 		return s.SynthFunctionTypeWithExpected(fn, sc, expectedFn)
+	}
+	if logical, ok := value.(*ast.LogicalOpExpr); ok {
+		return s.synthLogicalOpWithNarrowing(logical, p, s.deps.Flow, recurse, expected)
 	}
 	inferred := recurse(value)
 	// Literal values have no narrower mutable alias. Context supplies their
