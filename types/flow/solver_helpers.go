@@ -1,10 +1,10 @@
 package flow
 
 import (
-	"strings"
 	"slices"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
