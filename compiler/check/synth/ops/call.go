@@ -424,6 +424,7 @@ func inferUnion(ctx *db.QueryContext, u *typ.Union, def CallDef, isMethod bool, 
 		found       bool
 	)
 	for _, member := range u.Members {
+		member = unwrapCallee(member)
 		if inter, ok := member.(*typ.Intersection); ok {
 			hasIntersection = true
 			if fn := typ.GeneralMember(inter); fn != nil {
@@ -822,6 +823,7 @@ func callUnionWithGenericInference(ctx *db.QueryContext, u *typ.Union, def CallD
 	var hardErrors []CallError
 
 	for _, member := range u.Members {
+		member = unwrapCallee(member)
 		if inter, ok := member.(*typ.Intersection); ok {
 			seedErrors := append([]CallError(nil), baseErrors...)
 			result := callIntersection(ctx, def.Query, inter, def.Args, def.OpenTail, def.Written, receiver, isMethod, forceMethodReceiver, seedErrors)
