@@ -126,7 +126,7 @@ func CheckAssignments(graph *cfg.Graph, scopes map[cfg.Point]*scope.State, narro
 					return
 				}
 				keyType := narrowSynth.TypeOf(attr.Key, p)
-				if _, indexable := core.Index(mapping, keyType); !indexable {
+				if !mode.Assignable(keyType, mapping.Key) {
 					diags = append(diags, assignmentMismatchDiagnostic(keyType, mapping.Key, attr.Key, sourceName))
 					return
 				}
