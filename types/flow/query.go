@@ -506,6 +506,13 @@ func (s *Solution) rebindsAt(p cfg.Point, sym cfg.SymbolID) bool {
 func (s *Solution) narrowedTypeUnder(p cfg.Point, path constraint.Path, condition constraint.Condition) typ.Type {
 	baseType := s.baseTypeAt(p, path)
 	if baseType == nil {
+		// A predicate carries evidence about its value even when a partial
+		// ancestor shape has no member to project for that path.
+		if condition.HasConstraints() {
+			if narrowed := s.applyCondition(p, typ.Unknown, path, condition, true); narrowed != nil && !typ.IsUnknown(narrowed) {
+				return s.refineExactLengthIndex(p, path, narrowed)
+			}
+		}
 		return s.refineExactLengthIndex(p, path, nil)
 	}
 	// For annotated symbols, ensure base type does not drop required structure.
