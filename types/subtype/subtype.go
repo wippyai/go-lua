@@ -467,10 +467,10 @@ func (c *checker) deriveStructural(sub, super typ.Type, depth int) bool {
 		}
 	}
 
-	// Empty record can satisfy array/map shapes, but should still flow through
+	// Empty record can satisfy array shapes, but should still flow through
 	// regular record subtyping for record supers (e.g. all-optional records).
 	if r, ok := sub.(*typ.Record); ok && len(r.Fields) == 0 {
-		if super.Kind() == kind.Array || super.Kind() == kind.Map {
+		if super.Kind() == kind.Array {
 			return true
 		}
 	}
@@ -720,30 +720,7 @@ func (c *checker) checkRecord(sub, super *typ.Record, depth int) bool {
 
 	// Compare map components
 	if super.HasMapComponent() {
-		// A complete record can satisfy a map component through its known
-		// fields. A partial record cannot: it may contain unseen keys.
-		if !sub.HasMapComponent() && !sub.Complete {
-			return false
-		}
-		if sub.HasMapComponent() {
-			if !c.check(sub.MapKey, super.MapKey, depth+1) || !c.check(sub.MapValue, super.MapValue, depth+1) {
-				return false
-			}
-		}
-		for _, field := range sub.Fields {
-			if super.GetField(field.Name) != nil {
-				continue // declared fields take precedence over the map component
-			}
-			// Lua removes nil-valued entries from a table. Only values that
-			// can actually remain in the map need to satisfy its value type.
-			value := fieldPresentType(field.Type)
-			if typ.IsNever(value) {
-				continue
-			}
-			if !c.check(typ.LiteralString(field.Name), super.MapKey, depth+1) || !c.check(value, super.MapValue, depth+1) {
-				return false
-			}
-		}
+		return c.checkRecordMapDomain(sub, super.MapKey, super.MapValue, super, depth)
 	}
 
 	return true
@@ -1161,28 +1138,40 @@ func (c *checker) checkRecordToMap(sub *typ.Record, super *typ.Map, depth int) b
 	if sub == nil || super == nil {
 		return false
 	}
+	return c.checkRecordMapDomain(sub, super.Key, super.Value, nil, depth)
+}
+
+// checkRecordMapDomain checks all keys a record can contain. Open controls
+// unknown reads; only completeness or a map component supplies key evidence.
+func (c *checker) checkRecordMapDomain(sub *typ.Record, key, valueType typ.Type, declared *typ.Record, depth int) bool {
+	if !sub.Complete && !sub.HasMapComponent() {
+		return false
+	}
 
 	for _, f := range sub.Fields {
+		if declared != nil && declared.GetField(f.Name) != nil {
+			continue
+		}
 		value := fieldPresentType(f.Type)
 		if typ.IsNever(value) {
 			continue
 		}
 		keyType := typ.LiteralString(f.Name)
-		if !c.check(keyType, super.Key, depth+1) {
+		if !c.check(keyType, key, depth+1) {
 			return false
 		}
 
-		if !c.check(value, super.Value, depth+1) {
+		if !c.check(value, valueType, depth+1) {
 			return false
 		}
 	}
 
 	// If record has a map component, check its key/value against the super map
 	if sub.HasMapComponent() {
-		if !c.check(sub.MapKey, super.Key, depth+1) {
+		if !c.check(sub.MapKey, key, depth+1) {
 			return false
 		}
-		if !c.check(sub.MapValue, super.Value, depth+1) {
+		if !c.check(sub.MapValue, valueType, depth+1) {
 			return false
 		}
 	}
