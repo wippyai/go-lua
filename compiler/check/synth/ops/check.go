@@ -325,7 +325,9 @@ func checkTableAsRecord(mode subtype.Assignability, fields []FieldDef, elems []t
 	for _, ef := range expected.Fields {
 		pf, ok := provided[ef.Name]
 		if !ok {
-			if !ef.Optional {
+			// An absent key reads as nil, so a field whose type admits nil
+			// may be omitted.
+			if !ef.Optional && !unwrap.IsOptionalLike(ef.Type) {
 				errors = append(errors, CheckError{
 					Message:  "missing required field",
 					Expected: ef.Type,

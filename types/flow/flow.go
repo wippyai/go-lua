@@ -334,9 +334,10 @@ type IndexerAssignment struct {
 	// Field paths inside a table literal value, resolved after call returns and
 	// branch facts are available to the flow solver.
 	ValueFieldPaths []IndexerValueFieldPath
-	// FieldUpdate identifies t[k].field = value: it updates an existing entry,
-	// whereas t[k] = value inserts or replaces an entry.
-	FieldUpdate string
+	// FieldUpdate is the static field path of t[k].a.b = value: the write
+	// updates a field of an existing entry, whereas t[k] = value inserts or
+	// replaces an entry.
+	FieldUpdate []string
 }
 
 type IndexerValueFieldPath struct {
