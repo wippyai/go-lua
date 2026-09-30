@@ -70,7 +70,10 @@ func ReconcileFunctionFact(in ReconcileFunctionFactInput) ReconcileFunctionFactO
 		if len(alignedSummary) > 0 {
 			var aligned *typ.Function
 			var changed bool
-			if len(out.Narrow) > 0 && !returnVectorsComparable(fn.Returns, alignedSummary) {
+			// The first solved flow can replace a pre-flow estimate. Once
+			// flow evidence exists, the function's return bound joins later
+			// evidence; resetting it discards recursive return alternatives.
+			if len(in.ExistingNarrow) == 0 && len(out.Narrow) > 0 && !returnVectorsComparable(fn.Returns, alignedSummary) {
 				if _, direct := out.Func.(*typ.Function); direct {
 					aligned = typjoin.WithReturns(fn, alignedSummary)
 					changed = aligned != nil && !ReturnTypesEqual(fn.Returns, alignedSummary)
