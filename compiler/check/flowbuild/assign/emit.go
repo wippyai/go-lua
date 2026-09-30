@@ -47,6 +47,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/resolve"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/tblutil"
 	checkscope "github.com/wippyai/go-lua/compiler/check/scope"
+	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/effect"
@@ -332,6 +333,17 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 				}
 				if assignedType == nil {
 					assignedType = typ.Unknown
+				}
+				if table, fresh := source.(*ast.TableExpr); fresh && len(table.Fields) == 0 && info.IsLocal && fc.Services != nil {
+					if annotation := info.TypeAnnotationAt(i); annotation != nil {
+						expected := fc.Services.ResolveTypeExpr(annotation, sc)
+						if expected != nil && !unwrap.Alias(expected).Kind().IsPlaceholder() {
+							checked := ops.CheckTable(querycore.AssignabilityOf(fc.CallCtx), nil, nil, expected)
+							if len(checked.Errors) == 0 {
+								assignedType = checked.Type
+							}
+						}
+					}
 				}
 				// A later field write can give an unannotated local a partial
 				// inferred record before this initializer is emitted. When the
