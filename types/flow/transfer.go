@@ -233,7 +233,7 @@ func (s *Solution) preAssignmentNarrowedTypeAt(p cfg.Point, path constraint.Path
 
 		predPath := path
 		predPath.Version = ver.ID
-		if t := s.NarrowedTypeAt(pred, predPath); t != nil {
+		if t := s.narrowedTypeUnder(pred, predPath, s.conditionFromPredecessor(pred, p)); t != nil {
 			joined = append(joined, t)
 		}
 	}
@@ -423,7 +423,7 @@ func (s *Solution) carryForwardStructuredVersionFacts(p cfg.Point, targetPath co
 			}
 			pred := predBasePoints[i]
 			predPath := constraint.Path{Root: targetPath.Root, Symbol: targetPath.Symbol, Version: predBaseVersions[i]}
-			baseTypes = append(baseTypes, s.applyCondition(pred, t, predPath, s.ConditionAt(pred)))
+			baseTypes = append(baseTypes, s.applyCondition(pred, t, predPath, s.conditionFromPredecessor(pred, p)))
 		}
 		if len(baseTypes) > 0 {
 			joinedBase := join.Types(baseTypes...)

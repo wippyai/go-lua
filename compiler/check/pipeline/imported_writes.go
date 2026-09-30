@@ -43,6 +43,7 @@ func (r *Runner) importedModuleCallWrites(store api.StoreView, graph *cfg.Graph,
 		if len(writes) == 0 {
 			return
 		}
+		beforeOperands := callsite.CallsBeforeOperandReads(graph, p)[info.Call]
 		for _, write := range writes {
 			if write.Module == "" || write.Field == "" || write.Type == nil {
 				continue
@@ -50,10 +51,11 @@ func (r *Runner) importedModuleCallWrites(store api.StoreView, graph *cfg.Graph,
 			key := api.FieldWriteKey{Path: write.Path, Field: write.Field}
 			for _, sym := range aliasTargets[write.Module] {
 				effects = append(effects, flow.FieldWriteEffect{
-					Point:  p,
-					Target: constraint.Path{Root: graph.NameOf(sym), Symbol: sym, Segments: key.Segments()},
-					Field:  write.Field,
-					Type:   write.Type,
+					Point:          p,
+					Target:         constraint.Path{Root: graph.NameOf(sym), Symbol: sym, Segments: key.Segments()},
+					Field:          write.Field,
+					Type:           write.Type,
+					BeforeOperands: beforeOperands,
 				})
 			}
 		}

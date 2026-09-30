@@ -396,7 +396,7 @@ func CollectFieldWrites(
 	for _, closure := range cfg.SortedSymbolIDs(closures) {
 		eachFieldWrite(closures[closure], add)
 	}
-	eachCallFieldWrite(graph, bindings, source, false, func(_ cfg.Point, _ cfg.SymbolID, _ cfg.SymbolID, _ bool, target constraint.Path, key api.FieldWriteKey, t typ.Type, _ api.FieldWriteSet) {
+	eachCallFieldWrite(graph, bindings, source, false, func(_ cfg.Point, _ *cfg.CallInfo, _ cfg.SymbolID, _ cfg.SymbolID, _ bool, target constraint.Path, key api.FieldWriteKey, t typ.Type, _ api.FieldWriteSet) {
 		add(target.Symbol, key.Under(target.Segments), t)
 	})
 	return result
@@ -415,18 +415,28 @@ func CollectFieldWriteEffects(
 		return nil
 	}
 	var effects []flow.FieldWriteEffect
-	emit := func(p cfg.Point, target constraint.Path, key api.FieldWriteKey, t typ.Type, definite bool) {
+	emit := func(p cfg.Point, target constraint.Path, key api.FieldWriteKey, t typ.Type, definite, beforeOperands bool) {
 		if !graph.HasSymbolID(target.Symbol) {
 			return
 		}
 		segments := append(append([]constraint.Segment(nil), target.Segments...), key.Segments()...)
 		effects = append(effects, flow.FieldWriteEffect{
-			Point:    p,
-			Target:   constraint.Path{Root: target.Root, Symbol: target.Symbol, Segments: segments},
-			Field:    key.Field,
-			Type:     t,
-			Definite: definite,
+			Point:          p,
+			Target:         constraint.Path{Root: target.Root, Symbol: target.Symbol, Segments: segments},
+			Field:          key.Field,
+			Type:           t,
+			Definite:       definite,
+			BeforeOperands: beforeOperands,
 		})
+	}
+	callsBeforeReads := make(map[cfg.Point]map[*ast.FuncCallExpr]bool)
+	beforeReads := func(p cfg.Point) map[*ast.FuncCallExpr]bool {
+		before, ok := callsBeforeReads[p]
+		if !ok {
+			before = checkcallsite.CallsBeforeOperandReads(graph, p)
+			callsBeforeReads[p] = before
+		}
+		return before
 	}
 
 	for _, closure := range cfg.SortedSymbolIDs(closures) {
@@ -434,11 +444,13 @@ func CollectFieldWriteEffects(
 		if !ok {
 			continue
 		}
+		// A closure created by the statement can run in any of its calls.
+		mayRunBeforeReads := len(beforeReads(p)) > 0
 		eachFieldWrite(closures[closure], func(target cfg.SymbolID, key api.FieldWriteKey, t typ.Type) {
 			emit(p, constraint.Path{
 				Root:   resolve.RootNameFromGraphAndBindings(graph, bindings, target, ""),
 				Symbol: target,
-			}, key, t, false)
+			}, key, t, false, mayRunBeforeReads)
 		})
 	}
 	var mustSource interface {
@@ -454,7 +466,7 @@ func CollectFieldWriteEffects(
 		storeSource.mustCache = make(map[cfg.SymbolID]map[cfg.SymbolID]map[api.FieldWriteKey]bool)
 		graphMust = mustFieldWritesWithCalls(graph, bindings, storeSource)
 	}
-	eachCallFieldWrite(graph, bindings, source, true, func(p cfg.Point, callee cfg.SymbolID, writtenTo cfg.SymbolID, guaranteedCall bool, target constraint.Path, key api.FieldWriteKey, t typ.Type, calleeSet api.FieldWriteSet) {
+	eachCallFieldWrite(graph, bindings, source, true, func(p cfg.Point, call *cfg.CallInfo, callee cfg.SymbolID, writtenTo cfg.SymbolID, guaranteedCall bool, target constraint.Path, key api.FieldWriteKey, t typ.Type, calleeSet api.FieldWriteSet) {
 		definite := false
 		if guaranteedCall && mustSource != nil && t != nil && !typ.IsUnknown(t) && !typ.IsAny(t) {
 			_, nilable := typ.SplitNilableFieldType(t)
@@ -467,7 +479,7 @@ func CollectFieldWriteEffects(
 				definite = must[writtenTo][key] && graphMust[target.Symbol][key.Under(target.Segments)]
 			}
 		}
-		emit(p, target, key, t, definite)
+		emit(p, target, key, t, definite, beforeReads(p)[call.Call])
 	})
 	return effects
 }
@@ -481,7 +493,7 @@ func eachCallFieldWrite(
 	bindings *bind.BindingTable,
 	source FieldWriteSource,
 	compose bool,
-	visit func(p cfg.Point, callee cfg.SymbolID, writtenTo cfg.SymbolID, guaranteedCall bool, target constraint.Path, key api.FieldWriteKey, t typ.Type, calleeSet api.FieldWriteSet),
+	visit func(p cfg.Point, call *cfg.CallInfo, callee cfg.SymbolID, writtenTo cfg.SymbolID, guaranteedCall bool, target constraint.Path, key api.FieldWriteKey, t typ.Type, calleeSet api.FieldWriteSet),
 ) {
 	if source == nil {
 		return
@@ -534,7 +546,7 @@ func eachCallFieldWrite(
 			path.Symbol = stableAliasRoot(graph, path.Symbol)
 			set := writes[target]
 			for _, key := range api.SortedFieldWriteKeys(set) {
-				visit(p, callee, target, CallEvaluatedAtPoint(graph, p, info), path, key, set[key], set)
+				visit(p, info, callee, target, CallEvaluatedAtPoint(graph, p, info), path, key, set[key], set)
 			}
 		}
 	})

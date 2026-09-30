@@ -1,0 +1,1 @@
+{"description": "bee.hub.modules:contents: a call's own field writes follow its argument reads, so a guarded optional field passed alongside the mutated table stays present", "files": ["main.lua"], "check": {"errors": 0}}
