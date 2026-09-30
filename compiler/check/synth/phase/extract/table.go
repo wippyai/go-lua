@@ -165,11 +165,11 @@ func (s *Synthesizer) synthFieldValueWithExpected(value ast.Expr, sc *scope.Stat
 		return s.SynthFunctionTypeWithExpected(fn, sc, expectedFn)
 	}
 	inferred := recurse(value)
-	// Literal values have no narrower mutable alias. Context supplies their
-	// slot domain, including finite literal unions.
+	// Scalar literals can initialize wider slots. Keep their exact value when
+	// context has alternatives, since it selects the applicable record branch.
 	switch value.(type) {
 	case *ast.StringExpr, *ast.NumberExpr:
-		if expected != nil && s.isAssignable(inferred, expected) {
+		if _, alternatives := unwrap.Optional(expected).(*typ.Union); !alternatives && expected != nil && s.isAssignable(inferred, expected) {
 			return expected
 		}
 	}
