@@ -909,9 +909,13 @@ func buildLiftedDynamicIndexerAssignment(
 	for i := len(steps) - 1; i > firstDynamic; i-- {
 		valType = wrapStepValue(steps[i], valType, graph, bindings, synth, symResolver, p)
 	}
-	fieldUpdate := ""
-	if firstDynamic == len(steps)-2 && steps[len(steps)-1].Static && steps[len(steps)-1].Seg.Kind == constraint.SegmentField {
-		fieldUpdate = steps[len(steps)-1].Seg.Name
+	var fieldUpdate []string
+	for _, step := range steps[firstDynamic+1:] {
+		if !step.Static || step.Seg.Kind != constraint.SegmentField {
+			fieldUpdate = nil
+			break
+		}
+		fieldUpdate = append(fieldUpdate, step.Seg.Name)
 	}
 
 	// The source value is the entry itself only when the dynamic step is the

@@ -897,12 +897,10 @@ func (s *Solution) processIndexerAssignmentReturnKey(p cfg.Point, ia IndexerAssi
 
 	// Compute the widened type
 	newType := typ.WriteInto(currentType, func(t typ.Type) typ.Type {
-		if ia.FieldUpdate != "" {
-			if patch, ok := valueType.(*typ.Record); ok {
-				if field := patch.GetField(ia.FieldUpdate); field != nil {
-					if updated := widenIndexedField(t, ia.FieldUpdate, field.Type); updated != nil {
-						return updated
-					}
+		if len(ia.FieldUpdate) > 0 {
+			if value := fieldPathValue(valueType, ia.FieldUpdate); value != nil {
+				if updated := widenIndexedField(t, ia.FieldUpdate, value); updated != nil {
+					return updated
 				}
 			}
 		}
@@ -1666,17 +1664,18 @@ func mergeMapKeyDomain(existing, incoming typ.Type) typ.Type {
 	return typ.JoinPreferNonSoft(existing, incoming)
 }
 
-// widenIndexedField applies t[k].field = value to the existing element type.
-// The write does not insert a new t[k] value: if t[k] is absent, Lua raises
-// before the field write. Joining a partial {field: value} as a new map value
-// would discard fields known on every actual entry.
-func widenIndexedField(t typ.Type, field string, value typ.Type) typ.Type {
-	if t == nil || field == "" || value == nil {
+// widenIndexedField applies t[k].a.b = value, the write at field path path,
+// to the existing element type. The write does not insert a new t[k] value:
+// if t[k] is absent, Lua raises before the field write. Joining a partial
+// {a: {b: value}} as a new map value would discard fields known on every
+// actual entry.
+func widenIndexedField(t typ.Type, path []string, value typ.Type) typ.Type {
+	if t == nil || len(path) == 0 || value == nil {
 		return t
 	}
 	switch v := t.(type) {
 	case *typ.Alias:
-		updated := widenIndexedField(v.Target, field, value)
+		updated := widenIndexedField(v.Target, path, value)
 		if updated == nil {
 			return nil
 		}
@@ -1685,13 +1684,13 @@ func widenIndexedField(t typ.Type, field string, value typ.Type) typ.Type {
 		}
 		return typ.NewAlias(v.Name, updated)
 	case *typ.Map:
-		updated := applyFieldWrite(v.Value, field, value, false)
+		updated := applyFieldPathWrite(v.Value, path, value)
 		if updated == nil || typ.TypeEquals(updated, v.Value) {
 			return t
 		}
 		return v.WithTypes(v.Key, updated)
 	case *typ.Array:
-		updated := applyFieldWrite(v.Element, field, value, false)
+		updated := applyFieldPathWrite(v.Element, path, value)
 		if updated == nil || typ.TypeEquals(updated, v.Element) {
 			return t
 		}
@@ -1700,13 +1699,13 @@ func widenIndexedField(t typ.Type, field string, value typ.Type) typ.Type {
 		if !v.HasMapComponent() {
 			return nil
 		}
-		updated := applyFieldWrite(v.MapValue, field, value, false)
+		updated := applyFieldPathWrite(v.MapValue, path, value)
 		if updated == nil || typ.TypeEquals(updated, v.MapValue) {
 			return t
 		}
 		return rebuildRecordWithMapComponent(v, v.MapKey, updated)
 	case *typ.Optional:
-		updated := widenIndexedField(v.Inner, field, value)
+		updated := widenIndexedField(v.Inner, path, value)
 		if updated == nil {
 			return nil
 		}
@@ -1718,7 +1717,7 @@ func widenIndexedField(t typ.Type, field string, value typ.Type) typ.Type {
 		members := make([]typ.Type, len(v.Members))
 		changed := false
 		for i, member := range v.Members {
-			members[i] = widenIndexedField(member, field, value)
+			members[i] = widenIndexedField(member, path, value)
 			if members[i] == nil {
 				return nil
 			}
@@ -1731,6 +1730,63 @@ func widenIndexedField(t typ.Type, field string, value typ.Type) typ.Type {
 	default:
 		return nil
 	}
+}
+
+// applyFieldPathWrite applies a possible write of value at the field path
+// below entry t. The fields leading to the written one must already exist: a
+// write through an absent field raises, so it leaves t unchanged.
+func applyFieldPathWrite(t typ.Type, path []string, value typ.Type) typ.Type {
+	if len(path) == 1 {
+		return applyFieldWrite(t, path[0], value, false)
+	}
+	switch v := t.(type) {
+	case *typ.Record:
+		field := v.GetField(path[0])
+		if field == nil {
+			return t
+		}
+		updated := applyFieldPathWrite(field.Type, path[1:], value)
+		if updated == field.Type {
+			return t
+		}
+		written := *field
+		written.Type = updated
+		return v.WithField(written)
+	case *typ.Optional:
+		inner := applyFieldPathWrite(v.Inner, path, value)
+		if inner == v.Inner {
+			return t
+		}
+		return typ.NewOptional(inner)
+	case *typ.Union:
+		changed := false
+		members := make([]typ.Type, len(v.Members))
+		for i, m := range v.Members {
+			members[i] = applyFieldPathWrite(m, path, value)
+			changed = changed || members[i] != m
+		}
+		if !changed {
+			return t
+		}
+		return typ.NewUnion(members...)
+	}
+	return t
+}
+
+// fieldPathValue returns the value a patch {a: {b: value}} holds at path.
+func fieldPathValue(patch typ.Type, path []string) typ.Type {
+	for _, name := range path {
+		record, ok := patch.(*typ.Record)
+		if !ok {
+			return nil
+		}
+		field := record.GetField(name)
+		if field == nil {
+			return nil
+		}
+		patch = field.Type
+	}
+	return patch
 }
 
 func preferDeclaredTemplateForWiden(current, declared typ.Type) typ.Type {
