@@ -886,6 +886,15 @@ func joinsStructurally(a, b typ.Type) bool {
 // unresolved in an earlier iteration yields to its resolved type. The
 // parameters are those of the current fact.
 func joinIterationFunctions(a, b typ.Type) (typ.Type, bool) {
+	// Successive estimates of one callable may add literal dispatch cases.
+	// Reconcile them through the canonical callable merge before treating
+	// the mutable slot as an ordinary subtype-equivalent value.
+	_, aCases := a.(*typ.Intersection)
+	_, bCases := b.(*typ.Intersection)
+	if (aCases || bCases) && typ.GeneralMember(a) != nil && typ.GeneralMember(b) != nil {
+		return MergeFunctionFactType(a, b), true
+	}
+
 	af, ok := a.(*typ.Function)
 	if !ok {
 		return nil, false

@@ -726,3 +726,15 @@ func TestJoinIterationFact_SnapshotsOfOneIdentityJoinTheirBodies(t *testing.T) {
 		t.Fatalf("expected %s, got %s", typ.FormatShort(current.Body), typ.FormatShort(rec.Body))
 	}
 }
+
+func TestIterationCallableEstimateKeepsLiteralCases(t *testing.T) {
+	general := typ.Func().Param("mode", typ.Unknown).Returns(typ.NewOptional(typ.String)).Build()
+	literal := typ.Func().Param("mode", typ.LiteralString("w")).Returns(typ.String).Build()
+	cases := typ.NewIntersection(literal, general)
+	for _, pair := range [][2]typ.Type{{cases, general}, {general, cases}} {
+		got := joinIterationFactAt(pair[0], pair[1], true)
+		if !typ.TypeEquals(got, cases) {
+			t.Errorf("literal cases lost: %v", got)
+		}
+	}
+}
