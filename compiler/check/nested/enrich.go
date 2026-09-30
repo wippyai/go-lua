@@ -125,6 +125,52 @@ func NormalizeMethodSelfType(selfType typ.Type) typ.Type {
 	return subtype.WidenForInference(selfType)
 }
 
+// StableClassFields lists the fields of class table sym that hold the value of
+// their one definition in decl for the whole module: the table neither escapes,
+// nor takes dynamic-key writes, nor is reassigned, and no other definition of
+// the field exists in graphs. Returns of export publish the table.
+func StableClassFields(graphs []*cfg.Graph, decl, export *cfg.Graph, sym cfg.SymbolID) map[string]bool {
+	mutation := cfg.AnalyzeTableMutation(graphs, sym, export)
+	if mutation.Escaped || mutation.Dynamic || mutation.Reassigned {
+		return nil
+	}
+	stable := make(map[string]bool)
+	for name, sites := range mutation.Writes {
+		if len(sites) == 1 && sites[0].Graph == decl {
+			stable[name] = true
+		}
+	}
+	return stable
+}
+
+// NormalizeClassTableType widens the class table type as NormalizeMethodSelfType
+// does, except that a stable field keeps its own literal type. Literals nested
+// inside a field value stay widened because references to that value are not
+// tracked.
+func NormalizeClassTableType(tableType typ.Type, stable map[string]bool) typ.Type {
+	widened := NormalizeMethodSelfType(tableType)
+	rec, ok := tableType.(*typ.Record)
+	if !ok || len(stable) == 0 {
+		return widened
+	}
+	wideRec, ok := widened.(*typ.Record)
+	if !ok || len(wideRec.Fields) != len(rec.Fields) {
+		return widened
+	}
+	fields := append([]typ.Field(nil), wideRec.Fields...)
+	kept := false
+	for i, f := range rec.Fields {
+		if stable[f.Name] && fields[i].Name == f.Name && typ.TypeEquals(fields[i].Type, subtype.Widen(f.Type)) {
+			fields[i].Type = f.Type
+			kept = true
+		}
+	}
+	if !kept {
+		return widened
+	}
+	return wideRec.WithChildren(fields, wideRec.Metatable, wideRec.MapKey, wideRec.MapValue)
+}
+
 func mergeFieldsIntoSelfType(selfType typ.Type, fields map[string]typ.Type) typ.Type {
 	if len(fields) == 0 {
 		return selfType

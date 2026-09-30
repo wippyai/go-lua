@@ -36,6 +36,7 @@ type SessionStore struct {
 	// GraphParentHash records the parent scope hash for each graph ID.
 	GraphParentHash     map[uint64]uint64
 	classSelfIdentities map[classSelfKey]*typ.Recursive
+	classStableFields   map[classSelfKey]map[string]bool
 	// classSnapshots holds the snapshot each class identity is bound to in
 	// the current fixpoint round.
 	classSnapshots map[uint64]*typ.Recursive
@@ -283,9 +284,10 @@ func (s *SessionStore) bindClass(graph *cfg.Graph, at cfg.Point, sym cfg.SymbolI
 		return body
 	}
 	body = nested.EnrichSelfTypeWithConstructorFields(body, sym, s)
-	body = nested.NormalizeMethodSelfType(body)
 	if receiver {
-		body = typ.PartialView(body)
+		body = typ.PartialView(nested.NormalizeMethodSelfType(body))
+	} else {
+		body = nested.NormalizeClassTableType(body, s.stableClassFields(graph, sym))
 	}
 	if typ.IsAny(body) || typ.IsUnknown(body) {
 		return body
@@ -313,6 +315,35 @@ func (s *SessionStore) bindClass(graph *cfg.Graph, at cfg.Point, sym cfg.SymbolI
 	}
 	s.classSnapshots[identity.ID] = snapshot
 	return snapshot
+}
+
+// stableClassFields caches nested.StableClassFields for the class table sym
+// declared in graph. The module's graphs are fixed once registered.
+func (s *SessionStore) stableClassFields(graph *cfg.Graph, sym cfg.SymbolID) map[string]bool {
+	key := classSelfKey{graphID: graph.ID(), symbol: sym}
+	if fields, ok := s.classStableFields[key]; ok {
+		return fields
+	}
+	ids := make([]uint64, 0, len(s.Module.Graphs))
+	for id := range s.Module.Graphs {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	graphs := make([]*cfg.Graph, 0, len(ids))
+	var export *cfg.Graph
+	for _, id := range ids {
+		g := s.Module.Graphs[id]
+		graphs = append(graphs, g)
+		if _, nested := s.Module.NestedMeta[id]; !nested {
+			export = g
+		}
+	}
+	fields := nested.StableClassFields(graphs, graph, export, sym)
+	if s.classStableFields == nil {
+		s.classStableFields = make(map[classSelfKey]map[string]bool)
+	}
+	s.classStableFields[key] = fields
+	return fields
 }
 
 // directSelfFields finds fields definitely assigned the table itself before

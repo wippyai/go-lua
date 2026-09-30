@@ -1,0 +1,4 @@
+{
+  "description": "bee.gov:migration_work: module schema literals that nothing rewrites keep their singleton types inside the module's functions",
+  "check": {"errors": 0, "modes": ["gradual", "strict"]}
+}

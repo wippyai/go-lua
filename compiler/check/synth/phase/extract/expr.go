@@ -26,7 +26,6 @@ import (
 	"math/big"
 
 	"github.com/wippyai/go-lua/compiler/ast"
-	"github.com/wippyai/go-lua/compiler/bind"
 	compcfg "github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/scope"
@@ -243,113 +242,15 @@ func importedFieldWritten(env api.BaseEnv, sym compcfg.SymbolID, field string) b
 	if !ok || graph == nil {
 		return false
 	}
-	return ImportedFieldMayChange(graph, env.Bindings(), sym, field)
+	return ImportedFieldMayChange(graph, sym, field)
 }
 
 // ImportedFieldMayChange reports writes through stable aliases and escapes of
-// an imported table. Escapes conservatively invalidate every singleton field.
-func ImportedFieldMayChange(graph *compcfg.Graph, bindings *bind.BindingTable, sym compcfg.SymbolID, field string) bool {
-	// DirectAliasSymbol is computed from the whole graph and follows stable
-	// local alias chains. A write through any such alias reaches the import.
-	aliases := make(map[compcfg.SymbolID]bool)
-	graph.EachSymbolID(func(candidate compcfg.SymbolID) bool {
-		graph.EachAliasSymbol(candidate, func(source compcfg.SymbolID) bool {
-			if source == sym {
-				aliases[candidate] = true
-			}
-			return false
-		})
-		return false
-	})
-	aliases[sym] = true
-	written := false
-	graph.EachAssign(func(_ compcfg.Point, info *compcfg.AssignInfo) {
-		if written || info == nil {
-			return
-		}
-		for _, target := range info.Targets {
-			if !aliases[target.BaseSymbol] {
-				continue
-			}
-			if target.Kind == compcfg.TargetField && len(target.FieldPath) > 0 && target.FieldPath[0] == field {
-				written = true
-				return
-			}
-			if target.Kind == compcfg.TargetIndex {
-				if key, ok := target.Key.(*ast.StringExpr); !ok || key.Value == field {
-					written = true
-					return
-				}
-			}
-		}
-		// A local direct alias stays tracked above. Any other assignment
-		// containing the table lets an untracked reference retain it.
-		info.EachTargetSource(func(_ int, target compcfg.AssignTarget, source ast.Expr) {
-			if written || !importedAliasInValue(source, bindings, aliases) {
-				return
-			}
-			if target.Kind != compcfg.TargetIdent || !aliases[target.Symbol] || graph.DirectAliasSymbol(target.Symbol) == 0 {
-				written = true
-			}
-		})
-	})
-	graph.EachCallSite(func(_ compcfg.Point, call *compcfg.CallInfo) {
-		if written || call == nil {
-			return
-		}
-		if importedAliasInValue(call.Receiver, bindings, aliases) {
-			written = true
-			return
-		}
-		for _, arg := range call.Args {
-			if importedAliasInValue(arg, bindings, aliases) {
-				written = true
-				return
-			}
-		}
-	})
-	graph.EachReturn(func(_ compcfg.Point, ret *compcfg.ReturnInfo) {
-		if written || ret == nil {
-			return
-		}
-		for _, expr := range ret.Exprs {
-			if importedAliasInValue(expr, bindings, aliases) {
-				written = true
-				return
-			}
-		}
-	})
-	// A closure can retain the table and mutate it outside this graph.
-	for _, nested := range graph.NestedFunctions() {
-		if nested.Func == nil {
-			continue
-		}
-		for _, captured := range bindings.CapturedSymbols(nested.Func) {
-			if aliases[captured] {
-				return true
-			}
-		}
-	}
-	return written
-}
-
-func importedAliasInValue(expr ast.Expr, bindings *bind.BindingTable, aliases map[compcfg.SymbolID]bool) bool {
-	switch e := expr.(type) {
-	case *ast.IdentExpr:
-		sym, ok := bindings.SymbolOf(e)
-		return ok && aliases[sym]
-	case *ast.TableExpr:
-		for _, f := range e.Fields {
-			if f != nil && (importedAliasInValue(f.Key, bindings, aliases) || importedAliasInValue(f.Value, bindings, aliases)) {
-				return true
-			}
-		}
-	case *ast.CastExpr:
-		return importedAliasInValue(e.Expr, bindings, aliases)
-	case *ast.NonNilAssertExpr:
-		return importedAliasInValue(e.Expr, bindings, aliases)
-	}
-	return false
+// an imported table. Escapes and closures holding the table conservatively
+// invalidate every singleton field.
+func ImportedFieldMayChange(graph *compcfg.Graph, sym compcfg.SymbolID, field string) bool {
+	mutation := compcfg.AnalyzeTableMutation([]*compcfg.Graph{graph}, sym, nil)
+	return mutation.FieldWritten(field) || mutation.Escaped || mutation.Captured
 }
 
 func widenImportedLiteral(t typ.Type) typ.Type {
