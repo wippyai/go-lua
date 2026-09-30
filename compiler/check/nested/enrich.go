@@ -156,23 +156,24 @@ func NormalizeClassTableType(tableType typ.Type, mutation cfg.TableMutation) typ
 
 // NormalizeCapturedTableType widens the fields of a captured table that code
 // can change after the closure observes them, so the closure reads every value
-// such a field may hold. Declared slots bound mutable fields; stable fields
-// keep their observed types.
-func NormalizeCapturedTableType(tableType typ.Type, mutation cfg.TableMutation, declaredType typ.Type) typ.Type {
+// such a field may hold. Widening bounds preserve declared slots and widen
+// inferred literals; stable fields keep their observed types.
+func NormalizeCapturedTableType(tableType typ.Type, mutation cfg.TableMutation, boundType typ.Type) typ.Type {
 	rec, ok := tableType.(*typ.Record)
 	if !ok {
 		return tableType
 	}
 	fields := append([]typ.Field(nil), rec.Fields...)
-	declared, _ := unwrap.Optional(declaredType).(*typ.Record)
+	bound, _ := unwrap.Optional(boundType).(*typ.Record)
 	changed := false
 	for i, f := range fields {
 		if mutation.FieldStable(f.Name) {
 			continue
 		}
-		if declared != nil {
-			if slot := declared.GetField(f.Name); slot != nil {
-				if !typ.TypeEquals(f.Type, slot.Type) || f.Optional != slot.Optional {
+		if bound != nil {
+			if slot := bound.GetField(f.Name); slot != nil {
+				// Structural equality does not preserve an alias's widening bound.
+				if f.Type != slot.Type || f.Optional != slot.Optional {
 					fields[i] = *slot
 					changed = true
 				}

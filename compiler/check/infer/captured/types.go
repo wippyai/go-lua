@@ -9,6 +9,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow"
+	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -105,6 +106,15 @@ func Types(input ParentContext) map[cfg.SymbolID]typ.Type {
 	}
 
 	if nestedGraph != nil && nestedGraph.Bindings() != nil {
+		captureBounds := make(map[cfg.SymbolID]typ.Type, len(capturedTypes))
+		for sym, t := range capturedTypes {
+			if isAnnotated(sym) {
+				captureBounds[sym] = input.Facts.DeclaredAt(input.Point, sym).Type
+			} else {
+				// Widen before field narrowing erases aliases, which bound inference.
+				captureBounds[sym] = subtype.WidenForInference(t)
+			}
+		}
 		if input.Solution != nil {
 			unstable := make(map[cfg.SymbolID]bool)
 			if input.ParentGraph != nil {
@@ -137,11 +147,7 @@ func Types(input ParentContext) map[cfg.SymbolID]typ.Type {
 				continue
 			}
 			if t := capturedTypes[sym]; t != nil && input.Mutations != nil {
-				var declared typ.Type
-				if isAnnotated(sym) {
-					declared = input.Facts.DeclaredAt(input.Point, sym).Type
-				}
-				capturedTypes[sym] = nested.NormalizeCapturedTableType(t, input.Mutations.TableMutation(sym), declared)
+				capturedTypes[sym] = nested.NormalizeCapturedTableType(t, input.Mutations.TableMutation(sym), captureBounds[sym])
 			}
 		}
 	}
