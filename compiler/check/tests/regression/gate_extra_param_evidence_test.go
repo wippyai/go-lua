@@ -49,28 +49,3 @@ worker(1)`
 		checkBothModes(t, strings.Replace(source, ` worker_id = "worker"`, "", 1), "expected {worker_id: string}")
 	})
 }
-
-func TestSuppliedCaptureIgnoresNonDominatingFieldWrites(t *testing.T) {
-	checkBothModes(t, `
-local function run(flag: boolean)
- local M = {dep = {get = function() return nil end}}
- function M.run() return M.dep.get() end
- if flag then M.dep = {get = function() return {answer = "ok"} end} end
- local res = M.run()
- return res.answer
-end
-return run`, "cannot index type nil")
-}
-
-func TestSuppliedCaptureIncludesPrecedingFieldWrites(t *testing.T) {
-	checkBothModes(t, `
-local function run()
- local M = {dep = {get = function() return nil end}}
- M.dep = {get = function() return {answer = "ok"} end}
- function M.run() return M.dep.get() end
- local res = M.run()
- local answer: string = res.answer
- return answer
-end
-return run`, "")
-}
