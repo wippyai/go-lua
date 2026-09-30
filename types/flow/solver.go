@@ -1002,9 +1002,6 @@ func (s *Solution) mergeFieldsAt(baseType typ.Type, prefix string, depth int) ty
 	if len(fields) == 0 && len(deeper) == 0 {
 		return baseType
 	}
-	if len(fields) == 0 {
-		return s.mergeDeeperFieldFacts(baseType, prefix, deeper, depth)
-	}
 
 	if baseType == nil {
 		baseType = typ.NewRecord().SetOpen(true).Build()
@@ -1051,6 +1048,9 @@ func (s *Solution) mergeFieldsAt(baseType typ.Type, prefix string, depth int) ty
 			return rebuilt
 		},
 		Map: func(m *typ.Map) typ.Type {
+			if len(fields) == 0 {
+				return baseType
+			}
 			// Map base: create Record(open) with MapComponent + merged fields
 			builder := typ.NewRecord().SetOpen(true)
 			builder.MapComponentWithFlags(m.Key, m.Value, m.InferredPresence, m.ExplicitNilWrite)
@@ -1079,35 +1079,24 @@ func (s *Solution) mergeFieldsAt(baseType typ.Type, prefix string, depth int) ty
 				}
 			}
 			for _, f := range r.Fields {
-				fieldType := f.Type
-				optional := f.Optional
-				inferredPresence := f.InferredPresence
 				if assigned, ok := assignedByName[f.Name]; ok {
-					// Child-path facts already represent the current value of the
-					// field at this program point. Rebuilding the root should
-					// project that current field value back into the record rather
-					// than re-join it with the declared/base slot as if it were a
-					// separate branch. A placeholder fact carries no information
-					// about the value of a concrete slot, matching how TypeAt reads
-					// the child path itself; its nilability still applies.
+					current := f
+					current.Type = assigned.t
+					current.Optional = assigned.optional
+					current.InferredPresence = false
 					if assigned.t.Kind().IsPlaceholder() && !f.Type.Kind().IsPlaceholder() {
-						optional = optional || assigned.optional
-					} else if r.Declared && declaredSlotRetains(r, f, assigned.t, assigned.optional) {
-						// The table remains of its declared type; the value stays a
-						// fact of the child path, where reads of the field see it.
+						f.Optional = f.Optional || assigned.optional
 					} else {
-						fieldType = assigned.t
-						optional = assigned.optional
-						inferredPresence = false
+						f = projectFieldFact(r, f, current)
 					}
 					delete(assignedByName, f.Name)
 				}
-				if deeper[f.Name] && !r.Declared {
-					fieldType = s.mergeChildFieldFacts(fieldType, prefix, f.Name, depth)
+				if deeper[f.Name] {
+					current := f
+					current.Type = s.mergeChildFieldFacts(f.Type, prefix, f.Name, depth)
+					f = projectFieldFact(r, f, current)
 				}
-				f.Type = fieldType
-				f.Optional = optional
-				f.InferredPresence = inferredPresence && optional
+				f.InferredPresence = f.InferredPresence && f.Optional
 				builder.AddField(f)
 			}
 			for name, field := range assignedByName {
@@ -1120,6 +1109,9 @@ func (s *Solution) mergeFieldsAt(baseType typ.Type, prefix string, depth int) ty
 			return builder.Build()
 		},
 		Default: func(t typ.Type) typ.Type {
+			if len(fields) == 0 {
+				return baseType
+			}
 			// Base is not a record or map; create one with just the field assignments
 			builder := typ.NewRecord().SetOpen(true)
 			for _, f := range fields {
@@ -1130,6 +1122,17 @@ func (s *Solution) mergeFieldsAt(baseType typ.Type, prefix string, depth int) ty
 	})
 }
 
+// projectFieldFact projects a current field value into its owning record.
+// Admitted values keep declared slots when projection changes their contract;
+// incompatible values remain visible, and inferred records keep evolving.
+func projectFieldFact(r *typ.Record, slot, current typ.Field) typ.Field {
+	value, nilable := typ.SplitNilableFieldType(current.Type)
+	if r.Declared && declaredSlotRetains(r, slot, value, current.Optional || nilable) {
+		return slot
+	}
+	return current
+}
+
 // declaredSlotRetains reports whether field f of declared record r keeps its
 // declared type when it holds value. A record rebuilt from field facts
 // describes the same table, so it stays a subtype of r: a value within the
@@ -1137,6 +1140,12 @@ func (s *Solution) mergeFieldsAt(baseType typ.Type, prefix string, depth int) ty
 // of a literal union, leaves the slot declared. A value outside the slot's
 // type is projected, so the rebuilt record shows the violation.
 func declaredSlotRetains(r *typ.Record, f typ.Field, value typ.Type, optional bool) bool {
+	slot, nilable := typ.SplitNilableFieldType(f.Type)
+	if f.Optional || nilable {
+		if value == typ.Nil || (optional && subtype.IsSubtype(value, slot)) {
+			return true
+		}
+	}
 	if !subtype.IsSubtype(value, f.Type) {
 		return false
 	}
@@ -1178,47 +1187,15 @@ func (s *Solution) childFieldsWithDeeperFacts(prefix string) map[string]bool {
 }
 
 // mergeChildFieldFacts composes the facts stored below field name of prefix
-// into fieldType, that field's value, when the value is a complete record: a
-// table literal of this module, whose fields the module's own flow writes. A
-// declared shape, a map, or a partial view is not rebuilt from them.
+// into fieldType when its record shape is declared or complete. A map or
+// partial inferred view keeps its existing shape.
 func (s *Solution) mergeChildFieldFacts(fieldType typ.Type, prefix, name string, depth int) typ.Type {
-	if rec, ok := unwrap.Alias(fieldType).(*typ.Record); !ok || rec.Declared || !rec.Complete {
+	if rec := unwrap.Record(fieldType); rec == nil || (!rec.Declared && !rec.Complete) {
 		return fieldType
 	}
 	child := prefix + pathkey.SegmentsSuffix([]constraint.Segment{{Kind: constraint.SegmentField, Name: name}})
 	out := typ.WriteInto(fieldType, func(t typ.Type) typ.Type { return s.mergeFieldsAt(t, child, depth+1) })
 	return out
-}
-
-// mergeDeeperFieldFacts composes deeper child facts into the fields of a
-// record base that has no direct field facts below prefix.
-func (s *Solution) mergeDeeperFieldFacts(baseType typ.Type, prefix string, deeper map[string]bool, depth int) typ.Type {
-	switch v := baseType.(type) {
-	case *typ.Alias:
-		target := s.mergeDeeperFieldFacts(v.Target, prefix, deeper, depth)
-		if target == v.Target {
-			return baseType
-		}
-		return typ.NewAlias(v.Name, target)
-	case *typ.Record:
-		if v.Declared {
-			return baseType
-		}
-		out := v
-		for _, f := range v.Fields {
-			if !deeper[f.Name] {
-				continue
-			}
-			merged := s.mergeChildFieldFacts(f.Type, prefix, f.Name, depth)
-			if merged == nil || typ.TypeEquals(merged, f.Type) {
-				continue
-			}
-			f.Type = merged
-			out = out.WithField(f)
-		}
-		return out
-	}
-	return baseType
 }
 
 func (s *Solution) fieldAssignmentsForRoot(baseRoot string) []mergedField {

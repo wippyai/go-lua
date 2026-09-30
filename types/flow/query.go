@@ -593,8 +593,9 @@ func (s *Solution) narrowRecordFieldAliases(p cfg.Point, path constraint.Path, t
 		}
 		narrowed := s.applyCondition(p, sourceType, sourcePath, condition)
 		if narrowed != nil && subtype.IsSubtype(narrowed, field.Type) && !typ.TypeEquals(narrowed, field.Type) {
-			field.Type = narrowed
-			rec = rec.WithField(field)
+			current := field
+			current.Type = narrowed
+			rec = rec.WithField(projectFieldFact(rec, field, current))
 		}
 	}
 	return rec

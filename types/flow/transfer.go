@@ -853,7 +853,7 @@ func (s *Solution) valueTypeAt(p cfg.Point, v ValueSource) typ.Type {
 			if existing := record.GetField(field.Name); existing != nil {
 				updated := *existing
 				updated.Type = resolved
-				record = record.WithField(updated)
+				record = record.WithField(projectFieldFact(record, *existing, updated))
 			}
 		}
 		valueType = record
@@ -1380,7 +1380,7 @@ func applyFieldWrite(t typ.Type, field string, valueType typ.Type, definite bool
 				written.Type = join.Types(existing.Type, valueType)
 				written.Optional = false
 				written.InferredPresence = false
-				return v.WithField(written)
+				return v.WithField(projectFieldFact(v, *existing, written))
 			}
 			if typ.IsUnknown(existing.Type) {
 				return v
@@ -1396,7 +1396,7 @@ func applyFieldWrite(t typ.Type, field string, valueType typ.Type, definite bool
 			if nilable {
 				widened.InferredPresence = false
 			}
-			return v.WithField(widened)
+			return v.WithField(projectFieldFact(v, *existing, widened))
 		}
 		// A possible write supplies a value type but cannot prove presence.
 		// Explicit nil is a real value/removal, not inference uncertainty.
@@ -1808,7 +1808,7 @@ func applyFieldPathWrite(t typ.Type, path []string, value typ.Type) typ.Type {
 		}
 		written := *field
 		written.Type = updated
-		return v.WithField(written)
+		return v.WithField(projectFieldFact(v, *field, written))
 	case *typ.Optional:
 		inner := applyFieldPathWrite(v.Inner, path, value)
 		if inner == v.Inner {
