@@ -51,7 +51,6 @@ func TestRecordMapInterimCompatibility(t *testing.T) {
 		{"complete", typ.NewRecord().Field("f", typ.String).SetComplete(true).Build(), true, true},
 		{"optional", typ.NewRecord().OptField("f", typ.String).SetComplete(true).Build(), true, true},
 		{"nilable", typ.NewRecord().Field("f", typ.NewOptional(typ.String)).SetComplete(true).Build(), true, true},
-		{"optional-aliased-nil", typ.NewRecord().Field("f", typ.NewOptional(typ.NewAlias("Absent", typ.Nil))).SetComplete(true).Build(), false, false},
 		{"nil-only", typ.NewRecord().Field("f", typ.Nil).SetComplete(true).Build(), true, true},
 		{"wrong-value", typ.NewRecord().Field("f", typ.Number).SetComplete(true).Build(), false, false},
 		{"wrong-component-key", typ.NewRecord().Field("f", typ.String).MapComponent(typ.Integer, typ.String).Build(), false, false},

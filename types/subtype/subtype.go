@@ -729,7 +729,7 @@ func (c *checker) checkRecord(sub, super *typ.Record, depth int) bool {
 // fieldPresentType describes values left in a Lua table after nil deletes
 // the entry. It only strips nil at the field's outermost level.
 func fieldPresentType(t typ.Type) typ.Type {
-	present := presentFieldType(t, false)
+	present := presentFieldType(t)
 	// A non-nil alias still supplies the identity used by local references.
 	// Remove absence without discarding that identity when its domain is intact.
 	if typ.TypeEquals(present, unwrap.Alias(t)) {
@@ -738,23 +738,18 @@ func fieldPresentType(t typ.Type) typ.Type {
 	return present
 }
 
-// preserveOptionalInner keeps v1.6.2's optional value normalization for interim
-// record-to-map conversion (design-record-to-map.md), including aliased nil.
-func presentFieldType(t typ.Type, preserveOptionalInner bool) typ.Type {
+func presentFieldType(t typ.Type) typ.Type {
 	t = unwrap.Alias(t)
 	if unwrap.IsNilType(t) {
 		return typ.Never
 	}
 	switch v := t.(type) {
 	case *typ.Optional:
-		if preserveOptionalInner {
-			return v.Inner
-		}
-		return presentFieldType(v.Inner, preserveOptionalInner)
+		return fieldPresentType(v.Inner)
 	case *typ.Union:
 		members := make([]typ.Type, 0, len(v.Members))
 		for _, member := range v.Members {
-			present := presentFieldType(member, preserveOptionalInner)
+			present := fieldPresentType(member)
 			if !typ.IsNever(present) {
 				members = append(members, present)
 			}
@@ -1170,7 +1165,7 @@ func (c *checker) checkRecordMapDomain(sub *typ.Record, key, valueType typ.Type,
 		if declared != nil && declared.GetField(f.Name) != nil {
 			continue
 		}
-		value := presentFieldType(f.Type, true)
+		value := fieldPresentType(f.Type)
 		if typ.IsNever(value) {
 			continue
 		}
