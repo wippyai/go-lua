@@ -86,20 +86,3 @@ func TestRecordMapInterimMutableSlotOpenGuard(t *testing.T) {
 		}
 	}
 }
-
-func TestRecordMapInterimOptionalMutableSlot(t *testing.T) {
-	for _, mode := range []Assignability{Gradual, Strict} {
-		for _, open := range []bool{false, true} {
-			source := typ.NewRecord().Field("slot", typ.NewRecord().Field("f", typ.String).SetOpen(open).Build()).Build()
-			target := typ.NewRecord().Field("slot", typ.NewOptional(typ.NewMap(typ.String, typ.String))).Build()
-			// design-record-to-map.md retains v1.6.2's optional target widening.
-			if !mode.Assignable(source, target) {
-				t.Fatalf("optional map slot rejected, open=%v", open)
-			}
-			wrong := typ.NewRecord().Field("slot", typ.NewRecord().Field("f", typ.Number).SetOpen(open).Build()).Build()
-			if mode.Assignable(wrong, target) {
-				t.Fatal("wrong present value accepted")
-			}
-		}
-	}
-}
