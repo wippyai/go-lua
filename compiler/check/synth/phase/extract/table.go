@@ -168,7 +168,7 @@ func (s *Synthesizer) synthFieldValueWithExpected(value ast.Expr, sc *scope.Stat
 	// Literal values have no narrower mutable alias. Context supplies their
 	// slot domain, including finite literal unions.
 	switch value.(type) {
-	case *ast.StringExpr, *ast.NumberExpr, *ast.TrueExpr, *ast.FalseExpr, *ast.NilExpr:
+	case *ast.StringExpr, *ast.NumberExpr:
 		if expected != nil && s.isAssignable(inferred, expected) {
 			return expected
 		}
