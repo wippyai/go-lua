@@ -37,21 +37,33 @@ func CompileWithOptions(chunk []ast.Stmt, name string, opts CompileOptions) (pro
 	for name := range collectTopLevelTypeNames(chunk) {
 		typeNames[name] = struct{}{}
 	}
-	if len(opts.TypeInfo) > 0 {
-		if manifest := safeDecodeManifest(opts.TypeInfo); manifest != nil {
-			for name := range manifest.Types {
-				if name != "" {
-					typeNames[name] = struct{}{}
-				}
+	manifest := safeDecodeManifest(opts.TypeInfo)
+	if manifest != nil {
+		for name := range manifest.Types {
+			if name != "" {
+				typeNames[name] = struct{}{}
 			}
 		}
 	}
 
 	context := newFuncContext(name, nil, typeNames)
+	if manifest != nil {
+		context.argumentContracts = manifest.ArgumentContracts
+	}
 	compileFunctionExpr(context, funcexpr, ecnone(0))
 	proto = context.Proto
 	if len(opts.TypeInfo) > 0 {
-		proto.SetTypeInfo(opts.TypeInfo)
+		info := opts.TypeInfo
+		if manifest != nil && len(manifest.ArgumentContracts) > 0 {
+			// The source-to-contract index is compile-time only. Each callable
+			// retains its own contract without copying this index to every child.
+			manifest.ArgumentContracts = nil
+			info, err = manifest.Encode()
+			if err != nil {
+				return nil, err
+			}
+		}
+		proto.SetTypeInfo(info)
 	}
 	return
 }
