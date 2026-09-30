@@ -263,6 +263,22 @@ type functionViewCache struct {
 	views    map[api.GraphKey]functionView
 }
 
+// ClassSelfType returns the current round's class snapshot for a parent table.
+func (s *SessionStore) ClassSelfType(graph *cfg.Graph, sym cfg.SymbolID) typ.Type {
+	if s == nil || graph == nil {
+		return nil
+	}
+	identity := s.classSelfIdentities[classSelfKey{graphID: graph.ID(), symbol: sym}]
+	if identity == nil {
+		return nil
+	}
+	snapshot := s.classSnapshots[identity.ID]
+	if snapshot == nil {
+		return nil
+	}
+	return snapshot
+}
+
 // BindClassSelf gives a class table one recursion identity across fixpoint
 // rounds. Within a round every binding joins its body with the round's
 // snapshot of the class, so each snapshot the round hands out is refined by

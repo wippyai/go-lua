@@ -23,7 +23,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
-	"github.com/wippyai/go-lua/compiler/check/flowbuild/assign"
 	"github.com/wippyai/go-lua/compiler/check/infer/captured"
 	"github.com/wippyai/go-lua/compiler/check/nested"
 	"github.com/wippyai/go-lua/compiler/check/returns"
@@ -268,94 +267,19 @@ func (p *Processor) processNestedFunction(
 		nestedGraph = p.graphs.GetOrBuildCFG(info.NF.Func)
 	}
 
-	var capturedTypes map[cfg.SymbolID]typ.Type
-	if nestedGraph != nil && parentResult != nil {
-		capturedTypes = captured.FromParentFacts(parentResult.Facts, nestedGraph, info.NF.Point, nestedGraph.Bindings())
+	captureContext := captured.ParentContext{
+		ParentGraph: graph,
+		ChildGraph:  nestedGraph,
+		Point:       info.NF.Point,
+		Facts:       parentResult.Facts,
+		Solution:    parentResult.FlowSolution,
+		Classes:     p.store,
+		Mutations:   p.store,
 	}
-	if nestedGraph != nil && parentResult != nil && parentResult.NarrowSynth != nil {
-		bindings := nestedGraph.Bindings()
-		if bindings != nil {
-			capturedSyms := bindings.CapturedSymbols(info.NF.Func)
-			if len(capturedSyms) > 0 {
-				capturedSet := make(map[cfg.SymbolID]bool, len(capturedSyms))
-				for _, sym := range capturedSyms {
-					if sym != 0 && p.classSelf[sym] == nil {
-						capturedSet[sym] = true
-					}
-				}
-				if len(capturedSet) > 0 {
-					fields := assign.CollectFieldAssignments(parentResult.Graph, parentResult.NarrowSynth.TypeOf, capturedSet)
-					if len(fields) > 0 {
-						if capturedTypes == nil {
-							capturedTypes = make(map[cfg.SymbolID]typ.Type, len(fields))
-						}
-						for _, sym := range cfg.SortedSymbolIDs(fields) {
-							fieldMap := fields[sym]
-							if sym == 0 {
-								continue
-							}
-							base := capturedTypes[sym]
-							captured := returns.MergeFieldsIntoType(base, fieldMap)
-							if parentResult.FlowSolution != nil {
-								// A closure sees the table after its preceding writes. The
-								// declaration may leave a field as any even though the
-								// solved value at this definition is a typed function.
-								for _, name := range cfg.SortedFieldNames(fieldMap) {
-									path := constraint.Path{Symbol: sym, Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: name}}}
-									if t := parentResult.FlowSolution.TypeAt(info.NF.Point, path); t != nil && !typ.IsAny(t) && !typ.IsUnknown(t) {
-										captured = typ.ExtendRecordWithField(captured, name, t)
-									}
-									if t := initializedCapturedField(parentResult.Graph, info.NF.Point, sym, name, parentResult.NarrowSynth.TypeOf); t != nil {
-										captured = typ.ExtendRecordWithField(captured, name, t)
-									}
-								}
-							}
-							capturedTypes[sym] = captured
-						}
-					}
-				}
-			}
-		}
+	if parentResult.NarrowSynth != nil {
+		captureContext.TypeOf = parentResult.NarrowSynth.TypeOf
 	}
-
-	if nestedGraph != nil && nestedGraph.Bindings() != nil {
-		if parentResult != nil && parentResult.FlowSolution != nil {
-			unstable := make(map[cfg.SymbolID]bool)
-			if graph != nil {
-				graph.EachAssign(func(point cfg.Point, assignment *cfg.AssignInfo) {
-					if point <= info.NF.Point || assignment == nil {
-						return
-					}
-					for _, target := range assignment.Targets {
-						if target.Symbol != 0 {
-							unstable[target.Symbol] = true
-						}
-						if target.BaseSymbol != 0 {
-							unstable[target.BaseSymbol] = true
-						}
-					}
-				})
-			}
-			for sym, t := range capturedTypes {
-				if !unstable[sym] {
-					capturedTypes[sym] = captured.NarrowRecordFields(t, parentResult.FlowSolution, info.NF.Point, sym)
-				}
-			}
-		}
-		for _, sym := range nestedGraph.Bindings().CapturedSymbols(info.NF.Func) {
-			if bound := p.classSelf[sym]; bound != nil {
-				if capturedTypes == nil {
-					capturedTypes = make(map[cfg.SymbolID]typ.Type)
-				}
-				capturedTypes[sym] = bound
-				continue
-			}
-			if t := capturedTypes[sym]; t != nil && p.store != nil {
-				capturedTypes[sym] = nested.NormalizeCapturedTableType(t, p.store.TableMutation(sym))
-			}
-		}
-	}
-
+	capturedTypes := captured.Types(captureContext)
 	if selfType := p.methodSelfType(graph, info); selfType != nil {
 		parentScope = parentScope.WithSelf(selfType).WithLocalName("self")
 	}

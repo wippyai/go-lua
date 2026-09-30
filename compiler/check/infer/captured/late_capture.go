@@ -1,4 +1,4 @@
-package nestedinfer
+package captured
 
 import (
 	"github.com/wippyai/go-lua/compiler/ast"

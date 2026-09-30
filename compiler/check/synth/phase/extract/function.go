@@ -47,10 +47,8 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth/phase/core"
-	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/effect"
-	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/join"
@@ -427,39 +425,41 @@ func (s *Synthesizer) inferReturnTypesFromBody(
 		})
 	})
 
-	// Include captured symbol types from the parent context.
-	// This allows nested local functions to call sibling locals defined in the parent scope.
+	// Synthesis uses the same captured types as nested body checking.
 	if s.deps.CheckCtx != nil {
-		if types := s.deps.CheckCtx.Types(); types != nil {
-			p := capturePoint
-			if g := s.deps.CheckCtx.Graph(); g != nil {
-				if p == 0 {
-					p = g.Entry()
+		pg, _ := s.deps.CheckCtx.Graph().(*cfg.Graph)
+		point := capturePoint
+		if point == 0 && pg != nil {
+			for _, nf := range pg.NestedFunctions() {
+				if nf.Func == fn {
+					point = nf.Point
+					break
 				}
 			}
-			if bindings := fnGraph.Bindings(); bindings != nil {
-				for _, sym := range bindings.CapturedSymbols(fn) {
-					if sym == 0 {
-						continue
-					}
-					if _, ok := overlay[sym]; ok {
-						continue
-					}
-					if t := captureTypes[sym]; t != nil {
-						overlay[sym] = t
-						continue
-					}
-					if solution := s.deps.CheckCtx.Consts(); solution != nil {
-						if t := solution.TypeAt(p, constraint.Path{Symbol: sym}); t != nil {
-							overlay[sym] = t
-							continue
-						}
-					}
-					if tv := types.EffectiveTypeAt(p, sym); tv.State == flow.StateResolved && tv.Type != nil {
-						overlay[sym] = tv.Type
-					}
-				}
+		}
+		context := captured.ParentContext{
+			ParentGraph: pg,
+			ChildGraph:  fnGraph,
+			Point:       point,
+			Facts:       s.deps.CheckCtx.Types(),
+			Solution:    s.deps.CheckCtx.Consts(),
+			TypeOf:      s.TypeOf,
+		}
+		store := api.StoreFrom(s.deps.Ctx)
+		context.Classes, _ = store.(api.ClassSelfSource)
+		context.Mutations, _ = store.(api.TableMutationSource)
+		for sym, t := range captured.Types(context) {
+			if override := captureTypes[sym]; override != nil {
+				t = override
 			}
+			if overlay[sym] == nil {
+				overlay[sym] = t
+			}
+		}
+	}
+	for sym, t := range captureTypes {
+		if t != nil && overlay[sym] == nil {
+			overlay[sym] = t
 		}
 	}
 
