@@ -3,11 +3,8 @@ package nested
 import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
-	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/assign"
-	"github.com/wippyai/go-lua/compiler/check/overlaymut"
 	"github.com/wippyai/go-lua/types/typ"
-	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
 
 // This file implements detection and analysis of the Lua OOP constructor pattern.
@@ -172,43 +169,4 @@ func CollectConstructorFields(graph *cfg.Graph, selfSym cfg.SymbolID, synth func
 		return selfFields
 	}
 	return nil
-}
-
-// CollectInstanceFields uses constructor and method assignments as one receiver
-// domain. Fresh literals use that domain as context; shared values keep theirs.
-func CollectInstanceFields(graph *cfg.Graph, selfSym cfg.SymbolID, synth api.BaseSynth, previous map[string]typ.Type) map[string]typ.Type {
-	if graph == nil || selfSym == 0 || synth == nil {
-		return nil
-	}
-	fields := overlaymut.CollectFieldAssignmentsWithContext(graph, func(expr ast.Expr, point cfg.Point, _ cfg.SymbolID, name string) typ.Type {
-		if _, fresh := expr.(*ast.TableExpr); fresh {
-			context := instanceInitializerContext(previous[name])
-			if context != nil {
-				return synth.TypeOfWithExpected(expr, point, context)
-			}
-		}
-		return synth.TypeOf(expr, point)
-	}, map[cfg.SymbolID]bool{selfSym: true})
-	return fields[selfSym]
-}
-
-// Vacant initializer estimates provide no element domain. Other assignments
-// establish the context in which a fresh empty initializer is checked.
-func instanceInitializerContext(t typ.Type) typ.Type {
-	if t == nil || unwrap.IsEmptyRecord(unwrap.Alias(t)) {
-		return nil
-	}
-	if union, ok := unwrap.Alias(t).(*typ.Union); ok {
-		var domains []typ.Type
-		for _, member := range union.Members {
-			if !unwrap.IsEmptyRecord(unwrap.Alias(member)) {
-				domains = append(domains, member)
-			}
-		}
-		if len(domains) == 0 {
-			return nil
-		}
-		return typ.NewUnion(domains...)
-	}
-	return t
 }
