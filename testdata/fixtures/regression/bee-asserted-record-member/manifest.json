@@ -1,0 +1,1 @@
+{"description": "An asserted record member keeps its declared type (Bee golua-repros2 case 3).", "files": ["main.lua"], "check": {"errors": 0, "modes": ["gradual", "strict"]}}
