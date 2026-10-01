@@ -61,7 +61,7 @@ func CollectFieldAssignmentsWithContext(
 	}
 
 	eachMutationWrite(graph, nil, func(write mutationWrite) {
-		if write.target.BaseSymbol == 0 || write.field == "" {
+		if write.target.BaseSymbol == 0 || write.field == "" || filterSyms != nil && !filterSyms[write.target.BaseSymbol] {
 			return
 		}
 		switch write.target.Kind {

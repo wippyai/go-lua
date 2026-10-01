@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/wippyai/go-lua/compiler/check"
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
 	"github.com/wippyai/go-lua/types/diag"
 )
@@ -72,5 +73,44 @@ func expectNoFixpointWarning(t *testing.T, result *testutil.Result, message stri
 		if d.Severity == diag.SeverityWarning && strings.Contains(d.Message, message) {
 			t.Fatalf("unexpected non-convergence warning %q: %v", message, result.Diagnostics)
 		}
+	}
+}
+
+// Reduced from execution_identity_test.lua:41-64. Conditional error returns
+// make the instance estimate evolve while the builder methods capture themselves.
+func TestReproFixpointBuilderWithConditionalOpen(t *testing.T) {
+	source := `
+local function live_resolver_contract(opts: any): any
+    local options = type(opts) == "table" and opts or {}
+    local inst = {
+        resolve = function(_self: any, args: any)
+            if type(options.capture_args) == "table" then options.capture_args.value = args end
+            return options.params or {
+                subject_id = args.subject_id,
+                groups = { "users" },
+                meta = { status = "active" },
+            }, nil
+        end,
+    }
+    local builder = {}
+    builder.with_actor = function(_self: any, _actor: any) return builder end
+    builder.open = function()
+        if options.open_err ~= nil then return nil, options.open_err end
+        return inst, nil
+    end
+    return builder
+end
+`
+	for _, strict := range []bool{false, true} {
+		name := "gradual"
+		if strict {
+			name = "strict"
+		}
+		t.Run(name, func(t *testing.T) {
+			result := testutil.Check(source, testutil.WithStdlib(), testutil.WithCheckOptions(check.Options{Strict: strict}))
+			for _, d := range result.Diagnostics {
+				t.Errorf("unexpected diagnostic: %v", d)
+			}
+		})
 	}
 }
