@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	version     = 2          // v2: added TypeInfo
+	version     = 3          // v3: per-callable ArgumentInfo
 	headerMagic = 0x4C554143 // "LUAC"
 )
 
@@ -50,10 +50,11 @@ func Undump(data []byte) (*lua.FunctionProto, error) {
 	}
 
 	ver := r.readByte()
-	if ver != version {
+	if ver != version && ver != 2 {
 		return nil, ErrVersionMismatch
 	}
 
+	r.version = ver
 	proto, err := r.readProto()
 	if err != nil {
 		return nil, err
@@ -184,6 +185,10 @@ func (w *writer) writeProto(p *lua.FunctionProto) error {
 	if len(p.TypeInfo) > 0 {
 		_, w.err = w.w.Write(p.TypeInfo)
 	}
+	w.writeUint32(uint32(len(p.ArgumentInfo)))
+	if len(p.ArgumentInfo) > 0 {
+		_, w.err = w.w.Write(p.ArgumentInfo)
+	}
 
 	return w.err
 }
@@ -218,8 +223,9 @@ func (w *writer) writeConstant(v lua.LValue) {
 }
 
 type reader struct {
-	r   *bytes.Reader
-	err error
+	r       *bytes.Reader
+	err     error
+	version byte
 }
 
 func (r *reader) readByte() byte {
@@ -346,6 +352,16 @@ func (r *reader) readProto() (*lua.FunctionProto, error) {
 	if typeInfoLen > 0 {
 		p.TypeInfo = make([]byte, typeInfoLen)
 		_, r.err = io.ReadFull(r.r, p.TypeInfo)
+	}
+	if r.version >= 3 {
+		n := r.readUint32()
+		if uint64(n) > uint64(r.r.Len()) {
+			return nil, ErrCorruptedBytecode
+		}
+		if n > 0 {
+			p.ArgumentInfo = make([]byte, n)
+			_, r.err = io.ReadFull(r.r, p.ArgumentInfo)
+		}
 	}
 
 	if r.err != nil {

@@ -16,7 +16,7 @@ import (
 // Manifest file format constants.
 const (
 	manifestMagic   = 0x4D414E49 // "MANI" - identifies valid manifest files
-	manifestVersion = 14         // v14: semantic presence and completeness metadata
+	manifestVersion = 15         // v15: declaration-only argument contracts
 )
 
 // Manifest decoding errors.
@@ -55,6 +55,10 @@ type Manifest struct {
 	// Types maps type names to their definitions for cross-module type references.
 	Types map[string]typ.Type
 
+	// ArgumentContracts preserves explicit parameter declarations by source
+	// position for compilation. These are not inferred export signatures.
+	ArgumentContracts map[string]*ArgumentContract
+
 	// Summaries maps function names to their behavioral specifications.
 	// Enables interprocedural analysis without source code.
 	Summaries map[string]*FunctionSummary
@@ -78,6 +82,13 @@ type Manifest struct {
 	cachedLookupValues  map[string]lookupValueResult
 
 	declaredOnce sync.Once
+}
+
+// ArgumentContract is a resolved runtime boundary contract for one callable.
+// Untyped slots use any. Types retains its lexical alias-resolution environment.
+type ArgumentContract struct {
+	Signature *typ.Function
+	Types     map[string]typ.Type
 }
 
 // ModuleWrite is a callee write to a table exported by another module.
@@ -849,6 +860,19 @@ func (m *Manifest) encodeVersion(version byte) ([]byte, error) {
 		w.writeString(name)
 		w.writeType(m.Globals[name])
 	}
+	if version >= 15 {
+		w.writeUint32(uint32(len(m.ArgumentContracts)))
+		for _, key := range sortedKeys(m.ArgumentContracts) {
+			contract := m.ArgumentContracts[key]
+			w.writeString(key)
+			w.writeType(contract.Signature)
+			w.writeUint32(uint32(len(contract.Types)))
+			for _, name := range sortedKeys(contract.Types) {
+				w.writeString(name)
+				w.writeType(contract.Types[name])
+			}
+		}
+	}
 
 	if w.err != nil {
 		return nil, w.err
@@ -866,7 +890,7 @@ func DecodeManifest(data []byte) (*Manifest, error) {
 	}
 
 	version := r.readByte()
-	if version != manifestVersion && version != 13 {
+	if version != manifestVersion && version != 14 && version != 13 {
 		return nil, ErrVersionMismatch
 	}
 	r.version = version
@@ -986,6 +1010,32 @@ func DecodeManifest(data []byte) (*Manifest, error) {
 	for i := uint32(0); i < count; i++ {
 		name := r.readString()
 		m.Globals[name] = r.readType()
+	}
+	if version >= 15 {
+		count := r.readUint32()
+		if !r.checkSliceLen(count) {
+			return nil, r.err
+		}
+		if count > 0 {
+			m.ArgumentContracts = make(map[string]*ArgumentContract, count)
+		}
+		for range count {
+			key := r.readString()
+			signature, ok := r.readType().(*typ.Function)
+			if !ok {
+				return nil, ErrInvalidManifest
+			}
+			n := r.readUint32()
+			if !r.checkSliceLen(n) {
+				return nil, r.err
+			}
+			types := make(map[string]typ.Type, n)
+			for range n {
+				name := r.readString()
+				types[name] = r.readType()
+			}
+			m.ArgumentContracts[key] = &ArgumentContract{Signature: signature, Types: types}
+		}
 	}
 
 	if r.err != nil {
