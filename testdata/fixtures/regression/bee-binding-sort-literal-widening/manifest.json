@@ -1,0 +1,1 @@
+{"description": "Literal widening through a binding sort comparator (Bee golua-repros2 case 5).", "files": ["main.lua"], "check": {"errors": 0, "modes": ["gradual", "strict"]}}

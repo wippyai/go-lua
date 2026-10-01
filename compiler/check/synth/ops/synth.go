@@ -20,6 +20,8 @@ type FieldDef struct {
 	KeyType  typ.Type // Non-nil for an explicitly computed key.
 	Type     typ.Type
 	Optional bool
+	// Shared values retain their existing mutable slot domains.
+	Shared bool
 }
 
 // tableConstructor synthesizes type for table constructor {}.

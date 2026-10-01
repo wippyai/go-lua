@@ -47,6 +47,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/resolve"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/tblutil"
 	checkscope "github.com/wippyai/go-lua/compiler/check/scope"
+	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/effect"
@@ -333,6 +334,17 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 				if assignedType == nil {
 					assignedType = typ.Unknown
 				}
+				if table, fresh := source.(*ast.TableExpr); fresh && len(table.Fields) == 0 && info.IsLocal && fc.Services != nil {
+					if annotation := info.TypeAnnotationAt(i); annotation != nil {
+						expected := fc.Services.ResolveTypeExpr(annotation, sc)
+						if _, array := unwrap.Optional(expected).(*typ.Array); array {
+							checked := ops.CheckTable(querycore.AssignabilityOf(fc.CallCtx), nil, nil, expected)
+							if len(checked.Errors) == 0 {
+								assignedType = checked.Type
+							}
+						}
+					}
+				}
 				// A later field write can give an unannotated local a partial
 				// inferred record before this initializer is emitted. When the
 				// initializer itself is dynamic, that partial record cannot
@@ -615,7 +627,7 @@ func ExtractAssignments(fc *fbcore.FlowContext, inputs *flow.Inputs, keysCollect
 						Symbol: sym,
 					}
 				} else if target.Base != nil {
-					if bp := path.FromExprWithKeyTypes(target.Base, constResolver, bindings, keyTypeAt); !bp.IsEmpty() && bp.Symbol != 0 {
+					if bp := path.FromExprWithKeyTypesThroughCasts(target.Base, constResolver, bindings, keyTypeAt); !bp.IsEmpty() && bp.Symbol != 0 {
 						basePath = constraint.Path{
 							Root:     resolve.RootNameFromBindings(bindings, bp.Symbol, bp.Root),
 							Symbol:   bp.Symbol,

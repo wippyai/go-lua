@@ -672,23 +672,32 @@ func (c *checker) checkRecord(sub, super *typ.Record, depth int) bool {
 	// For each field in super, sub must have compatible field
 	for _, sf := range super.Fields {
 		subField := recordFieldOrInherited(sub, sf.Name)
+		superMayBeAbsent := sf.Optional || c.checkNil(sf.Type, depth+1)
 		if subField == nil {
-			// Allow missing field if field is optional or type accepts nil
-			if !sf.Optional && !unwrap.IsOptionalLike(sf.Type) {
-				return false // required field missing and type doesn't accept nil
+			if !superMayBeAbsent {
+				return false
 			}
-
 			continue
 		}
-		// Assigning nil to a Lua table key removes that key. A nil-valued
-		// field therefore satisfies a destination that permits absence.
-		if (sf.Optional || unwrap.IsOptionalLike(sf.Type)) && unwrap.IsNilType(subField.Type) {
+		// Nil deletes a Lua table key. Presence follows semantic nil admission,
+		// including normalized top types, while depth compares present values.
+		subValueType := unwrap.Alias(subField.Type)
+		// Gradual consistency permits a required dynamic slot to fit a concrete
+		// slot; an explicitly optional slot still carries absence evidence.
+		dynamicConsistent := c.gradual && (typ.IsAny(subValueType) || (c.unknownConsistent && typ.IsUnknown(subValueType)))
+		subMayBeAbsent := subField.Optional || (!dynamicConsistent && c.checkNil(subField.Type, depth+1))
+		if !superMayBeAbsent && subMayBeAbsent {
+			return false
+		}
+		subValue := fieldPresentType(subField.Type)
+		superValue := fieldPresentType(sf.Type)
+		if typ.IsNever(subValue) {
 			continue
 		}
 
 		if sf.Readonly {
 			// Readonly in super: covariant check is sound (no writes through supertype)
-			if !c.check(subField.Type, sf.Type, depth+1) {
+			if !c.check(subValue, superValue, depth+1) {
 				return false
 			}
 		} else {
@@ -698,70 +707,49 @@ func (c *checker) checkRecord(sub, super *typ.Record, depth int) bool {
 			}
 
 			// Forward check: sub field type must be subtype of super field type
-			if !c.check(subField.Type, sf.Type, depth+1) {
+			if !c.check(subValue, superValue, depth+1) {
 				return false
 			}
 			// Reverse check with widening: allow literal/refinement types to widen
 			// This is sound for fresh record literals where no narrower-typed alias exists
-			if !c.check(sf.Type, subField.Type, depth+1) && !c.canWidenTo(subField.Type, sf.Type, depth+1) {
+			if !c.checkInvariantSlot(subValue, superValue, depth+1) && !c.canWidenTo(subValue, sf.Type, depth+1) {
 				return false
 			}
-		}
-
-		// Optional compatibility:
-		// A super field that syntactically looks required can still admit nil
-		// via its type (e.g. `x: string?`). In that case an optional sub field
-		// remains compatible.
-		if !sf.Optional && !unwrap.IsOptionalLike(sf.Type) && subField.Optional {
-			return false
 		}
 	}
 
 	// Compare map components
 	if super.HasMapComponent() {
-		// A complete record can satisfy a map component through its known
-		// fields. A partial record cannot: it may contain unseen keys.
-		if !sub.HasMapComponent() && !sub.Complete {
-			return false
-		}
-		if sub.HasMapComponent() {
-			if !c.check(sub.MapKey, super.MapKey, depth+1) || !c.check(sub.MapValue, super.MapValue, depth+1) {
-				return false
-			}
-		}
-		for _, field := range sub.Fields {
-			if super.GetField(field.Name) != nil {
-				continue // declared fields take precedence over the map component
-			}
-			// Lua removes nil-valued entries from a table. Only values that
-			// can actually remain in the map need to satisfy its value type.
-			value := mapFieldPresentType(field.Type)
-			if typ.IsNever(value) {
-				continue
-			}
-			if !c.check(typ.LiteralString(field.Name), super.MapKey, depth+1) || !c.check(value, super.MapValue, depth+1) {
-				return false
-			}
-		}
+		return c.checkRecordMapDomain(sub, super.MapKey, super.MapValue, super, depth)
 	}
 
 	return true
 }
 
-// mapFieldPresentType describes values left in a Lua table after nil deletes
+// fieldPresentType describes values left in a Lua table after nil deletes
 // the entry. It only strips nil at the field's outermost level.
-func mapFieldPresentType(t typ.Type) typ.Type {
+func fieldPresentType(t typ.Type) typ.Type {
+	present := presentFieldType(t)
+	// A non-nil alias still supplies the identity used by local references.
+	// Remove absence without discarding that identity when its domain is intact.
+	if typ.TypeEquals(present, unwrap.Alias(t)) {
+		return t
+	}
+	return present
+}
+
+func presentFieldType(t typ.Type) typ.Type {
 	t = unwrap.Alias(t)
 	if unwrap.IsNilType(t) {
 		return typ.Never
 	}
 	switch v := t.(type) {
 	case *typ.Optional:
-		return v.Inner
+		return fieldPresentType(v.Inner)
 	case *typ.Union:
 		members := make([]typ.Type, 0, len(v.Members))
 		for _, member := range v.Members {
-			present := mapFieldPresentType(member)
+			present := fieldPresentType(member)
 			if !typ.IsNever(present) {
 				members = append(members, present)
 			}
@@ -841,7 +829,7 @@ func (c *checker) canWidenTo(narrow, wide typ.Type, depth int) bool {
 	wide = unwrap.Alias(wide)
 	narrow = unwrap.Alias(narrow)
 
-	// Any type accepts everything
+	// Any accepts every value in a widening context.
 	if typ.IsAny(wide) {
 		return true
 	}
@@ -928,6 +916,8 @@ func (c *checker) canWidenTo(narrow, wide typ.Type, depth int) bool {
 		if supRec, ok := wide.(*typ.Record); ok {
 			return c.canWidenRecordTo(subRec, supRec, depth+1)
 		}
+		// Preserve v1.6.2 mutable-slot widening during the v1.6.3 interim
+		// period (design-record-to-map.md), including the closed lookup guard.
 		if tableMap, ok := wide.(*typ.Map); ok && !subRec.Open &&
 			c.check(subRec, tableMap, depth+1) {
 			return true
@@ -1033,14 +1023,14 @@ func (c *checker) canWidenRecordTo(narrow, wide *typ.Record, depth int) bool {
 		if nf == nil {
 			continue
 		}
-		// A nil-valued Lua table key is absent. Widening a fresh nested record
-		// may add an optional property later, just as it may add a missing one.
-		if unwrap.IsNilType(nf.Type) && (wf.Optional || unwrap.IsOptionalLike(wf.Type)) {
+		narrowValue := fieldPresentType(nf.Type)
+		wideValue := fieldPresentType(wf.Type)
+		if typ.IsNever(narrowValue) {
 			continue
 		}
-		// Forward direction must hold (already checked by main subtype check)
-		// Check if reverse direction can be satisfied by widening
-		if !c.check(wf.Type, nf.Type, depth+1) && !c.canWidenTo(nf.Type, wf.Type, depth+1) {
+		// Forward presence and value compatibility was checked by checkRecord.
+		// Apply its present-value rule to recursive mutable widening as well.
+		if !c.checkInvariantSlot(narrowValue, wideValue, depth+1) && !c.canWidenTo(narrowValue, wf.Type, depth+1) {
 			return false
 		}
 	}
@@ -1158,28 +1148,43 @@ func (c *checker) checkRecordToMap(sub *typ.Record, super *typ.Map, depth int) b
 	if sub == nil || super == nil {
 		return false
 	}
+	return c.checkRecordMapDomain(sub, super.Key, super.Value, nil, depth)
+}
+
+// checkRecordMapDomain preserves the interim v1.6.2 rules for the two target
+// forms: typ.Map checks known entries; a record map component requires
+// completeness or a component. This deliberate difference is frozen for
+// v1.6.3 by design-record-to-map.md; semantic exactness and write capabilities
+// are v1.7 work. Open remains a lookup policy, not proof of key closure.
+func (c *checker) checkRecordMapDomain(sub *typ.Record, key, valueType typ.Type, declared *typ.Record, depth int) bool {
+	if declared != nil && !sub.Complete && !sub.HasMapComponent() {
+		return false
+	}
 
 	for _, f := range sub.Fields {
-		value := mapFieldPresentType(f.Type)
+		if declared != nil && declared.GetField(f.Name) != nil {
+			continue
+		}
+		value := fieldPresentType(f.Type)
 		if typ.IsNever(value) {
 			continue
 		}
 		keyType := typ.LiteralString(f.Name)
-		if !c.check(keyType, super.Key, depth+1) {
+		if !c.check(keyType, key, depth+1) {
 			return false
 		}
 
-		if !c.check(value, super.Value, depth+1) {
+		if !c.check(value, valueType, depth+1) {
 			return false
 		}
 	}
 
 	// If record has a map component, check its key/value against the super map
 	if sub.HasMapComponent() {
-		if !c.check(sub.MapKey, super.Key, depth+1) {
+		if !c.check(sub.MapKey, key, depth+1) {
 			return false
 		}
-		if !c.check(sub.MapValue, super.Value, depth+1) {
+		if !c.check(sub.MapValue, valueType, depth+1) {
 			return false
 		}
 	}

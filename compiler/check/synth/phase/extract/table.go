@@ -44,7 +44,7 @@ func (s *Synthesizer) SynthTableWithExpected(ex *ast.TableExpr, sc *scope.State,
 		return typ.NewRecord().SetOpen(true).SetComplete(true).Build()
 	}
 
-	if _, isUnion := unwrap.Alias(expected).(*typ.Union); isUnion {
+	if _, isUnion := unwrap.Optional(expected).(*typ.Union); isUnion {
 		if match := querycore.TryDiscriminatedUnionMember(ex, expected); match != nil {
 			return s.SynthTableWithExpected(ex, sc, recurse, match.Member)
 		}
@@ -83,7 +83,7 @@ func (s *Synthesizer) SynthTableWithExpected(ex *ast.TableExpr, sc *scope.State,
 			if ft == nil {
 				ft = typ.Unknown
 			}
-			fieldDefs = append(fieldDefs, ops.FieldDef{Name: k.Value, Type: ft})
+			fieldDefs = append(fieldDefs, ops.FieldDef{Name: k.Value, Type: ft, Shared: phasecore.SharedTableValue(field.Value, ft)})
 			if inner, optional := typ.SplitNilableFieldType(ft); optional {
 				builder.OptField(k.Value, inner)
 			} else {
@@ -95,7 +95,7 @@ func (s *Synthesizer) SynthTableWithExpected(ex *ast.TableExpr, sc *scope.State,
 			if ft == nil {
 				ft = typ.Unknown
 			}
-			fieldDefs = append(fieldDefs, ops.FieldDef{Name: k.Value, Type: ft})
+			fieldDefs = append(fieldDefs, ops.FieldDef{Name: k.Value, Type: ft, Shared: phasecore.SharedTableValue(field.Value, ft)})
 			if inner, optional := typ.SplitNilableFieldType(ft); optional {
 				builder.OptField(k.Value, inner)
 			} else {
@@ -164,7 +164,16 @@ func (s *Synthesizer) synthFieldValueWithExpected(value ast.Expr, sc *scope.Stat
 		}
 		return s.SynthFunctionTypeWithExpected(fn, sc, expectedFn)
 	}
-	return recurse(value)
+	inferred := recurse(value)
+	// Scalar literals can initialize wider slots. Keep their exact value when
+	// context has alternatives, since it selects the applicable record branch.
+	switch value.(type) {
+	case *ast.StringExpr, *ast.NumberExpr:
+		if _, alternatives := unwrap.Optional(expected).(*typ.Union); !alternatives && expected != nil && s.isAssignable(inferred, expected) {
+			return expected
+		}
+	}
+	return inferred
 }
 
 // resolveExpectedFields extracts expected field types from the expected type.
@@ -173,11 +182,11 @@ func (s *Synthesizer) resolveExpectedFields(expected typ.Type) map[string]typ.Ty
 		return nil
 	}
 
-	if _, isUnion := unwrap.Alias(expected).(*typ.Union); !isUnion {
+	if _, isUnion := unwrap.Optional(expected).(*typ.Union); !isUnion {
 		return querycore.AllFieldTypesResolved(expected)
 	}
 
-	union := unwrap.Alias(expected).(*typ.Union)
+	union := unwrap.Optional(expected).(*typ.Union)
 	result := make(map[string]typ.Type)
 
 	fieldNames := make(map[string]struct{})

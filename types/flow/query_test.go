@@ -41,6 +41,49 @@ func TestTypeAt_EmptyPath(t *testing.T) {
 	}
 }
 
+func TestNarrowingDistinguishesPendingAndMissingMembers(t *testing.T) {
+	c := cfg.New()
+	g := newMockSSAGraph(c)
+	sym := setupSymbol(g, "value", []cfg.Point{c.Entry()})
+	setVersion(g, c.Entry(), sym, cfg.Version{Root: "value", Symbol: sym, ID: 1})
+	root := constraint.Path{Root: "value", Symbol: sym}
+	child := root.Field("member")
+	for _, tc := range []struct {
+		name    string
+		base    typ.Type
+		path    constraint.Path
+		pending bool
+	}{
+		{"pending_root", nil, root, true},
+		{"pending_child", nil, child, true},
+		{"pending_intermediate", typ.NewRecord().Field("member", typ.Unresolved).Build(), child.Field("leaf"), true},
+		{"missing_member", typ.NewRecord().Field("known", typ.String).Build(), child, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			inputs := newInputs(g)
+			if tc.base != nil {
+				inputs.DeclaredTypes[sym] = tc.base
+			}
+			s := Solve(inputs, testResolver())
+			base := s.baseTypeAt(c.Entry(), tc.path)
+			if tc.pending && !typ.IsUnresolved(base) {
+				t.Fatalf("pending base = %v, want unresolved", base)
+			}
+			if !tc.pending && base != nil {
+				t.Fatalf("missing projection = %v, want nil", base)
+			}
+			guard := constraint.FromConstraints(constraint.HasType{Path: tc.path, Type: narrow.BuiltinTypeKey("string")})
+			got := s.narrowedTypeUnder(c.Entry(), tc.path, guard)
+			if tc.pending && !typ.IsUnresolved(got) {
+				t.Fatalf("pending guard invents evidence: %v", got)
+			}
+			if !tc.pending && !typ.TypeEquals(got, typ.String) {
+				t.Fatalf("missing member guard = %v, want string", got)
+			}
+		})
+	}
+}
+
 func TestTypeAt_DeclaredType(t *testing.T) {
 	c := cfg.New()
 	g := newMockSSAGraph(c)
@@ -151,6 +194,41 @@ func TestBaseTypeAt_NoSegments(t *testing.T) {
 	result := s.baseTypeAt(c.Entry(), path)
 	if result != typ.Number {
 		t.Errorf("baseTypeAt(x) = %v, want number", result)
+	}
+}
+
+func TestNarrowAscribedTypeAssumingKeepsMemberDomain(t *testing.T) {
+	c := cfg.New()
+	branch := c.AddNode(cfg.NodeBranch, 0, "")
+	thenNode := c.AddNode(cfg.NodeAssign, 0, "")
+	c.AddEdge(c.Entry(), branch, true)
+	c.AddEdge(branch, thenNode, true)
+	c.AddEdge(thenNode, c.Exit(), true)
+	g := newMockSSAGraph(c)
+	points := []cfg.Point{c.Entry(), branch, thenNode}
+	sym := setupSymbol(g, "module", points)
+	for _, point := range points {
+		setVersion(g, point, sym, cfg.Version{Root: "module", Symbol: sym, ID: 1})
+	}
+	root := constraint.Path{Root: "module", Symbol: sym}
+	member := root.Field("invoke")
+	fn := typ.Func().Returns(typ.Boolean).Build()
+	inputs := newInputs(g)
+	inputs.DeclaredTypes[sym] = typ.NewOptional(typ.NewRecord().OptField("invoke", fn).SetDeclared(true).Build())
+	inputs.EdgeConditions = []EdgeCondition{{
+		From: branch, To: thenNode,
+		Condition: constraint.FromConstraints(constraint.Truthy{Path: root}),
+	}}
+	s := Solve(inputs, testResolver())
+	if got := s.NarrowedTypeAt(thenNode, member); !typ.TypeEquals(got, typ.NewOptional(fn)) {
+		t.Fatalf("solution member = %v, want optional function", got)
+	}
+	if got := s.NarrowAscribedTypeAssuming(thenNode, member, typ.Any, constraint.TrueCondition()); !typ.IsAny(got) {
+		t.Fatalf("supplied member = %v, want any", got)
+	}
+	guard := constraint.FromConstraints(constraint.NotNil{Path: member})
+	if got := s.NarrowAscribedTypeAssuming(thenNode, member, typ.NewOptional(fn), guard); !typ.TypeEquals(got, fn) {
+		t.Fatalf("guarded supplied member = %v, want function", got)
 	}
 }
 

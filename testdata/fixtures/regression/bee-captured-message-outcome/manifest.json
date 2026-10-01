@@ -1,0 +1,1 @@
+{"description": "A captured message outcome keeps its declared type (Bee golua-repros2 case 8).", "files": ["main.lua"], "check": {"errors": 0, "modes": ["gradual", "strict"]}}

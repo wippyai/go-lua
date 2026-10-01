@@ -87,7 +87,8 @@ func widenDepth(t typ.Type, depth int) typ.Type {
 //   - Tuple elements: each element is recursively widened
 //   - Array elements: the element type is recursively widened
 //   - Map key/value: both are recursively widened
-//   - Record fields: each field type is recursively widened
+//   - Inferred record fields: each field type is recursively widened
+//   - Declared records: unchanged
 //
 // Record field names are retained even for large records so accesses to a
 // known field do not become accesses to a union of unrelated field values.
@@ -144,6 +145,10 @@ func widenForInferenceDepth(t typ.Type, depth int) typ.Type {
 			return m.WithTypes(key, val)
 		},
 		Record: func(r *typ.Record) typ.Type {
+			// A declared record already specifies its field domains.
+			if r.Declared {
+				return r
+			}
 			fields := make([]typ.Field, len(r.Fields))
 			for i, f := range r.Fields {
 				fieldType := widenForInferenceDepth(f.Type, depth+1)

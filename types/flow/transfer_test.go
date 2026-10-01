@@ -467,3 +467,31 @@ func TestWidenWithIndexerInferredMapPresence(t *testing.T) {
 		t.Fatalf("write to declared map = %v, want %v", got, declared)
 	}
 }
+
+func TestDeclaredRecordEffectsPreserveOptionalSlotContracts(t *testing.T) {
+	for _, optionalField := range []bool{false, true} {
+		slot := typ.NewRecord().Field("fixed", typ.String)
+		if optionalField {
+			slot.OptField("note", typ.String)
+		} else {
+			slot.Field("note", typ.NewOptional(typ.String))
+		}
+		record := slot.SetDeclared(true).Build()
+		for _, definite := range []bool{false, true} {
+			for _, value := range []typ.Type{typ.String, typ.Nil, typ.NewOptional(typ.String)} {
+				written := applyFieldWrite(record, "note", value, definite)
+				if !subtype.IsSubtype(written, record) {
+					t.Fatalf("admitted effect %s changes the slot contract: %s", value, written)
+				}
+			}
+			written := applyFieldWrite(record, "note", typ.Integer, definite)
+			if subtype.IsSubtype(written, record) {
+				t.Fatalf("incompatible effect disappears from the record: %s", written)
+			}
+			written = applyFieldWrite(record, "note", typ.Any, definite)
+			if !typ.IsAny(written.(*typ.Record).GetField("note").Type) {
+				t.Fatalf("dynamic effect loses its value domain: %s", written)
+			}
+		}
+	}
+}

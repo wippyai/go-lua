@@ -9,19 +9,22 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow"
+	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
 // ParentContext supplies the parent facts and mutation information for captures.
 type ParentContext struct {
-	ParentGraph *cfg.Graph
-	ChildGraph  *cfg.Graph
-	Point       cfg.Point
-	Facts       flow.TypeFacts
-	Solution    *flow.Solution
-	TypeOf      func(ast.Expr, cfg.Point) typ.Type
-	Classes     api.ClassSelfSource
-	Mutations   api.TableMutationSource
+	ParentGraph   *cfg.Graph
+	ChildGraph    *cfg.Graph
+	Point         cfg.Point
+	Facts         flow.TypeFacts
+	Solution      *flow.Solution
+	Flow          api.FlowOps
+	FallbackTypes map[cfg.SymbolID]typ.Type
+	TypeOf        func(ast.Expr, cfg.Point) typ.Type
+	Classes       api.ClassSelfSource
+	Mutations     api.TableMutationSource
 }
 
 // Types computes the captures a closure body observes, including field writes
@@ -34,6 +37,44 @@ func Types(input ParentContext) map[cfg.SymbolID]typ.Type {
 	isAnnotated := func(sym cfg.SymbolID) bool {
 		return input.Facts != nil && input.Facts.IsAnnotated(sym) && nestedGraph.Bindings().TypeAnnotation(sym) != nil
 	}
+	parameters := make(map[cfg.SymbolID]cfg.Point)
+	if input.ParentGraph != nil {
+		for _, slot := range input.ParentGraph.ParamSlotsReadOnly() {
+			parameters[slot.Symbol] = slot.DeclPoint
+		}
+	}
+	valueAtCapture := func(sym cfg.SymbolID) typ.Type {
+		value := input.FallbackTypes[sym]
+		declPoint, parameter := parameters[sym]
+		if !parameter {
+			return value
+		}
+		flowOps := input.Flow
+		if flowOps == nil && input.Solution != nil {
+			flowOps = input.Solution
+		}
+		if flowOps != nil {
+			if current := flowOps.NarrowedTypeAt(input.Point, constraint.Path{Symbol: sym}); current != nil && !typ.IsUnresolved(current) {
+				return current
+			}
+		}
+		if value != nil && !value.Kind().IsPlaceholder() {
+			return value
+		}
+		entry := input.ParentGraph.VisibleVersion(declPoint, sym)
+		current := input.ParentGraph.VisibleVersion(input.Point, sym)
+		// A reassigned parameter needs capture-point evidence. Its declaration
+		// describes the entry value and cannot type this later SSA version.
+		if !current.IsZero() && current.ID != entry.ID {
+			return typ.Unresolved
+		}
+		if input.Facts != nil {
+			if fact := input.Facts.EffectiveTypeAt(input.Point, sym); fact.State == flow.StateResolved && fact.Type != nil {
+				return fact.Type
+			}
+		}
+		return value
+	}
 	// When synthesis runs inside the closure's own graph, its declarations
 	// already include the captures supplied by nested body checking.
 	if input.ParentGraph == nestedGraph {
@@ -44,6 +85,9 @@ func Types(input ParentContext) map[cfg.SymbolID]typ.Type {
 		for _, sym := range nestedGraph.Bindings().CapturedSymbols(nestedGraph.Func()) {
 			if tv := input.Facts.DeclaredAt(input.Point, sym); tv.State == flow.StateResolved && tv.Type != nil {
 				out[sym] = tv.Type
+			}
+			if value := valueAtCapture(sym); value != nil {
+				out[sym] = value
 			}
 		}
 		return out
@@ -57,6 +101,14 @@ func Types(input ParentContext) map[cfg.SymbolID]typ.Type {
 	var capturedTypes map[cfg.SymbolID]typ.Type
 	if nestedGraph != nil {
 		capturedTypes = FromParentFacts(input.Facts, nestedGraph, input.Point, nestedGraph.Bindings())
+		for _, sym := range nestedGraph.Bindings().CapturedSymbols(nestedGraph.Func()) {
+			if value := valueAtCapture(sym); value != nil {
+				if capturedTypes == nil {
+					capturedTypes = make(map[cfg.SymbolID]typ.Type)
+				}
+				capturedTypes[sym] = value
+			}
+		}
 	}
 	if nestedGraph != nil && input.TypeOf != nil {
 		bindings := nestedGraph.Bindings()
@@ -105,6 +157,15 @@ func Types(input ParentContext) map[cfg.SymbolID]typ.Type {
 	}
 
 	if nestedGraph != nil && nestedGraph.Bindings() != nil {
+		captureBounds := make(map[cfg.SymbolID]typ.Type, len(capturedTypes))
+		for sym, t := range capturedTypes {
+			if isAnnotated(sym) {
+				captureBounds[sym] = input.Facts.DeclaredAt(input.Point, sym).Type
+			} else {
+				// Widen before field narrowing erases aliases, which bound inference.
+				captureBounds[sym] = subtype.WidenForInference(t)
+			}
+		}
 		if input.Solution != nil {
 			unstable := make(map[cfg.SymbolID]bool)
 			if input.ParentGraph != nil {
@@ -137,11 +198,7 @@ func Types(input ParentContext) map[cfg.SymbolID]typ.Type {
 				continue
 			}
 			if t := capturedTypes[sym]; t != nil && input.Mutations != nil {
-				var declared typ.Type
-				if isAnnotated(sym) {
-					declared = input.Facts.DeclaredAt(input.Point, sym).Type
-				}
-				capturedTypes[sym] = nested.NormalizeCapturedTableType(t, input.Mutations.TableMutation(sym), declared)
+				capturedTypes[sym] = nested.NormalizeCapturedTableType(t, input.Mutations.TableMutation(sym), captureBounds[sym])
 			}
 		}
 	}

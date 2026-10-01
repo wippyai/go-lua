@@ -74,11 +74,13 @@ func (s *Synthesizer) synthAttrGetCore(ex *ast.AttrGetExpr, p cfg.Point, sc *sco
 	if narrower != nil && s.deps.Paths != nil {
 		path := s.deps.Paths(p, ex, sc, recurse)
 		if !path.IsEmpty() {
+			if attributePathHasCast(ex) {
+				// Project the asserted type before applying guards on the same value.
+				projected := s.synthAttrGetCore(ex, p, sc, nil, recurse)
+				return narrower.NarrowAscribedTypeAssuming(p, path, projected, constraint.TrueCondition())
+			}
 			narrowed := narrower.NarrowedTypeAt(p, path)
 			if narrowed != nil {
-				if _, cast := ex.Object.(*ast.CastExpr); cast && typ.IsAny(unwrap.Alias(objType)) && querycore.AssignabilityOf(s.deps.Ctx) != subtype.Strict {
-					goto skipNarrowedAttr
-				}
 				if specialized := s.stableLocalFunctionValueType(ex, p, sc, narrowed, nil); specialized != nil {
 					return specialized
 				}
@@ -229,6 +231,20 @@ skipNarrowedAttr:
 	}
 
 	return typ.Unknown
+}
+
+// attributePathHasCast reports an assertion in an attribute's object chain.
+func attributePathHasCast(expr ast.Expr) bool {
+	for {
+		switch ex := expr.(type) {
+		case *ast.CastExpr:
+			return true
+		case *ast.AttrGetExpr:
+			expr = ex.Object
+		default:
+			return false
+		}
+	}
 }
 
 // A writable imported field cannot remain a singleton after a write in the
@@ -550,6 +566,9 @@ type assumingFlowOps struct {
 // assumeFlow returns flow ops in which cond holds at every point in addition to
 // what ops already establishes.
 func assumeFlow(ops api.FlowOps, cond constraint.Condition) api.FlowOps {
+	if ops == nil {
+		return nil
+	}
 	if a, ok := ops.(*assumingFlowOps); ok {
 		return &assumingFlowOps{inner: a.inner, extra: constraint.And(a.extra, cond)}
 	}
@@ -562,6 +581,10 @@ func (a *assumingFlowOps) NarrowedTypeAt(p cfg.Point, path constraint.Path) typ.
 
 func (a *assumingFlowOps) NarrowedTypeAssuming(p cfg.Point, path constraint.Path, extra constraint.Condition) typ.Type {
 	return a.inner.NarrowedTypeAssuming(p, path, constraint.And(a.extra, extra))
+}
+
+func (a *assumingFlowOps) NarrowAscribedTypeAssuming(p cfg.Point, path constraint.Path, t typ.Type, extra constraint.Condition) typ.Type {
+	return a.inner.NarrowAscribedTypeAssuming(p, path, t, constraint.And(a.extra, extra))
 }
 
 func (a *assumingFlowOps) BoundsAt(p cfg.Point, name string) (int64, int64, bool) {
@@ -601,32 +624,40 @@ func (a *assumingFlowOps) HasKeyOfAssuming(p cfg.Point, tablePath, keyPath const
 // branch on the left operand puts on its edge, applied by the flow solution the
 // same way, so `type(x) == "table" and x.f` types x.f exactly as
 // `if type(x) == "table" then ... x.f ... end` does.
-func (s *Synthesizer) synthLogicalOpWithNarrowing(ex *ast.LogicalOpExpr, p cfg.Point, narrower api.FlowOps, recurse ExprSynth) typ.Type {
-	if s.deps.Conditions == nil {
-		return s.synthLogicalOpCore(ex, recurse)
-	}
-	onTrue, onFalse := s.deps.Conditions(p, ex.Lhs)
-	var cond constraint.Condition
-	switch ex.Operator {
-	case "and":
-		cond = onTrue
-	case "or":
-		cond = onFalse
-	default:
-		return s.synthLogicalOpCore(ex, recurse)
-	}
-	if !cond.HasConstraints() {
-		return s.synthLogicalOpCore(ex, recurse)
-	}
-	left := recurse(ex.Lhs)
-	right := s.SynthExpr(ex.Rhs, p, assumeFlow(narrower, cond))
-	if ex.Operator == "and" {
-		if querycore.AssignabilityOf(s.deps.Ctx) == subtype.Strict && typ.IsAny(left) {
-			return typ.JoinBranchOutcome(narrow.ToFalsy(left), right)
+func (s *Synthesizer) synthLogicalOpWithNarrowing(ex *ast.LogicalOpExpr, p cfg.Point, narrower api.FlowOps, recurse ExprSynth, expected typ.Type) typ.Type {
+	cond := constraint.TrueCondition()
+	if s.IsNarrowing() && narrower != nil && s.deps.Conditions != nil {
+		onTrue, onFalse := s.deps.Conditions(p, ex.Lhs)
+		switch ex.Operator {
+		case "and":
+			cond = onTrue
+		case "or":
+			cond = onFalse
 		}
-		return ops.LogicalAndTyped(left, right)
 	}
-	return ops.LogicalOrTyped(left, right)
+	operand := func(expr ast.Expr, flow api.FlowOps, contextual bool) typ.Type {
+		if contextual && expected != nil {
+			deps := *s.deps
+			deps.Flow = flow
+			under := NewSynthesizer(&deps, s.phase)
+			return under.SynthExprWithExpectedCore(expr, deps.Scopes[p], p,
+				func(child ast.Expr) typ.Type { return under.SynthExpr(child, p, flow) }, expected)
+		}
+		if cond.HasConstraints() && expr == ex.Rhs {
+			return s.SynthExpr(expr, p, flow)
+		}
+		return recurse(expr)
+	}
+	// `or` can yield either operand; `and` yields its right operand or the
+	// falsy part of its guard. Expected types guide only value alternatives.
+	left := operand(ex.Lhs, narrower, ex.Operator == "or")
+	right := operand(ex.Rhs, assumeFlow(narrower, cond), true)
+	return s.synthLogicalOpCore(ex, func(expr ast.Expr) typ.Type {
+		if expr == ex.Lhs {
+			return left
+		}
+		return right
+	})
 }
 
 // synthArithmeticOpCore synthesizes type for arithmetic operators.
@@ -737,6 +768,9 @@ func (s *Synthesizer) synthExprWithSpec(expr ast.Expr, p cfg.Point, specTypes ap
 		}
 	}
 	sc := s.deps.ScopeAt(p)
+	if fn, ok := expr.(*ast.FunctionExpr); ok {
+		return s.withOwnerOverloads(fn, s.synthFunctionTypeWithCapturePoint(fn, sc, nil, 0, specTypes))
+	}
 	recurse := func(ex ast.Expr) typ.Type { return s.synthExprWithSpec(ex, p, specTypes) }
 	return s.synthExprCore(expr, sc, p, nil, recurse)
 }
@@ -751,7 +785,7 @@ func (s *Synthesizer) synthMultiWithSpec(expr ast.Expr, p cfg.Point, specTypes a
 				if recvIdent, ok := call.Receiver.(*ast.IdentExpr); ok {
 					if sym := s.LookupSymbol(recvIdent); sym != 0 {
 						if recvType, exists := specTypes[sym]; exists {
-							return s.SynthCallWithReceiverType(call, p, sc, recvType, recurse)
+							return s.synthMethodCall(call, p, sc, func() typ.Type { return recvType }, recurse, nil, specTypes)
 						}
 					}
 				}

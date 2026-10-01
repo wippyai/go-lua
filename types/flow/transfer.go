@@ -423,7 +423,7 @@ func (s *Solution) carryForwardStructuredVersionFacts(p cfg.Point, targetPath co
 			}
 			pred := predBasePoints[i]
 			predPath := constraint.Path{Root: targetPath.Root, Symbol: targetPath.Symbol, Version: predBaseVersions[i]}
-			baseTypes = append(baseTypes, s.applyCondition(pred, t, predPath, s.conditionFromPredecessor(pred, p)))
+			baseTypes = append(baseTypes, s.applyCondition(pred, t, predPath, s.conditionFromPredecessor(pred, p), true))
 		}
 		if len(baseTypes) > 0 {
 			joinedBase := join.Types(baseTypes...)
@@ -853,7 +853,7 @@ func (s *Solution) valueTypeAt(p cfg.Point, v ValueSource) typ.Type {
 			if existing := record.GetField(field.Name); existing != nil {
 				updated := *existing
 				updated.Type = resolved
-				record = record.WithField(updated)
+				record = record.WithField(projectFieldFact(record, *existing, updated))
 			}
 		}
 		valueType = record
@@ -1380,7 +1380,7 @@ func applyFieldWrite(t typ.Type, field string, valueType typ.Type, definite bool
 				written.Type = join.Types(existing.Type, valueType)
 				written.Optional = false
 				written.InferredPresence = false
-				return v.WithField(written)
+				return v.WithField(projectFieldFact(v, *existing, written))
 			}
 			if typ.IsUnknown(existing.Type) {
 				return v
@@ -1396,7 +1396,7 @@ func applyFieldWrite(t typ.Type, field string, valueType typ.Type, definite bool
 			if nilable {
 				widened.InferredPresence = false
 			}
-			return v.WithField(widened)
+			return v.WithField(projectFieldFact(v, *existing, widened))
 		}
 		// A possible write supplies a value type but cannot prove presence.
 		// Explicit nil is a real value/removal, not inference uncertainty.
@@ -1808,7 +1808,7 @@ func applyFieldPathWrite(t typ.Type, path []string, value typ.Type) typ.Type {
 		}
 		written := *field
 		written.Type = updated
-		return v.WithField(written)
+		return v.WithField(projectFieldFact(v, *field, written))
 	case *typ.Optional:
 		inner := applyFieldPathWrite(v.Inner, path, value)
 		if inner == v.Inner {
@@ -2188,13 +2188,13 @@ func (s *Solution) phiOperandTypeAt(joinPoint cfg.Point, op cfg.PhiOperand, segm
 	if opType == nil {
 		opType = s.baseTypeAt(op.From, path)
 	}
-	if opType == nil {
+	if opType == nil || typ.IsUnresolved(opType) {
 		return nil
 	}
 
 	edgeK := edgeKey{from: op.From, to: joinPoint}
 	if cond, ok := s.edgeConditions[edgeK]; ok && cond.HasConstraints() {
-		if narrowed := s.applyCondition(op.From, opType, path, cond); narrowed != nil {
+		if narrowed := s.applyCondition(op.From, opType, path, cond, true); narrowed != nil {
 			opType = narrowed
 		}
 	}

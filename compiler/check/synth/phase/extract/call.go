@@ -123,7 +123,7 @@ func (s *Synthesizer) GetCallQuery() core.TypeOps {
 // 3. Call pipeline: Infer type args, re-synthesize callbacks, finish call
 // 4. Post-call transforms: Apply spec-based return type overrides and effects
 //
-// For method calls (obj:method()), dispatches to synthMethodCallCoreWithExpected.
+// For method calls (obj:method()), dispatches to synthMethodCall.
 func (s *Synthesizer) SynthCallCore(ex *ast.FuncCallExpr, p cfg.Point, sc *scope.State, narrower api.FlowOps, recurse ExprSynth) []typ.Type {
 	return s.synthCallCoreWithCaptureTypes(ex, p, sc, narrower, recurse, nil, nil)
 }
@@ -143,7 +143,7 @@ func (s *Synthesizer) synthCallCoreWithCaptureTypes(
 	captureTypes map[cfg.SymbolID]typ.Type,
 ) []typ.Type {
 	if callsite.IsMethodLikeExpr(ex) {
-		return s.synthMethodCallCoreWithExpected(ex, p, sc, recurse, expected)
+		return s.synthMethodCall(ex, p, sc, func() typ.Type { return recurse(ex.Receiver) }, recurse, expected, captureTypes)
 	}
 
 	env := intercept.CallEnv{
@@ -175,7 +175,7 @@ func (s *Synthesizer) synthCallCoreWithCaptureTypes(
 	}
 
 	pipeline := NewCallPipeline(s.deps.Ctx, def, ex.Args).
-		WithReSynth(s.callbackAwareReSynth(calleeType, sc))
+		WithReSynth(s.callbackAwareReSynth(calleeType, sc, captureTypes))
 
 	if expected != nil {
 		pipeline = pipeline.WithExpected(expected)
@@ -236,17 +236,12 @@ func (s *Synthesizer) SynthCallCoreWithExpected(ex *ast.FuncCallExpr, p cfg.Poin
 	return s.synthCallCoreWithNarrower(ex, p, sc, nil, recurse, expected)
 }
 
-// synthMethodCallCoreWithExpected synthesizes method call with optional expected return type.
-func (s *Synthesizer) synthMethodCallCoreWithExpected(ex *ast.FuncCallExpr, p cfg.Point, sc *scope.State, recurse ExprSynth, expected typ.Type) []typ.Type {
-	return s.synthMethodCall(ex, p, sc, func() typ.Type { return recurse(ex.Receiver) }, recurse, expected)
-}
-
 // SynthCallWithReceiverType synthesizes method call with an explicit receiver type.
 func (s *Synthesizer) SynthCallWithReceiverType(ex *ast.FuncCallExpr, p cfg.Point, sc *scope.State, recvType typ.Type, recurse ExprSynth) []typ.Type {
-	return s.synthMethodCall(ex, p, sc, func() typ.Type { return recvType }, recurse, nil)
+	return s.synthMethodCall(ex, p, sc, func() typ.Type { return recvType }, recurse, nil, nil)
 }
 
-func (s *Synthesizer) synthMethodCall(ex *ast.FuncCallExpr, p cfg.Point, sc *scope.State, receiver func() typ.Type, recurse ExprSynth, expected typ.Type) []typ.Type {
+func (s *Synthesizer) synthMethodCall(ex *ast.FuncCallExpr, p cfg.Point, sc *scope.State, receiver func() typ.Type, recurse ExprSynth, expected typ.Type, captureTypes map[cfg.SymbolID]typ.Type) []typ.Type {
 	env := intercept.CallEnv{
 		Scope:      sc,
 		Recurse:    intercept.ExprSynth(recurse),
@@ -272,7 +267,7 @@ func (s *Synthesizer) synthMethodCall(ex *ast.FuncCallExpr, p cfg.Point, sc *sco
 		ForceMethodReceiver: s.forceMethodReceiverAtPoint(p, ex),
 	}
 	pipeline := NewCallPipeline(s.deps.Ctx, def, ex.Args).
-		WithReSynth(s.callbackAwareReSynth(calleeType, sc))
+		WithReSynth(s.callbackAwareReSynth(calleeType, sc, captureTypes))
 	if expected != nil {
 		pipeline = pipeline.WithExpected(expected)
 	}
@@ -518,7 +513,7 @@ func applyTruthyIdentityReturn(fn *typ.Function, args []typ.Type, returnIdx int,
 // callbackAwareReSynth creates an ArgReSynth that applies EnvOverlay from callback specs.
 // For callback parameters with an EnvOverlay, the overlay globals are merged into the
 // synthesizer's context so they are visible inside the callback body only.
-func (s *Synthesizer) callbackAwareReSynth(calleeType typ.Type, sc *scope.State) ArgReSynth {
+func (s *Synthesizer) callbackAwareReSynth(calleeType typ.Type, sc *scope.State, captureTypes map[cfg.SymbolID]typ.Type) ArgReSynth {
 	return func(idx int, arg ast.Expr, expected typ.Type) typ.Type {
 		expectedFn, ok := unwrap.Alias(expected).(*typ.Function)
 		if !ok {
@@ -537,11 +532,11 @@ func (s *Synthesizer) callbackAwareReSynth(calleeType typ.Type, sc *scope.State)
 			}
 		}
 
-		synthFn := s.SynthFunctionTypeWithExpected
+		engine := s
 		if overlay := callbackEnvOverlay(calleeType, idx); len(overlay) > 0 {
-			synthFn = s.withEnvOverlay(overlay).SynthFunctionTypeWithExpected
+			engine = s.withEnvOverlay(overlay)
 		}
-		ft := synthFn(fnExpr, sc, expectedFn)
+		ft := engine.synthFunctionTypeWithCapturePoint(fnExpr, sc, expectedFn, 0, captureTypes)
 		if ft == nil {
 			return nil
 		}

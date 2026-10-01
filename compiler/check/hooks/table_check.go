@@ -6,6 +6,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
+	phasecore "github.com/wippyai/go-lua/compiler/check/synth/phase/core"
 	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/subtype"
@@ -138,7 +139,7 @@ func extractTableFields(mode subtype.Assignability, table *ast.TableExpr, expect
 		if ft == nil {
 			ft = typ.Unknown
 		}
-		fields = append(fields, ops.FieldDef{Name: name, Type: ft})
+		fields = append(fields, ops.FieldDef{Name: name, Type: ft, Shared: phasecore.SharedTableValue(field.Value, ft)})
 	}
 
 	return fields, arrayElems, recordOnly, false

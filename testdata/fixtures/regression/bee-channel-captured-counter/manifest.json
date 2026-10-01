@@ -1,0 +1,1 @@
+{"description": "Integer counter and valid sends preserve Channel<Activation> at a captured return (bee.harness.window:picker:93).", "files": ["main.lua"], "packages": ["channel"], "check": {"errors": 0, "modes": ["gradual", "strict"]}}

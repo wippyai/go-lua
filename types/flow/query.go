@@ -505,7 +505,18 @@ func (s *Solution) rebindsAt(p cfg.Point, sym cfg.SymbolID) bool {
 // condition.
 func (s *Solution) narrowedTypeUnder(p cfg.Point, path constraint.Path, condition constraint.Condition) typ.Type {
 	baseType := s.baseTypeAt(p, path)
+	if typ.IsUnresolved(baseType) {
+		// Pending solver evidence does not establish a value domain yet.
+		return baseType
+	}
 	if baseType == nil {
+		// Nil denotes a missing projection from an available ancestor. A
+		// predicate supplies member evidence even for a partial shape.
+		if condition.HasConstraints() {
+			if narrowed := s.applyCondition(p, typ.Unknown, path, condition, true); narrowed != nil && !typ.IsUnknown(narrowed) {
+				return s.refineExactLengthIndex(p, path, narrowed)
+			}
+		}
 		return s.refineExactLengthIndex(p, path, nil)
 	}
 	// For annotated symbols, ensure base type does not drop required structure.
@@ -526,7 +537,7 @@ func (s *Solution) narrowedTypeUnder(p cfg.Point, path constraint.Path, conditio
 		return s.refineExactLengthIndex(p, path, baseType)
 	}
 	baseType = s.narrowRecordFieldAliases(p, path, baseType, condition)
-	return s.refineExactLengthIndex(p, path, s.applyCondition(p, baseType, path, condition))
+	return s.refineExactLengthIndex(p, path, s.applyCondition(p, baseType, path, condition, true))
 }
 
 func (s *Solution) refineExactLengthIndex(p cfg.Point, path constraint.Path, t typ.Type) typ.Type {
@@ -591,10 +602,11 @@ func (s *Solution) narrowRecordFieldAliases(p cfg.Point, path constraint.Path, t
 		if sourceType == nil {
 			continue
 		}
-		narrowed := s.applyCondition(p, sourceType, sourcePath, condition)
+		narrowed := s.applyCondition(p, sourceType, sourcePath, condition, true)
 		if narrowed != nil && subtype.IsSubtype(narrowed, field.Type) && !typ.TypeEquals(narrowed, field.Type) {
-			field.Type = narrowed
-			rec = rec.WithField(field)
+			current := field
+			current.Type = narrowed
+			rec = rec.WithField(projectFieldFact(rec, field, current))
 		}
 	}
 	return rec
@@ -613,7 +625,16 @@ func (s *Solution) NarrowTypeAssuming(p cfg.Point, path constraint.Path, t typ.T
 	if s == nil || t == nil || path.IsEmpty() {
 		return t
 	}
-	return s.applyCondition(p, t, path, constraint.And(s.ConditionAt(p), extra))
+	return s.applyCondition(p, t, path, constraint.And(s.ConditionAt(p), extra), true)
+}
+
+// NarrowAscribedTypeAssuming narrows an expression's ascribed type by direct
+// predicates without restoring projections from the operand's ancestors.
+func (s *Solution) NarrowAscribedTypeAssuming(p cfg.Point, path constraint.Path, t typ.Type, extra constraint.Condition) typ.Type {
+	if s == nil || t == nil || path.IsEmpty() {
+		return t
+	}
+	return s.applyCondition(p, t, path, constraint.And(s.ConditionAt(p), extra), false)
 }
 
 // NarrowTypeBeforeAssuming narrows t, a type the caller holds for path on
@@ -635,7 +656,7 @@ func (s *Solution) NarrowTypeBeforeAssuming(p cfg.Point, path constraint.Path, t
 		if edge, ok := s.edgeConditions[edgeKey{from: pred, to: p}]; ok {
 			entering = constraint.And(entering, edge)
 		}
-		n := s.applyCondition(pred, t, path, constraint.And(entering, extra))
+		n := s.applyCondition(pred, t, path, constraint.And(entering, extra), true)
 		if n != nil && !typ.IsNever(n) {
 			narrowed = append(narrowed, n)
 		}
@@ -677,6 +698,8 @@ func (s *Solution) narrowedTypeCacheKey(p cfg.Point, path constraint.Path) (narr
 }
 
 // baseTypeAt returns the base type for a path at point p, for use in narrowing.
+// Unresolved denotes pending value evidence; nil denotes a missing member
+// projection from an available value.
 //
 // A child path has two sources: its own type at p (TypeAt) and the type derived
 // from its closest narrowed ancestor. When the own type is only a projection of
@@ -688,12 +711,21 @@ func (s *Solution) baseTypeAt(p cfg.Point, path constraint.Path) typ.Type {
 	explicit, origin := s.typeAtWithOrigin(p, path)
 
 	if len(path.Segments) == 0 {
+		if explicit == nil {
+			return typ.Unresolved
+		}
 		return explicit
 	}
 
 	derived := s.derivedTypeAt(p, path)
 
 	if explicit == nil {
+		if derived == nil {
+			root := constraint.Path{Root: path.Root, Symbol: path.Symbol, Version: path.Version}
+			if s.TypeAt(p, root) == nil {
+				return typ.Unresolved
+			}
+		}
 		return derived
 	}
 	if derived == nil {
@@ -778,8 +810,9 @@ func isFalseLiteral(t typ.Type) bool {
 	return ok && !b
 }
 
-// applyCondition narrows baseType using a DNF condition.
-func (s *Solution) applyCondition(p cfg.Point, baseType typ.Type, path constraint.Path, cond constraint.Condition) typ.Type {
+// applyCondition narrows baseType using a DNF condition. Ancestor projections
+// refine ordinary reads; ascribed types retain their own value domains.
+func (s *Solution) applyCondition(p cfg.Point, baseType typ.Type, path constraint.Path, cond constraint.Condition, projectAncestors bool) typ.Type {
 	if baseType == nil {
 		return baseType
 	}
@@ -797,7 +830,7 @@ func (s *Solution) applyCondition(p cfg.Point, baseType typ.Type, path constrain
 			narrowedTypes = append(narrowedTypes, baseType)
 			continue
 		}
-		narrowed := s.applyConstraints(p, baseType, path, disjunct)
+		narrowed := s.applyConstraints(p, baseType, path, disjunct, projectAncestors)
 		if narrowed != nil && !narrowed.Kind().IsNever() {
 			// A disjunct that leaves the value unresolved admits every value,
 			// so the union over the disjuncts is unresolved too; NewUnion
@@ -819,7 +852,7 @@ func (s *Solution) applyCondition(p cfg.Point, baseType typ.Type, path constrain
 }
 
 // applyConstraints narrows baseType using constraints that apply to path at point p.
-func (s *Solution) applyConstraints(p cfg.Point, baseType typ.Type, path constraint.Path, constraints []constraint.Constraint) typ.Type {
+func (s *Solution) applyConstraints(p cfg.Point, baseType typ.Type, path constraint.Path, constraints []constraint.Constraint, projectAncestors bool) typ.Type {
 	if baseType == nil || len(constraints) == 0 {
 		return baseType
 	}
@@ -870,16 +903,18 @@ func (s *Solution) applyConstraints(p cfg.Point, baseType typ.Type, path constra
 		current = narrowed
 	}
 
-	if narrowed, ok := s.deriveFromNarrowedAncestors(canonicalKey, dom); ok {
-		_, origin := s.typeAtWithOrigin(p, path)
-		if origin == pathTypeRecorded && isEmptyRecordNoMapType(narrowed) && !isEmptyRecordNoMapType(current) {
-			ok = false
-		}
-		if ok {
-			if current == nil {
-				current = narrowed
-			} else {
-				current = narrow.Intersect(current, narrowed)
+	if projectAncestors {
+		if narrowed, ok := s.deriveFromNarrowedAncestors(canonicalKey, dom); ok {
+			_, origin := s.typeAtWithOrigin(p, path)
+			if origin == pathTypeRecorded && isEmptyRecordNoMapType(narrowed) && !isEmptyRecordNoMapType(current) {
+				ok = false
+			}
+			if ok {
+				if current == nil {
+					current = narrowed
+				} else {
+					current = narrow.Intersect(current, narrowed)
+				}
 			}
 		}
 	}

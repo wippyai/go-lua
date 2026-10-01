@@ -60,7 +60,7 @@ func ByFieldFalsy(t typ.Type, field string, resolver Resolver) typ.Type {
 //
 // Keeps only type members where the matcher returns true:
 //   - Union: keeps members where matcher(member) == true.
-//   - Optional: returns inner type if matcher(inner) == true, else Never.
+//   - Optional: filters the inner type without retaining nil.
 //   - Intersection: returns type if matcher(intersection) == true, else Never.
 //   - Other: returns type if matcher(type) == true, else Never.
 //
@@ -68,7 +68,7 @@ func ByFieldFalsy(t typ.Type, field string, resolver Resolver) typ.Type {
 //
 // Removes type members where the matcher returns true:
 //   - Union: keeps members where matcher(member) == false.
-//   - Optional: returns Nil if matcher(inner) == true, else unchanged.
+//   - Optional: filters the inner type and retains nil.
 //   - Intersection: returns Never if matcher(intersection) == true, else unchanged.
 //   - Other: returns Never if matcher(type) == true, else unchanged.
 //
@@ -183,7 +183,7 @@ func fieldCanBeFalsy(t typ.Type, field string, resolver Resolver) bool {
 // This function handles the positive case where we want to keep types that
 // satisfy the matcher. It processes each type variant appropriately:
 //   - Intersections are matched atomically.
-//   - Optionals unwrap to their inner type when matched.
+//   - Optionals filter their inner type without retaining nil.
 //   - Unions filter to only matching members.
 //   - Other types return themselves if matched, Never otherwise.
 func filterNarrow(t typ.Type, matches TypeMatcher) typ.Type {
@@ -195,27 +195,15 @@ func filterNarrow(t typ.Type, matches TypeMatcher) typ.Type {
 	}
 
 	if opt, ok := t.(*typ.Optional); ok {
-		if matches(opt.Inner) {
-			return opt.Inner
-		}
-
-		return typ.Never
+		return FilterByMatch(opt.Inner, matches, false)
 	}
 
 	if u, ok := t.(*typ.Union); ok {
 		var kept []typ.Type
 
 		for _, m := range u.Members {
-			if opt, ok := m.(*typ.Optional); ok {
-				if matches(opt.Inner) {
-					kept = append(kept, opt.Inner)
-				}
-
-				continue
-			}
-
-			if matches(m) {
-				kept = append(kept, m)
+			if filtered := FilterByMatch(m, matches, false); !typ.IsNever(filtered) {
+				kept = append(kept, filtered)
 			}
 		}
 
@@ -250,10 +238,11 @@ func filterExclude(t typ.Type, matches TypeMatcher) typ.Type {
 	}
 
 	if opt, ok := t.(*typ.Optional); ok {
-		if matches(opt.Inner) {
-			return typ.Nil
+		filtered := FilterByMatch(opt.Inner, matches, true)
+		if typ.TypeEquals(filtered, opt.Inner) {
+			return t
 		}
-		return t
+		return typ.NewUnion(filtered, typ.Nil)
 	}
 
 	u, ok := t.(*typ.Union)
@@ -268,16 +257,8 @@ func filterExclude(t typ.Type, matches TypeMatcher) typ.Type {
 	var kept []typ.Type
 
 	for _, m := range u.Members {
-		if opt, ok := m.(*typ.Optional); ok {
-			if !matches(opt.Inner) {
-				kept = append(kept, m)
-			}
-
-			continue
-		}
-
-		if !matches(m) {
-			kept = append(kept, m)
+		if filtered := FilterByMatch(m, matches, true); !typ.IsNever(filtered) {
+			kept = append(kept, filtered)
 		}
 	}
 

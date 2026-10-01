@@ -234,7 +234,11 @@ func (e *Engine) SynthWithExpected(expr ast.Expr, p cfg.Point, expected typ.Type
 	}
 	sc := e.deps.Scopes[p]
 	recurse := func(ex ast.Expr) typ.Type { return e.SynthExpr(ex, p, e.deps.Flow) }
-	return e.SynthExprWithExpectedCore(expr, sc, p, recurse, expected)
+	t := e.SynthExprWithExpectedCore(expr, sc, p, recurse, expected)
+	if e.IsNarrowing() {
+		return finalizeNarrowed(t)
+	}
+	return t
 }
 
 // Narrow returns a narrowing-capable synth if flow information is available

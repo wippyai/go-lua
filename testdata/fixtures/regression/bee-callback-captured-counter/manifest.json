@@ -1,0 +1,1 @@
+{"description": "Both callbacks return Selection through a captured counter (bee.apps:catalog_test:383).", "files": ["main.lua"], "check": {"errors": 0, "modes": ["gradual", "strict"]}}
