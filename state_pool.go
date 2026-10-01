@@ -90,6 +90,7 @@ func newLStateWithGlobal(options Options, G *Global, env *LTable) *LState {
 			ls.reg.handler = ls
 		}
 
+		covArm(ls)
 		return ls
 	}
 
@@ -118,5 +119,6 @@ func newLStateWithGlobal(options Options, G *Global, env *LTable) *LState {
 	ls.reg = newRegistry(ls, options.RegistrySize, options.RegistryGrowStep, options.RegistryMaxSize)
 	ls.Env = env
 
+	covArm(ls)
 	return ls
 }
