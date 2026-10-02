@@ -61,11 +61,12 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			default:
 			}
 		}
-		if g.tickBudget < 0 {
+		budget := g.tickBudget
+		if budget < 0 {
 			return false
 		}
-		if g.tickBudget > 0 {
-			g.tickBudget--
+		if budget > 0 {
+			g.tickBudget = budget - 1
 			return false
 		}
 		if L.Parent == nil || g.nonYieldable != 0 {
@@ -3073,11 +3074,25 @@ func callGFunction(L *LState) bool {
 // after a yield. Lua code the function calls runs under this Go frame and is
 // not preemptible, except where the function hands suspension back to the VM
 // through CallK or coroutine resumption.
+//
+// The Go frame is counted in nonYieldable only while preemption is enabled.
+// The budget changes only between resumes, so a frame entered with preemption
+// disabled cannot observe preemption before it returns and needs no count.
 func invokeGoFrame(L *LState, frame *callFrame) int {
+	if L.G.tickBudget < 0 {
+		return runGoFrame(L, frame)
+	}
+	return runCountedGoFrame(L, frame)
+}
+
+func runCountedGoFrame(L *LState, frame *callFrame) int {
 	g := L.G
 	g.nonYieldable++
 	defer func() { g.nonYieldable-- }()
+	return runGoFrame(L, frame)
+}
 
+func runGoFrame(L *LState, frame *callFrame) int {
 	if ext := L.getFrameExt(frame); ext != nil && ext.Continuation != nil {
 		cont := ext.Continuation
 		ctx := ext.ContinuationCtx

@@ -1893,6 +1893,14 @@ func (ls *LState) Load(reader io.Reader, name string) (*LFunction, error) {
 // called Lua code is not preemptible; a Go function that supports suspension
 // of the code it calls uses CallK instead.
 func (ls *LState) Call(nargs, nret int) {
+	if ls.G.tickBudget < 0 {
+		ls.callR(nargs, nret, -1)
+		return
+	}
+	ls.callCounted(nargs, nret)
+}
+
+func (ls *LState) callCounted(nargs, nret int) {
 	g := ls.G
 	g.nonYieldable++
 	defer func() { g.nonYieldable-- }()
@@ -1926,9 +1934,14 @@ func (ls *LState) CallK(nargs, nret int, cont LGContinuation, ctx any) {
 
 // callYieldable calls a function on behalf of the running Go function, which
 // handles suspension of the called code (yield or preemption) through its
-// continuation. The Go frame counted by invokeGoFrame is released for the call.
+// continuation. The Go frame counted by invokeGoFrame, if any, is released for
+// the call.
 func (ls *LState) callYieldable(nargs, nret int) {
 	g := ls.G
+	if g.tickBudget < 0 {
+		ls.callR(nargs, nret, -1)
+		return
+	}
 	g.nonYieldable--
 	defer func() { g.nonYieldable++ }()
 	ls.callR(nargs, nret, -1)

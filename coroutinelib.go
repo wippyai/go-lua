@@ -114,11 +114,11 @@ func coResume(L *LState) int {
 // as a coroutine, a preemption of th propagates through L to the Go resumer,
 // so this Go frame does not block preemption of th.
 func runResumed(L *LState, th *LState) {
-	if L.Parent == nil {
+	g := L.G
+	if L.Parent == nil || g.tickBudget < 0 {
 		threadRun(th)
 		return
 	}
-	g := L.G
 	g.nonYieldable--
 	defer func() { g.nonYieldable++ }()
 	threadRun(th)
