@@ -34,7 +34,7 @@ func TestYieldContinuationLifetime(t *testing.T) {
 		{"eq", ``, `local v = obj == other`, OP_EQ, yieldContCompare},
 		{"lt", ``, `local v = obj < other`, OP_LT, yieldContCompare},
 		{"le", ``, `local v = obj <= other`, OP_LE, yieldContCompare},
-		{"le-via-lt", `mt.__le = nil`, `local v = obj <= other`, OP_LE, yieldContCompare},
+		{"le-via-lt", `mt.__le = nil`, `local v = obj <= other`, OP_LE, yieldContCompareNot},
 		{"iterator", ``, `for v in meta do end`, OP_TFORLOOP, yieldContTForLoop},
 	}
 	for _, tc := range cases {
