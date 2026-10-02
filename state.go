@@ -163,6 +163,8 @@ const (
 	yieldContLen      uint8 = 7 // OP_LEN __len result → store at RA
 	yieldContConcat   uint8 = 8 // OP_CONCAT __concat result → store at RA
 	yieldContCompare  uint8 = 9 // OP_EQ/LT/LE comparison result → affects Pc jump
+
+	yieldContCompareNot uint8 = 10 // OP_LE through __lt: the metamethod result is negated
 )
 
 // Yield state: combined yielded flag + yield kind in a single field.
@@ -184,6 +186,9 @@ type callFrameExt struct {
 	YieldCont   uint8 // pending opcode continuation kind for a Lua frame
 	YieldContRA int32 // target register (or comparison operand) for the continuation
 	YieldContRB int32 // inner call's ReturnBase (where the result lands)
+	// YieldContAux is continuation-specific. For OP_CONCAT it is the register
+	// that receives the metamethod result and ends the remaining reduction.
+	YieldContAux int32
 }
 
 // getFrameExt returns the extension for a frame, or nil if none exists
@@ -1845,7 +1850,7 @@ func (ls *LState) Concat(values ...LValue) string {
 	for _, value := range values {
 		ls.reg.Push(value)
 	}
-	ret := stringConcat(ls, len(values), ls.reg.Top()-1)
+	ret, _ := stringConcat(ls, len(values), ls.reg.Top()-1)
 	ls.reg.SetTop(top)
 	return LVAsString(ret)
 }

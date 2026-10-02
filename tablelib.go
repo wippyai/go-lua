@@ -111,7 +111,8 @@ func tableConcat(L *LState) int {
 			L.Push(sep)
 		}
 	}
-	L.Push(stringConcat(L, L.GetTop()-retbottom, L.reg.Top()-1))
+	v, _ := stringConcat(L, L.GetTop()-retbottom, L.reg.Top()-1)
+	L.Push(v)
 	return 1
 }
 

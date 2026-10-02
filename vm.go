@@ -89,7 +89,9 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 		// frame owns its continuation, so nested metamethod yields resolve
 		// innermost-first as their frames resume.
 		if cf.Flags&frameYieldCont != 0 {
-			handleYieldContinuation(L, cf, inst)
+			if handleYieldContinuation(L, cf, inst) {
+				return
+			}
 			continue
 		}
 
@@ -1585,9 +1587,10 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			C := int(inst>>9) & 0x1ff //GETC
 			RC := int(lbase) + C
 			RB := int(lbase) + B
-			v := stringConcat(L, RC-RB+1, RC)
+			v, pos := stringConcat(L, RC-RB+1, RC)
 			if L.yieldState != yieldNone {
 				L.setYieldCont(cf, yieldContConcat, RA)
+				L.getFrameExt(cf).YieldContAux = int32(pos)
 				cf.Pc--
 				return
 			}
@@ -1691,7 +1694,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 					default:
 						ret = !objectRationalWithError(L, rhs, lhs, "__lt")
 						if L.yieldState != yieldNone {
-							L.setYieldCont(cf, yieldContCompare, A)
+							L.setYieldCont(cf, yieldContCompareNot, A)
 							cf.Pc--
 							return
 						}
@@ -2934,17 +2937,22 @@ func (ls *LState) setYieldCont(cf *callFrame, kind uint8, ra int) {
 	ext.YieldCont = kind
 	ext.YieldContRA = int32(ra)
 	ext.YieldContRB = ls.yieldCallRB
+	ext.YieldContAux = 0
 	cf.Flags |= frameYieldCont
 }
 
 // handleYieldContinuation finishes an opcode whose inner call yielded.
 // The called function has completed and OP_RETURN placed the result at the
 // recorded return base. We execute only the post-call logic of the originating opcode.
-func handleYieldContinuation(L *LState, cf *callFrame, inst uint32) {
+//
+// It reports true when the continuation suspended the thread again and the
+// main loop must return.
+func handleYieldContinuation(L *LState, cf *callFrame, inst uint32) bool {
 	ext := L.getFrameExt(cf)
 	contType := ext.YieldCont
 	ra := int(ext.YieldContRA)
 	rb := int(ext.YieldContRB)
+	aux := int(ext.YieldContAux)
 	reg := L.reg
 
 	// Clear continuation state before executing post-call logic.
@@ -2952,9 +2960,29 @@ func handleYieldContinuation(L *LState, cf *callFrame, inst uint32) {
 	ext.YieldCont = yieldContNone
 	ext.YieldContRA = 0
 	ext.YieldContRB = 0
+	ext.YieldContAux = 0
 
 	switch contType {
-	case yieldContGetField, yieldContArith, yieldContUnm, yieldContLen, yieldContConcat:
+	case yieldContConcat:
+		// The result replaces the operand pair it reduced and the remaining
+		// operands, from B up to that position, are concatenated on.
+		first := int(cf.LocalBase) + int(inst&0x1ff) //GETB
+		v := reg.Get(rb)
+		reg.Set(aux, v)
+		if aux > first {
+			v, pos := stringConcat(L, aux-first+1, aux)
+			if L.yieldState != yieldNone {
+				L.setYieldCont(cf, yieldContConcat, ra)
+				L.getFrameExt(cf).YieldContAux = int32(pos)
+				cf.Pc--
+				return true
+			}
+			reg.Set(ra, v)
+			break
+		}
+		reg.Set(ra, v)
+
+	case yieldContGetField, yieldContArith, yieldContUnm, yieldContLen:
 		// All these place a single return value at RA.
 		v := reg.Get(rb)
 		reg.Set(ra, v)
@@ -2972,12 +3000,15 @@ func handleYieldContinuation(L *LState, cf *callFrame, inst uint32) {
 		selfobj := reg.Get(int(lbase) + B)
 		reg.Set(ra+1, selfobj)
 
-	case yieldContCompare:
+	case yieldContCompare, yieldContCompareNot:
 		// RA holds the A operand from the comparison instruction (not a register index).
 		// The metamethod result is at rb. Evaluate as bool and apply the skip logic.
-		v := reg.Get(rb)
+		holds := LVAsBool(reg.Get(rb))
+		if contType == yieldContCompareNot {
+			holds = !holds
+		}
 		result := 1
-		if LVAsBool(v) {
+		if holds {
 			result = 0
 		}
 		if result == int(ra) {
@@ -2995,6 +3026,7 @@ func handleYieldContinuation(L *LState, cf *callFrame, inst uint32) {
 		}
 		cf.Pc++
 	}
+	return false
 }
 
 func callGFunction(L *LState) bool {
@@ -3338,7 +3370,10 @@ var stringPartsPool = sync.Pool{
 	},
 }
 
-func stringConcat(L *LState, total, last int) LValue {
+// stringConcat concatenates the total values ending at register last. When a
+// __concat metamethod suspends the thread it returns the register that
+// receives the metamethod result; the values up to it remain to be reduced.
+func stringConcat(L *LState, total, last int) (LValue, int) {
 	rhs := L.reg.Get(last)
 	total--
 	for i := last - 1; total > 0; {
@@ -3351,14 +3386,14 @@ func stringConcat(L *LState, total, last int) LValue {
 				L.reg.Push(rhs)
 				L.callR(2, 1, -1)
 				if L.yieldState != yieldNone {
-					return LNil
+					return LNil, i
 				}
 				rhs = L.reg.Pop()
 				total--
 				i--
 			} else {
 				L.RaiseError("cannot perform concat operation between %v and %v", lhs.Type().String(), rhs.Type().String())
-				return LNil
+				return LNil, i
 			}
 		} else {
 			// Get builder from pool
@@ -3404,7 +3439,7 @@ func stringConcat(L *LState, total, last int) LValue {
 			rhs = result
 		}
 	}
-	return rhs
+	return rhs, 0
 }
 
 func lessThan(L *LState, lhs, rhs LValue) bool {
