@@ -248,6 +248,7 @@ type LState struct {
 	frameExt     map[int16]*callFrameExt // lazy-allocated frame extensions keyed by Idx
 	yieldState   uint8                   // 0=not yielded, 1=system yield, 2=user yield
 	yieldCallRB  int32                   // ReturnBase of the innermost nested call that yielded
+	heldBy       *LState                 // thread whose pending coroutine.resume continuation owns this thread
 
 	hook          LValue         // debug hook function, or nil (see hook.go)
 	hookMask      uint8          // active HookMaskXxx bits

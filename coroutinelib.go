@@ -69,18 +69,7 @@ func coYield(L *LState) int {
 
 func coResume(L *LState) int {
 	th := L.CheckThread(1)
-	if L.G.CurrentThread == th {
-		msg := "can not resume a running thread"
-		if th.wrapped {
-			L.RaiseError(msg)
-			return 0
-		}
-		L.Push(LFalse)
-		L.Push(LString(msg))
-		return 2
-	}
-	if th.Dead {
-		msg := "can not resume a dead thread"
+	if msg := L.resumeRejection(th, L.GetTop()-1); msg != "" {
 		if th.wrapped {
 			L.RaiseError(msg)
 			return 0
@@ -141,10 +130,17 @@ func coResumePreempted(L *LState, th *LState) int {
 	L.SetTop(0)
 	L.preempt()
 
+	holdResumed(L, th)
+	return -1
+}
+
+// holdResumed installs the continuation that re-enters th on L's next resume
+// and reserves th for it.
+func holdResumed(L *LState, th *LState) {
 	ext := L.setFrameExt(L.currentFrame)
 	ext.Continuation = coResumeContinuation
 	ext.ContinuationCtx = th
-	return -1
+	th.heldBy = L
 }
 
 // coResumePropagate handles system yield propagation through a coroutine boundary.
@@ -181,9 +177,7 @@ func coResumePropagate(L *LState, th *LState, top int) int {
 	L.yieldState = yieldSystem
 
 	// Install continuation so the next resume re-enters the inner thread.
-	ext := L.setFrameExt(L.currentFrame)
-	ext.Continuation = coResumeContinuation
-	ext.ContinuationCtx = th
+	holdResumed(L, th)
 
 	// callGFunction checks L.yieldState and skips switchToParentThread when set,
 	// preserving the frame on the stack.
@@ -195,6 +189,7 @@ func coResumePropagate(L *LState, th *LState, top int) int {
 // on L's stack.
 func coResumeContinuation(L *LState, ctx interface{}, _ ResumeState) int {
 	th := ctx.(*LState)
+	th.heldBy = nil
 
 	th.Parent = L
 	L.G.CurrentThread = th
