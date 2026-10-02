@@ -2080,10 +2080,37 @@ func (ls *LState) Status(th *LState) string {
 		status = "dead"
 	} else if ls.G.CurrentThread == th {
 		status = "running"
-	} else if ls.Parent == th {
+	} else if ls.Parent == th || th.isHeld() {
 		status = "normal"
 	}
 	return status
+}
+
+// isHeld reports whether a live thread's pending coroutine.resume continuation
+// owns ls and will re-enter it on its next resume.
+func (ls *LState) isHeld() bool {
+	return ls.heldBy != nil && !ls.heldBy.Dead
+}
+
+// resumeRejection returns why th cannot be resumed from ls with nargs values,
+// or the empty string when it can. Go and Lua resumption share it.
+func (ls *LState) resumeRejection(th *LState, nargs int) string {
+	switch {
+	case ls.G.CurrentThread == th:
+		return "can not resume a running thread"
+	case th.Dead:
+		return "can not resume a dead thread"
+	case th.isHeld():
+		return "can not resume a thread held by a pending resume"
+	case th.yieldState == yieldPreempt && nargs > 0:
+		return "can not pass values to a preempted thread"
+	}
+	for p := ls; p != nil; p = p.Parent {
+		if p == th {
+			return "can not resume a normal thread"
+		}
+	}
+	return ""
 }
 
 func (ls *LState) Resume(th *LState, fn *LFunction, args ...LValue) (ResumeState, []LValue, error) {
@@ -2102,14 +2129,8 @@ func (ls *LState) Resume(th *LState, fn *LFunction, args ...LValue) (ResumeState
 		})
 	}
 
-	if ls.G.CurrentThread == th {
-		return ResumeError, nil, newApiErrorS(ApiErrorRun, "can not resume a running thread")
-	}
-	if th.Dead {
-		return ResumeError, nil, newApiErrorS(ApiErrorRun, "can not resume a dead thread")
-	}
-	if th.yieldState == yieldPreempt && len(args) > 0 {
-		return ResumeError, nil, newApiErrorS(ApiErrorRun, "can not pass values to a preempted thread")
+	if msg := ls.resumeRejection(th, len(args)); msg != "" {
+		return ResumeError, nil, newApiErrorS(ApiErrorRun, msg)
 	}
 	th.Parent = ls
 	ls.G.CurrentThread = th
@@ -2140,6 +2161,9 @@ func (ls *LState) Resume(th *LState, fn *LFunction, args ...LValue) (ResumeState
 	th.yieldState = yieldNone // Clear yield flag for new resume
 	threadRun(th)
 	haserror := LVIsFalse(ls.Get(top + 1))
+	if !haserror && th.yieldState == yieldPreempt {
+		return ls.preemptedResume(th, top, nil)
+	}
 	ret := make([]LValue, 0, ls.GetTop())
 	for idx := top + 2; idx <= ls.GetTop(); idx++ {
 		ret = append(ret, ls.Get(idx))
@@ -2154,9 +2178,6 @@ func (ls *LState) Resume(th *LState, fn *LFunction, args ...LValue) (ResumeState
 	} else if th.yieldState != yieldNone {
 		if th.stack.IsEmpty() || th.currentFrame == nil {
 			return ls.abortInvalidResume(th, "yielded thread has no resumable frame")
-		}
-		if th.yieldState == yieldPreempt {
-			return ResumePreempted, ret[:0], nil
 		}
 		return ResumeYield, ret, nil
 	} else if th.stack.IsEmpty() {
@@ -2208,14 +2229,8 @@ func (ls *LState) ResumeInto(th *LState, fn *LFunction, retBuf []LValue, args ..
 		})
 	}
 
-	if ls.G.CurrentThread == th {
-		return ResumeError, nil, newApiErrorS(ApiErrorRun, "can not resume a running thread")
-	}
-	if th.Dead {
-		return ResumeError, nil, newApiErrorS(ApiErrorRun, "can not resume a dead thread")
-	}
-	if th.yieldState == yieldPreempt && len(args) > 0 {
-		return ResumeError, nil, newApiErrorS(ApiErrorRun, "can not pass values to a preempted thread")
+	if msg := ls.resumeRejection(th, len(args)); msg != "" {
+		return ResumeError, nil, newApiErrorS(ApiErrorRun, msg)
 	}
 	th.Parent = ls
 	ls.G.CurrentThread = th
@@ -2246,6 +2261,9 @@ func (ls *LState) ResumeInto(th *LState, fn *LFunction, retBuf []LValue, args ..
 	th.yieldState = yieldNone // Clear yield flag for new resume
 	threadRun(th)
 	haserror := LVIsFalse(ls.Get(top + 1))
+	if !haserror && th.yieldState == yieldPreempt {
+		return ls.preemptedResume(th, top, retBuf)
+	}
 
 	// Reuse provided buffer if possible
 	retCount := ls.GetTop() - top - 1
@@ -2269,14 +2287,21 @@ func (ls *LState) ResumeInto(th *LState, fn *LFunction, retBuf []LValue, args ..
 		if th.stack.IsEmpty() || th.currentFrame == nil {
 			return ls.abortInvalidResume(th, "yielded thread has no resumable frame")
 		}
-		if th.yieldState == yieldPreempt {
-			return ResumePreempted, ret[:0], nil
-		}
 		return ResumeYield, ret, nil
 	} else if th.stack.IsEmpty() {
 		return ResumeOK, ret, nil
 	}
 	return ResumeYield, ret, nil
+}
+
+// preemptedResume completes a resume that stopped at a preemption. A preempted
+// thread has no results to report.
+func (ls *LState) preemptedResume(th *LState, top int, retBuf []LValue) (ResumeState, []LValue, error) {
+	ls.SetTop(top)
+	if th.stack.IsEmpty() || th.currentFrame == nil {
+		return ls.abortInvalidResume(th, "yielded thread has no resumable frame")
+	}
+	return ResumePreempted, retBuf[:0], nil
 }
 
 // abortCanceledResume restores the resumer relationship established before

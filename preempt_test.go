@@ -519,3 +519,108 @@ func TestPreemptDisabledAfterPreemptInsideGoFrame(t *testing.T) {
 		t.Fatalf("nonYieldable = %d", L.G.nonYieldable)
 	}
 }
+
+// A thread held by its resumer's pending continuation cannot be resumed by
+// anyone else, and the continuation still completes it.
+func TestPreemptedChildIsReservedByItsResumer(t *testing.T) {
+	L := NewState()
+	defer L.Close()
+	if err := L.DoString(`
+		inner = coroutine.create(function()
+			local s = 0
+			for i = 1, 1000 do s = s + i end
+			return s
+		end)`); err != nil {
+		t.Fatal(err)
+	}
+	outerFn, err := L.LoadString(`return coroutine.resume(inner)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outer, cancelOuter := L.NewThread()
+	defer cancelOuter()
+	L.SetTickBudget(5)
+	st, _, err := L.Resume(outer, outerFn)
+	if err != nil || st != ResumePreempted {
+		t.Fatalf("expected preemption, got %v %v", st, err)
+	}
+
+	L.SetTickBudget(-1)
+	ret, _ := runSliced(t, L, `return coroutine.resume(inner)`, -1)
+	if len(ret) != 2 || ret[0] != LFalse {
+		t.Fatalf("sibling resume of a held thread must fail, got %v", ret)
+	}
+	if got := mustDoString(t, L, `return coroutine.status(inner)`); got != "normal" {
+		t.Fatalf("held thread status = %q", got)
+	}
+
+	st, ret, err = L.Resume(outer, outerFn)
+	if err != nil || st != ResumeOK {
+		t.Fatalf("expected completion, got %v %v %v", st, ret, err)
+	}
+	if len(ret) != 2 || ret[0] != LTrue || LVAsNumber(ret[1]) != 500500 {
+		t.Fatalf("unexpected result %v", ret)
+	}
+}
+
+// Values cannot be passed to a preempted thread from Lua either.
+func TestLuaResumeRejectsValuesForPreemptedThread(t *testing.T) {
+	L := NewState()
+	defer L.Close()
+	fn, err := L.LoadString(`local s = 0 for i = 1, 1000 do s = s + i end return s`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	th, cancel := L.NewThread()
+	defer cancel()
+	L.SetGlobal("th", th)
+	L.SetTickBudget(5)
+	st, _, err := L.Resume(th, fn)
+	if err != nil || st != ResumePreempted {
+		t.Fatalf("expected preemption, got %v %v", st, err)
+	}
+	L.SetTickBudget(-1)
+	ret, _ := runSliced(t, L, `return coroutine.resume(th, 1)`, -1)
+	if len(ret) != 2 || ret[0] != LFalse {
+		t.Fatalf("expected rejection, got %v", ret)
+	}
+	ret, _ = runSliced(t, L, `return coroutine.resume(th)`, -1)
+	if len(ret) != 2 || ret[0] != LTrue || LVAsNumber(ret[1]) != 500500 {
+		t.Fatalf("expected completion, got %v", ret)
+	}
+}
+
+func mustDoString(t *testing.T, L *LState, src string) string {
+	t.Helper()
+	ret, _ := runSliced(t, L, src, -1)
+	if len(ret) != 1 {
+		t.Fatalf("unexpected results %v", ret)
+	}
+	return ret[0].String()
+}
+
+// Preempted resumes return no results and allocate nothing.
+func TestPreemptedResumeDoesNotAllocate(t *testing.T) {
+	L := NewState()
+	defer L.Close()
+	fn, err := L.LoadString(`while true do end`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	th, cancel := L.NewThread()
+	defer cancel()
+	L.SetTickBudget(0)
+	if st, _, err := L.ResumeInto(th, fn, nil); err != nil || st != ResumePreempted {
+		t.Fatalf("expected preemption, got %v %v", st, err)
+	}
+	allocs := testing.AllocsPerRun(100, func() {
+		L.SetTickBudget(0)
+		st, ret, err := L.ResumeInto(th, fn, nil)
+		if err != nil || st != ResumePreempted || len(ret) != 0 {
+			t.Fatalf("unexpected resume %v %v %v", st, ret, err)
+		}
+	})
+	if allocs != 0 {
+		t.Fatalf("expected no allocations, got %v", allocs)
+	}
+}
