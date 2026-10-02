@@ -438,3 +438,84 @@ return s`)
 		}
 	}
 }
+
+// A Go frame suspended while preemption was disabled resumes under an enabled
+// budget; the frames it enters afterwards are counted and balanced.
+func TestPreemptEnabledAfterYieldInsideGoFrame(t *testing.T) {
+	L := NewState()
+	defer L.Close()
+	fn, err := L.LoadString(`
+		local ok, v = pcall(function()
+			coroutine.yield(1)
+			local s = 0
+			for i = 1, 1000 do s = s + i end
+			return s
+		end)
+		return ok, v`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	co, cancel := L.NewThread()
+	defer cancel()
+	st, _, err := L.Resume(co, fn)
+	if err != nil || st != ResumeYield {
+		t.Fatalf("expected yield, got %v %v", st, err)
+	}
+	preempts := 0
+	L.SetTickBudget(3)
+	for {
+		st, ret, err := L.Resume(co, fn)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if st == ResumePreempted {
+			preempts++
+			L.SetTickBudget(3)
+			continue
+		}
+		if st != ResumeOK || ret[0] != LTrue {
+			t.Fatalf("unexpected result %v %v", st, ret)
+		}
+		expectNumbers(t, ret[1:], 500500)
+		break
+	}
+	if preempts == 0 {
+		t.Fatal("expected preemption after enabling the budget")
+	}
+	if L.G.nonYieldable != 0 {
+		t.Fatalf("nonYieldable = %d", L.G.nonYieldable)
+	}
+}
+
+// Preemption suspended inside a yieldable Go frame resumes with preemption
+// disabled; no counter is left behind.
+func TestPreemptDisabledAfterPreemptInsideGoFrame(t *testing.T) {
+	L := NewState()
+	defer L.Close()
+	fn, err := L.LoadString(`
+		local ok, v = pcall(function()
+			local s = 0
+			for i = 1, 1000 do s = s + i end
+			return s
+		end)
+		return ok, v`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	co, cancel := L.NewThread()
+	defer cancel()
+	L.SetTickBudget(3)
+	st, _, err := L.Resume(co, fn)
+	if err != nil || st != ResumePreempted {
+		t.Fatalf("expected preemption, got %v %v", st, err)
+	}
+	L.SetTickBudget(-1)
+	st, ret, err := L.Resume(co, fn)
+	if err != nil || st != ResumeOK || ret[0] != LTrue {
+		t.Fatalf("unexpected result %v %v %v", st, ret, err)
+	}
+	expectNumbers(t, ret[1:], 500500)
+	if L.G.nonYieldable != 0 {
+		t.Fatalf("nonYieldable = %d", L.G.nonYieldable)
+	}
+}
