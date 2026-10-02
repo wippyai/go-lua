@@ -106,11 +106,45 @@ func coResume(L *LState) int {
 	}
 	top := L.GetTop()
 	th.yieldState = yieldNone
-	threadRun(th)
-	if th.yieldState != yieldSystem || L.Parent == nil {
-		return L.GetTop() - top
+	runResumed(L, th)
+	return coResumeResult(L, th, top)
+}
+
+// runResumed runs th on behalf of coroutine.resume in L. When L itself runs
+// as a coroutine, a preemption of th propagates through L to the Go resumer,
+// so this Go frame does not block preemption of th.
+func runResumed(L *LState, th *LState) {
+	if L.Parent == nil {
+		threadRun(th)
+		return
 	}
-	return coResumePropagate(L, th, top)
+	g := L.G
+	g.nonYieldable--
+	defer func() { g.nonYieldable++ }()
+	threadRun(th)
+}
+
+// coResumeResult completes coroutine.resume after th stopped running.
+func coResumeResult(L *LState, th *LState, top int) int {
+	switch {
+	case th.yieldState == yieldPreempt:
+		return coResumePreempted(L, th)
+	case th.yieldState == yieldSystem && L.Parent != nil:
+		return coResumePropagate(L, th, top)
+	}
+	return L.GetTop() - top
+}
+
+// coResumePreempted suspends L after th was preempted. L keeps its
+// coroutine.resume frame, whose continuation re-enters th on the next resume.
+func coResumePreempted(L *LState, th *LState) int {
+	L.SetTop(0)
+	L.preempt()
+
+	ext := L.setFrameExt(L.currentFrame)
+	ext.Continuation = coResumeContinuation
+	ext.ContinuationCtx = th
+	return -1
 }
 
 // coResumePropagate handles system yield propagation through a coroutine boundary.
@@ -156,8 +190,9 @@ func coResumePropagate(L *LState, th *LState, top int) int {
 	return -1
 }
 
-// coResumeContinuation re-resumes the inner thread after a system yield was
-// propagated through this coroutine boundary. Resume values are on L's stack.
+// coResumeContinuation re-resumes the inner thread after a system yield or a
+// preemption was propagated through this coroutine boundary. Resume values are
+// on L's stack.
 func coResumeContinuation(L *LState, ctx interface{}, _ ResumeState) int {
 	th := ctx.(*LState)
 
@@ -168,11 +203,8 @@ func coResumeContinuation(L *LState, ctx interface{}, _ ResumeState) int {
 	th.yieldState = yieldNone
 
 	top := L.GetTop()
-	threadRun(th)
-	if th.yieldState != yieldSystem || L.Parent == nil {
-		return L.GetTop() - top
-	}
-	return coResumePropagate(L, th, top)
+	runResumed(L, th)
+	return coResumeResult(L, th, top)
 }
 
 func coRunning(L *LState) int {
