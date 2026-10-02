@@ -2,6 +2,7 @@ package lua
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 )
 
@@ -114,5 +115,30 @@ return tostring(r)`, body)
 				expectString(t, ret, c.want)
 			})
 		}
+	}
+}
+
+func TestPcallDoesNotInheritCompletedXpcallHandler(t *testing.T) {
+	for _, mode := range []string{"yield", "preempt"} {
+		t.Run(mode, func(t *testing.T) {
+			L := NewState()
+			defer L.Close()
+			body, budget := "coroutine.yield(1)", int64(-1)
+			if mode == "preempt" {
+				body, budget = slowBody, 3
+			}
+			src := sprintfBody(`
+local ok1 = xpcall(function() %[1]s return 1 end, function(e) return "OLD" end)
+assert(ok1)
+local ok, err = pcall(function() %[1]s error("boom") end)
+return tostring(ok) .. ":" .. tostring(err)`, body)
+			ret, yields, preempts := runToCompletion(t, L, src, budget)
+			if yields+preempts == 0 {
+				t.Fatal("expected a suspension")
+			}
+			if len(ret) != 1 || !strings.Contains(string(ret[0].(LString)), "boom") || strings.Contains(string(ret[0].(LString)), "OLD") {
+				t.Fatalf("unexpected result %v", ret)
+			}
+		})
 	}
 }

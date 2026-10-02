@@ -3051,6 +3051,10 @@ func callGFunction(L *LState) bool {
 		return true
 	}
 
+	// Extensions are keyed by frame index; a finished Go call must not leave
+	// its continuation or xpcall handler to a later call at the same index.
+	L.clearFrameExt(L.currentFrame)
+
 	wantret := frame.NRet
 	if wantret == MultRet {
 		wantret = int16(gfnret)
