@@ -43,7 +43,6 @@ func resetLState(ls *LState) {
 	ls.G = nil
 	ls.wrapped = false
 	ls.yieldState = yieldNone
-	ls.clearYieldContinuation()
 
 	// Debug callbacks and their dispatch history belong to the prior owner.
 	ls.clearHook()

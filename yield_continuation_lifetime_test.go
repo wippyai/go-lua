@@ -122,10 +122,10 @@ func TestYieldContinuationLifetime(t *testing.T) {
 					if state != ResumeYield || err != nil || len(values) != 1 || values[0] != LString("waiting") {
 						t.Fatalf("first resume = %v, %v, %v", state, values, err)
 					}
-					if co.yieldCont != tc.continuation {
-						t.Fatalf("continuation = %d, want %d", co.yieldCont, tc.continuation)
+					owner, ext := pendingYieldContinuation(co)
+					if owner == nil || ext.YieldCont != tc.continuation {
+						t.Fatalf("continuation = %v, want %d", ext, tc.continuation)
 					}
-					owner := co.stack.At(int(co.yieldContIdx))
 					if op := int(owner.Fn.Proto.Code[owner.Pc] >> 26); op != tc.opcode {
 						t.Fatalf("suspended opcode = %d, want %d", op, tc.opcode)
 					}
@@ -244,8 +244,9 @@ func TestYieldContinuationDeepUnwind(t *testing.T) {
 	}
 	fn := L.GetGlobal("run").(*LFunction)
 	state, _, err := L.Resume(co, fn)
-	if state != ResumeYield || err != nil || int(co.yieldContIdx) < FramesPerSegment*2 {
-		t.Fatalf("first resume = %v, %v, owner=%d", state, err, co.yieldContIdx)
+	owner, _ := pendingYieldContinuation(co)
+	if state != ResumeYield || err != nil || owner == nil || int(owner.Idx) < FramesPerSegment*2 {
+		t.Fatalf("first resume = %v, %v, owner=%v", state, err, owner)
 	}
 	state, values, err := L.Resume(co, fn)
 	if state != ResumeOK || err != nil || len(values) != 1 || values[0] != LInteger(42) {
@@ -254,10 +255,33 @@ func TestYieldContinuationDeepUnwind(t *testing.T) {
 	assertNoYieldContinuation(t, co)
 }
 
+// pendingYieldContinuation returns the frame whose opcode awaits a yielded
+// call's result, and that frame's continuation.
+func pendingYieldContinuation(L *LState) (*callFrame, *callFrameExt) {
+	if L.stack == nil {
+		return nil, nil
+	}
+	for i := 0; i < L.stack.Sp(); i++ {
+		frame := L.stack.At(i)
+		if frame.Flags&frameYieldCont == 0 {
+			continue
+		}
+		if ext := L.getFrameExt(frame); ext != nil && ext.YieldCont != yieldContNone {
+			return frame, ext
+		}
+	}
+	return nil, nil
+}
+
 func assertNoYieldContinuation(t *testing.T, L *LState) {
 	t.Helper()
-	if L.yieldCont != yieldContNone || L.yieldContRA != 0 || L.yieldContRB != 0 || L.yieldContIdx != 0 {
-		t.Errorf("discarded continuation = (%d, %d, %d, %d), want zero", L.yieldCont, L.yieldContRA, L.yieldContRB, L.yieldContIdx)
+	if owner, ext := pendingYieldContinuation(L); owner != nil {
+		t.Errorf("discarded continuation = %+v at frame %d, want none", *ext, owner.Idx)
+	}
+	for idx, ext := range L.frameExt {
+		if ext.YieldCont != yieldContNone || ext.YieldContRA != 0 || ext.YieldContRB != 0 {
+			t.Errorf("frame %d extension retains continuation %+v", idx, *ext)
+		}
 	}
 }
 
