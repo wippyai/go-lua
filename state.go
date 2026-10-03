@@ -442,13 +442,13 @@ func (cs *autoGrowingCallFrameStack) Sp() int {
 	return int(cs.segSp) + int(cs.segIdx)*FramesPerSegment
 }
 
-// SetSp can be used to rapidly unwind the stack, freeing all stack frames on the way. It should not be used to
-// allocate new stack space, use Push() for that.
 func (cs *autoGrowingCallFrameStack) Reset() {
 	cs.SetSp(0)
 	cs.segments[0].array = [FramesPerSegment]callFrame{}
 }
 
+// SetSp can be used to rapidly unwind the stack, freeing all stack frames on the way. It should not be used to
+// allocate new stack space, use Push() for that.
 func (cs *autoGrowingCallFrameStack) SetSp(sp int) {
 	desiredSegIdx := segIdx(sp / FramesPerSegment)
 	desiredFramesInLastSeg := uint8(sp % FramesPerSegment)
