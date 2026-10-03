@@ -1849,7 +1849,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 				if callGFunction(L) {
 					return
 				}
-				if luaframe == baseframe || resumeGoFrames(L) {
+				if luaframe == baseframe || (!returnsToLua(L) && resumeGoFrames(L)) {
 					return
 				}
 			} else {
@@ -2218,7 +2218,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 				}
 			}
 			L.currentFrame = L.stack.Last()
-			if islast || resumeGoFrames(L) {
+			if islast || (!returnsToLua(L) && resumeGoFrames(L)) {
 				return
 			}
 
@@ -2787,7 +2787,14 @@ func returnFromTailcall(L *LState, baseframe *callFrame, cf *callFrame, RA int, 
 	}
 
 	L.currentFrame = L.stack.Last()
-	return islast || resumeGoFrames(L)
+	return islast || (!returnsToLua(L) && resumeGoFrames(L))
+}
+
+// returnsToLua reports whether the current frame is a Lua frame, the common
+// case after a return; resumeGoFrames handles the rest.
+func returnsToLua(L *LState) bool {
+	cf := L.currentFrame
+	return cf != nil && cf.Fn != nil && !cf.Fn.IsG
 }
 
 // resumeGoFrames completes the Go frames a returning Lua frame uncovered.

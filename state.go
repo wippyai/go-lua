@@ -194,7 +194,7 @@ type callFrameExt struct {
 
 // getFrameExt returns the extension for a frame, or nil if none exists
 func (ls *LState) getFrameExt(cf *callFrame) *callFrameExt {
-	if ls.frameExt == nil {
+	if cf.Flags&frameHasExt == 0 {
 		return nil
 	}
 	return ls.frameExt[cf.Idx]
@@ -202,22 +202,26 @@ func (ls *LState) getFrameExt(cf *callFrame) *callFrameExt {
 
 // setFrameExt sets or creates the extension for a frame
 func (ls *LState) setFrameExt(cf *callFrame) *callFrameExt {
+	if cf.Flags&frameHasExt != 0 {
+		return ls.frameExt[cf.Idx]
+	}
 	if ls.frameExt == nil {
 		ls.frameExt = make(map[int16]*callFrameExt)
 	}
-	ext := ls.frameExt[cf.Idx]
-	if ext == nil {
-		ext = &callFrameExt{}
-		ls.frameExt[cf.Idx] = ext
-	}
+	// An entry left at this index by an earlier frame is not this frame's.
+	ext := &callFrameExt{}
+	ls.frameExt[cf.Idx] = ext
+	cf.Flags |= frameHasExt
 	return ext
 }
 
 // clearFrameExt removes the extension for a frame
 func (ls *LState) clearFrameExt(cf *callFrame) {
-	if ls.frameExt != nil {
-		delete(ls.frameExt, cf.Idx)
+	if cf.Flags&frameHasExt == 0 {
+		return
 	}
+	delete(ls.frameExt, cf.Idx)
+	cf.Flags &^= frameHasExt
 }
 
 // unwindCallFrames discards frames down to sp and their pending work.
@@ -250,6 +254,7 @@ const (
 	frameProtected uint8 = 1 << iota // pcall/xpcall boundary that catches errors
 	frameYieldCont                   // current opcode awaits a yielded call's result (see callFrameExt.YieldCont)
 	frameRewound                     // current opcode was rewound at a safepoint after its hook dispatch
+	frameHasExt                      // the frame owns an entry in LState.frameExt
 )
 
 type callFrameStack interface {
