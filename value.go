@@ -212,6 +212,16 @@ type Global struct {
 	// Owner is the host process/context that owns this Lua VM.
 	// Set by the host runtime for fast access from modules.
 	Owner any
+
+	// tickBudget is the number of ticks left before running Lua code is
+	// preempted; negative means unlimited. See LState.SetTickBudget.
+	tickBudget int64
+	// nonYieldable counts Go frames on the running path that cannot suspend
+	// the Lua code they call. Preemption requires zero.
+	nonYieldable int32
+	// executing counts the active entries into Lua execution from Go (callR and
+	// thread resumption). The tick budget may change only while it is zero.
+	executing int32
 }
 
 type LState struct {
@@ -234,11 +244,11 @@ type LState struct {
 	ctxCancelFn  context.CancelFunc
 	ctxDone      <-chan struct{}
 	frameExt     map[int16]*callFrameExt // lazy-allocated frame extensions keyed by Idx
-	yieldState   uint8                   // 0=not yielded, 1=system yield, 2=user yield
-	yieldCont    uint8                   // pending yield continuation type for Lua frames
-	yieldContRA  int32                   // target register for continuation result
-	yieldContRB  int32                   // call's ReturnBase (where the result lands)
-	yieldContIdx int16                   // frame Idx that owns this continuation
+	yieldState   uint8                   // 0=not yielded, 1=system yield, 2=user yield, 3=preempted
+	yieldCallRB  int32                   // ReturnBase of the innermost nested call that yielded
+	goCalls      int32                   // Call entries of this thread that cannot suspend the Lua code they run
+	heldBy       *LState                 // thread whose pending coroutine.resume continuation owns this thread
+	holding      *LState                 // thread this thread's pending coroutine.resume continuation owns
 }
 
 func (ls *LState) String() string   { return fmt.Sprintf("thread: %p", ls) }

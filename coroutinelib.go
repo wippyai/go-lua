@@ -69,18 +69,7 @@ func coYield(L *LState) int {
 
 func coResume(L *LState) int {
 	th := L.CheckThread(1)
-	if L.G.CurrentThread == th {
-		msg := "can not resume a running thread"
-		if th.wrapped {
-			L.RaiseError(msg)
-			return 0
-		}
-		L.Push(LFalse)
-		L.Push(LString(msg))
-		return 2
-	}
-	if th.Dead {
-		msg := "can not resume a dead thread"
+	if msg := L.resumeRejection(th, L.GetTop()-1); msg != "" {
 		if th.wrapped {
 			L.RaiseError(msg)
 			return 0
@@ -106,11 +95,62 @@ func coResume(L *LState) int {
 	}
 	top := L.GetTop()
 	th.yieldState = yieldNone
-	threadRun(th)
-	if th.yieldState != yieldSystem || L.Parent == nil {
-		return L.GetTop() - top
+	runResumed(L, th)
+	return coResumeResult(L, th, top)
+}
+
+// runResumed runs th on behalf of coroutine.resume in L. When L itself runs
+// as a coroutine, a preemption of th propagates through L to the Go resumer,
+// so this Go frame does not block preemption of th.
+func runResumed(L *LState, th *LState) {
+	g := L.G
+	if L.Parent == nil || g.tickBudget < 0 {
+		threadRun(th)
+		return
 	}
-	return coResumePropagate(L, th, top)
+	g.nonYieldable--
+	defer func() { g.nonYieldable++ }()
+	threadRun(th)
+}
+
+// coResumeResult completes coroutine.resume after th stopped running.
+func coResumeResult(L *LState, th *LState, top int) int {
+	switch {
+	case th.yieldState == yieldPreempt:
+		return coResumePreempted(L, th)
+	case th.yieldState == yieldSystem && L.Parent != nil:
+		return coResumePropagate(L, th, top)
+	}
+	return L.GetTop() - top
+}
+
+// coResumePreempted suspends L after th was preempted. L keeps its
+// coroutine.resume frame, whose continuation re-enters th on the next resume.
+func coResumePreempted(L *LState, th *LState) int {
+	L.SetTop(0)
+	L.preempt()
+
+	holdResumed(L, th)
+	return -1
+}
+
+// heldResume is the context of a coroutine.resume continuation. The child may
+// be torn down and its state reused before the continuation runs, so the
+// continuation only compares the child's identity and uses the wrapper kind
+// recorded here.
+type heldResume struct {
+	child   *LState
+	wrapped bool
+}
+
+// holdResumed installs the continuation that re-enters th on L's next resume
+// and reserves th for it.
+func holdResumed(L *LState, th *LState) {
+	ext := L.setFrameExt(L.currentFrame)
+	ext.Continuation = coResumeContinuation
+	ext.ContinuationCtx = heldResume{child: th, wrapped: th.wrapped}
+	L.holding = th
+	th.heldBy = L
 }
 
 // coResumePropagate handles system yield propagation through a coroutine boundary.
@@ -147,19 +187,33 @@ func coResumePropagate(L *LState, th *LState, top int) int {
 	L.yieldState = yieldSystem
 
 	// Install continuation so the next resume re-enters the inner thread.
-	ext := L.setFrameExt(L.currentFrame)
-	ext.Continuation = coResumeContinuation
-	ext.ContinuationCtx = th
+	holdResumed(L, th)
 
 	// callGFunction checks L.yieldState and skips switchToParentThread when set,
 	// preserving the frame on the stack.
 	return -1
 }
 
-// coResumeContinuation re-resumes the inner thread after a system yield was
-// propagated through this coroutine boundary. Resume values are on L's stack.
+// coResumeContinuation re-resumes the inner thread after a system yield or a
+// preemption was propagated through this coroutine boundary. Resume values are
+// on L's stack.
 func coResumeContinuation(L *LState, ctx interface{}, _ ResumeState) int {
-	th := ctx.(*LState)
+	held := ctx.(heldResume)
+	th := held.child
+	if L.holding != th {
+		// The held thread was torn down; it is dead as far as Lua can tell.
+		L.holding = nil
+		msg := "can not resume a dead thread"
+		L.SetTop(0)
+		if held.wrapped {
+			L.RaiseError(msg)
+			return 0
+		}
+		L.Push(LFalse)
+		L.Push(LString(msg))
+		return 2
+	}
+	L.releaseHold()
 
 	th.Parent = L
 	L.G.CurrentThread = th
@@ -168,11 +222,8 @@ func coResumeContinuation(L *LState, ctx interface{}, _ ResumeState) int {
 	th.yieldState = yieldNone
 
 	top := L.GetTop()
-	threadRun(th)
-	if th.yieldState != yieldSystem || L.Parent == nil {
-		return L.GetTop() - top
-	}
-	return coResumePropagate(L, th, top)
+	runResumed(L, th)
+	return coResumeResult(L, th, top)
 }
 
 func coRunning(L *LState) int {

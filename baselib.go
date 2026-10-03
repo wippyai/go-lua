@@ -154,7 +154,7 @@ func basePCall(L *LState) int {
 		return 2
 	}
 
-	L.currentFrame.Protected = true
+	L.currentFrame.Flags |= frameProtected
 	nargs := L.GetTop() - 1
 
 	if L.Parent == nil {
@@ -179,13 +179,13 @@ func basePCall(L *LState) int {
 		if err != nil {
 			L.unwindCallFrames(sp)
 			L.reg.SetTop(base)
-			L.currentFrame.Protected = false
+			L.currentFrame.Flags &^= frameProtected
 			L.clearFrameExt(L.currentFrame)
 			L.Push(LFalse)
 			L.Push(err.(*ApiError).Object)
 			return 2
 		}
-		L.currentFrame.Protected = false
+		L.currentFrame.Flags &^= frameProtected
 		L.clearFrameExt(L.currentFrame)
 	} else {
 		// In coroutine - use continuation for yield-transparency
@@ -215,13 +215,13 @@ func basePCall(L *LState) int {
 		if err != nil {
 			L.unwindCallFrames(sp)
 			L.reg.SetTop(base)
-			L.currentFrame.Protected = false
+			L.currentFrame.Flags &^= frameProtected
 			L.clearFrameExt(L.currentFrame)
 			L.Push(LFalse)
 			L.Push(err.(*ApiError).Object)
 			return 2
 		}
-		L.currentFrame.Protected = false
+		L.currentFrame.Flags &^= frameProtected
 		L.clearFrameExt(L.currentFrame)
 	}
 
@@ -409,7 +409,7 @@ func baseXPCall(L *LState) int {
 	// The inline recover below is the boundary for synchronous errors and is
 	// the only recover layer present under a direct DoString/PCall call, which
 	// is why xpcall previously leaked its error in non-coroutine contexts.
-	protectedFrame.Protected = true
+	protectedFrame.Flags |= frameProtected
 	L.setFrameExt(protectedFrame).ErrFunc = errfunc
 
 	top := L.GetTop()
@@ -441,14 +441,14 @@ func baseXPCall(L *LState) int {
 
 		L.unwindCallFrames(sp)
 		L.reg.SetTop(base)
-		protectedFrame.Protected = false
+		protectedFrame.Flags &^= frameProtected
 		L.clearFrameExt(protectedFrame)
 		L.Push(LFalse)
 		L.Push(handled)
 		return 2
 	}
 
-	protectedFrame.Protected = false
+	protectedFrame.Flags &^= frameProtected
 	L.clearFrameExt(protectedFrame)
 	L.Insert(LTrue, top+1)
 	return L.GetTop() - top

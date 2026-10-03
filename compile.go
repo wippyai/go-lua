@@ -1407,6 +1407,16 @@ func constFold(exp ast.Expr) ast.Expr { // {{{
 		}
 	case *ast.UnaryMinusOpExpr:
 		expr.Expr = constFold(expr.Expr)
+		var operand LValue
+		switch ex := expr.Expr.(type) {
+		case *ast.NumberExpr:
+			operand, _ = parseNumberValue(ex.Value)
+		case *constLValueExpr:
+			operand = ex.Value
+		}
+		if value, ok := operand.(LInteger); ok {
+			return &constLValueExpr{Value: -value}
+		}
 		if value, ok := lnumberValue(expr.Expr); ok {
 			return &constLValueExpr{Value: -value}
 		}
