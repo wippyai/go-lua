@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 )
 
 // A yield inside Lua code that a Go function runs synchronously cannot
@@ -29,7 +30,7 @@ end)`},
 	for _, tc := range cases {
 		for _, budget := range []int64{-1, 1, 3} {
 			t.Run(fmt.Sprintf("%s/%d", tc.name, budget), func(t *testing.T) {
-				out, _, ok := diffRun(tc.src, nil, fixedBudget(budget), true, 1000)
+				out, _, ok := diffRun(tc.src, nil, fixedBudget(budget), true, 1000, time.Time{})
 				if !ok {
 					t.Fatal("no progress")
 				}
@@ -57,7 +58,7 @@ end)
 local y = coroutine.yield('after')
 return s, y`
 	for _, budget := range []int64{-1, 1, 3} {
-		out, _, ok := diffRun(src, nil, fixedBudget(budget), true, 1000)
+		out, _, ok := diffRun(src, nil, fixedBudget(budget), true, 1000, time.Time{})
 		if !ok || out.err != "" {
 			t.Fatalf("budget %d: %v %q", budget, ok, out.err)
 		}
