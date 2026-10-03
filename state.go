@@ -107,7 +107,8 @@ type P struct {
 
 // Options is a configuration that is used to create a new LState.
 type Options struct {
-	// Call stack size. This defaults to `lua.CallStackSize`.
+	// Call stack size. This defaults to `lua.CallStackSize` and may not
+	// exceed MaxCallStackSize.
 	CallStackSize int
 	// Data stack size. This defaults to `lua.RegistrySize`.
 	RegistrySize int
@@ -205,7 +206,7 @@ func (ls *LState) setFrameExt(cf *callFrame) *callFrameExt {
 		return ls.frameExt[cf.Idx]
 	}
 	if ls.frameExt == nil {
-		ls.frameExt = make(map[int32]*callFrameExt)
+		ls.frameExt = make(map[int16]*callFrameExt)
 	}
 	// An entry left at this index by an earlier frame is not this frame's.
 	ext := &callFrameExt{}
@@ -245,7 +246,7 @@ type callFrame struct {
 	ReturnBase int32
 	NArgs      int16
 	NRet       int16
-	Idx        int32
+	Idx        int16
 	TailCall   int8
 	Flags      uint8
 }
@@ -297,7 +298,7 @@ func (cs *fixedCallFrameStack) Clear() {
 
 func (cs *fixedCallFrameStack) Push(v callFrame) {
 	cs.array[cs.sp] = v
-	cs.array[cs.sp].Idx = int32(cs.sp)
+	cs.array[cs.sp].Idx = int16(cs.sp)
 	cs.sp++
 }
 
@@ -426,7 +427,7 @@ func (cs *autoGrowingCallFrameStack) Push(v callFrame) {
 		}
 	}
 	curSeg.array[cs.segSp] = v
-	curSeg.array[cs.segSp].Idx = int32(cs.segSp) + int32(FramesPerSegment)*int32(cs.segIdx)
+	curSeg.array[cs.segSp].Idx = int16(cs.segSp) + int16(FramesPerSegment)*int16(cs.segIdx)
 	cs.segSp++
 }
 
@@ -527,6 +528,9 @@ func panicWithoutTraceback(L *LState) {
 }
 
 func newLState(options Options) *LState {
+	if options.CallStackSize > MaxCallStackSize {
+		panic(fmt.Sprintf("lua: CallStackSize %d exceeds MaxCallStackSize %d", options.CallStackSize, MaxCallStackSize))
+	}
 	// Try to get a state from the pool
 	if pooled := statePool.Get(); pooled != nil {
 		if ls, ok := pooled.(*LState); ok && ls != nil {
