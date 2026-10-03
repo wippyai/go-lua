@@ -205,7 +205,7 @@ func (ls *LState) setFrameExt(cf *callFrame) *callFrameExt {
 		return ls.frameExt[cf.Idx]
 	}
 	if ls.frameExt == nil {
-		ls.frameExt = make(map[int16]*callFrameExt)
+		ls.frameExt = make(map[int32]*callFrameExt)
 	}
 	// An entry left at this index by an earlier frame is not this frame's.
 	ext := &callFrameExt{}
@@ -245,7 +245,7 @@ type callFrame struct {
 	ReturnBase int32
 	NArgs      int16
 	NRet       int16
-	Idx        int16
+	Idx        int32
 	TailCall   int8
 	Flags      uint8
 }
@@ -297,7 +297,7 @@ func (cs *fixedCallFrameStack) Clear() {
 
 func (cs *fixedCallFrameStack) Push(v callFrame) {
 	cs.array[cs.sp] = v
-	cs.array[cs.sp].Idx = int16(cs.sp)
+	cs.array[cs.sp].Idx = int32(cs.sp)
 	cs.sp++
 }
 
@@ -426,7 +426,7 @@ func (cs *autoGrowingCallFrameStack) Push(v callFrame) {
 		}
 	}
 	curSeg.array[cs.segSp] = v
-	curSeg.array[cs.segSp].Idx = int16(cs.segSp) + int16(FramesPerSegment)*int16(cs.segIdx)
+	curSeg.array[cs.segSp].Idx = int32(cs.segSp) + int32(FramesPerSegment)*int32(cs.segIdx)
 	cs.segSp++
 }
 
