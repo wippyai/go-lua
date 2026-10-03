@@ -2,6 +2,7 @@ package lua
 
 import (
 	"context"
+	"math"
 	"strings"
 	"testing"
 )
@@ -672,4 +673,52 @@ func TestSetTickBudgetBetweenResumes(t *testing.T) {
 	if L.TickBudget() != -1 {
 		t.Fatal("budget not reset")
 	}
+}
+
+func TestTickBudgetBounds(t *testing.T) {
+	const loop = `local s = 0 for i = 1, 100 do s = s + i end return s`
+	cases := []struct {
+		name      string
+		budget    int64
+		preempted bool
+	}{
+		{"max", math.MaxInt64, false},
+		{"minus_one", -1, false},
+		{"very_negative", math.MinInt64, false},
+		{"one", 1, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			L := NewState()
+			defer L.Close()
+			ret, _, preempts := runToCompletion(t, L, loop, tc.budget)
+			expectNumbers(t, ret, 5050)
+			if (preempts > 0) != tc.preempted {
+				t.Fatalf("budget %d: %d preemptions", tc.budget, preempts)
+			}
+		})
+	}
+}
+
+func TestZeroTickBudgetPreemptsAtNextSafepoint(t *testing.T) {
+	L := NewState()
+	defer L.Close()
+	fn, err := L.LoadString(`local s = 0 for i = 1, 10 do s = s + i end return s`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	th, cancel := L.NewThread()
+	defer cancel()
+	for i := 0; i < 3; i++ {
+		L.SetTickBudget(0)
+		if st, _, err := L.Resume(th, fn); err != nil || st != ResumePreempted {
+			t.Fatalf("resume %d: %v %v", i, st, err)
+		}
+	}
+	L.SetTickBudget(-1)
+	st, ret, err := L.Resume(th, fn)
+	if err != nil || st != ResumeOK {
+		t.Fatalf("final resume: %v %v", st, err)
+	}
+	expectNumbers(t, ret, 55)
 }
