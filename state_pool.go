@@ -29,8 +29,7 @@ func resetLState(ls *LState) {
 
 	// Reset call frames
 	if ls.stack != nil {
-		// Different stack implementations handled in FreeAll()
-		ls.stack.SetSp(0)
+		ls.stack.Reset()
 	}
 
 	// Reset state properties
@@ -43,12 +42,18 @@ func resetLState(ls *LState) {
 	ls.G = nil
 	ls.wrapped = false
 	ls.yieldState = yieldNone
+	ls.yieldCallRB = 0
+	ls.releaseHold()
+	ls.releaseHeld()
+	ls.ctx = nil
+	ls.ctxDone = nil
+	ls.ctxCancelFn = nil
 
 	// Debug callbacks and their dispatch history belong to the prior owner.
 	ls.clearHook()
 	ls.inHook = false
 
-	// Clear frame extensions to prevent stale continuations from being invoked
+	// Frame extensions hold continuations and handlers keyed by frame index.
 	ls.frameExt = nil
 }
 
