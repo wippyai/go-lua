@@ -88,19 +88,21 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 
 	for {
 		cf = L.currentFrame
-		inst = cf.Fn.Proto.Code[cf.Pc]
-		cf.Pc++
 
 		// Handle yield continuation: when an opcode's inner call yielded and has
-		// now completed, finish the originating opcode's post-call work. Each
-		// frame owns its continuation, so nested metamethod yields resolve
-		// innermost-first as their frames resume.
+		// now completed, finish the originating opcode's post-call work. The
+		// frame's Pc already follows that opcode. Each frame owns its
+		// continuation, so nested metamethod yields resolve innermost-first as
+		// their frames resume.
 		if cf.Flags&frameYieldCont != 0 {
-			if handleYieldContinuation(L, cf, inst) {
+			if handleYieldContinuation(L, cf, cf.Fn.Proto.Code[cf.Pc-1]) {
 				return
 			}
 			continue
 		}
+
+		inst = cf.Fn.Proto.Code[cf.Pc]
+		cf.Pc++
 
 		if (L.hookMask != 0 || covOn) && cf.Flags&frameRewound == 0 {
 			L.callHook(cf)
@@ -345,7 +347,6 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			v := L.getFieldString(cf.Fn.Env, cf.Fn.Proto.stringConstants[Bx])
 			if L.yieldState != yieldNone {
 				L.setYieldCont(cf, yieldContGetField, RA)
-				cf.Pc--
 				return
 			}
 			// this section is inlined by go-inline
@@ -411,7 +412,6 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			v := L.getField(reg.Get(int(lbase)+B), L.rkValue(C))
 			if L.yieldState != yieldNone {
 				L.setYieldCont(cf, yieldContGetField, RA)
-				cf.Pc--
 				return
 			}
 			// this section is inlined by go-inline
@@ -445,7 +445,6 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			v := L.getFieldString(reg.Get(int(lbase)+B), L.rkString(C))
 			if L.yieldState != yieldNone {
 				L.setYieldCont(cf, yieldContGetField, RA)
-				cf.Pc--
 				return
 			}
 			// this section is inlined by go-inline
@@ -479,7 +478,6 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			L.setFieldString(cf.Fn.Env, cf.Fn.Proto.stringConstants[Bx], value)
 			if L.yieldState != yieldNone {
 				L.setYieldCont(cf, yieldContSetField, 0)
-				cf.Pc--
 				return
 			}
 
@@ -502,7 +500,6 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			L.setField(reg.Get(RA), L.rkValue(B), L.rkValue(C))
 			if L.yieldState != yieldNone {
 				L.setYieldCont(cf, yieldContSetField, 0)
-				cf.Pc--
 				return
 			}
 
@@ -516,7 +513,6 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			L.setFieldString(reg.Get(RA), L.rkString(B), L.rkValue(C))
 			if L.yieldState != yieldNone {
 				L.setYieldCont(cf, yieldContSetField, 0)
-				cf.Pc--
 				return
 			}
 
@@ -560,7 +556,6 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			v := L.getFieldString(selfobj, L.rkString(C))
 			if L.yieldState != yieldNone {
 				L.setYieldCont(cf, yieldContSelf, RA)
-				cf.Pc--
 				return
 			}
 			// this section is inlined by go-inline
@@ -672,7 +667,6 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 				v := objectArith(L, OP_ADD, lhs, rhs)
 				if L.yieldState != yieldNone {
 					L.setYieldCont(cf, yieldContArith, RA)
-					cf.Pc--
 					return
 				}
 				newSize := RA + 1
@@ -753,7 +747,6 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 				v := objectArith(L, OP_SUB, lhs, rhs)
 				if L.yieldState != yieldNone {
 					L.setYieldCont(cf, yieldContArith, RA)
-					cf.Pc--
 					return
 				}
 				newSize := RA + 1
@@ -834,7 +827,6 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 				v := objectArith(L, OP_MUL, lhs, rhs)
 				if L.yieldState != yieldNone {
 					L.setYieldCont(cf, yieldContArith, RA)
-					cf.Pc--
 					return
 				}
 				newSize := RA + 1
@@ -884,7 +876,6 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 				v := objectArith(L, OP_DIV, lhs, rhs)
 				if L.yieldState != yieldNone {
 					L.setYieldCont(cf, yieldContArith, RA)
-					cf.Pc--
 					return
 				}
 				// this section is inlined by go-inline
@@ -956,7 +947,6 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 				v := objectArith(L, OP_MOD, lhs, rhs)
 				if L.yieldState != yieldNone {
 					L.setYieldCont(cf, yieldContArith, RA)
-					cf.Pc--
 					return
 				}
 				// this section is inlined by go-inline
@@ -1018,7 +1008,6 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 				v := objectArith(L, OP_POW, lhs, rhs)
 				if L.yieldState != yieldNone {
 					L.setYieldCont(cf, yieldContArith, RA)
-					cf.Pc--
 					return
 				}
 				// this section is inlined by go-inline
@@ -1225,7 +1214,6 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 					L.callR(1, 1, -1)
 					if L.yieldState != yieldNone {
 						L.setYieldCont(cf, yieldContUnm, RA)
-						cf.Pc--
 						return
 					}
 					// this section is inlined by go-inline
@@ -1386,7 +1374,6 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 					L.callR(1, 1, -1)
 					if L.yieldState != yieldNone {
 						L.setYieldCont(cf, yieldContLen, RA)
-						cf.Pc--
 						return
 					}
 					ret := reg.Pop()
@@ -1473,7 +1460,6 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			if L.yieldState != yieldNone {
 				L.setYieldCont(cf, yieldContConcat, RA)
 				L.getFrameExt(cf).YieldContAux = int32(pos)
-				cf.Pc--
 				return
 			}
 			// this section is inlined by go-inline
@@ -1511,7 +1497,6 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			ret := equals(L, L.rkValue(B), L.rkValue(C), false)
 			if L.yieldState != yieldNone {
 				L.setYieldCont(cf, yieldContCompare, A)
-				cf.Pc--
 				return
 			}
 			v := 1
@@ -1529,7 +1514,6 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			ret := lessThan(L, L.rkValue(B), L.rkValue(C))
 			if L.yieldState != yieldNone {
 				L.setYieldCont(cf, yieldContCompare, A)
-				cf.Pc--
 				return
 			}
 			v := 1
@@ -1571,13 +1555,11 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 						ret = false
 					case -2:
 						L.setYieldCont(cf, yieldContCompare, A)
-						cf.Pc--
 						return
 					default:
 						ret = !objectRationalWithError(L, rhs, lhs, "__lt")
 						if L.yieldState != yieldNone {
 							L.setYieldCont(cf, yieldContCompareNot, A)
-							cf.Pc--
 							return
 						}
 					}
@@ -2516,7 +2498,6 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			L.callR(2, nret, RA+3)
 			if L.yieldState != yieldNone {
 				L.setYieldCont(cf, yieldContTForLoop, RA)
-				cf.Pc--
 				return
 			}
 			if value := reg.Get(RA + 3); value != LNil {
@@ -2865,7 +2846,6 @@ func handleYieldContinuation(L *LState, cf *callFrame, inst uint32) bool {
 			if L.yieldState != yieldNone {
 				L.setYieldCont(cf, yieldContConcat, ra)
 				L.getFrameExt(cf).YieldContAux = int32(pos)
-				cf.Pc--
 				return true
 			}
 			reg.Set(ra, v)

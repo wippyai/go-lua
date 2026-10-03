@@ -126,7 +126,7 @@ func TestYieldContinuationLifetime(t *testing.T) {
 					if owner == nil || ext.YieldCont != tc.continuation {
 						t.Fatalf("continuation = %v, want %d", ext, tc.continuation)
 					}
-					if op := int(owner.Fn.Proto.Code[owner.Pc] >> 26); op != tc.opcode {
+					if op := int(owner.Fn.Proto.Code[owner.Pc-1] >> 26); op != tc.opcode {
 						t.Fatalf("suspended opcode = %d, want %d", op, tc.opcode)
 					}
 					switch exit {
