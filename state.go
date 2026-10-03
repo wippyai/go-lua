@@ -726,6 +726,8 @@ func (ls *LState) kill() {
 	ls.yieldState = yieldNone
 	ls.frameExt = nil
 	ls.Dead = true
+	ls.releaseHold()
+	ls.releaseHeld()
 	if ls.ctxCancelFn != nil {
 		ls.ctxCancelFn()
 	}
@@ -2082,7 +2084,24 @@ func (ls *LState) Status(th *LState) string {
 // isHeld reports whether a live thread's pending coroutine.resume continuation
 // owns ls and will re-enter it on its next resume.
 func (ls *LState) isHeld() bool {
-	return ls.heldBy != nil && !ls.heldBy.Dead
+	return ls.heldBy != nil
+}
+
+// releaseHold drops the reservation ls's pending coroutine.resume continuation
+// holds on its child.
+func (ls *LState) releaseHold() {
+	if child := ls.holding; child != nil {
+		child.heldBy = nil
+		ls.holding = nil
+	}
+}
+
+// releaseHeld drops the reservation a resumer's pending continuation holds on ls.
+func (ls *LState) releaseHeld() {
+	if owner := ls.heldBy; owner != nil {
+		owner.holding = nil
+		ls.heldBy = nil
+	}
 }
 
 // resumeRejection returns why th cannot be resumed from ls with nargs values,

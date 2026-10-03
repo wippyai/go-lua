@@ -140,6 +140,7 @@ func holdResumed(L *LState, th *LState) {
 	ext := L.setFrameExt(L.currentFrame)
 	ext.Continuation = coResumeContinuation
 	ext.ContinuationCtx = th
+	L.holding = th
 	th.heldBy = L
 }
 
@@ -189,7 +190,7 @@ func coResumePropagate(L *LState, th *LState, top int) int {
 // on L's stack.
 func coResumeContinuation(L *LState, ctx interface{}, _ ResumeState) int {
 	th := ctx.(*LState)
-	th.heldBy = nil
+	L.releaseHold()
 
 	th.Parent = L
 	L.G.CurrentThread = th
