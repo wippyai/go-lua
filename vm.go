@@ -55,7 +55,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 	// on resume; it is false only where the instruction already completed.
 	// A rewound instruction reaches its safepoint again before any other
 	// effect, so its hook dispatch happens once per execution.
-	safepoint := func(rewind bool) bool {
+	safepoint := func(cf *callFrame, rewind bool) bool {
 		cf.Flags &^= frameRewound
 		if ctxDone != nil {
 			select {
@@ -1500,7 +1500,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 		case OP_JMP:
 			Sbx := int(inst&0x3ffff) - opMaxArgSbx //GETSBX
 			cf.Pc += int32(Sbx)
-			if Sbx < 0 && safepoint(false) {
+			if Sbx < 0 && safepoint(cf, false) {
 				return
 			}
 
@@ -1635,7 +1635,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			}
 
 		case OP_CALL:
-			if safepoint(true) {
+			if safepoint(cf, true) {
 				return
 			}
 			reg := L.reg
@@ -1772,7 +1772,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			}
 
 		case OP_TAILCALL:
-			if safepoint(true) {
+			if safepoint(cf, true) {
 				return
 			}
 			reg := L.reg
@@ -2223,7 +2223,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			}
 
 		case OP_FORLOOP:
-			if safepoint(true) {
+			if safepoint(cf, true) {
 				return
 			}
 			reg := L.reg
@@ -2414,7 +2414,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			cf.Pc += int32(Sbx)
 
 		case OP_TFORLOOP:
-			if safepoint(true) {
+			if safepoint(cf, true) {
 				return
 			}
 			reg := L.reg
