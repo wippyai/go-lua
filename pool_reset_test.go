@@ -67,3 +67,51 @@ func TestPooledStateFramesDoNotRetainClosures(t *testing.T) {
 		}
 	}
 }
+
+const recurseSource = `local function f(n) if n == 0 then return 0 end return 1 + f(n - 1) end return f(...)`
+
+func TestPooledStateHonorsCallStackSize(t *testing.T) {
+	for _, minimize := range []bool{false, true} {
+		NewState(Options{CallStackSize: 16, MinimizeStackMemory: minimize}).Close()
+		L := NewState(Options{CallStackSize: 1024, MinimizeStackMemory: minimize})
+		fn, err := L.LoadString(recurseSource)
+		if err != nil {
+			t.Fatal(err)
+		}
+		L.Push(fn)
+		L.Push(LNumber(500))
+		if err := L.PCall(1, 1, nil); err != nil {
+			t.Fatalf("minimize=%v: %v", minimize, err)
+		}
+		L.Close()
+	}
+}
+
+func TestPooledThreadHonorsCallStackSize(t *testing.T) {
+	for _, minimize := range []bool{false, true} {
+		L := NewState(Options{CallStackSize: 1024, MinimizeStackMemory: minimize})
+		NewState(Options{CallStackSize: 16, MinimizeStackMemory: minimize}).Close()
+		fn, err := L.LoadString(recurseSource)
+		if err != nil {
+			t.Fatal(err)
+		}
+		th, cancel := L.NewThread()
+		st, ret, err := L.Resume(th, fn, LNumber(500))
+		cancel()
+		if err != nil || st != ResumeOK {
+			t.Fatalf("minimize=%v: %v %v %v", minimize, st, ret, err)
+		}
+		L.Close()
+	}
+}
+
+func TestPooledThreadHonorsRegistryLimits(t *testing.T) {
+	L := NewState(Options{RegistrySize: 256, RegistryMaxSize: 4096, RegistryGrowStep: 64})
+	defer L.Close()
+	NewState(Options{RegistrySize: 256, RegistryMaxSize: 1 << 20, RegistryGrowStep: 1024}).Close()
+	th, cancel := L.NewThread()
+	defer cancel()
+	if th.reg.maxSize != 4096 || th.reg.growBy != 64 {
+		t.Fatalf("thread registry limits %d/%d, want 4096/64", th.reg.maxSize, th.reg.growBy)
+	}
+}
