@@ -36,7 +36,7 @@ return 0`)
 	if err := L.PCall(0, 1, nil); err != nil {
 		t.Fatal(err)
 	}
-	if got := L.Get(-1); got != LNumber(42) {
+	if got := L.Get(-1); LVAsNumber(got) != 42 {
 		t.Fatalf("escaped upvalue read %v, want 42", got)
 	}
 	L.SetTop(0)
