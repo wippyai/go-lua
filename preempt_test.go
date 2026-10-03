@@ -722,3 +722,21 @@ func TestZeroTickBudgetPreemptsAtNextSafepoint(t *testing.T) {
 	}
 	expectNumbers(t, ret, 55)
 }
+
+// The rejected budget change raises in the code that attempted it, whichever
+// state the Go callback holds, and leaves every other stack alone.
+func TestSetTickBudgetRejectionRaisesInRunningThread(t *testing.T) {
+	L := NewState()
+	defer L.Close()
+	L.SetGlobal("setbudget", L.NewFunction(func(*LState) int {
+		L.SetTickBudget(0)
+		return 0
+	}))
+	ret, _, _ := runToCompletion(t, L, `local ok, e = pcall(setbudget) return ok and "accepted" or "rejected", 42`, -1)
+	if len(ret) != 2 || ret[0] != LString("rejected") || LVAsNumber(ret[1]) != 42 {
+		t.Fatalf("got %v", ret)
+	}
+	if L.TickBudget() >= 0 {
+		t.Fatalf("budget changed to %d", L.TickBudget())
+	}
+}

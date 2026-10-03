@@ -2223,16 +2223,16 @@ func (ls *LState) Resume(th *LState, fn *LFunction, args ...LValue) (ResumeState
 // budget takes effect at the next safepoint outside it. The budget is shared
 // by all threads of the state and is consumed until reset. A zero budget
 // preempts at the next safepoint, so a thread resumed with an exhausted budget
-// stops again at its next safepoint until the host sets a new one. A negative budget disables
-// preemption, which is the default.
+// stops again at its next safepoint until the host sets a new one. A negative
+// budget disables preemption, which is the default.
 //
-// SetTickBudget raises an error when called while Lua code is executing (from
-// a Go function running on a Lua thread): Go frames entered while preemption
-// is disabled are not counted as non-yieldable, so the budget may change only
-// between resumes, from the host.
+// SetTickBudget raises an error in the running code when called while Lua code
+// is executing (from a Go function running on a Lua thread): Go frames entered
+// while preemption is disabled are not counted as non-yieldable, so the budget
+// may change only between resumes, from the host.
 func (ls *LState) SetTickBudget(n int64) {
 	if ls.G.executing != 0 {
-		ls.RaiseError("tick budget can not be changed while Lua code is running")
+		panic(newApiErrorS(ApiErrorRun, "tick budget can not be changed while Lua code is running"))
 	}
 	ls.G.tickBudget = n
 }
