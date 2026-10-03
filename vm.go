@@ -3127,7 +3127,8 @@ func handleProtectedError(L *LState, errValue LValue, _ interface{}) bool {
 		}
 		if frame.Flags&frameProtected != 0 {
 			// Capture frame values before popping (frame memory may be reused after pop)
-			returnBase := frame.ReturnBase
+			returnBase := int(frame.ReturnBase)
+			nret := int(frame.NRet)
 			L.closeUpvalues(int(frame.LocalBase))
 			var errFunc *LFunction
 			if ext := L.getFrameExt(frame); ext != nil {
@@ -3137,13 +3138,7 @@ func handleProtectedError(L *LState, errValue LValue, _ interface{}) bool {
 			// Call the xpcall error handler while the throw-site frames are still on the
 			// stack, so a root protected frame is never left as the handler's sole frame
 			if errFunc != nil {
-				L.Push(errFunc)
-				L.Push(errValue)
-				err := L.PCall(1, 1, nil)
-				if err == nil {
-					errValue = L.Get(-1)
-					L.Pop(1)
-				}
+				errValue = invokeErrorHandler(L, errFunc, errValue)
 			}
 
 			L.unwindCallFrames(i)
@@ -3153,15 +3148,27 @@ func handleProtectedError(L *LState, errValue LValue, _ interface{}) bool {
 				SetErrorMetatable(L, e)
 			}
 
-			// Set up return values: false, error_message
-			L.reg.Set(int(returnBase), LFalse)
-			L.reg.Set(int(returnBase)+1, errValue)
+			// The call returns false and the error value, adjusted to the
+			// caller's expected result count; frames above it are discarded.
+			if nret == MultRet {
+				nret = 2
+			}
+			L.reg.SetTop(returnBase + nret)
+			for i := 0; i < nret; i++ {
+				switch i {
+				case 0:
+					L.reg.Set(returnBase, LFalse)
+				case 1:
+					L.reg.Set(returnBase+1, errValue)
+				default:
+					L.reg.Set(returnBase+i, LNil)
+				}
+			}
 
 			// A protected frame that was the thread's root returns to the
 			// resumer like a sole frame finishing.
 			if L.stack.IsEmpty() && L.Parent != nil {
-				L.reg.SetTop(int(returnBase) + 2)
-				transferToParent(L, 2, false)
+				transferToParent(L, nret, false)
 				L.kill()
 			}
 			return true
