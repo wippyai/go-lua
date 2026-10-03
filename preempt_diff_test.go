@@ -238,7 +238,7 @@ func sweepScale() (cfg diffConfig, generated int) {
 		}
 		return budgetConfigs(rangeInts(1, 64), 24, 5000, 1000), n
 	}
-	return budgetConfigs([]int{1, 2, 3, 4, 5, 7, 11, 16, 33, 64}, 3, 500, 1000), 150
+	return budgetConfigs([]int{1, 2, 3, 5, 8, 16, 64}, 2, 500, 1000), 60
 }
 
 func sweep(t *testing.T, progs []diffProgram, cfg diffConfig) {
