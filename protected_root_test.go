@@ -52,3 +52,69 @@ func TestRootProtectedCallDeliversErrorAfterSuspension(t *testing.T) {
 		}
 	}
 }
+
+// heldPair returns an outer thread preempted inside coroutine.resume of inner.
+func heldPair(t *testing.T) (L, outer, inner *LState) {
+	t.Helper()
+	L = NewState()
+	fn, err := L.LoadString(`local s = 0 for i = 1, 1000 do s = s + i end return s`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	L.SetGlobal("innerfn", fn)
+	if err := L.DoString(`inner_co = coroutine.create(innerfn)`); err != nil {
+		t.Fatal(err)
+	}
+	inner = L.GetGlobal("inner_co").(*LState)
+	outerFn, err := L.LoadString(`return coroutine.resume(inner_co)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outer, _ = L.NewThread()
+	L.SetTickBudget(5)
+	st, _, err := L.Resume(outer, outerFn)
+	if err != nil || st != ResumePreempted {
+		t.Fatalf("expected preemption, got %v %v", st, err)
+	}
+	L.SetTickBudget(-1)
+	if !inner.isHeld() || outer.holding != inner {
+		t.Fatal("inner is not held by outer")
+	}
+	return L, outer, inner
+}
+
+func TestHoldReleasedWhenResumerIsKilled(t *testing.T) {
+	L, outer, inner := heldPair(t)
+	defer L.Close()
+	outer.kill()
+	if inner.isHeld() || outer.holding != nil {
+		t.Fatal("hold survives resumer kill")
+	}
+	if msg := L.resumeRejection(inner, 0); msg != "" {
+		t.Fatalf("inner rejected: %s", msg)
+	}
+}
+
+func TestHoldReleasedWhenResumerIsClosed(t *testing.T) {
+	L, outer, inner := heldPair(t)
+	defer L.Close()
+	outer.Close()
+	if inner.isHeld() {
+		t.Fatal("hold survives resumer close")
+	}
+}
+
+func TestHoldReleasedWhenChildIsClosedOrKilled(t *testing.T) {
+	for _, closeIt := range []bool{true, false} {
+		L, outer, inner := heldPair(t)
+		if closeIt {
+			inner.Close()
+		} else {
+			inner.kill()
+		}
+		if inner.heldBy != nil || outer.holding != nil {
+			t.Fatalf("closeIt=%v: hold survives child teardown", closeIt)
+		}
+		L.Close()
+	}
+}

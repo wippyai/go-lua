@@ -244,6 +244,7 @@ type LState struct {
 	yieldState   uint8                   // 0=not yielded, 1=system yield, 2=user yield
 	yieldCallRB  int32                   // ReturnBase of the innermost nested call that yielded
 	heldBy       *LState                 // thread whose pending coroutine.resume continuation owns this thread
+	holding      *LState                 // thread this thread's pending coroutine.resume continuation owns
 }
 
 func (ls *LState) String() string   { return fmt.Sprintf("thread: %p", ls) }

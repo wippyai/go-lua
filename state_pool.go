@@ -24,6 +24,9 @@ func resetLState(ls *LState) {
 		}
 	}
 
+	ls.releaseHold()
+	ls.releaseHeld()
+
 	// Reset upvalue cache
 	ls.uvcache = nil
 
