@@ -107,8 +107,8 @@ type P struct {
 
 // Options is a configuration that is used to create a new LState.
 type Options struct {
-	// Call stack size. This defaults to `lua.CallStackSize` and may not
-	// exceed MaxCallStackSize.
+	// Call stack size. This defaults to `lua.CallStackSize`. NewState panics
+	// when it exceeds MaxCallStackSize.
 	CallStackSize int
 	// Data stack size. This defaults to `lua.RegistrySize`.
 	RegistrySize int
@@ -2221,8 +2221,10 @@ func (ls *LState) Resume(th *LState, fn *LFunction, args ...LValue) (ResumeState
 // returns ResumePreempted. Code running under a Go caller that cannot suspend
 // it (Call, PCall, Go library callbacks) is never preempted; the exhausted
 // budget takes effect at the next safepoint outside it. The budget is shared
-// by all threads of the state and is consumed until reset. A negative budget
-// disables preemption, which is the default.
+// by all threads of the state and is consumed until reset. A zero budget
+// preempts at the next safepoint, so a thread resumed with an exhausted budget
+// stops again at its next safepoint until the host sets a new one. A negative budget disables
+// preemption, which is the default.
 //
 // SetTickBudget raises an error when called while Lua code is executing (from
 // a Go function running on a Lua thread): Go frames entered while preemption
