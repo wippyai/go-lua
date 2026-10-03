@@ -3044,6 +3044,9 @@ func callGFunction(L *LState) bool {
 		// Subsequent Go functions returning -1 (pcall, xpcall, coResume) detect
 		// the yield via yieldState and propagate it without a second thread switch.
 		if L.yieldState == yieldNone {
+			if L.goCalls != 0 {
+				L.RaiseError("attempt to yield across a C-call boundary")
+			}
 			if L.Parent != nil && L.stack.Sp() == 1 {
 				preserveSoleGoYield(L)
 			} else {

@@ -1904,20 +1904,22 @@ func (ls *LState) Load(reader io.Reader, name string) (*LFunction, error) {
 }
 
 // Call calls a function from Go. The Go caller cannot be suspended, so the
-// called Lua code is not preemptible; a Go function that supports suspension
-// of the code it calls uses CallK instead.
+// called Lua code is not preemptible and cannot yield: a yield raises an
+// error. A Go function that supports suspension of the code it calls uses
+// CallK instead.
 func (ls *LState) Call(nargs, nret int) {
+	ls.goCalls++
 	if ls.G.tickBudget < 0 {
+		defer func() { ls.goCalls-- }()
 		ls.callR(nargs, nret, -1)
 		return
 	}
-	ls.callCounted(nargs, nret)
-}
-
-func (ls *LState) callCounted(nargs, nret int) {
 	g := ls.G
 	g.nonYieldable++
-	defer func() { g.nonYieldable-- }()
+	defer func() {
+		g.nonYieldable--
+		ls.goCalls--
+	}()
 	ls.callR(nargs, nret, -1)
 }
 
