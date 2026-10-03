@@ -2125,6 +2125,8 @@ func (ls *LState) resumeRejection(th *LState, nargs int) string {
 	switch {
 	case ls.G.CurrentThread == th:
 		return "can not resume a running thread"
+	case th.IsClosed():
+		return "can not resume a closed thread"
 	case th.Dead:
 		return "can not resume a dead thread"
 	case th.isHeld():
@@ -2141,6 +2143,9 @@ func (ls *LState) resumeRejection(th *LState, nargs int) string {
 }
 
 func (ls *LState) Resume(th *LState, fn *LFunction, args ...LValue) (ResumeState, []LValue, error) {
+	if msg := ls.resumeRejection(th, len(args)); msg != "" {
+		return ResumeError, nil, newApiErrorS(ApiErrorRun, msg)
+	}
 	isstarted := th.isStarted()
 	if !isstarted {
 		base := 0
@@ -2156,9 +2161,6 @@ func (ls *LState) Resume(th *LState, fn *LFunction, args ...LValue) (ResumeState
 		})
 	}
 
-	if msg := ls.resumeRejection(th, len(args)); msg != "" {
-		return ResumeError, nil, newApiErrorS(ApiErrorRun, msg)
-	}
 	th.Parent = ls
 	ls.G.CurrentThread = th
 	if !isstarted {
@@ -2249,6 +2251,9 @@ func (ls *LState) Yield(values ...LValue) int {
 // ResumeInto is like Resume but uses a pre-allocated buffer for return values.
 // This avoids allocations in the hot path.
 func (ls *LState) ResumeInto(th *LState, fn *LFunction, retBuf []LValue, args ...LValue) (ResumeState, []LValue, error) {
+	if msg := ls.resumeRejection(th, len(args)); msg != "" {
+		return ResumeError, nil, newApiErrorS(ApiErrorRun, msg)
+	}
 	isstarted := th.isStarted()
 	if !isstarted {
 		base := 0
@@ -2264,9 +2269,6 @@ func (ls *LState) ResumeInto(th *LState, fn *LFunction, retBuf []LValue, args ..
 		})
 	}
 
-	if msg := ls.resumeRejection(th, len(args)); msg != "" {
-		return ResumeError, nil, newApiErrorS(ApiErrorRun, msg)
-	}
 	th.Parent = ls
 	ls.G.CurrentThread = th
 	if !isstarted {
