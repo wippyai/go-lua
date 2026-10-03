@@ -44,6 +44,8 @@ func resetLState(ls *LState) {
 	ls.wrapped = false
 	ls.yieldState = yieldNone
 	ls.yieldCallRB = 0
+	ls.goCalls = 0
+	ls.Panic = panicWithTraceback
 	ls.releaseHold()
 	ls.releaseHeld()
 	ls.ctx = nil
