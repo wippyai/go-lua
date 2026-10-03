@@ -59,6 +59,9 @@ func (ls *LState) Close() {
 	atomic.AddInt32(&ls.stop, 1)
 	ls.releaseHold()
 	ls.releaseHeld()
+	// Closures that escaped keep their captured values; the registers return to
+	// the pool and are overwritten by the next user.
+	ls.closeUpvalues(0)
 
 	// Don't pool if registry has grown beyond initial size
 	shouldPool := ls.reg != nil && cap(ls.reg.array) <= ls.Options.RegistrySize+ls.Options.RegistryGrowStep
