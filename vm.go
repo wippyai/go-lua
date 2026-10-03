@@ -8,6 +8,12 @@ import (
 	"sync"
 )
 
+// integerForCount updates in place so long loops do not box a count each iteration.
+type integerForCount uint64
+
+func (c *integerForCount) String() string   { return LInteger(*c).String() }
+func (c *integerForCount) Type() LValueType { return LTInteger }
+
 func mainLoop(L *LState, baseframe *callFrame) {
 	// Set background context and nil done channel for fast path
 	L.ctx = context.Background()
@@ -2333,56 +2339,28 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			lbase := cf.LocalBase
 			A := int(inst>>18) & 0xff //GETA
 			RA := int(lbase) + A
-			// Fast path: check if all values are integers
 			initVal := reg.Get(RA)
 			limitVal := reg.Get(RA + 1)
 			stepVal := reg.Get(RA + 2)
-			if initI, ok1 := initVal.(LInteger); ok1 {
-				if limitI, ok2 := limitVal.(LInteger); ok2 {
-					if stepI, ok3 := stepVal.(LInteger); ok3 {
-						init := int64(initI) + int64(stepI)
-						limit := int64(limitI)
-						step := int64(stepI)
-						v := lintegerToValue(LInteger(init))
-						newSize := RA + 1
-						if newSize > cap(reg.array) {
-							reg.resize(newSize)
-						}
-						reg.array[RA] = v
-						if RA >= reg.top {
-							reg.top = RA + 1
-						}
-						if (step > 0 && init <= limit) || (step <= 0 && init >= limit) {
-							Sbx := int(inst&0x3ffff) - opMaxArgSbx
-							cf.Pc += int32(Sbx)
-							newSize := RA + 4
-							if newSize > cap(reg.array) {
-								reg.resize(newSize)
-							}
-							reg.array[RA+3] = v
-							if RA+3 >= reg.top {
-								reg.top = RA + 4
-							}
-						} else {
-							topi := RA + 1
-							if topi > cap(reg.array) {
-								reg.resize(topi)
-							}
-							oldtopi := reg.top
-							reg.top = topi
-							for i := oldtopi; i < reg.top; i++ {
-								reg.array[i] = LNil
-							}
-							if reg.top < oldtopi {
-								nilRange := reg.array[reg.top:oldtopi]
-								for i := range nilRange {
-									nilRange[i] = nil
-								}
-							}
-						}
-						continue
+			if init, ok := initVal.(LInteger); ok {
+				count := limitVal.(*integerForCount)
+				if *count != 0 {
+					*count--
+					v := lintegerToValue(init + stepVal.(LInteger))
+					if RA+4 > cap(reg.array) {
+						reg.resize(RA + 4)
 					}
+					reg.array[RA] = v
+					reg.array[RA+3] = v
+					if RA+3 >= reg.top {
+						reg.top = RA + 4
+					}
+					Sbx := int(inst&0x3ffff) - opMaxArgSbx
+					cf.Pc += int32(Sbx)
+				} else {
+					reg.SetTop(RA + 1)
 				}
+				continue
 			}
 			// Slow path: use LNumber
 			if init, ok1 := toNumber(initVal); ok1 {
@@ -2475,20 +2453,31 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			Sbx := int(inst&0x3ffff) - opMaxArgSbx //GETSBX
 			initVal := reg.Get(RA)
 			stepVal := reg.Get(RA + 2)
-			// Fast path: integer-only for loops
-			if initI, ok1 := initVal.(LInteger); ok1 {
-				if stepI, ok2 := stepVal.(LInteger); ok2 {
-					result := int64(initI) - int64(stepI)
-					v := lintegerToValue(LInteger(result))
-					newSize := RA + 1
-					if newSize > cap(reg.array) {
-						reg.resize(newSize)
+			if init, ok := initVal.(LInteger); ok {
+				if step, ok := stepVal.(LInteger); ok {
+					// Integer preparation consumes the first loop tick before entering the body.
+					if safepoint(cf, true) {
+						return
 					}
-					reg.array[RA] = v
-					if RA >= reg.top {
-						reg.top = RA + 1
+					if step == 0 {
+						L.RaiseError("'for' step is zero")
 					}
-					cf.Pc += int32(Sbx)
+					limit, skip := integerForLimit(L, reg.Get(RA+1), step)
+					if skip || (step > 0 && init > limit) || (step < 0 && init < limit) {
+						cf.Pc += int32(Sbx + 1)
+						reg.SetTop(RA + 1)
+						continue
+					}
+					// The first iteration uses init; the count covers subsequent iterations.
+					var count uint64
+					if step > 0 {
+						count = (uint64(limit) - uint64(init)) / uint64(step)
+					} else {
+						count = (uint64(init) - uint64(limit)) / (0 - uint64(step))
+					}
+					counter := integerForCount(count)
+					reg.Set(RA+1, &counter)
+					reg.Set(RA+3, initVal)
 					continue
 				}
 			}
@@ -3306,6 +3295,32 @@ func numberArith(_ *LState, opcode int, lhs, rhs LNumber) LNumber {
 	default:
 		panic("should not reach here")
 	}
+}
+
+// integerForLimit rounds float limits in the direction of the loop and clamps
+// limits outside the integer range, skipping loops that cannot reach the limit.
+func integerForLimit(L *LState, value LValue, step LInteger) (LInteger, bool) {
+	if limit, ok := value.(LInteger); ok {
+		return limit, false
+	}
+	limit, ok := toNumber(value)
+	if !ok {
+		L.RaiseError("for statement limit must be a number")
+	}
+	f := float64(limit)
+	if step > 0 {
+		f = math.Floor(f)
+	} else {
+		f = math.Ceil(f)
+	}
+	// The upper bound is exclusive because float64(MaxInt64) rounds to 2^63.
+	if f >= math.MinInt64 && f < -float64(math.MinInt64) {
+		return LInteger(f), false
+	}
+	if f > 0 {
+		return LInteger(math.MaxInt64), step < 0
+	}
+	return LInteger(math.MinInt64), step > 0
 }
 
 // toNumber extracts numeric value from LNumber or LInteger
