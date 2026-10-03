@@ -1717,11 +1717,7 @@ func (ls *LState) GetStack(level int) (*Debug, bool) {
 func (ls *LState) GetLocal(dbg *Debug, no int) (string, LValue) {
 	frame := dbg.frame
 	if name := ls.findLocal(frame, no); len(name) > 0 {
-		value := ls.reg.Get(int(frame.LocalBase) + no - 1)
-		if count, ok := value.(*integerForCount); ok {
-			return name, lintegerToValue(LInteger(*count))
-		}
-		return name, value
+		return name, ls.reg.Get(int(frame.LocalBase) + no - 1)
 	}
 	return "", LNil
 }
@@ -1729,14 +1725,7 @@ func (ls *LState) GetLocal(dbg *Debug, no int) (string, LValue) {
 func (ls *LState) SetLocal(dbg *Debug, no int, lv LValue) string {
 	frame := dbg.frame
 	if name := ls.findLocal(frame, no); len(name) > 0 {
-		index := int(frame.LocalBase) + no - 1
-		if count, ok := ls.reg.Get(index).(*integerForCount); ok {
-			if value, ok := lv.(LInteger); ok {
-				*count = integerForCount(value)
-				return name
-			}
-		}
-		ls.reg.Set(index, lv)
+		ls.reg.Set(int(frame.LocalBase)+no-1, lv)
 		return name
 	}
 	return ""

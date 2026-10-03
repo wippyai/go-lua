@@ -86,9 +86,9 @@ const (
 	OP_TAILCALL /*  A B C   return R(A)(R(A+1) ... R(A+B-1))              */
 	OP_RETURN   /*    A B     return R(A) ... R(A+B-2)      (see note)      */
 
-	OP_FORLOOP /*   A sBx   integer: advance and decrement R(A+1) if nonzero;
+	OP_FORLOOP /*   A sBx   integer: advance if distance to R(A+1) permits R(A+2);
 	     float: R(A)+=R(A+2), compare with R(A+1); pc+=sBx on continuation */
-	OP_FORPREP /*   A sBx   integer: prepare count, enter body or skip loop;
+	OP_FORPREP /*   A sBx   integer: prepare limit, enter body or skip loop;
 	     float: R(A)-=R(A+2); pc+=sBx */
 
 	OP_TFORLOOP /*  A C     R(A+3) ... R(A+3+C) := R(A)(R(A+1) R(A+2));
