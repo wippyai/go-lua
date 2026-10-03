@@ -19,9 +19,9 @@ debug.sethook()
 return lines, counts, s`
 	L := NewState()
 	defer L.Close()
-	want, _ := runSliced(t, L, src, -1)
+	want, _, _ := runToCompletion(t, L, src, -1)
 	for _, budget := range []int64{1, 2, 3} {
-		got, preempts := runSliced(t, L, src, budget)
+		got, _, preempts := runToCompletion(t, L, src, budget)
 		if preempts == 0 {
 			t.Fatalf("budget %d: expected preemption", budget)
 		}

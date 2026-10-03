@@ -6,44 +6,12 @@ import (
 	"testing"
 )
 
-// runToCompletion resumes src until it finishes, resuming through yields and,
-// when budget >= 0, through preemptions. It returns the results and the number
-// of yields and preemptions seen.
-func runToCompletion(t *testing.T, L *LState, src string, budget int64) (ret []LValue, yields, preempts int) {
-	t.Helper()
-	fn, err := L.LoadString(src)
-	if err != nil {
-		t.Fatalf("load: %v", err)
-	}
-	co, cancel := L.NewThread()
-	defer cancel()
-	for i := 0; i < 1_000_000; i++ {
-		L.SetTickBudget(budget)
-		st, res, err := L.Resume(co, fn)
-		if err != nil {
-			t.Fatalf("resume: %v", err)
-		}
-		switch st {
-		case ResumeYield:
-			yields++
-		case ResumePreempted:
-			preempts++
-		case ResumeOK:
-			return res, yields, preempts
-		}
-	}
-	t.Fatal("no progress")
-	return nil, 0, 0
-}
-
 func expectString(t *testing.T, got []LValue, want string) {
 	t.Helper()
 	if len(got) != 1 || got[0] != LString(want) {
 		t.Fatalf("expected %q, got %v", want, got)
 	}
 }
-
-func sprintfBody(src, body string) string { return fmt.Sprintf(src, body) }
 
 const slowBody = `local s = 0 for i = 1, 50 do s = s + i end`
 
@@ -75,7 +43,7 @@ return "a" .. "b" .. v .. "c" .. "d"`, "abJcd"},
 				if mode == "preempt" {
 					body, budget = slowBody, 3
 				}
-				src := sprintfBody(c.src, body)
+				src := fmt.Sprintf(c.src, body)
 				ret, yields, preempts := runToCompletion(t, L, src, budget)
 				if yields+preempts == 0 {
 					t.Fatal("expected a suspension")
@@ -104,7 +72,7 @@ func TestLessEqualViaLessThanKeepsInversion(t *testing.T) {
 				if mode == "preempt" {
 					body, budget = slowBody, 3
 				}
-				src := sprintfBody(`local mt = {__lt = function(x, y) %s return x.n < y.n end}
+				src := fmt.Sprintf(`local mt = {__lt = function(x, y) %s return x.n < y.n end}
 local a, b = setmetatable({n = 1}, mt), setmetatable({n = 2}, mt)
 local r = `+c.expr+`
 return tostring(r)`, body)
@@ -127,7 +95,7 @@ func TestPcallDoesNotInheritCompletedXpcallHandler(t *testing.T) {
 			if mode == "preempt" {
 				body, budget = slowBody, 3
 			}
-			src := sprintfBody(`
+			src := fmt.Sprintf(`
 local ok1 = xpcall(function() %[1]s return 1 end, function(e) return "OLD" end)
 assert(ok1)
 local ok, err = pcall(function() %[1]s error("boom") end)
