@@ -142,7 +142,7 @@ var pooledStateKeptFields = map[string]bool{
 func seedField(t *testing.T, name string, f reflect.Value) {
 	t.Helper()
 	switch f.Kind() {
-	case reflect.Ptr:
+	case reflect.Pointer:
 		f.Set(reflect.New(f.Type().Elem()))
 	case reflect.Map:
 		f.Set(reflect.MakeMap(f.Type()))
@@ -203,7 +203,7 @@ func TestResetLStateClearsEveryField(t *testing.T) {
 		}
 		f := v.Field(i)
 		switch f.Kind() {
-		case reflect.Ptr, reflect.Map, reflect.Slice, reflect.Chan, reflect.Interface:
+		case reflect.Pointer, reflect.Map, reflect.Slice, reflect.Chan, reflect.Interface:
 			if !f.IsNil() {
 				t.Errorf("pooled state retains %s", name)
 			}

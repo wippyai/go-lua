@@ -118,7 +118,7 @@ func diffRun(src string, mods map[string]string, sched budgetSchedule, withCtx b
 		th, cancel = L.NewThread()
 		defer cancel()
 	} else {
-		th = L.NewThreadWithContext(nil)
+		th = L.NewThreadWithContext(nil) //nolint:staticcheck // nil selects the main loop without context checks
 	}
 
 	defer func() {
