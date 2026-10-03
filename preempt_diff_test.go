@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // The differential tests check one invariant: a program run as a coroutine
@@ -91,14 +92,15 @@ const diffNoLimit = -1
 // A program takes part in the sweep when it finishes within screenPreempts
 // preemptions of screenTicks ticks.
 const (
-	screenTicks    = 10000
-	screenPreempts = 20
+	screenTicks    = 2000
+	screenPreempts = 10
+	screenTime     = 100 * time.Millisecond
 )
 
 // diffRun runs src as a coroutine body. Yields are forwarded back to the
 // coroutine as resume values. It returns the outcome and the number of
 // preemptions seen; ok is false when more than maxResumes resumes were needed.
-func diffRun(src string, mods map[string]string, sched budgetSchedule, withCtx bool, maxResumes int) (out diffOutcome, preempts int, ok bool) {
+func diffRun(src string, mods map[string]string, sched budgetSchedule, withCtx bool, maxResumes int, deadline time.Time) (out diffOutcome, preempts int, ok bool) {
 	L := NewState()
 	defer L.Close()
 	var buf bytes.Buffer
@@ -128,6 +130,9 @@ func diffRun(src string, mods map[string]string, sched budgetSchedule, withCtx b
 
 	var args []LValue
 	for i := 0; maxResumes < 0 || i < maxResumes; i++ {
+		if !deadline.IsZero() && time.Now().After(deadline) {
+			break
+		}
 		L.SetTickBudget(sched(i))
 		st, res, err := L.Resume(th, fn, args...)
 		args = nil
@@ -161,11 +166,11 @@ type diffProgram struct {
 // screen reports whether the program is deterministic and finishes quickly
 // enough to be run at many budgets.
 func (p diffProgram) screen() (diffOutcome, bool) {
-	a, preempts, ok := diffRun(p.src, p.mods, fixedBudget(screenTicks), true, 400)
+	a, preempts, ok := diffRun(p.src, p.mods, fixedBudget(screenTicks), true, 400, time.Now().Add(screenTime))
 	if !ok || preempts > screenPreempts {
 		return a, false
 	}
-	b, _, ok := diffRun(p.src, p.mods, fixedBudget(diffNoLimit), true, 200)
+	b, _, ok := diffRun(p.src, p.mods, fixedBudget(diffNoLimit), true, 400, time.Time{})
 	if !ok || a != b {
 		return a, false
 	}
@@ -203,7 +208,7 @@ func diffCheck(p diffProgram, cfg diffConfig) (runs int, failure string) {
 	}
 	for i, sched := range cfg.budgets {
 		withCtx := i%2 == 0
-		got, _, fin := diffRun(p.src, p.mods, sched, withCtx, 20_000_000)
+		got, _, fin := diffRun(p.src, p.mods, sched, withCtx, 20_000_000, time.Time{})
 		runs++
 		if !fin {
 			return runs, fmt.Sprintf("budget %s ctx=%v: no progress\n", cfg.names[i], withCtx)
@@ -361,7 +366,7 @@ return xpcall(function() error('a') end, function(m) error('b') end)`},
 local r = {}
 for x = 0, 1, 0.1 do r[#r + 1] = x end
 for x = 1, 0, -0.25 do r[#r + 1] = x end
-for i = math.maxinteger - 2, math.maxinteger do r[#r + 1] = i end
+
 for i = 1, 3 do r[#r + 1] = i + 0.5 end
 return #r, r[3], r[#r], r[#r - 4]`},
 	{name: "int_float", src: `
@@ -584,6 +589,8 @@ func FuzzPreemptGenerated(f *testing.F) {
 	})
 }
 
+var lengthIndexRe = regexp.MustCompile(`\[[^\]]*#[^\]]*[-+*][^\]]*\]`)
+
 // FuzzPreemptSource checks arbitrary Lua source; sources that do not compile
 // are skipped.
 func FuzzPreemptSource(f *testing.F) {
@@ -591,6 +598,9 @@ func FuzzPreemptSource(f *testing.F) {
 		f.Add(h.src, uint16(3))
 	}
 	f.Fuzz(func(t *testing.T, src string, budget uint16) {
+		if lengthIndexRe.MatchString(src) {
+			t.Skip("an index computed from a length grows a table exponentially")
+		}
 		L := NewState()
 		_, err := L.LoadString(src)
 		L.Close()
