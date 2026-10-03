@@ -52,7 +52,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 	// one tick. It raises on context cancellation and suspends the thread once
 	// the tick budget is exhausted. rewind re-executes the current instruction
 	// on resume; it is false only where the instruction already completed.
-	safepoint := func(rewind bool) bool {
+	safepoint := func(cf *callFrame, rewind bool) bool {
 		if ctxDone != nil {
 			select {
 			case <-ctxDone:
@@ -1618,7 +1618,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 		case OP_JMP:
 			Sbx := int(inst&0x3ffff) - opMaxArgSbx //GETSBX
 			cf.Pc += int32(Sbx)
-			if Sbx < 0 && safepoint(false) {
+			if Sbx < 0 && safepoint(cf, false) {
 				return
 			}
 
@@ -1753,7 +1753,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			}
 
 		case OP_CALL:
-			if safepoint(true) {
+			if safepoint(cf, true) {
 				return
 			}
 			reg := L.reg
@@ -1890,7 +1890,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			}
 
 		case OP_TAILCALL:
-			if safepoint(true) {
+			if safepoint(cf, true) {
 				return
 			}
 			reg := L.reg
@@ -2340,7 +2340,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			}
 
 		case OP_FORLOOP:
-			if safepoint(true) {
+			if safepoint(cf, true) {
 				return
 			}
 			reg := L.reg
@@ -2531,7 +2531,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			cf.Pc += int32(Sbx)
 
 		case OP_TFORLOOP:
-			if safepoint(true) {
+			if safepoint(cf, true) {
 				return
 			}
 			reg := L.reg
