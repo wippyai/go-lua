@@ -624,3 +624,47 @@ func TestPreemptedResumeDoesNotAllocate(t *testing.T) {
 		t.Fatalf("expected no allocations, got %v", allocs)
 	}
 }
+
+func TestSetTickBudgetRejectedWhileLuaRuns(t *testing.T) {
+	cases := map[string]bool{"main": false, "coroutine": true}
+	for name, inCoroutine := range cases {
+		t.Run(name, func(t *testing.T) {
+			L := NewState()
+			defer L.Close()
+			L.SetGlobal("setbudget", L.NewFunction(func(L *LState) int {
+				L.SetTickBudget(0)
+				return 0
+			}))
+			src := `return pcall(setbudget)`
+			var ret []LValue
+			if inCoroutine {
+				ret, _ = runSliced(t, L, src, -1)
+			} else {
+				if err := L.DoString(`result = {pcall(setbudget)}`); err != nil {
+					t.Fatal(err)
+				}
+				ret = []LValue{L.GetGlobal("result").(*LTable).RawGetInt(1)}
+			}
+			if ret[0] != LFalse {
+				t.Fatalf("expected rejection, got %v", ret)
+			}
+			if L.TickBudget() >= 0 {
+				t.Fatalf("budget changed to %d", L.TickBudget())
+			}
+		})
+	}
+}
+
+func TestSetTickBudgetBetweenResumes(t *testing.T) {
+	L := NewState()
+	defer L.Close()
+	ret, preempts := runSliced(t, L, `local s = 0 for i = 1, 100 do s = s + i end return s`, 5)
+	if preempts == 0 {
+		t.Fatal("expected preemption")
+	}
+	expectNumbers(t, ret, 5050)
+	L.SetTickBudget(-1)
+	if L.TickBudget() != -1 {
+		t.Fatal("budget not reset")
+	}
+}
