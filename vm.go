@@ -3461,9 +3461,11 @@ func stringConcat(L *LState, total, last int) (LValue, int) {
 
 			result := LString(builder.String())
 
-			// Return slices to pool
-			*partsPtr = parts
+			// Return slices to pool without the strings they referenced
+			clear(parts)
+			*partsPtr = parts[:0]
 			stringPartsPool.Put(partsPtr)
+			builder.Reset()
 			stringBuilderPool.Put(builder)
 
 			rhs = result
