@@ -219,6 +219,9 @@ type Global struct {
 	// nonYieldable counts Go frames on the running path that cannot suspend
 	// the Lua code they call. Preemption requires zero.
 	nonYieldable int32
+	// executing counts the active entries into Lua execution from Go (Call and
+	// thread resumption). The tick budget may change only while it is zero.
+	executing int32
 }
 
 type LState struct {

@@ -3187,6 +3187,10 @@ func threadRun(L *LState) {
 		return
 	}
 
+	g := L.G
+	g.executing++
+	defer func() { g.executing-- }()
+
 	defer func() {
 		if rcv := recover(); rcv != nil {
 			var lv LValue

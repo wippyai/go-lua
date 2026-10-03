@@ -1905,6 +1905,9 @@ func (ls *LState) Load(reader io.Reader, name string) (*LFunction, error) {
 // called Lua code is not preemptible; a Go function that supports suspension
 // of the code it calls uses CallK instead.
 func (ls *LState) Call(nargs, nret int) {
+	g := ls.G
+	g.executing++
+	defer func() { g.executing-- }()
 	if ls.G.tickBudget < 0 {
 		ls.callR(nargs, nret, -1)
 		return
@@ -2225,7 +2228,7 @@ func (ls *LState) Resume(th *LState, fn *LFunction, args ...LValue) (ResumeState
 // is disabled are not counted as non-yieldable, so the budget may change only
 // between resumes, from the host.
 func (ls *LState) SetTickBudget(n int64) {
-	if ct := ls.G.CurrentThread; ct != nil && !ct.stack.IsEmpty() {
+	if ls.G.executing != 0 {
 		ls.RaiseError("tick budget can not be changed while Lua code is running")
 	}
 	ls.G.tickBudget = n
