@@ -2827,11 +2827,10 @@ func (ls *LState) preempt() {
 	ls.yieldState = yieldPreempt
 }
 
-func switchToParentThread(L *LState, nargs int, haserror bool, kill bool) {
+// transferToParent hands the top nargs values of L to its resumer, preceded by
+// the status flag for non-wrapped threads, and makes the resumer current.
+func transferToParent(L *LState, nargs int, haserror bool) {
 	parent := L.Parent
-	if parent == nil {
-		L.RaiseError("can not yield from outside of a coroutine")
-	}
 	L.G.CurrentThread = parent
 	L.Parent = nil
 	if !L.wrapped {
@@ -2842,6 +2841,13 @@ func switchToParentThread(L *LState, nargs int, haserror bool, kill bool) {
 		}
 	}
 	L.XMoveTo(parent, nargs)
+}
+
+func switchToParentThread(L *LState, nargs int, haserror bool, kill bool) {
+	if L.Parent == nil {
+		L.RaiseError("can not yield from outside of a coroutine")
+	}
+	transferToParent(L, nargs, haserror)
 	L.stack.Pop()
 	offset := L.currentFrame.LocalBase - L.currentFrame.ReturnBase
 	L.currentFrame = L.stack.Last()
@@ -3237,6 +3243,18 @@ func handleProtectedError(L *LState, errValue LValue, _ interface{}) bool {
 				errFunc = ext.ErrFunc
 			}
 
+			// Call the xpcall error handler while the throw-site frames are still on the
+			// stack, so a root protected frame is never left as the handler's sole frame
+			if errFunc != nil {
+				L.Push(errFunc)
+				L.Push(errValue)
+				err := L.PCall(1, 1, nil)
+				if err == nil {
+					errValue = L.Get(-1)
+					L.Pop(1)
+				}
+			}
+
 			// Clear frame extensions for all frames being popped (including protected frame)
 			for j := L.stack.Sp() - 1; j >= i; j-- {
 				if f := L.stack.At(j); f != nil {
@@ -3249,17 +3267,6 @@ func handleProtectedError(L *LState, errValue LValue, _ interface{}) bool {
 			L.stack.Pop()
 			L.currentFrame = L.stack.Last()
 
-			// Call error handler if present (xpcall)
-			if errFunc != nil {
-				L.Push(errFunc)
-				L.Push(errValue)
-				err := L.PCall(1, 1, nil)
-				if err == nil {
-					errValue = L.Get(-1)
-					L.Pop(1)
-				}
-			}
-
 			// If errValue is an *Error, ensure it has its metatable set
 			if e, ok := errValue.(*Error); ok {
 				SetErrorMetatable(L, e)
@@ -3269,6 +3276,13 @@ func handleProtectedError(L *LState, errValue LValue, _ interface{}) bool {
 			L.reg.Set(int(returnBase), LFalse)
 			L.reg.Set(int(returnBase)+1, errValue)
 
+			// A protected frame that was the thread's root returns to the
+			// resumer like a sole frame finishing.
+			if L.stack.IsEmpty() && L.Parent != nil {
+				L.reg.SetTop(int(returnBase) + 2)
+				transferToParent(L, 2, false)
+				L.kill()
+			}
 			return true
 		}
 	}
