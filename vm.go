@@ -2818,12 +2818,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 // frames stay in place: the resumer sees ResumePreempted and continues L by
 // resuming it with no values.
 func (ls *LState) preempt() {
-	parent := ls.Parent
-	if !ls.wrapped {
-		parent.Push(LTrue)
-	}
-	ls.G.CurrentThread = parent
-	ls.Parent = nil
+	transferToParent(ls, 0, false)
 	ls.yieldState = yieldPreempt
 }
 
@@ -3158,17 +3153,10 @@ func runGoFrame(L *LState, frame *callFrame) int {
 // Resume arguments into the function's final results, matching how a surviving
 // Lua caller receives resume values after a non-root Go function yields.
 func preserveSoleGoYield(L *LState) {
-	parent := L.Parent
-	if parent == nil {
+	if L.Parent == nil {
 		L.RaiseError("can not yield from outside of a coroutine")
 	}
-
-	if !L.wrapped {
-		parent.Push(LTrue)
-	}
-	L.XMoveTo(parent, L.GetTop())
-	L.G.CurrentThread = parent
-	L.Parent = nil
+	transferToParent(L, L.GetTop(), false)
 	L.yieldState = yieldSystem
 
 	ext := L.setFrameExt(L.currentFrame)
