@@ -1294,6 +1294,10 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			RA := int(lbase) + A
 			B := int(inst & 0x1ff) //GETB
 			unaryv := L.rkValue(B)
+			if value, ok := unaryv.(LInteger); ok {
+				reg.Set(RA, lintegerToValue(-value))
+				continue
+			}
 			if nm, ok := toNumber(unaryv); ok {
 				// this section is inlined by go-inline
 				// source function is 'func (rg *registry) Set(regi int, vali LValue) ' in '_state.go'
