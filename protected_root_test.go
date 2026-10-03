@@ -160,3 +160,38 @@ func TestHoldReleasedWhenUnpoolableOwnerIsClosed(t *testing.T) {
 		t.Fatal("hold survives close of an unpoolable owner")
 	}
 }
+
+func TestSetTickBudgetRejectedInsideDirectChildCall(t *testing.T) {
+	L := NewState()
+	defer L.Close()
+	L.SetGlobal("setbudget", L.NewFunction(func(*LState) int {
+		L.SetTickBudget(0)
+		return 0
+	}))
+	for _, viaPCall := range []bool{false, true} {
+		child, cancel := L.NewThread()
+		fn, err := L.LoadString(`setbudget()`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		child.Push(fn)
+		if viaPCall {
+			if err := child.PCall(0, 0, nil); err == nil {
+				t.Fatal("expected the budget change to be rejected")
+			}
+		} else {
+			func() {
+				defer func() {
+					if recover() == nil {
+						t.Error("expected the budget change to be rejected")
+					}
+				}()
+				child.Call(0, 0)
+			}()
+		}
+		cancel()
+		if L.TickBudget() >= 0 {
+			t.Fatalf("viaPCall=%v: budget changed to %d", viaPCall, L.TickBudget())
+		}
+	}
+}
