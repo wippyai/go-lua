@@ -158,7 +158,9 @@ return n`, tc.bounds, tc.bounds == "1.0, 0, 0"), budget)
 	}
 }
 
-func TestNumericForCounterSnapshot(t *testing.T) {
+// The debugger sees the loop's limit in the internal limit slot, as in
+// reference Lua.
+func TestNumericForLimitSnapshot(t *testing.T) {
 	for _, budget := range []int64{-1, 1} {
 		t.Run(fmt.Sprintf("budget_%d", budget), func(t *testing.T) {
 			L := NewState()
@@ -178,12 +180,12 @@ for i = 1, 3 do
     end
 end
 return saved`, budget)
-			expectNumbers(t, ret, 2)
+			expectNumbers(t, ret, 3)
 		})
 	}
 }
 
-func TestNumericForCounterSetLocal(t *testing.T) {
+func TestNumericForLimitSetLocal(t *testing.T) {
 	L := NewState()
 	defer L.Close()
 	ret, _, _ := runToCompletion(t, L, `
