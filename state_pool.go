@@ -150,10 +150,10 @@ func callStackFor(pooled callFrameStack, options Options) callFrameStack {
 }
 
 // registryFor returns an empty registry for ls with the sizes options
-// describe, reusing a pooled one that is large enough.
+// describe, reusing a pooled one whose capacity lies within them.
 func registryFor(ls *LState, options Options) *registry {
 	rg := ls.reg
-	if rg == nil || cap(rg.array) < options.RegistrySize {
+	if rg == nil || cap(rg.array) < options.RegistrySize || cap(rg.array) > options.RegistryMaxSize {
 		return newRegistry(ls, options.RegistrySize, options.RegistryGrowStep, options.RegistryMaxSize)
 	}
 	rg.handler = ls
