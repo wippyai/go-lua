@@ -190,6 +190,19 @@ func coResumePropagate(L *LState, th *LState, top int) int {
 // on L's stack.
 func coResumeContinuation(L *LState, ctx interface{}, _ ResumeState) int {
 	th := ctx.(*LState)
+	if L.holding != th {
+		// The held thread was torn down; it is dead as far as Lua can tell.
+		L.holding = nil
+		msg := "can not resume a dead thread"
+		L.SetTop(0)
+		if th.wrapped {
+			L.RaiseError(msg)
+			return 0
+		}
+		L.Push(LFalse)
+		L.Push(LString(msg))
+		return 2
+	}
 	L.releaseHold()
 
 	th.Parent = L

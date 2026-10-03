@@ -24,9 +24,6 @@ func resetLState(ls *LState) {
 		}
 	}
 
-	ls.releaseHold()
-	ls.releaseHeld()
-
 	// Reset upvalue cache
 	ls.uvcache = nil
 
@@ -62,6 +59,8 @@ func (ls *LState) Close() {
 	if !atomic.CompareAndSwapInt32(&ls.stop, 0, 1) {
 		return
 	}
+	ls.releaseHold()
+	ls.releaseHeld()
 	// Captures must keep their values before registers are cleared or reused.
 	ls.closeUpvalues(0)
 
