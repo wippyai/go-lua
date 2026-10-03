@@ -270,6 +270,8 @@ type callFrameStack interface {
 	IsFull() bool
 	IsEmpty() bool
 
+	// Reset empties the stack and drops every reference held by its frame slots.
+	Reset()
 	FreeAll()
 }
 
@@ -301,6 +303,11 @@ func (cs *fixedCallFrameStack) Push(v callFrame) {
 
 func (cs *fixedCallFrameStack) Sp() int {
 	return cs.sp
+}
+
+func (cs *fixedCallFrameStack) Reset() {
+	clear(cs.array)
+	cs.sp = 0
 }
 
 func (cs *fixedCallFrameStack) SetSp(sp int) {
@@ -363,6 +370,7 @@ func newCallFrameStackSegment() *callFrameStackSegment {
 }
 
 func freeCallFrameStackSegment(seg *callFrameStackSegment) {
+	seg.array = [FramesPerSegment]callFrame{}
 	segmentPool.Put(seg)
 }
 
@@ -429,6 +437,11 @@ func (cs *autoGrowingCallFrameStack) Sp() int {
 
 // SetSp can be used to rapidly unwind the stack, freeing all stack frames on the way. It should not be used to
 // allocate new stack space, use Push() for that.
+func (cs *autoGrowingCallFrameStack) Reset() {
+	cs.SetSp(0)
+	cs.segments[0].array = [FramesPerSegment]callFrame{}
+}
+
 func (cs *autoGrowingCallFrameStack) SetSp(sp int) {
 	desiredSegIdx := segIdx(sp / FramesPerSegment)
 	desiredFramesInLastSeg := uint8(sp % FramesPerSegment)
