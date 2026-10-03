@@ -13,6 +13,20 @@ func collect() {
 	}
 }
 
+// waitCollected reports whether done, closed by a finalizer, closes within a
+// few collection cycles.
+func waitCollected(done <-chan struct{}) bool {
+	for i := 0; i < 20; i++ {
+		collect()
+		select {
+		case <-done:
+			return true
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	return false
+}
+
 func heapInUse() (inuse uint64, objects uint64) {
 	collect()
 	var m runtime.MemStats
@@ -25,22 +39,6 @@ func requireNoFrameExt(t *testing.T, what string, th *LState) {
 	if n := len(th.frameExt); n != 0 {
 		t.Fatalf("%s: %d frame extensions remain with no active frames", what, n)
 	}
-}
-
-// driveToCompletion resumes fn in th through every yield and preemption.
-func driveToCompletion(t *testing.T, L, th *LState, fn *LFunction, budget int64) {
-	t.Helper()
-	for i := 0; i < 1_000_000; i++ {
-		L.SetTickBudget(budget)
-		st, _, err := L.Resume(th, fn)
-		if err != nil {
-			t.Fatalf("resume: %v", err)
-		}
-		if st == ResumeOK {
-			return
-		}
-	}
-	t.Fatal("no progress")
 }
 
 var leakSources = map[string]string{
@@ -87,7 +85,7 @@ func TestFrameExtReleasedWhenFramesFinish(t *testing.T) {
 				}
 				th, cancel := L.NewThread()
 				defer cancel()
-				driveToCompletion(t, L, th, fn, budget)
+				resumeThrough(t, L, th, fn, budget)
 				requireNoFrameExt(t, "thread", th)
 				requireNoFrameExt(t, "main", L)
 			})
@@ -105,7 +103,7 @@ func TestFrameExtBoundedAcrossCycles(t *testing.T) {
 	th, cancel := L.NewThread()
 	defer cancel()
 	for i := 0; i < 50; i++ {
-		driveToCompletion(t, L, th, fn, 3)
+		resumeThrough(t, L, th, fn, 3)
 		th.Dead = false
 		th.stack.SetSp(0)
 		th.currentFrame = nil
@@ -174,7 +172,7 @@ return ok`)
 	batch := func(n int) {
 		for i := 0; i < n; i++ {
 			th, cancel := L.NewThread()
-			driveToCompletion(t, L, th, script, 4)
+			resumeThrough(t, L, th, script, 4)
 			cancel()
 			th.Close()
 		}
@@ -219,15 +217,8 @@ func TestSuspendedCoroutinesAreCollectable(t *testing.T) {
 				}
 				L.SetTickBudget(-1)
 			}()
-			deadline := time.Now().Add(5 * time.Second)
-			for time.Now().Before(deadline) {
-				collect()
-				select {
-				case <-done:
-					return
-				default:
-				}
-				time.Sleep(10 * time.Millisecond)
+			if waitCollected(done) {
+				return
 			}
 			t.Fatal("suspended coroutine is not collectable")
 		})

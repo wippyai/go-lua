@@ -6,36 +6,40 @@ import (
 	"testing"
 )
 
-// runSliced resumes src in a fresh thread with the given tick budget per
-// resume until it finishes, and returns its results and preemption count.
-func runSliced(t *testing.T, L *LState, src string, budget int64) ([]LValue, int) {
+// resumeThrough resumes fn in th with the given tick budget per resume until
+// it finishes, through yields and, when budget >= 0, preemptions. It returns
+// the results and the number of yields and preemptions seen.
+func resumeThrough(t *testing.T, L, th *LState, fn *LFunction, budget int64) (ret []LValue, yields, preempts int) {
+	t.Helper()
+	for i := 0; i < 1_000_000; i++ {
+		L.SetTickBudget(budget)
+		st, res, err := L.Resume(th, fn)
+		if err != nil {
+			t.Fatalf("resume: %v", err)
+		}
+		switch st {
+		case ResumeYield:
+			yields++
+		case ResumePreempted:
+			preempts++
+		case ResumeOK:
+			return res, yields, preempts
+		}
+	}
+	t.Fatal("no progress")
+	return nil, 0, 0
+}
+
+// runToCompletion runs src in a fresh thread through resumeThrough.
+func runToCompletion(t *testing.T, L *LState, src string, budget int64) (ret []LValue, yields, preempts int) {
 	t.Helper()
 	fn, err := L.LoadString(src)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
-	co, cancel := L.NewThread()
+	th, cancel := L.NewThread()
 	defer cancel()
-
-	preempts := 0
-	for {
-		L.SetTickBudget(budget)
-		st, ret, err := L.Resume(co, fn)
-		if err != nil {
-			t.Fatalf("resume after %d preemptions: %v", preempts, err)
-		}
-		switch st {
-		case ResumePreempted:
-			preempts++
-			if preempts > 1_000_000 {
-				t.Fatalf("no progress after %d preemptions", preempts)
-			}
-		case ResumeOK:
-			return ret, preempts
-		default:
-			t.Fatalf("unexpected resume state %v (%v)", st, ret)
-		}
-	}
+	return resumeThrough(t, L, th, fn, budget)
 }
 
 func expectNumbers(t *testing.T, got []LValue, want ...LNumber) {
@@ -80,7 +84,7 @@ return s`, 10000},
 		t.Run(tc.name, func(t *testing.T) {
 			L := NewState()
 			defer L.Close()
-			ret, preempts := runSliced(t, L, tc.src, 7)
+			ret, _, preempts := runToCompletion(t, L, tc.src, 7)
 			expectNumbers(t, ret, tc.want)
 			if preempts == 0 {
 				t.Fatal("expected preemption")
@@ -181,7 +185,7 @@ return outer()`, 500501},
 		t.Run(tc.name, func(t *testing.T) {
 			L := NewState()
 			defer L.Close()
-			ret, preempts := runSliced(t, L, tc.src, 5)
+			ret, _, preempts := runToCompletion(t, L, tc.src, 5)
 			expectNumbers(t, ret, tc.want)
 			if preempts == 0 {
 				t.Fatal("expected preemption")
@@ -227,7 +231,7 @@ return tonumber(tostring(v))`, 500500},
 				L.Call(1, 1)
 				return 1
 			}))
-			ret, _ := runSliced(t, L, tc.src, 3)
+			ret, _, _ := runToCompletion(t, L, tc.src, 3)
 			expectNumbers(t, ret, tc.want)
 		})
 	}
@@ -252,7 +256,7 @@ func TestPreemptSuppressedForResumeFromGoFunction(t *testing.T) {
 		L.Push(ret[0])
 		return 1
 	}))
-	ret, _ := runSliced(t, L, `return gorun(function() local s = 0 for i = 1, 1000 do s = s + i end return s end)`, 3)
+	ret, _, _ := runToCompletion(t, L, `return gorun(function() local s = 0 for i = 1, 1000 do s = s + i end return s end)`, 3)
 	expectNumbers(t, ret, 500500)
 }
 
@@ -546,11 +550,11 @@ func TestPreemptedChildIsReservedByItsResumer(t *testing.T) {
 	}
 
 	L.SetTickBudget(-1)
-	ret, _ := runSliced(t, L, `return coroutine.resume(inner)`, -1)
+	ret, _, _ := runToCompletion(t, L, `return coroutine.resume(inner)`, -1)
 	if len(ret) != 2 || ret[0] != LFalse {
 		t.Fatalf("sibling resume of a held thread must fail, got %v", ret)
 	}
-	if got := mustDoString(t, L, `return coroutine.status(inner)`); got != "normal" {
+	if got := runString(t, L, `return coroutine.status(inner)`); got != "normal" {
 		t.Fatalf("held thread status = %q", got)
 	}
 
@@ -580,19 +584,20 @@ func TestLuaResumeRejectsValuesForPreemptedThread(t *testing.T) {
 		t.Fatalf("expected preemption, got %v %v", st, err)
 	}
 	L.SetTickBudget(-1)
-	ret, _ := runSliced(t, L, `return coroutine.resume(th, 1)`, -1)
+	ret, _, _ := runToCompletion(t, L, `return coroutine.resume(th, 1)`, -1)
 	if len(ret) != 2 || ret[0] != LFalse {
 		t.Fatalf("expected rejection, got %v", ret)
 	}
-	ret, _ = runSliced(t, L, `return coroutine.resume(th)`, -1)
+	ret, _, _ = runToCompletion(t, L, `return coroutine.resume(th)`, -1)
 	if len(ret) != 2 || ret[0] != LTrue || LVAsNumber(ret[1]) != 500500 {
 		t.Fatalf("expected completion, got %v", ret)
 	}
 }
 
-func mustDoString(t *testing.T, L *LState, src string) string {
+// runString runs src to completion and returns its single result as a string.
+func runString(t *testing.T, L *LState, src string) string {
 	t.Helper()
-	ret, _ := runSliced(t, L, src, -1)
+	ret, _, _ := runToCompletion(t, L, src, -1)
 	if len(ret) != 1 {
 		t.Fatalf("unexpected results %v", ret)
 	}
@@ -638,7 +643,7 @@ func TestSetTickBudgetRejectedWhileLuaRuns(t *testing.T) {
 			src := `return pcall(setbudget)`
 			var ret []LValue
 			if inCoroutine {
-				ret, _ = runSliced(t, L, src, -1)
+				ret, _, _ = runToCompletion(t, L, src, -1)
 			} else {
 				if err := L.DoString(`result = {pcall(setbudget)}`); err != nil {
 					t.Fatal(err)
@@ -658,7 +663,7 @@ func TestSetTickBudgetRejectedWhileLuaRuns(t *testing.T) {
 func TestSetTickBudgetBetweenResumes(t *testing.T) {
 	L := NewState()
 	defer L.Close()
-	ret, preempts := runSliced(t, L, `local s = 0 for i = 1, 100 do s = s + i end return s`, 5)
+	ret, _, preempts := runToCompletion(t, L, `local s = 0 for i = 1, 100 do s = s + i end return s`, 5)
 	if preempts == 0 {
 		t.Fatal("expected preemption")
 	}

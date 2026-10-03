@@ -22,6 +22,5 @@ func TestConcatPoolsRetainNoStrings(t *testing.T) {
 		if b.Cap() != 0 {
 			t.Fatalf("pooled builder retains a %d byte buffer", b.Cap())
 		}
-		_ = p
 	}
 }

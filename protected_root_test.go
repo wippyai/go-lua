@@ -1,6 +1,9 @@
 package lua
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+)
 
 func TestRootProtectedCallDeliversErrorAfterSuspension(t *testing.T) {
 	for _, call := range []string{
@@ -13,7 +16,7 @@ func TestRootProtectedCallDeliversErrorAfterSuspension(t *testing.T) {
 				if mode == "preempt" {
 					body, budget = slowBody, 3
 				}
-				src := "return " + sprintfBody(call, body)
+				src := "return " + fmt.Sprintf(call, body)
 				L := NewState()
 				fn, err := L.LoadString(src)
 				if err != nil {

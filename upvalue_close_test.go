@@ -22,13 +22,8 @@ func TestClosedUpvalueDoesNotRetainState(t *testing.T) {
 			t.Fatalf("resume: %v %v", st, err)
 		}
 	}()
-	for i := 0; i < 20; i++ {
-		collect()
-		select {
-		case <-done:
-			return
-		default:
-		}
+	if waitCollected(done) {
+		return
 	}
 	t.Fatal("a closed upvalue keeps the finished thread's registers reachable")
 }
