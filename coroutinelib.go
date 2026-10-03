@@ -134,12 +134,21 @@ func coResumePreempted(L *LState, th *LState) int {
 	return -1
 }
 
+// heldResume is the context of a coroutine.resume continuation. The child may
+// be torn down and its state reused before the continuation runs, so the
+// continuation only compares the child's identity and uses the wrapper kind
+// recorded here.
+type heldResume struct {
+	child   *LState
+	wrapped bool
+}
+
 // holdResumed installs the continuation that re-enters th on L's next resume
 // and reserves th for it.
 func holdResumed(L *LState, th *LState) {
 	ext := L.setFrameExt(L.currentFrame)
 	ext.Continuation = coResumeContinuation
-	ext.ContinuationCtx = th
+	ext.ContinuationCtx = heldResume{child: th, wrapped: th.wrapped}
 	L.holding = th
 	th.heldBy = L
 }
@@ -189,13 +198,14 @@ func coResumePropagate(L *LState, th *LState, top int) int {
 // preemption was propagated through this coroutine boundary. Resume values are
 // on L's stack.
 func coResumeContinuation(L *LState, ctx interface{}, _ ResumeState) int {
-	th := ctx.(*LState)
+	held := ctx.(heldResume)
+	th := held.child
 	if L.holding != th {
 		// The held thread was torn down; it is dead as far as Lua can tell.
 		L.holding = nil
 		msg := "can not resume a dead thread"
 		L.SetTop(0)
-		if th.wrapped {
+		if held.wrapped {
 			L.RaiseError(msg)
 			return 0
 		}
