@@ -1099,9 +1099,12 @@ func (ls *LState) callR(nargs, nret, rbase int) {
 		NRet:       int16(nret),
 		TailCall:   0,
 	}, lv, meta)
-	if ls.G.MainThread == nil {
-		ls.G.MainThread = ls
-		ls.G.CurrentThread = ls
+	g := ls.G
+	g.executing++
+	defer func() { g.executing-- }()
+	if g.MainThread == nil {
+		g.MainThread = ls
+		g.CurrentThread = ls
 		ls.mainLoop(ls, nil)
 	} else {
 		ls.mainLoop(ls, ls.currentFrame)
@@ -1904,10 +1907,7 @@ func (ls *LState) Load(reader io.Reader, name string) (*LFunction, error) {
 // called Lua code is not preemptible; a Go function that supports suspension
 // of the code it calls uses CallK instead.
 func (ls *LState) Call(nargs, nret int) {
-	g := ls.G
-	g.executing++
-	defer func() { g.executing-- }()
-	if g.tickBudget < 0 {
+	if ls.G.tickBudget < 0 {
 		ls.callR(nargs, nret, -1)
 		return
 	}

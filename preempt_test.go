@@ -740,3 +740,29 @@ func TestSetTickBudgetRejectionRaisesInRunningThread(t *testing.T) {
 		t.Fatalf("budget changed to %d", L.TickBudget())
 	}
 }
+
+// Metamethods entered by host API calls run Lua code, so they cannot change
+// the budget either.
+func TestSetTickBudgetRejectedInsideHostMetamethod(t *testing.T) {
+	L := NewState()
+	defer L.Close()
+	L.SetGlobal("setbudget", L.NewFunction(func(*LState) int {
+		L.SetTickBudget(0)
+		return 0
+	}))
+	if err := L.DoString(`obj = setmetatable({}, {__index = function() setbudget() return 1 end})`); err != nil {
+		t.Fatal(err)
+	}
+	obj := L.GetGlobal("obj")
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Error("expected the budget change to be rejected")
+			}
+		}()
+		L.GetField(obj, "key")
+	}()
+	if L.TickBudget() >= 0 {
+		t.Fatalf("budget changed to %d", L.TickBudget())
+	}
+}
