@@ -3057,8 +3057,9 @@ func callGFunction(L *LState) bool {
 		return true
 	}
 
-	// Extensions are keyed by frame index; a finished Go call must not leave
-	// its continuation or xpcall handler to a later call at the same index.
+	// Extensions are keyed by frame index; clearing a finished Go call's
+	// extension keeps its continuation and xpcall handler from reaching a later
+	// call at the same index.
 	L.clearFrameExt(L.currentFrame)
 
 	wantret := frame.NRet

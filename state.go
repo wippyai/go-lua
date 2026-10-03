@@ -208,7 +208,7 @@ func (ls *LState) setFrameExt(cf *callFrame) *callFrameExt {
 	if ls.frameExt == nil {
 		ls.frameExt = make(map[int16]*callFrameExt)
 	}
-	// An entry left at this index by an earlier frame is not this frame's.
+	// An entry at this index belongs to an earlier frame; this frame starts with its own.
 	ext := &callFrameExt{}
 	ls.frameExt[cf.Idx] = ext
 	cf.Flags |= frameHasExt
@@ -1907,7 +1907,7 @@ func (ls *LState) Call(nargs, nret int) {
 	g := ls.G
 	g.executing++
 	defer func() { g.executing-- }()
-	if ls.G.tickBudget < 0 {
+	if g.tickBudget < 0 {
 		ls.callR(nargs, nret, -1)
 		return
 	}
