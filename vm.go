@@ -3213,6 +3213,9 @@ func threadRun(L *LState) {
 			if parent := L.Parent; parent != nil {
 				if L.wrapped {
 					L.Push(lv)
+					L.G.CurrentThread = parent
+					L.Parent = nil
+					L.kill()
 					parent.Panic(L)
 				} else {
 					L.SetTop(0)
