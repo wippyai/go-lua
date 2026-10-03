@@ -115,3 +115,12 @@ func TestPooledThreadHonorsRegistryLimits(t *testing.T) {
 		t.Fatalf("thread registry limits %d/%d, want 4096/64", th.reg.maxSize, th.reg.growBy)
 	}
 }
+
+func TestPooledStateRegistryRespectsMaxSize(t *testing.T) {
+	NewState(Options{RegistrySize: 4096, RegistryMaxSize: 4096}).Close()
+	L := NewState(Options{RegistrySize: 256, RegistryMaxSize: 512})
+	defer L.Close()
+	if n := cap(L.reg.array); n > 512 {
+		t.Fatalf("registry holds %d slots, limit is 512", n)
+	}
+}
