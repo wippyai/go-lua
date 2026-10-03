@@ -8,12 +8,6 @@ import (
 	"sync"
 )
 
-// integerForCount updates in place so long loops do not box a count each iteration.
-type integerForCount uint64
-
-func (c *integerForCount) String() string   { return LInteger(*c).String() }
-func (c *integerForCount) Type() LValueType { return LTInteger }
-
 func mainLoop(L *LState, baseframe *callFrame) {
 	// Set background context and nil done channel for fast path
 	L.ctx = context.Background()
@@ -2343,10 +2337,12 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			limitVal := reg.Get(RA + 1)
 			stepVal := reg.Get(RA + 2)
 			if init, ok := initVal.(LInteger); ok {
-				count := limitVal.(*integerForCount)
-				if *count != 0 {
-					*count--
-					v := lintegerToValue(init + stepVal.(LInteger))
+				limit := limitVal.(LInteger)
+				step := stepVal.(LInteger)
+				// Debugger writes can move the limit past the current index.
+				if (step > 0 && init <= limit && uint64(limit)-uint64(init) >= uint64(step)) ||
+					(step < 0 && init >= limit && uint64(init)-uint64(limit) >= 0-uint64(step)) {
+					v := lintegerToValue(init + step)
 					if RA+4 > cap(reg.array) {
 						reg.resize(RA + 4)
 					}
@@ -2462,21 +2458,16 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 					if step == 0 {
 						L.RaiseError("'for' step is zero")
 					}
-					limit, skip := integerForLimit(L, reg.Get(RA+1), step)
+					limitVal := reg.Get(RA + 1)
+					limit, skip := integerForLimit(L, limitVal, step)
 					if skip || (step > 0 && init > limit) || (step < 0 && init < limit) {
 						cf.Pc += int32(Sbx + 1)
 						reg.SetTop(RA + 1)
 						continue
 					}
-					// The first iteration uses init; the count covers subsequent iterations.
-					var count uint64
-					if step > 0 {
-						count = (uint64(limit) - uint64(init)) / uint64(step)
-					} else {
-						count = (uint64(init) - uint64(limit)) / (0 - uint64(step))
+					if _, ok := limitVal.(LInteger); !ok {
+						reg.Set(RA+1, lintegerToValue(limit))
 					}
-					counter := integerForCount(count)
-					reg.Set(RA+1, &counter)
 					reg.Set(RA+3, initVal)
 					continue
 				}

@@ -6,6 +6,31 @@ import (
 	"testing"
 )
 
+func TestNumericForEntryAllocs(t *testing.T) {
+	for _, src := range []string{
+		`for outer = 1, 100 do for inner = 1, 3 do end end`,
+		`for outer = 1, 100 do for inner = 1, 100000 do break end end`,
+	} {
+		t.Run(src, func(t *testing.T) {
+			L := NewState(Options{SkipOpenLibs: true})
+			defer L.Close()
+			fn, err := L.LoadString(src)
+			if err != nil {
+				t.Fatal(err)
+			}
+			allocs := testing.AllocsPerRun(100, func() {
+				L.Push(fn)
+				if err := L.PCall(0, 0, nil); err != nil {
+					t.Fatal(err)
+				}
+			})
+			if allocs != 0 {
+				t.Fatalf("integer numeric-for entries allocate: got %g allocs/run, want 0", allocs)
+			}
+		})
+	}
+}
+
 func TestNumericForBoundaries(t *testing.T) {
 	cases := []struct {
 		name, bounds string
