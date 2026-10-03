@@ -118,3 +118,45 @@ func TestHoldReleasedWhenChildIsClosedOrKilled(t *testing.T) {
 		L.Close()
 	}
 }
+
+// Resuming an owner whose held child was torn down reports a dead coroutine
+// and never touches the child.
+func TestOwnerResumeAfterHeldChildTeardown(t *testing.T) {
+	teardowns := map[string]func(L, outer, inner *LState){
+		"kill":  func(_, _, inner *LState) { inner.kill() },
+		"close": func(_, _, inner *LState) { inner.Close() },
+		"pool_reuse": func(L, _, inner *LState) {
+			inner.Close()
+			reused, _ := L.NewThread()
+			reused.SetTop(0)
+		},
+	}
+	for name, teardown := range teardowns {
+		t.Run(name, func(t *testing.T) {
+			L, outer, inner := heldPair(t)
+			defer L.Close()
+			teardown(L, outer, inner)
+			outerFn, err := L.LoadString(`return coroutine.resume(inner_co)`)
+			if err != nil {
+				t.Fatal(err)
+			}
+			st, ret, err := L.Resume(outer, outerFn)
+			if err != nil || st != ResumeOK {
+				t.Fatalf("expected completion, got %v %v %v", st, ret, err)
+			}
+			if len(ret) != 2 || ret[0] != LFalse {
+				t.Fatalf("expected failed resume, got %v", ret)
+			}
+		})
+	}
+}
+
+func TestHoldReleasedWhenUnpoolableOwnerIsClosed(t *testing.T) {
+	L, outer, inner := heldPair(t)
+	defer L.Close()
+	outer.reg.resize(outer.Options.RegistrySize + outer.Options.RegistryGrowStep + 1024)
+	outer.Close()
+	if inner.isHeld() {
+		t.Fatal("hold survives close of an unpoolable owner")
+	}
+}

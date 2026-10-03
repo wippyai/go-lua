@@ -24,9 +24,6 @@ func resetLState(ls *LState) {
 		}
 	}
 
-	ls.releaseHold()
-	ls.releaseHeld()
-
 	// Reset upvalue cache
 	ls.uvcache = nil
 
@@ -55,6 +52,8 @@ func resetLState(ls *LState) {
 // Close returns the state to pool if appropriate.
 func (ls *LState) Close() {
 	atomic.AddInt32(&ls.stop, 1)
+	ls.releaseHold()
+	ls.releaseHeld()
 
 	// Don't pool if registry has grown beyond initial size
 	shouldPool := ls.reg != nil && cap(ls.reg.array) <= ls.Options.RegistrySize+ls.Options.RegistryGrowStep

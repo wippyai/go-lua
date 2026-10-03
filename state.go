@@ -2108,7 +2108,8 @@ func (ls *LState) releaseHold() {
 	}
 }
 
-// releaseHeld drops the reservation a resumer's pending continuation holds on ls.
+// releaseHeld drops the reservation a resumer's pending continuation holds on
+// ls. The owner's continuation finds its hold gone and reports the child dead.
 func (ls *LState) releaseHeld() {
 	if owner := ls.heldBy; owner != nil {
 		owner.holding = nil
