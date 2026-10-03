@@ -380,11 +380,17 @@ func freeCallFrameStackSegment(seg *callFrameStackSegment) {
 // FramesPerSegment.
 func newAutoGrowingCallFrameStack(maxSize int) callFrameStack {
 	cs := &autoGrowingCallFrameStack{
-		segments: make([]*callFrameStackSegment, (maxSize+(FramesPerSegment-1))/FramesPerSegment),
+		segments: make([]*callFrameStackSegment, autoSegmentCount(maxSize)),
 		segIdx:   0,
 	}
 	cs.segments[0] = newCallFrameStackSegment()
 	return cs
+}
+
+// autoSegmentCount returns the number of segments an auto-growing stack of
+// maxSize frames may allocate.
+func autoSegmentCount(maxSize int) int {
+	return (maxSize + FramesPerSegment - 1) / FramesPerSegment
 }
 
 func (cs *autoGrowingCallFrameStack) IsEmpty() bool {
@@ -550,28 +556,8 @@ func newLState(options Options) *LState {
 			ls.ctx = nil
 			ls.ctxDone = nil
 
-			// Reuse or recreate registry
-			if ls.reg != nil && cap(ls.reg.array) >= options.RegistrySize {
-				ls.reg.handler = ls
-				ls.reg.top = 0
-				ls.reg.maxSize = options.RegistryMaxSize
-				ls.reg.growBy = options.RegistryGrowStep
-			} else {
-				ls.reg = newRegistry(ls, options.RegistrySize, options.RegistryGrowStep, options.RegistryMaxSize)
-			}
-
-			// Reuse auto-growing stack (can handle any size), recreate fixed stacks
-			if options.MinimizeStackMemory {
-				if _, isAuto := ls.stack.(*autoGrowingCallFrameStack); isAuto {
-					ls.stack.SetSp(0)
-				} else {
-					ls.stack = newAutoGrowingCallFrameStack(options.CallStackSize)
-				}
-			} else {
-				// Fixed stacks need exact size match - just recreate
-				ls.stack = newFixedCallFrameStack(options.CallStackSize)
-			}
-
+			ls.reg = registryFor(ls, options)
+			ls.stack = callStackFor(ls.stack, options)
 			ls.Env = ls.G.Global
 			return ls
 		}
@@ -593,11 +579,7 @@ func newLState(options Options) *LState {
 		mainLoop:     mainLoop,
 		ctx:          nil,
 	}
-	if options.MinimizeStackMemory {
-		ls.stack = newAutoGrowingCallFrameStack(options.CallStackSize)
-	} else {
-		ls.stack = newFixedCallFrameStack(options.CallStackSize)
-	}
+	ls.stack = newCallStack(options)
 	ls.reg = newRegistry(ls, options.RegistrySize, options.RegistryGrowStep, options.RegistryMaxSize)
 	ls.Env = ls.G.Global
 	return ls

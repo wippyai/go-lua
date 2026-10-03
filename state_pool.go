@@ -93,12 +93,8 @@ func newLStateWithGlobal(options Options, G *Global, env *LTable) *LState {
 		ls.ctx = nil
 		ls.ctxDone = nil
 
-		// Registry was preserved but might need resetting if options changed
-		if ls.reg != nil && cap(ls.reg.array) != options.RegistrySize {
-			ls.reg = newRegistry(ls, options.RegistrySize, options.RegistryGrowStep, options.RegistryMaxSize)
-		} else if ls.reg != nil {
-			ls.reg.handler = ls
-		}
+		ls.reg = registryFor(ls, options)
+		ls.stack = callStackFor(ls.stack, options)
 
 		return ls
 	}
@@ -119,14 +115,50 @@ func newLStateWithGlobal(options Options, G *Global, env *LTable) *LState {
 		ctx:          nil,
 	}
 
-	if options.MinimizeStackMemory {
-		ls.stack = newAutoGrowingCallFrameStack(options.CallStackSize)
-	} else {
-		ls.stack = newFixedCallFrameStack(options.CallStackSize)
-	}
-
+	ls.stack = newCallStack(options)
 	ls.reg = newRegistry(ls, options.RegistrySize, options.RegistryGrowStep, options.RegistryMaxSize)
 	ls.Env = env
 
 	return ls
+}
+
+// newCallStack creates the call stack options describe.
+func newCallStack(options Options) callFrameStack {
+	if options.MinimizeStackMemory {
+		return newAutoGrowingCallFrameStack(options.CallStackSize)
+	}
+	return newFixedCallFrameStack(options.CallStackSize)
+}
+
+// callStackFor returns an empty call stack for options, reusing a pooled one
+// when its kind and capacity match.
+func callStackFor(pooled callFrameStack, options Options) callFrameStack {
+	switch cs := pooled.(type) {
+	case *fixedCallFrameStack:
+		if !options.MinimizeStackMemory && len(cs.array) == options.CallStackSize {
+			return cs
+		}
+	case *autoGrowingCallFrameStack:
+		if options.MinimizeStackMemory && len(cs.segments) == autoSegmentCount(options.CallStackSize) {
+			return cs
+		}
+	}
+	if pooled != nil {
+		pooled.FreeAll()
+	}
+	return newCallStack(options)
+}
+
+// registryFor returns an empty registry for ls with the sizes options
+// describe, reusing a pooled one that is large enough.
+func registryFor(ls *LState, options Options) *registry {
+	rg := ls.reg
+	if rg == nil || cap(rg.array) < options.RegistrySize {
+		return newRegistry(ls, options.RegistrySize, options.RegistryGrowStep, options.RegistryMaxSize)
+	}
+	rg.handler = ls
+	rg.top = 0
+	rg.maxSize = options.RegistryMaxSize
+	rg.growBy = options.RegistryGrowStep
+	return rg
 }
