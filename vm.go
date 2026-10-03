@@ -2968,12 +2968,10 @@ func handleYieldContinuation(L *LState, cf *callFrame, inst uint32) bool {
 	aux := int(ext.YieldContAux)
 	reg := L.reg
 
-	// Clear continuation state before executing post-call logic.
+	// A Lua frame's extension carries only the continuation; release it before
+	// executing post-call logic, which may record a new one.
+	L.clearFrameExt(cf)
 	cf.Flags &^= frameYieldCont
-	ext.YieldCont = yieldContNone
-	ext.YieldContRA = 0
-	ext.YieldContRB = 0
-	ext.YieldContAux = 0
 
 	switch contType {
 	case yieldContConcat:
