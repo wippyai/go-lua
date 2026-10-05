@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Regression fixtures dominate race-instrumented time. These ranges partition
-# every letter, while the other shard runs all remaining fixtures and tests.
+# Fixture execution and manifest equivalence dominate race-instrumented time.
+# These ranges partition both corpus tests by every letter, while the other
+# shard runs all remaining fixtures and tests.
 case "${1:-}" in
   other)
     for path in testdata/fixtures/regression/*/; do
@@ -14,7 +15,7 @@ case "${1:-}" in
       fi
     done
 
-    go test -race -timeout 30m -skip '^TestFixtures$' ./...
+    go test -race -timeout 30m -skip '^(TestFixtures|TestFixtureManifestDiagnosticEquivalence)$' ./...
 
     categories=()
     for path in testdata/fixtures/*/; do
@@ -29,7 +30,7 @@ case "${1:-}" in
       fi
     done
     pattern=$(IFS='|'; printf '%s' "${categories[*]}")
-    go test -race -timeout 30m -run "^TestFixtures$/^(${pattern})$" .
+    go test -race -timeout 30m -run "^(TestFixtures|TestFixtureManifestDiagnosticEquivalence)$/^(${pattern})$" .
     exit
     ;;
   ac) range='[a-c]' ;;
@@ -41,4 +42,4 @@ case "${1:-}" in
   *) printf 'unknown race shard: %s\n' "${1:-}" >&2; exit 2 ;;
 esac
 
-go test -race -timeout 30m -run "^TestFixtures$/^regression$/^${range}" .
+go test -race -timeout 30m -run "^(TestFixtures|TestFixtureManifestDiagnosticEquivalence)$/^regression$/^${range}" .
