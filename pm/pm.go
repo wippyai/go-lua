@@ -1255,11 +1255,11 @@ func (v *vm) repeatBounds(cls charClass, repeatType int, sourcePos int) (int, in
 		if sourcePos >= len(v.src) || !matchClass(cls, int(v.src[sourcePos])) {
 			return 0, 0, false, nil
 		}
-		maxPos, err := v.scanRepeat(cls, sourcePos+1)
-		if err != nil {
+		if err := v.chargeByteScans(1); err != nil {
 			return 0, 0, false, err
 		}
-		if err := v.chargeByteScans(1); err != nil {
+		maxPos, err := v.scanRepeat(cls, sourcePos+1)
+		if err != nil {
 			return 0, 0, false, err
 		}
 		return sourcePos + 1, maxPos, true, nil
@@ -1270,11 +1270,29 @@ func (v *vm) repeatBounds(cls charClass, repeatType int, sourcePos int) (int, in
 
 func (v *vm) scanRepeat(cls charClass, sourcePos int) (int, error) {
 	pos := sourcePos
-	for pos < len(v.src) && matchClass(cls, int(v.src[pos])) {
-		pos++
-	}
-	if err := v.chargeByteScans(pos - sourcePos); err != nil {
-		return sourcePos, err
+	for pos < len(v.src) {
+		remaining := MaxVMByteScans - v.byteScans
+		if remaining == 0 {
+			// A non-matching byte ends the repetition without more scanned
+			// matches. Only a continuation would exceed the work budget.
+			if !matchClass(cls, int(v.src[pos])) {
+				return pos, nil
+			}
+			return sourcePos, v.chargeByteScans(1)
+		}
+		// Check cancellation between chunks and never read the entire input
+		// before discovering that its scan work exceeded the remaining budget.
+		end := pos + min(len(v.src)-pos, remaining, cancelCheckMask+1)
+		start := pos
+		for pos < end && matchClass(cls, int(v.src[pos])) {
+			pos++
+		}
+		if err := v.chargeByteScans(pos - start); err != nil {
+			return sourcePos, err
+		}
+		if pos < end {
+			return pos, nil
+		}
 	}
 	return pos, nil
 }
@@ -1299,7 +1317,12 @@ func (v *vm) chargeByteScans(n int) error {
 		v.releaseStack()
 		return newError(unknownPos, "pattern match byte scan limit exceeded")
 	}
+	previous := v.byteScans
 	v.byteScans += n
+	if (previous == 0 || previous/(cancelCheckMask+1) != v.byteScans/(cancelCheckMask+1)) && canceled(v.done) {
+		v.releaseStack()
+		return ErrCanceled
+	}
 	return nil
 }
 
