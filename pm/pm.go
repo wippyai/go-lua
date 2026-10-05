@@ -1536,7 +1536,6 @@ func (p Program) FindOne(src []byte, offset int) (*MatchData, error) {
 			return nil, err
 		}
 		if ok {
-			scratchOwned = false
 			return md, nil
 		}
 		scratchOwned = true
