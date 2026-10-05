@@ -2,6 +2,7 @@ package lua
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -113,10 +114,7 @@ func strFind(L *LState) int {
 		return 2
 	}
 
-	mds, err := pm.Find(pattern, unsafeFastStringToReadOnlyBytes(str), init, 1)
-	if err != nil {
-		L.RaiseError(err.Error())
-	}
+	mds := patternFind(L, pattern, unsafeFastStringToReadOnlyBytes(str), init, 1)
 	if len(mds) == 0 {
 		L.Push(LNil)
 		return 1
@@ -132,6 +130,24 @@ func strFind(L *LState) int {
 		}
 	}
 	return md.CaptureLength()/2 + 1
+}
+
+// patternFind searches src for pattern and raises the matcher's error in L.
+// A search stops with the thread's context error once that context is done.
+func patternFind(L *LState, pattern string, src []byte, offset, limit int) []*pm.MatchData {
+	program, err := pm.Compile(pattern)
+	if err == nil {
+		var mds []*pm.MatchData
+		mds, err = program.WithDone(L.ctxDone).Find(src, offset, limit)
+		if err == nil {
+			return mds
+		}
+	}
+	if errors.Is(err, pm.ErrCanceled) {
+		L.RaiseError(L.ctx.Err().Error())
+	}
+	L.RaiseError(err.Error())
+	return nil
 }
 
 func strFormat(L *LState) int {
@@ -153,10 +169,7 @@ func strGsub(L *LState) int {
 	repl := L.CheckAny(3)
 	limit := L.OptInt(4, -1)
 
-	mds, err := pm.Find(pat, unsafeFastStringToReadOnlyBytes(str), 0, limit)
-	if err != nil {
-		L.RaiseError(err.Error())
-	}
+	mds := patternFind(L, pat, unsafeFastStringToReadOnlyBytes(str), 0, limit)
 	if len(mds) == 0 {
 		L.SetTop(1)
 		L.Push(LNumber(0))
@@ -325,10 +338,7 @@ func strGmatchIter(L *LState) int {
 func strGmatch(L *LState) int {
 	str := L.CheckString(1)
 	pattern := L.CheckString(2)
-	mds, err := pm.Find(pattern, []byte(str), 0, -1)
-	if err != nil {
-		L.RaiseError(err.Error())
-	}
+	mds := patternFind(L, pattern, []byte(str), 0, -1)
 	L.Push(L.Get(UpvalueIndex(1)))
 	ud := L.NewUserData()
 	ud.Value = &strMatchData{str, 0, mds}
@@ -361,10 +371,7 @@ func strMatch(L *LState) int {
 		offset = 0
 	}
 
-	mds, err := pm.Find(pattern, unsafeFastStringToReadOnlyBytes(str), offset, 1)
-	if err != nil {
-		L.RaiseError(err.Error())
-	}
+	mds := patternFind(L, pattern, unsafeFastStringToReadOnlyBytes(str), offset, 1)
 	if len(mds) == 0 {
 		L.Push(LNil)
 		return 0

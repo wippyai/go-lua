@@ -84,6 +84,10 @@ const (
 	ResumeOK ResumeState = iota
 	ResumeYield
 	ResumeError
+	// ResumePreempted reports that the thread exhausted the tick budget and
+	// was suspended at a safepoint. It carries no values; resuming it with no
+	// arguments continues where it stopped.
+	ResumePreempted
 )
 
 /* }}} */
@@ -103,7 +107,8 @@ type P struct {
 
 // Options is a configuration that is used to create a new LState.
 type Options struct {
-	// Call stack size. This defaults to `lua.CallStackSize`.
+	// Call stack size. This defaults to `lua.CallStackSize`. NewState panics
+	// when it exceeds MaxCallStackSize.
 	CallStackSize int
 	// Data stack size. This defaults to `lua.RegistrySize`.
 	RegistrySize int
@@ -159,14 +164,17 @@ const (
 	yieldContLen      uint8 = 7 // OP_LEN __len result → store at RA
 	yieldContConcat   uint8 = 8 // OP_CONCAT __concat result → store at RA
 	yieldContCompare  uint8 = 9 // OP_EQ/LT/LE comparison result → affects Pc jump
+
+	yieldContCompareNot uint8 = 10 // OP_LE through __lt: the metamethod result is negated
 )
 
 // Yield state: combined yielded flag + yield kind in a single field.
 // 0 = not yielded, nonzero = yielded with specific kind.
 const (
-	yieldNone   uint8 = 0 // not yielded
-	yieldSystem uint8 = 1 // Go function returned -1 (propagates through coroutine boundaries)
-	yieldUser   uint8 = 2 // coroutine.yield (caught by the immediate resumer)
+	yieldNone    uint8 = 0 // not yielded
+	yieldSystem  uint8 = 1 // Go function returned -1 (propagates through coroutine boundaries)
+	yieldUser    uint8 = 2 // coroutine.yield (caught by the immediate resumer)
+	yieldPreempt uint8 = 3 // tick budget exhausted at a safepoint (propagates to the Go resumer)
 )
 
 // callFrameExt holds rarely-used fields for protected calls and continuations.
@@ -175,11 +183,18 @@ type callFrameExt struct {
 	ErrFunc         *LFunction     // error handler for xpcall (nil for pcall)
 	Continuation    LGContinuation // function to call on resume after yield
 	ContinuationCtx any            // user context for continuation
+
+	YieldCont   uint8 // pending opcode continuation kind for a Lua frame
+	YieldContRA int32 // target register (or comparison operand) for the continuation
+	YieldContRB int32 // inner call's ReturnBase (where the result lands)
+	// YieldContAux is continuation-specific. For OP_CONCAT it is the register
+	// that receives the metamethod result and ends the remaining reduction.
+	YieldContAux int32
 }
 
 // getFrameExt returns the extension for a frame, or nil if none exists
 func (ls *LState) getFrameExt(cf *callFrame) *callFrameExt {
-	if ls.frameExt == nil {
+	if cf.Flags&frameHasExt == 0 {
 		return nil
 	}
 	return ls.frameExt[cf.Idx]
@@ -187,22 +202,26 @@ func (ls *LState) getFrameExt(cf *callFrame) *callFrameExt {
 
 // setFrameExt sets or creates the extension for a frame
 func (ls *LState) setFrameExt(cf *callFrame) *callFrameExt {
+	if cf.Flags&frameHasExt != 0 {
+		return ls.frameExt[cf.Idx]
+	}
 	if ls.frameExt == nil {
 		ls.frameExt = make(map[int16]*callFrameExt)
 	}
-	ext := ls.frameExt[cf.Idx]
-	if ext == nil {
-		ext = &callFrameExt{}
-		ls.frameExt[cf.Idx] = ext
-	}
+	// An entry at this index belongs to an earlier frame; this frame starts with its own.
+	ext := &callFrameExt{}
+	ls.frameExt[cf.Idx] = ext
+	cf.Flags |= frameHasExt
 	return ext
 }
 
 // clearFrameExt removes the extension for a frame
 func (ls *LState) clearFrameExt(cf *callFrame) {
-	if ls.frameExt != nil {
-		delete(ls.frameExt, cf.Idx)
+	if cf.Flags&frameHasExt == 0 {
+		return
 	}
+	delete(ls.frameExt, cf.Idx)
+	cf.Flags &^= frameHasExt
 }
 
 // unwindCallFrames discards frames down to sp and removes their extension
@@ -229,8 +248,15 @@ type callFrame struct {
 	NRet       int16
 	Idx        int16
 	TailCall   int8
-	Protected  bool
+	Flags      uint8
 }
+
+// callFrame.Flags bits.
+const (
+	frameProtected uint8 = 1 << iota // pcall/xpcall boundary that catches errors
+	frameYieldCont                   // current opcode awaits a yielded call's result (see callFrameExt.YieldCont)
+	frameHasExt                      // the frame owns an entry in LState.frameExt
+)
 
 type callFrameStack interface {
 	Push(v callFrame)
@@ -245,6 +271,8 @@ type callFrameStack interface {
 	IsFull() bool
 	IsEmpty() bool
 
+	// Reset empties the stack and drops every reference held by its frame slots.
+	Reset()
 	FreeAll()
 }
 
@@ -276,6 +304,11 @@ func (cs *fixedCallFrameStack) Push(v callFrame) {
 
 func (cs *fixedCallFrameStack) Sp() int {
 	return cs.sp
+}
+
+func (cs *fixedCallFrameStack) Reset() {
+	clear(cs.array)
+	cs.sp = 0
 }
 
 func (cs *fixedCallFrameStack) SetSp(sp int) {
@@ -338,6 +371,7 @@ func newCallFrameStackSegment() *callFrameStackSegment {
 }
 
 func freeCallFrameStackSegment(seg *callFrameStackSegment) {
+	seg.array = [FramesPerSegment]callFrame{}
 	segmentPool.Put(seg)
 }
 
@@ -346,11 +380,17 @@ func freeCallFrameStackSegment(seg *callFrameStackSegment) {
 // FramesPerSegment.
 func newAutoGrowingCallFrameStack(maxSize int) callFrameStack {
 	cs := &autoGrowingCallFrameStack{
-		segments: make([]*callFrameStackSegment, (maxSize+(FramesPerSegment-1))/FramesPerSegment),
+		segments: make([]*callFrameStackSegment, autoSegmentCount(maxSize)),
 		segIdx:   0,
 	}
 	cs.segments[0] = newCallFrameStackSegment()
 	return cs
+}
+
+// autoSegmentCount returns the number of segments an auto-growing stack of
+// maxSize frames may allocate.
+func autoSegmentCount(maxSize int) int {
+	return (maxSize + FramesPerSegment - 1) / FramesPerSegment
 }
 
 func (cs *autoGrowingCallFrameStack) IsEmpty() bool {
@@ -400,6 +440,11 @@ func (cs *autoGrowingCallFrameStack) Push(v callFrame) {
 // Sp retrieves the current stack depth, which is the number of frames currently pushed on the stack.
 func (cs *autoGrowingCallFrameStack) Sp() int {
 	return int(cs.segSp) + int(cs.segIdx)*FramesPerSegment
+}
+
+func (cs *autoGrowingCallFrameStack) Reset() {
+	cs.SetSp(0)
+	cs.segments[0].array = [FramesPerSegment]callFrame{}
 }
 
 // SetSp can be used to rapidly unwind the stack, freeing all stack frames on the way. It should not be used to
@@ -469,6 +514,7 @@ func newGlobal() *Global {
 		Registry:   newLTable(0, 16), // _LOADED, _PRELOAD, etc
 		Global:     newLTable(0, 48), // base functions + libs
 		builtinMts: make(map[int]LValue, 4),
+		tickBudget: -1,
 	}
 }
 
@@ -488,6 +534,9 @@ func panicWithoutTraceback(L *LState) {
 }
 
 func newLState(options Options) *LState {
+	if options.CallStackSize > MaxCallStackSize {
+		panic(fmt.Sprintf("lua: CallStackSize %d exceeds MaxCallStackSize %d", options.CallStackSize, MaxCallStackSize))
+	}
 	// Try to get a state from the pool
 	if pooled := statePool.Get(); pooled != nil {
 		if ls, ok := pooled.(*LState); ok && ls != nil {
@@ -507,28 +556,8 @@ func newLState(options Options) *LState {
 			ls.ctx = nil
 			ls.ctxDone = nil
 
-			// Reuse or recreate registry
-			if ls.reg != nil && cap(ls.reg.array) >= options.RegistrySize {
-				ls.reg.handler = ls
-				ls.reg.top = 0
-				ls.reg.maxSize = options.RegistryMaxSize
-				ls.reg.growBy = options.RegistryGrowStep
-			} else {
-				ls.reg = newRegistry(ls, options.RegistrySize, options.RegistryGrowStep, options.RegistryMaxSize)
-			}
-
-			// Reuse auto-growing stack (can handle any size), recreate fixed stacks
-			if options.MinimizeStackMemory {
-				if _, isAuto := ls.stack.(*autoGrowingCallFrameStack); isAuto {
-					ls.stack.SetSp(0)
-				} else {
-					ls.stack = newAutoGrowingCallFrameStack(options.CallStackSize)
-				}
-			} else {
-				// Fixed stacks need exact size match - just recreate
-				ls.stack = newFixedCallFrameStack(options.CallStackSize)
-			}
-
+			ls.reg = registryFor(ls, options)
+			ls.stack = callStackFor(ls.stack, options)
 			ls.Env = ls.G.Global
 			return ls
 		}
@@ -550,11 +579,7 @@ func newLState(options Options) *LState {
 		mainLoop:     mainLoop,
 		ctx:          nil,
 	}
-	if options.MinimizeStackMemory {
-		ls.stack = newAutoGrowingCallFrameStack(options.CallStackSize)
-	} else {
-		ls.stack = newFixedCallFrameStack(options.CallStackSize)
-	}
+	ls.stack = newCallStack(options)
 	ls.reg = newRegistry(ls, options.RegistrySize, options.RegistryGrowStep, options.RegistryMaxSize)
 	ls.Env = ls.G.Global
 	return ls
@@ -708,6 +733,8 @@ func (ls *LState) isStarted() bool {
 
 func (ls *LState) kill() {
 	ls.Dead = true
+	ls.releaseHold()
+	ls.releaseHeld()
 	if ls.ctxCancelFn != nil {
 		ls.ctxCancelFn()
 	}
@@ -1072,9 +1099,12 @@ func (ls *LState) callR(nargs, nret, rbase int) {
 		NRet:       int16(nret),
 		TailCall:   0,
 	}, lv, meta)
-	if ls.G.MainThread == nil {
-		ls.G.MainThread = ls
-		ls.G.CurrentThread = ls
+	g := ls.G
+	g.executing++
+	defer func() { g.executing-- }()
+	if g.MainThread == nil {
+		g.MainThread = ls
+		g.CurrentThread = ls
 		ls.mainLoop(ls, nil)
 	} else {
 		ls.mainLoop(ls, ls.currentFrame)
@@ -1082,7 +1112,7 @@ func (ls *LState) callR(nargs, nret, rbase int) {
 	// Skip register adjustment if yield happened (state is already set by switchToParentThread).
 	// Save the return base so the continuation handler knows where the result lands.
 	if ls.yieldState != yieldNone {
-		ls.yieldContRB = int32(rbase)
+		ls.yieldCallRB = int32(rbase)
 		return
 	}
 	if nret != MultRet {
@@ -1124,7 +1154,7 @@ func (ls *LState) getField(obj LValue, key LValue) LValue {
 			ls.reg.Push(metaindex)
 			ls.reg.Push(curobj)
 			ls.reg.Push(key)
-			ls.Call(2, 1)
+			ls.callR(2, 1, -1)
 			if ls.yieldState != yieldNone {
 				return LNil
 			}
@@ -1167,7 +1197,7 @@ func (ls *LState) getFieldString(obj LValue, key string) LValue {
 			ls.reg.Push(metaindex)
 			ls.reg.Push(curobj)
 			ls.reg.Push(LString(key))
-			ls.Call(2, 1)
+			ls.callR(2, 1, -1)
 			if ls.yieldState != yieldNone {
 				return LNil
 			}
@@ -1214,7 +1244,7 @@ func (ls *LState) setField(obj LValue, key LValue, value LValue) {
 			ls.reg.Push(curobj)
 			ls.reg.Push(key)
 			ls.reg.Push(value)
-			ls.Call(3, 0)
+			ls.callR(3, 0, -1)
 			return
 		}
 		curobj = metaindex
@@ -1259,7 +1289,7 @@ func (ls *LState) setFieldString(obj LValue, key string, value LValue) {
 			ls.reg.Push(curobj)
 			ls.reg.Push(LString(key))
 			ls.reg.Push(value)
-			ls.Call(3, 0)
+			ls.callR(3, 0, -1)
 			return
 		}
 		curobj = metaindex
@@ -1829,7 +1859,7 @@ func (ls *LState) Concat(values ...LValue) string {
 	for _, value := range values {
 		ls.reg.Push(value)
 	}
-	ret := stringConcat(ls, len(values), ls.reg.Top()-1)
+	ret, _ := stringConcat(ls, len(values), ls.reg.Top()-1)
 	ls.reg.SetTop(top)
 	return LVAsString(ret)
 }
@@ -1873,7 +1903,23 @@ func (ls *LState) Load(reader io.Reader, name string) (*LFunction, error) {
 	return newLFunctionL(proto, ls.currentEnv(), 0), nil
 }
 
+// Call calls a function from Go. The Go caller cannot be suspended, so the
+// called Lua code is not preemptible and cannot yield: a yield raises an
+// error. A Go function that supports suspension of the code it calls uses
+// CallK instead.
 func (ls *LState) Call(nargs, nret int) {
+	ls.goCalls++
+	if ls.G.tickBudget < 0 {
+		defer func() { ls.goCalls-- }()
+		ls.callR(nargs, nret, -1)
+		return
+	}
+	g := ls.G
+	g.nonYieldable++
+	defer func() {
+		g.nonYieldable--
+		ls.goCalls--
+	}()
 	ls.callR(nargs, nret, -1)
 }
 
@@ -1888,7 +1934,7 @@ func (ls *LState) CallK(nargs, nret int, cont LGContinuation, ctx any) {
 		ext.Continuation = cont
 		ext.ContinuationCtx = ctx
 	}
-	ls.callR(nargs, nret, -1)
+	ls.callYieldable(nargs, nret)
 	// If yield happened, keep continuation for resume
 	if ls.yieldState != yieldNone {
 		return
@@ -1900,6 +1946,21 @@ func (ls *LState) CallK(nargs, nret int, cont LGContinuation, ctx any) {
 			ext.ContinuationCtx = nil
 		}
 	}
+}
+
+// callYieldable calls a function on behalf of the running Go function, which
+// handles suspension of the called code (yield or preemption) through its
+// continuation. The Go frame counted by invokeGoFrame, if any, is released for
+// the call.
+func (ls *LState) callYieldable(nargs, nret int) {
+	g := ls.G
+	if g.tickBudget < 0 {
+		ls.callR(nargs, nret, -1)
+		return
+	}
+	g.nonYieldable--
+	defer func() { g.nonYieldable++ }()
+	ls.callR(nargs, nret, -1)
 }
 
 func (ls *LState) PCall(nargs, nret int, errfunc *LFunction) (err error) {
@@ -2030,13 +2091,63 @@ func (ls *LState) Status(th *LState) string {
 		status = "dead"
 	} else if ls.G.CurrentThread == th {
 		status = "running"
-	} else if ls.Parent == th {
+	} else if ls.Parent == th || th.isHeld() {
 		status = "normal"
 	}
 	return status
 }
 
+// isHeld reports whether a live thread's pending coroutine.resume continuation
+// owns ls and will re-enter it on its next resume.
+func (ls *LState) isHeld() bool {
+	return ls.heldBy != nil
+}
+
+// releaseHold drops the reservation ls's pending coroutine.resume continuation
+// holds on its child.
+func (ls *LState) releaseHold() {
+	if child := ls.holding; child != nil {
+		child.heldBy = nil
+		ls.holding = nil
+	}
+}
+
+// releaseHeld drops the reservation a resumer's pending continuation holds on
+// ls. The owner's continuation finds its hold gone and reports the child dead.
+func (ls *LState) releaseHeld() {
+	if owner := ls.heldBy; owner != nil {
+		owner.holding = nil
+		ls.heldBy = nil
+	}
+}
+
+// resumeRejection returns why th cannot be resumed from ls with nargs values,
+// or the empty string when it can. Go and Lua resumption share it.
+func (ls *LState) resumeRejection(th *LState, nargs int) string {
+	switch {
+	case ls.G.CurrentThread == th:
+		return "can not resume a running thread"
+	case th.IsClosed():
+		return "can not resume a closed thread"
+	case th.Dead:
+		return "can not resume a dead thread"
+	case th.isHeld():
+		return "can not resume a thread held by a pending resume"
+	case th.yieldState == yieldPreempt && nargs > 0:
+		return "can not pass values to a preempted thread"
+	}
+	for p := ls; p != nil; p = p.Parent {
+		if p == th {
+			return "can not resume a normal thread"
+		}
+	}
+	return ""
+}
+
 func (ls *LState) Resume(th *LState, fn *LFunction, args ...LValue) (ResumeState, []LValue, error) {
+	if msg := ls.resumeRejection(th, len(args)); msg != "" {
+		return ResumeError, nil, newApiErrorS(ApiErrorRun, msg)
+	}
 	isstarted := th.isStarted()
 	if !isstarted {
 		base := 0
@@ -2052,12 +2163,6 @@ func (ls *LState) Resume(th *LState, fn *LFunction, args ...LValue) (ResumeState
 		})
 	}
 
-	if ls.G.CurrentThread == th {
-		return ResumeError, nil, newApiErrorS(ApiErrorRun, "can not resume a running thread")
-	}
-	if th.Dead {
-		return ResumeError, nil, newApiErrorS(ApiErrorRun, "can not resume a dead thread")
-	}
 	th.Parent = ls
 	ls.G.CurrentThread = th
 	if !isstarted {
@@ -2087,6 +2192,9 @@ func (ls *LState) Resume(th *LState, fn *LFunction, args ...LValue) (ResumeState
 	th.yieldState = yieldNone // Clear yield flag for new resume
 	threadRun(th)
 	haserror := LVIsFalse(ls.Get(top + 1))
+	if !haserror && th.yieldState == yieldPreempt {
+		return ls.preemptedResume(th, top, nil)
+	}
 	ret := make([]LValue, 0, ls.GetTop())
 	for idx := top + 2; idx <= ls.GetTop(); idx++ {
 		ret = append(ret, ls.Get(idx))
@@ -2109,6 +2217,33 @@ func (ls *LState) Resume(th *LState, fn *LFunction, args ...LValue) (ResumeState
 	return ResumeYield, ret, nil
 }
 
+// SetTickBudget sets how many ticks Lua code may run before it is preempted.
+// A tick is a backward jump, a loop iteration or a call. Preemption suspends a
+// coroutine resumed through Resume or ResumeInto at a safepoint, and the call
+// returns ResumePreempted. Code running under a Go caller that cannot suspend
+// it (Call, PCall, Go library callbacks) is never preempted; the exhausted
+// budget takes effect at the next safepoint outside it. The budget is shared
+// by all threads of the state and is consumed until reset. A zero budget
+// preempts at the next safepoint, so a thread resumed with an exhausted budget
+// stops again at its next safepoint until the host sets a new one. A negative
+// budget disables preemption, which is the default.
+//
+// SetTickBudget raises an error in the running code when called while Lua code
+// is executing (from a Go function running on a Lua thread): Go frames entered
+// while preemption is disabled are not counted as non-yieldable, so the budget
+// may change only between resumes, from the host.
+func (ls *LState) SetTickBudget(n int64) {
+	if ls.G.executing != 0 {
+		panic(newApiErrorS(ApiErrorRun, "tick budget can not be changed while Lua code is running"))
+	}
+	ls.G.tickBudget = n
+}
+
+// TickBudget returns the remaining tick budget; negative means unlimited.
+func (ls *LState) TickBudget() int64 {
+	return ls.G.tickBudget
+}
+
 func (ls *LState) Yield(values ...LValue) int {
 	ls.SetTop(0)
 	for _, lv := range values {
@@ -2120,6 +2255,9 @@ func (ls *LState) Yield(values ...LValue) int {
 // ResumeInto is like Resume but uses a pre-allocated buffer for return values.
 // This avoids allocations in the hot path.
 func (ls *LState) ResumeInto(th *LState, fn *LFunction, retBuf []LValue, args ...LValue) (ResumeState, []LValue, error) {
+	if msg := ls.resumeRejection(th, len(args)); msg != "" {
+		return ResumeError, nil, newApiErrorS(ApiErrorRun, msg)
+	}
 	isstarted := th.isStarted()
 	if !isstarted {
 		base := 0
@@ -2135,12 +2273,6 @@ func (ls *LState) ResumeInto(th *LState, fn *LFunction, retBuf []LValue, args ..
 		})
 	}
 
-	if ls.G.CurrentThread == th {
-		return ResumeError, nil, newApiErrorS(ApiErrorRun, "can not resume a running thread")
-	}
-	if th.Dead {
-		return ResumeError, nil, newApiErrorS(ApiErrorRun, "can not resume a dead thread")
-	}
 	th.Parent = ls
 	ls.G.CurrentThread = th
 	if !isstarted {
@@ -2170,6 +2302,9 @@ func (ls *LState) ResumeInto(th *LState, fn *LFunction, retBuf []LValue, args ..
 	th.yieldState = yieldNone // Clear yield flag for new resume
 	threadRun(th)
 	haserror := LVIsFalse(ls.Get(top + 1))
+	if !haserror && th.yieldState == yieldPreempt {
+		return ls.preemptedResume(th, top, retBuf)
+	}
 
 	// Reuse provided buffer if possible
 	retCount := ls.GetTop() - top - 1
@@ -2198,6 +2333,16 @@ func (ls *LState) ResumeInto(th *LState, fn *LFunction, retBuf []LValue, args ..
 		return ResumeOK, ret, nil
 	}
 	return ResumeYield, ret, nil
+}
+
+// preemptedResume completes a resume that stopped at a preemption. A preempted
+// thread has no results to report.
+func (ls *LState) preemptedResume(th *LState, top int, retBuf []LValue) (ResumeState, []LValue, error) {
+	ls.SetTop(top)
+	if th.stack.IsEmpty() || th.currentFrame == nil {
+		return ls.abortInvalidResume(th, "yielded thread has no resumable frame")
+	}
+	return ResumePreempted, retBuf[:0], nil
 }
 
 // abortCanceledResume restores the resumer relationship established before
