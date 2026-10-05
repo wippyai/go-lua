@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/wippyai/go-lua/compiler/ast"
+	typeio "github.com/wippyai/go-lua/types/io"
 )
 
 /* internal constants & structs  {{{ */
@@ -486,18 +487,19 @@ func (b *codeBlock) LocalVarsCount() int {
 }
 
 type funcContext struct {
-	Proto           *FunctionProto
-	Code            *codeStore
-	Parent          *funcContext
-	Upvalues        *varNamePool
-	Block           *codeBlock
-	Blocks          []*codeBlock
-	typeNames       map[string]struct{}
-	regTop          int
-	labelId         int
-	labelPc         map[int]int
-	gotosCount      int
-	unresolvedGotos map[int]*gotoLabelDesc
+	Proto             *FunctionProto
+	Code              *codeStore
+	Parent            *funcContext
+	Upvalues          *varNamePool
+	Block             *codeBlock
+	Blocks            []*codeBlock
+	typeNames         map[string]struct{}
+	argumentContracts map[string]*typeio.ArgumentContract
+	regTop            int
+	labelId           int
+	labelPc           map[int]int
+	gotosCount        int
+	unresolvedGotos   map[int]*gotoLabelDesc
 }
 
 func newFuncContext(sourcename string, parent *funcContext, typeNames map[string]struct{}) *funcContext {
@@ -515,6 +517,9 @@ func newFuncContext(sourcename string, parent *funcContext, typeNames map[string
 		unresolvedGotos: map[int]*gotoLabelDesc{},
 	}
 	fc.Blocks = []*codeBlock{fc.Block}
+	if parent != nil {
+		fc.argumentContracts = parent.argumentContracts
+	}
 	return fc
 }
 
@@ -1428,6 +1433,16 @@ func constFold(exp ast.Expr) ast.Expr { // {{{
 } // }}}
 
 func compileFunctionExpr(context *funcContext, funcexpr *ast.FunctionExpr, ec *expcontext) { // {{{
+	if contract := context.argumentContracts[funcexpr.SourceKey()]; contract != nil {
+		manifest := typeio.NewManifest(context.Proto.SourceName)
+		manifest.Export = contract.Signature
+		manifest.Types = contract.Types
+		data, err := manifest.Encode()
+		if err != nil {
+			raiseCompileError(context, funcexpr.Line(), "encode argument contract: %v", err)
+		}
+		context.Proto.ArgumentInfo = data
+	}
 	context.Proto.LineDefined = sline(funcexpr)
 	context.Proto.LastLineDefined = eline(funcexpr)
 	if len(funcexpr.ParList.Names) > maxRegisters {
