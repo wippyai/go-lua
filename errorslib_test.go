@@ -1,6 +1,7 @@
 package lua
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -734,5 +735,46 @@ func TestErrorsLib_DetailsPreserveArrays(t *testing.T) {
 		assert(d.mixed.name == "x")
 	`); err != nil {
 		t.Fatalf("test failed: %v", err)
+	}
+}
+
+func TestErrorsLib_DetailsTableShapes(t *testing.T) {
+	tests := []struct {
+		name string
+		keys []LValue
+		want any
+	}{
+		{name: "empty", want: map[string]any{}},
+		{name: "single", keys: []LValue{LInteger(1)}, want: []any{"value"}},
+		{name: "sequence", keys: []LValue{LInteger(1), LInteger(2)}, want: []any{"value", "value"}},
+		{name: "numeric sequence", keys: []LValue{LNumber(1), LNumber(2)}, want: []any{"value", "value"}},
+		{name: "sparse", keys: []LValue{LInteger(1), LInteger(3)}, want: map[string]any{}},
+		{name: "zero indexed", keys: []LValue{LInteger(0), LInteger(1)}, want: map[string]any{}},
+		{name: "negative indexed", keys: []LValue{LInteger(-1), LInteger(1)}, want: map[string]any{}},
+		{name: "fractional indexed", keys: []LValue{LNumber(1.5)}, want: map[string]any{}},
+		{name: "numeric string", keys: []LValue{LString("1")}, want: map[string]any{"1": "value"}},
+		{name: "mixed", keys: []LValue{LInteger(1), LString("name")}, want: map[string]any{"name": "value"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			L := setupErrorsTest(t)
+			defer L.Close()
+			table := L.NewTable()
+			for _, key := range tt.keys {
+				table.RawSet(key, LString("value"))
+			}
+			if got := luaToGoValue(table); !reflect.DeepEqual(got, tt.want) {
+				t.Fatalf("converted table = %#v, want %#v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestErrorsLib_DetailsArrayRoundTrip(t *testing.T) {
+	L := setupErrorsTest(t)
+	defer L.Close()
+	want := []any{"root", true, int64(7), []any{"nested"}, map[string]any{"ids": []any{int64(3), int64(5)}}}
+	if got := luaToGoValue(goToLuaValue(L, want)); !reflect.DeepEqual(got, want) {
+		t.Fatalf("round-trip details = %#v, want %#v", got, want)
 	}
 }
