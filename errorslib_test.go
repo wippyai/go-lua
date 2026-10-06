@@ -715,3 +715,30 @@ func TestAssertRaisesErrorMessageValue(t *testing.T) {
 		t.Fatalf("test failed: %v", err)
 	}
 }
+
+func TestErrorsLib_DetailsPreserveArrays(t *testing.T) {
+	L := setupErrorsTest(t)
+	defer L.Close()
+
+	if err := L.DoString(`
+		local e = errors.new({
+			message = "test",
+			details = {
+				allowed = {"root", "app:parent"},
+				nested = {ids = {3, 5, 8}},
+				empty = {},
+				mixed = {name = "x"}
+			}
+		})
+		local d = e:details()
+		assert(#d.allowed == 2, "array length mismatch, got: " .. tostring(#d.allowed))
+		assert(d.allowed[1] == "root", "array element 1 mismatch")
+		assert(d.allowed[2] == "app:parent", "array element 2 mismatch")
+		assert(#d.nested.ids == 3, "nested array length mismatch")
+		assert(math.floor(d.nested.ids[3]) == 8, "nested array element mismatch")
+		assert(type(d.empty) == "table", "empty table must stay a table")
+		assert(d.mixed.name == "x", "string-keyed table mismatch")
+	`); err != nil {
+		t.Fatalf("test failed: %v", err)
+	}
+}

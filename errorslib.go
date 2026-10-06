@@ -423,6 +423,12 @@ func goToLuaValue(L *LState, val any) LValue {
 		return LNumber(v)
 	case bool:
 		return LBool(v)
+	case []any:
+		table := L.CreateTable(len(v), 0)
+		for i, val := range v {
+			table.RawSetInt(i+1, goToLuaValue(L, val))
+		}
+		return table
 	case map[string]any:
 		table := L.CreateTable(0, len(v))
 		for k, val := range v {
@@ -448,6 +454,9 @@ func luaToGoValue(val LValue) any {
 	case LBool:
 		return bool(v)
 	case *LTable:
+		if seq, ok := luaSequence(v); ok {
+			return seq
+		}
 		m := make(map[string]any)
 		v.ForEach(func(k, val LValue) {
 			if keyStr, ok := k.(LString); ok {
@@ -460,4 +469,38 @@ func luaToGoValue(val LValue) any {
 	default:
 		return val.String()
 	}
+}
+
+// luaSequence converts a table whose keys are exactly the integers 1..n (n > 0)
+// into a Go slice; any other table is not a sequence.
+func luaSequence(t *LTable) ([]any, bool) {
+	count := 0
+	sequence := true
+	t.ForEach(func(k, _ LValue) {
+		count++
+		switch key := k.(type) {
+		case LInteger:
+			if key < 1 {
+				sequence = false
+			}
+		case LNumber:
+			if key < 1 || float64(key) != float64(int64(key)) {
+				sequence = false
+			}
+		default:
+			sequence = false
+		}
+	})
+	if !sequence || count == 0 {
+		return nil, false
+	}
+	out := make([]any, count)
+	for i := 1; i <= count; i++ {
+		item := t.RawGetInt(i)
+		if item == LNil {
+			return nil, false
+		}
+		out[i-1] = luaToGoValue(item)
+	}
+	return out, true
 }
