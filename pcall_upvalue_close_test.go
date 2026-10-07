@@ -137,6 +137,63 @@ function check_independent_writers()
 	assert(get() == 42, "independent writer lost its value")
 end
 
+function check_escaped_closure_xpcall_failing_handler()
+	local saved
+	local ok = xpcall(function()
+		local kept = "kept"
+		saved = function() return kept end
+		error("first")
+	end, function() error("handler failed") end)
+	assert(ok == false)
+	clobber("a", "b", "c", "d", "e", "f")
+	assert(saved() == "kept", "xpcall with failing handler: escaped closure lost its value")
+end
+
+function check_xpcall_handler_writes_caller_upvalue()
+	local value
+	local function set(x) value = x end
+	xpcall(function() error("first") end, function(e) set("handled"); return e end)
+	assert(value == "handled", "xpcall handler: lost closure write, got " .. tostring(value))
+	set(42)
+	assert(value == 42, "xpcall handler: lost later closure write, got " .. tostring(value))
+end
+
+function check_escaped_closure_wrapped_dead_coroutine()
+	local value
+	local function set(x) value = x end
+	local saved
+	local ok = pcall(coroutine.wrap(function()
+		local kept = "kept"
+		saved = function() return kept end
+		error("dead")
+	end))
+	assert(ok == false)
+	set(42)
+	clobber("a", "b", "c", "d", "e", "f")
+	assert(value == 42, "wrapped coroutine: lost closure write, got " .. tostring(value))
+	assert(saved() == "kept", "wrapped coroutine: escaped closure lost its value")
+end
+
+function check_go_raise_error()
+	local value
+	local function set(x) value = x end
+	assert(pcall(go_raise_error) == false)
+	set(42)
+	assert(value == 42, "Go RaiseError: lost closure write, got " .. tostring(value))
+end
+
+function check_inner_catch_keeps_enclosing_frame_open()
+	local outer
+	local ok = pcall(function()
+		local value
+		local function set(x) value = x end
+		pcall(error, "first")
+		set(42)
+		outer = value
+	end)
+	assert(ok == true and outer == 42, "enclosing protected frame lost closure write, got " .. tostring(outer))
+end
+
 function check_yield_then_error()
 	local value
 	local function set(x) value = x end
@@ -169,6 +226,11 @@ var upvalueCloseCaseNames = []string{
 	"check_escaped_closure_go_pcall_failing_handler",
 	"check_escaped_closure_dead_coroutine",
 	"check_independent_writers",
+	"check_escaped_closure_xpcall_failing_handler",
+	"check_xpcall_handler_writes_caller_upvalue",
+	"check_escaped_closure_wrapped_dead_coroutine",
+	"check_go_raise_error",
+	"check_inner_catch_keeps_enclosing_frame_open",
 }
 
 func newUpvalueCloseState(t *testing.T) *LState {
@@ -193,6 +255,10 @@ func newUpvalueCloseState(t *testing.T) *LState {
 		})
 		L.Push(LBool(L.PCall(0, 0, handler) == nil))
 		return 1
+	}))
+	L.SetGlobal("go_raise_error", L.NewFunction(func(L *LState) int {
+		L.RaiseError("go failed")
+		return 0
 	}))
 	if err := L.DoString(upvalueCloseCases); err != nil {
 		L.Close()
@@ -228,6 +294,25 @@ func TestCaughtErrorKeepsSurvivingUpvaluesOpenInCoroutine(t *testing.T) {
 		} else if state != ResumeOK {
 			t.Errorf("%s: expected ResumeOK, got %v", name, state)
 		}
+	}
+}
+
+func TestUncaughtErrorClosesEscapedUpvalues(t *testing.T) {
+	L := NewState()
+	defer L.Close()
+
+	if err := L.DoString(`
+		local kept = "kept"
+		saved = function() return kept end
+		error("uncaught")
+	`); err == nil {
+		t.Fatal("expected uncaught error")
+	}
+	if err := L.DoString(`
+		local a, b, c, d, e, f = "a", "b", "c", "d", "e", "f"
+		assert(saved() == "kept", "uncaught error: escaped closure read " .. tostring(saved()))
+	`); err != nil {
+		t.Fatal(err)
 	}
 }
 

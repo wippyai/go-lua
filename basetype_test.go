@@ -21,6 +21,21 @@ func TestBaseTypeNames(t *testing.T) {
 	}
 }
 
+func TestBaseTypeNamesMatchValueTypes(t *testing.T) {
+	for vt := range lValueNames {
+		if got, want := lValueTypeNames[vt], LString(LValueType(vt).String()); got != want {
+			t.Errorf("type %d: got %q, want %q", vt, got, want)
+		}
+	}
+
+	L := NewState()
+	defer L.Close()
+	L.SetGlobal("ud", L.NewUserData())
+	if err := L.DoString(`assert(type(ud) == "userdata", "userdata: " .. type(ud))`); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestBaseTypeDoesNotAllocatePerCall(t *testing.T) {
 	L := NewState()
 	defer L.Close()
