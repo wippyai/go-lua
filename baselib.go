@@ -370,8 +370,16 @@ func baseToString(L *LState) int {
 	return 1
 }
 
+var lValueTypeNames = func() [len(lValueNames)]LValue {
+	var names [len(lValueNames)]LValue
+	for i, name := range lValueNames {
+		names[i] = LString(name)
+	}
+	return names
+}()
+
 func baseType(L *LState) int {
-	L.Push(LString(L.CheckAny(1).Type().String()))
+	L.Push(lValueTypeNames[L.CheckAny(1).Type()])
 	return 1
 }
 
