@@ -3146,6 +3146,7 @@ func threadRun(L *LState) {
 				return
 			}
 
+			L.closeUpvalues(0)
 			if parent := L.Parent; parent != nil {
 				if L.wrapped {
 					L.Push(lv)
@@ -3176,6 +3177,7 @@ func handleProtectedError(L *LState, errValue LValue, _ interface{}) bool {
 		if frame.Protected {
 			// Capture frame values before popping (frame memory may be reused after pop)
 			returnBase := frame.ReturnBase
+			L.closeUpvalues(int(frame.LocalBase))
 			var errFunc *LFunction
 			if ext := L.getFrameExt(frame); ext != nil {
 				errFunc = ext.ErrFunc

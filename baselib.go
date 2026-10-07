@@ -145,6 +145,17 @@ func pcallContinuation(L *LState, _ interface{}, _ ResumeState) int {
 	return L.GetTop()
 }
 
+func pcallFailed(L *LState, sp, base int, err error) int {
+	L.closeUpvalues(base)
+	L.unwindCallFrames(sp)
+	L.reg.SetTop(base)
+	L.currentFrame.Protected = false
+	L.clearFrameExt(L.currentFrame)
+	L.Push(LFalse)
+	L.Push(err.(*ApiError).Object)
+	return 2
+}
+
 func basePCall(L *LState) int {
 	L.CheckAny(1)
 	v := L.Get(1)
@@ -177,13 +188,7 @@ func basePCall(L *LState) int {
 		}()
 
 		if err != nil {
-			L.unwindCallFrames(sp)
-			L.reg.SetTop(base)
-			L.currentFrame.Protected = false
-			L.clearFrameExt(L.currentFrame)
-			L.Push(LFalse)
-			L.Push(err.(*ApiError).Object)
-			return 2
+			return pcallFailed(L, sp, base, err)
 		}
 		L.currentFrame.Protected = false
 		L.clearFrameExt(L.currentFrame)
@@ -213,13 +218,7 @@ func basePCall(L *LState) int {
 		}
 
 		if err != nil {
-			L.unwindCallFrames(sp)
-			L.reg.SetTop(base)
-			L.currentFrame.Protected = false
-			L.clearFrameExt(L.currentFrame)
-			L.Push(LFalse)
-			L.Push(err.(*ApiError).Object)
-			return 2
+			return pcallFailed(L, sp, base, err)
 		}
 		L.currentFrame.Protected = false
 		L.clearFrameExt(L.currentFrame)
@@ -439,6 +438,7 @@ func baseXPCall(L *LState) int {
 		// debug.traceback, etc.). PCall's own errfunc path does the same.
 		handled := invokeErrorHandler(L, errfunc, errValue)
 
+		L.closeUpvalues(base)
 		L.unwindCallFrames(sp)
 		L.reg.SetTop(base)
 		protectedFrame.Protected = false
