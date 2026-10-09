@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"runtime/debug"
 	"strings"
 	"sync"
 )
@@ -3135,7 +3136,12 @@ func threadRun(L *LState) {
 					SetErrorMetatable(L, e)
 				}
 			} else {
-				lv = LString(fmt.Sprint(rcv))
+				message := fmt.Sprint(rcv)
+				if L.Options.IncludeGoStackTrace {
+					message += "\n" + string(debug.Stack())
+				}
+				reportPanic(L, message)
+				lv = LString(message)
 			}
 
 			// Check if there's a protected frame that should catch this error
@@ -3146,6 +3152,7 @@ func threadRun(L *LState) {
 				return
 			}
 
+			L.closeUpvalues(0)
 			if parent := L.Parent; parent != nil {
 				if L.wrapped {
 					L.Push(lv)
@@ -3163,6 +3170,16 @@ func threadRun(L *LState) {
 	L.mainLoop(L, nil)
 }
 
+func reportPanic(L *LState, message string) {
+	if L.Options.PanicHandler == nil {
+		return
+	}
+	defer func() {
+		_ = recover()
+	}()
+	L.Options.PanicHandler(L, message)
+}
+
 // handleProtectedError searches for a protected (pcall) frame and handles the error.
 // Returns true if error was handled, false if it should propagate.
 func handleProtectedError(L *LState, errValue LValue, _ interface{}) bool {
@@ -3176,6 +3193,7 @@ func handleProtectedError(L *LState, errValue LValue, _ interface{}) bool {
 		if frame.Protected {
 			// Capture frame values before popping (frame memory may be reused after pop)
 			returnBase := frame.ReturnBase
+			L.closeUpvalues(int(frame.LocalBase))
 			var errFunc *LFunction
 			if ext := L.getFrameExt(frame); ext != nil {
 				errFunc = ext.ErrFunc
