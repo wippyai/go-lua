@@ -41,7 +41,6 @@ func resetLState(ls *LState) {
 	// stop is reset when the state is retrieved from the pool for reuse
 	ls.Env = nil
 	ls.G = nil
-	ls.hasErrorFunc = false
 	ls.wrapped = false
 	ls.yieldState = yieldNone
 
@@ -104,7 +103,6 @@ func newLStateWithGlobal(options Options, G *Global, env *LTable) *LState {
 		currentFrame: nil,
 		wrapped:      false,
 		uvcache:      nil,
-		hasErrorFunc: false,
 		mainLoop:     mainLoop,
 		ctx:          nil,
 	}
