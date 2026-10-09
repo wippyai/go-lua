@@ -228,7 +228,6 @@ type LState struct {
 	currentFrame *callFrame
 	wrapped      bool
 	uvcache      *Upvalue
-	hasErrorFunc bool
 	mainLoop     func(*LState, *callFrame)
 	ctx          context.Context
 	ctxCancelFn  context.CancelFunc

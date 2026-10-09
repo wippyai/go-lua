@@ -117,6 +117,7 @@ type Options struct {
 	SkipOpenLibs bool
 	// Tells whether a Go stacktrace should be included in a Lua stacktrace when panics occur.
 	IncludeGoStackTrace bool
+	PanicHandler        func(*LState, string)
 	// If `MinimizeStackMemory` is set, the call stack will be automatically grown or shrank up to a limit of
 	// `CallStackSize` in order to minimize memory usage. This does incur a slight performance penalty.
 	MinimizeStackMemory bool
@@ -502,7 +503,6 @@ func newLState(options Options) *LState {
 			ls.wrapped = false
 			ls.yieldState = yieldNone
 			ls.uvcache = nil
-			ls.hasErrorFunc = false
 			ls.mainLoop = mainLoop
 			ls.ctx = nil
 			ls.ctxDone = nil
@@ -546,7 +546,6 @@ func newLState(options Options) *LState {
 		currentFrame: nil,
 		wrapped:      false,
 		uvcache:      nil,
-		hasErrorFunc: false,
 		mainLoop:     mainLoop,
 		ctx:          nil,
 	}
@@ -560,18 +559,8 @@ func newLState(options Options) *LState {
 	return ls
 }
 
-func (ls *LState) closeAllUpvalues() { // +inline-start
-	for cf := ls.currentFrame; cf != nil; cf = ls.stack.ParentOf(cf) {
-		if cf.Fn != nil && !cf.Fn.IsG {
-			ls.closeUpvalues(int(cf.LocalBase))
-		}
-	}
-} // +inline-end
-
 func (ls *LState) raiseError(level int, format string, args ...any) {
-	if !ls.hasErrorFunc {
-		ls.closeAllUpvalues()
-	}
+	reg := ls.reg
 	message := format
 	if len(args) > 0 {
 		message = fmt.Sprintf(format, args...)
@@ -579,11 +568,11 @@ func (ls *LState) raiseError(level int, format string, args ...any) {
 	if level > 0 {
 		message = fmt.Sprintf("%v %v", ls.where(level-1, true), message)
 	}
-	if ls.reg.IsFull() {
+	if reg.IsFull() {
 		// if the registry is full then it won't be possible to push a value, in this case, force a larger size
-		ls.reg.forceResize(ls.reg.Top() + 1)
+		reg.forceResize(reg.Top() + 1)
 	}
-	ls.reg.Push(LString(message))
+	reg.Push(LString(message))
 	ls.Panic(ls)
 }
 
@@ -1608,9 +1597,6 @@ func (ls *LState) Error(lv LValue, level int) {
 	if str, ok := lv.(LString); ok {
 		ls.raiseError(level, string(str))
 	} else {
-		if !ls.hasErrorFunc {
-			ls.closeAllUpvalues()
-		}
 		ls.Push(lv)
 		ls.Panic(ls)
 	}
@@ -1908,12 +1894,8 @@ func (ls *LState) PCall(nargs, nret int, errfunc *LFunction) (err error) {
 	base := ls.reg.Top() - nargs - 1
 	oldpanic := ls.Panic
 	ls.Panic = panicWithoutTraceback
-	if errfunc != nil {
-		ls.hasErrorFunc = true
-	}
 	defer func() {
 		ls.Panic = oldpanic
-		ls.hasErrorFunc = false
 
 		rcv := recover()
 		if rcv != nil {
@@ -1946,6 +1928,7 @@ func (ls *LState) PCall(nargs, nret int, errfunc *LFunction) (err error) {
 							err = rcv.(*ApiError)
 							err.(*ApiError).StackTrace = ls.stackTrace(0)
 						}
+						ls.closeUpvalues(base)
 						ls.unwindCallFrames(sp)
 						ls.reg.SetTop(base)
 					}
@@ -1955,6 +1938,7 @@ func (ls *LState) PCall(nargs, nret int, errfunc *LFunction) (err error) {
 			} else if len(err.(*ApiError).StackTrace) == 0 {
 				err.(*ApiError).StackTrace = ls.stackTrace(0)
 			}
+			ls.closeUpvalues(base)
 			ls.unwindCallFrames(sp)
 			ls.reg.SetTop(base)
 		}
