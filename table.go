@@ -2,6 +2,7 @@ package lua
 
 const defaultArrayCap = 32
 const defaultHashCap = 32
+const maxArrayGap = defaultArrayCap
 
 type lValueArraySorter struct {
 	L      *LState
@@ -114,6 +115,9 @@ func (tb *LTable) Append(value LValue) bool {
 	}
 	if len(tb.Array) == 0 || tb.Array[len(tb.Array)-1] != LNil {
 		tb.Array = append(tb.Array, value)
+		if len(tb.Dict) > 0 {
+			tb.pullHashed()
+		}
 	} else {
 		i := len(tb.Array) - 2
 		for ; i >= 0; i-- {
@@ -144,6 +148,7 @@ func (tb *LTable) Insert(i int, value LValue) bool {
 	tb.Array = append(tb.Array, LNil)
 	copy(tb.Array[i+1:], tb.Array[i:])
 	tb.Array[i] = value
+	tb.pullHashed()
 	return true
 }
 
@@ -199,42 +204,28 @@ func (tb *LTable) RawSet(key LValue, value LValue) bool {
 	switch v := key.(type) {
 	case LNumber:
 		if isArrayKey(v) {
-			if tb.Array == nil {
-				tb.Array = make([]LValue, 0, defaultArrayCap)
-			}
 			index := int(v) - 1
-			alen := len(tb.Array)
 			switch {
-			case index == alen:
-				tb.Array = append(tb.Array, value)
-			case index > alen:
-				for i := 0; i < (index - alen); i++ {
-					tb.Array = append(tb.Array, LNil)
-				}
-				tb.Array = append(tb.Array, value)
-			case index < alen:
+			case index < len(tb.Array):
 				tb.Array[index] = value
+			case index == len(tb.Array) && tb.Array != nil && value != LNil && len(tb.Dict) == 0:
+				tb.Array = append(tb.Array, value)
+			default:
+				tb.setSparseIntKey(int(v), value)
 			}
 			return true
 		}
 	case LInteger:
 		iv := int(v)
 		if iv > 0 && iv < MaxArrayIndex {
-			if tb.Array == nil {
-				tb.Array = make([]LValue, 0, defaultArrayCap)
-			}
 			index := iv - 1
-			alen := len(tb.Array)
 			switch {
-			case index == alen:
-				tb.Array = append(tb.Array, value)
-			case index > alen:
-				for i := 0; i < (index - alen); i++ {
-					tb.Array = append(tb.Array, LNil)
-				}
-				tb.Array = append(tb.Array, value)
-			case index < alen:
+			case index < len(tb.Array):
 				tb.Array[index] = value
+			case index == len(tb.Array) && tb.Array != nil && value != LNil && len(tb.Dict) == 0:
+				tb.Array = append(tb.Array, value)
+			default:
+				tb.setSparseIntKey(iv, value)
 			}
 			return true
 		}
@@ -253,23 +244,72 @@ func (tb *LTable) RawSetInt(key int, value LValue) bool {
 	if key < 1 || key >= MaxArrayIndex {
 		return tb.RawSetH(LNumber(key), value)
 	}
+	index := key - 1
+	switch {
+	case index < len(tb.Array):
+		tb.Array[index] = value
+	case index == len(tb.Array) && tb.Array != nil && value != LNil && len(tb.Dict) == 0:
+		tb.Array = append(tb.Array, value)
+	default:
+		tb.setSparseIntKey(key, value)
+	}
+	return true
+}
+
+func (tb *LTable) setSparseIntKey(key int, value LValue) {
+	index := key - 1
+	alen := len(tb.Array)
+	gap := index - alen
+	if value == LNil || (gap > alen && gap > maxArrayGap) {
+		tb.RawSetH(LNumber(key), value)
+		return
+	}
 	if tb.Array == nil {
 		tb.Array = make([]LValue, 0, defaultArrayCap)
 	}
-	index := key - 1
-	alen := len(tb.Array)
-	switch {
-	case index == alen:
-		tb.Array = append(tb.Array, value)
-	case index > alen:
-		for i := 0; i < (index - alen); i++ {
-			tb.Array = append(tb.Array, LNil)
-		}
-		tb.Array = append(tb.Array, value)
-	case index < alen:
-		tb.Array[index] = value
+	for position := alen + 1; position < key; position++ {
+		tb.Array = append(tb.Array, tb.takeHashed(position))
 	}
-	return true
+	tb.takeHashed(key)
+	tb.Array = append(tb.Array, value)
+	tb.pullHashed()
+}
+
+func (tb *LTable) getIntKey(key int) LValue {
+	index := key - 1
+	if index < len(tb.Array) {
+		return tb.Array[index]
+	}
+	if tb.Dict == nil {
+		return LNil
+	}
+	if v, ok := tb.Dict[LNumber(key)]; ok {
+		return v
+	}
+	return LNil
+}
+
+func (tb *LTable) takeHashed(key int) LValue {
+	if len(tb.Dict) == 0 {
+		return LNil
+	}
+	hashed := LNumber(key)
+	v, ok := tb.Dict[hashed]
+	if !ok {
+		return LNil
+	}
+	tb.RawSetH(hashed, LNil)
+	return v
+}
+
+func (tb *LTable) pullHashed() {
+	for len(tb.Dict) > 0 {
+		v := tb.takeHashed(len(tb.Array) + 1)
+		if v == LNil {
+			return
+		}
+		tb.Array = append(tb.Array, v)
+	}
 }
 
 // RawSetString sets a given LValue to a given string index without the __newindex metamethod.
@@ -365,26 +405,12 @@ func (tb *LTable) RawGet(key LValue) LValue {
 	switch v := key.(type) {
 	case LNumber:
 		if isArrayKey(v) {
-			if tb.Array == nil {
-				return LNil
-			}
-			index := int(v) - 1
-			if index >= len(tb.Array) {
-				return LNil
-			}
-			return tb.Array[index]
+			return tb.getIntKey(int(v))
 		}
 	case LInteger:
 		iv := int(v)
 		if iv > 0 && iv < MaxArrayIndex {
-			if tb.Array == nil {
-				return LNil
-			}
-			index := iv - 1
-			if index >= len(tb.Array) {
-				return LNil
-			}
-			return tb.Array[index]
+			return tb.getIntKey(iv)
 		}
 	case LString:
 		if tb.Strdict == nil {
@@ -406,14 +432,10 @@ func (tb *LTable) RawGet(key LValue) LValue {
 
 // RawGetInt returns an LValue at position `key` without __index metamethod.
 func (tb *LTable) RawGetInt(key int) LValue {
-	if tb.Array == nil {
+	if key < 1 {
 		return LNil
 	}
-	index := int(key) - 1
-	if index >= len(tb.Array) || index < 0 {
-		return LNil
-	}
-	return tb.Array[index]
+	return tb.getIntKey(key)
 }
 
 // RawGetH returns an LValue associated with a given key without __index metamethod.
