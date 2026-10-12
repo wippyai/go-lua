@@ -38,6 +38,15 @@ coroutine.yield(function() return value, other end, function(v) value = v end)
 					t.Fatal("fixture did not exceed pooling threshold")
 				}
 			}
+			if err := parent.CallByParam(P{Fn: read, NRet: 2, Protect: true}); err != nil {
+				thread.Close()
+				t.Fatal(err)
+			}
+			if !numberEquals(parent.Get(-2), 42) || parent.Get(-1) != LString("kept") {
+				thread.Close()
+				t.Fatalf("fixture changed captures before close: %v %v", parent.Get(-2), parent.Get(-1))
+			}
+			parent.Pop(2)
 			thread.Close()
 			for _, uv := range read.Upvalues {
 				if !uv.IsClosed() || uv.reg != nil {
@@ -47,7 +56,7 @@ coroutine.yield(function() return value, other end, function(v) value = v end)
 			if err := parent.CallByParam(P{Fn: read, NRet: 2, Protect: true}); err != nil {
 				t.Fatal(err)
 			}
-			if parent.Get(-2) != LNumber(42) || parent.Get(-1) != LString("kept") {
+			if !numberEquals(parent.Get(-2), 42) || parent.Get(-1) != LString("kept") {
 				t.Fatalf("captures after close: %v %v", parent.Get(-2), parent.Get(-1))
 			}
 			parent.Pop(2)
@@ -57,7 +66,7 @@ coroutine.yield(function() return value, other end, function(v) value = v end)
 			if err := parent.CallByParam(P{Fn: read, NRet: 2, Protect: true}); err != nil {
 				t.Fatal(err)
 			}
-			if parent.Get(-2) != LNumber(77) || parent.Get(-1) != LString("kept") {
+			if !numberEquals(parent.Get(-2), 77) || parent.Get(-1) != LString("kept") {
 				t.Fatal("closed captures lost their shared value")
 			}
 			parent.Pop(2)
