@@ -114,11 +114,12 @@ func TestSparsePromotionOrders(t *testing.T) {
 			for i := range keys {
 				keys[i] = i + 1
 			}
-			if order == "descending" {
+			switch order {
+			case "descending":
 				for i, j := 0, len(keys)-1; i < j; i, j = i+1, j-1 {
 					keys[i], keys[j] = keys[j], keys[i]
 				}
-			} else if order == "shuffled" {
+			case "shuffled":
 				rand.New(rand.NewSource(42)).Shuffle(len(keys), func(i, j int) { keys[i], keys[j] = keys[j], keys[i] })
 			}
 			for _, key := range keys {
