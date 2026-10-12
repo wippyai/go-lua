@@ -279,7 +279,12 @@ func (tb *LTable) setSparseIntKey(key int, value LValue) {
 	// A bounded gap keeps allocated holes proportional to writes. Comparing
 	// against array length alone lets a few geometric keys allocate huge arrays.
 	if value == LNil || gap > maxArrayGap {
+		sparseOrigin := tb.Dict == nil || tb.sparseArrayHash
 		tb.RawSetH(LNumber(key), value)
+		if sparseOrigin {
+			tb.sparseArrayHash = true
+			tb.releaseEmptySparseHash()
+		}
 		return
 	}
 	if tb.Array == nil {
@@ -330,6 +335,15 @@ func (tb *LTable) pullHashed() {
 	}
 }
 
+func (tb *LTable) releaseEmptySparseHash() {
+	if tb.sparseArrayHash && len(tb.Dict) == 0 {
+		// Numeric-only hash storage is an array implementation detail. Retaining
+		// an empty Dict would make existing encoders classify it as an object.
+		tb.Dict = nil
+		tb.sparseArrayHash = false
+	}
+}
+
 // RawSetString sets a given LValue to a given string index without the __newindex metamethod.
 func (tb *LTable) RawSetString(key string, value LValue) bool {
 	if tb.Immutable {
@@ -354,6 +368,7 @@ func (tb *LTable) RawSetString(key string, value LValue) bool {
 					tb.K2i[lastKey] = idx
 				}
 
+				tb.Keys[lastIdx] = nil
 				tb.Keys = tb.Keys[:lastIdx]
 				delete(tb.K2i, lkey)
 			}
@@ -397,11 +412,15 @@ func (tb *LTable) RawSetH(key LValue, value LValue) bool {
 					tb.K2i[lastKey] = idx
 				}
 
+				tb.Keys[lastIdx] = nil
 				tb.Keys = tb.Keys[:lastIdx]
 				delete(tb.K2i, key)
 			}
 		}
+		tb.releaseEmptySparseHash()
 	} else {
+		// Explicit hash keys preserve the existing hash/object storage origin.
+		tb.sparseArrayHash = false
 		// LAZY: Only create Dict when storing non-string, non-int key
 		if tb.Dict == nil {
 			tb.Dict = make(map[LValue]LValue, 8) // Start small for rare use case

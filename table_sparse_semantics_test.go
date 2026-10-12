@@ -3,6 +3,7 @@ package lua
 import (
 	"math/rand"
 	"testing"
+	"unsafe"
 )
 
 func TestSparseStorageBounds(t *testing.T) {
@@ -356,5 +357,87 @@ func TestSparseDenseAccessAllocations(t *testing.T) {
 		}
 	}); allocs != 0 {
 		t.Fatalf("dense read allocated %v times", allocs)
+	}
+}
+
+func TestSparseEmptyStorageOrigin(t *testing.T) {
+	t.Run("numeric array", func(t *testing.T) {
+		tbl := newLTable(0, 0)
+		tbl.RawSetInt(100000, LTrue)
+		tbl.RawSetInt(100000, LNil)
+		if tbl.Dict != nil {
+			t.Fatal("deleted sparse array key left an object-shaped hash part")
+		}
+	})
+	t.Run("hash origin", func(t *testing.T) {
+		tbl := newLTable(0, 0)
+		tbl.RawSetH(LTrue, LTrue)
+		tbl.RawSetH(LTrue, LNil)
+		tbl.RawSetInt(100000, LTrue)
+		tbl.RawSetInt(100000, LNil)
+		if tbl.Dict == nil {
+			t.Fatal("sparse write discarded the existing hash/object origin")
+		}
+	})
+	t.Run("mixed hash origin", func(t *testing.T) {
+		tbl := newLTable(0, 0)
+		tbl.RawSetInt(100000, LTrue)
+		tbl.RawSetH(LTrue, LTrue)
+		tbl.RawSetH(LTrue, LNil)
+		tbl.RawSetInt(100000, LNil)
+		if tbl.Dict == nil {
+			t.Fatal("hash keys changed to an array-shaped empty table")
+		}
+	})
+	t.Run("promoted array", func(t *testing.T) {
+		tbl := newLTable(0, 0)
+		tbl.RawSetInt(100, LTrue)
+		for i := 1; i < 100; i++ {
+			tbl.RawSetInt(i, LTrue)
+		}
+		if tbl.Dict != nil {
+			t.Fatal("promotion retained the numeric-only hash part")
+		}
+	})
+	t.Run("header copy", func(t *testing.T) {
+		tbl := newLTable(0, 0)
+		tbl.RawSetInt(100000, LTrue)
+		copy := *tbl
+		copy.Dict = map[LValue]LValue{LNumber(100000): LTrue}
+		copy.RawSetInt(100000, LNil)
+		if copy.Dict != nil || tbl.RawGetInt(100000) != LTrue {
+			t.Fatal("copy lost numeric storage origin or changed its source")
+		}
+	})
+}
+
+func TestSparseTableHeaderSize(t *testing.T) {
+	type legacyTableHeader struct {
+		Metatable LValue
+		Immutable bool
+		Array     []LValue
+		Dict      map[LValue]LValue
+		Strdict   map[string]LValue
+		Keys      []LValue
+		K2i       map[LValue]int
+	}
+	if unsafe.Sizeof(LTable{}) != unsafe.Sizeof(legacyTableHeader{}) {
+		t.Fatal("sparse bookkeeping increased per-table header size")
+	}
+}
+
+func TestSparseIterationDeletionReleasesKeyBacking(t *testing.T) {
+	tbl := newLTable(0, 0)
+	key := newLTable(0, 0)
+	tbl.RawSetH(key, LTrue)
+	tbl.RawSetString("name", LTrue)
+	sparseVisitOnce(t, tbl, 2)
+	backing := tbl.Keys[:cap(tbl.Keys)]
+	tbl.RawSetH(key, LNil)
+	tbl.RawSetString("name", LNil)
+	for _, retained := range backing {
+		if retained != nil && retained != LNil {
+			t.Fatal("deleted iteration key remains retained by slice capacity")
+		}
 	}
 }
