@@ -95,6 +95,9 @@ func TestTableSparseKeyNextVisitsEveryKeyOnce(t *testing.T) {
 	seen := map[string]int{}
 	key, value := tbl.Next(LNil)
 	for key != LNil {
+		if seen[value.String()] != 0 || len(seen) >= 4 {
+			t.Fatalf("next repeated key %v or exceeded the table's key count", key)
+		}
 		seen[value.String()]++
 		key, value = tbl.Next(key)
 	}
