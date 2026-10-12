@@ -2,7 +2,10 @@
 
 package lua
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 func TestStateClosePreservesSuspendedCaptures(t *testing.T) {
 	for _, pooled := range []bool{true, false} {
@@ -21,7 +24,7 @@ coroutine.yield(function() return value, other end, function(v) value = v end)
 			if err != nil {
 				t.Fatal(err)
 			}
-			thread := parent.NewThreadWithContext(nil)
+			thread := parent.NewThreadWithContext(context.Background())
 			status, values, err := parent.Resume(thread, fn)
 			if err != nil || status != ResumeYield || len(values) != 2 {
 				thread.Close()
