@@ -135,18 +135,18 @@ func (tb *LTable) Insert(i int, value LValue) bool {
 	if tb.Immutable {
 		return false
 	}
-	if tb.Array == nil {
-		tb.Array = make([]LValue, 0, defaultArrayCap)
-	}
-	if i > len(tb.Array) {
+	length := tb.Len()
+	if i > length {
 		return tb.RawSetInt(i, value)
 	}
 	if i <= 0 {
 		return tb.RawSet(LNumber(i), value)
 	}
 	i -= 1
-	tb.Array = append(tb.Array, LNil)
-	copy(tb.Array[i+1:], tb.Array[i:])
+	if length == len(tb.Array) {
+		tb.Array = append(tb.Array, LNil)
+	}
+	copy(tb.Array[i+1:length+1], tb.Array[i:length])
 	tb.Array[i] = value
 	tb.pullHashed()
 	return true
@@ -188,7 +188,7 @@ func (tb *LTable) Remove(pos int) (LValue, bool) {
 	if tb.Array == nil {
 		return LNil, true
 	}
-	larray := len(tb.Array)
+	larray := tb.Len()
 	if larray == 0 {
 		return LNil, true
 	}
@@ -203,7 +203,7 @@ func (tb *LTable) Remove(pos int) (LValue, bool) {
 		tb.Array = tb.Array[:larray-1]
 	default:
 		oldval = tb.Array[i]
-		copy(tb.Array[i:], tb.Array[i+1:])
+		copy(tb.Array[i:larray-1], tb.Array[i+1:larray])
 		tb.Array[larray-1] = LNil
 		tb.Array = tb.Array[:larray-1]
 	}
@@ -517,7 +517,9 @@ func (tb *LTable) Next(key LValue) (LValue, LValue) {
 	tb.ensureIterationOrder()
 
 	if k, ok := key.(LInteger); ok && k > 0 && k < LInteger(MaxArrayIndex) {
-		key = LNumber(k)
+		if _, hashed := tb.K2i[key]; !hashed {
+			key = LNumber(k)
+		}
 	}
 
 	hashIndex := 0
