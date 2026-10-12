@@ -153,6 +153,81 @@ func TestSparseAliasesAndMaximum(t *testing.T) {
 	}
 }
 
+func TestSparseIntegerConversionAndExplicitNext(t *testing.T) {
+	tbl := newLTable(0, 0)
+	key := LInteger(1<<32 + 1)
+	tbl.RawSet(key, LTrue)
+	if len(tbl.Array) != 0 || tbl.RawGet(key) != LTrue || tbl.RawGetInt(1) != LNil {
+		t.Fatal("large integer key wrapped into the array-index range")
+	}
+	tbl.RawSetInt(1, LTrue)
+	tbl.RawSetInt(2, LFalse)
+	next, value := tbl.Next(LInteger(1))
+	if next != LNumber(2) || value != LFalse {
+		t.Fatalf("next after integer key 1 returned %v, %v", next, value)
+	}
+}
+
+func TestSparseLuaMaxNHashKeys(t *testing.T) {
+	L := NewState()
+	defer L.Close()
+	if err := L.DoString(`
+local t = {[-1] = true, [0] = true, [1.5] = true}
+assert(table.maxn(t) == 1.5)
+t[67108865] = true
+assert(table.maxn(t) == 67108865)
+t[67108865] = nil
+assert(table.maxn(t) == 1.5)
+assert(table.maxn({[-1] = true}) == 0)
+`); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSparseInsertionModel(t *testing.T) {
+	rng := rand.New(rand.NewSource(123))
+	tbl := newLTable(0, 0)
+	model := make(map[int]LValue)
+	for step := 0; step < 1000; step++ {
+		key := rng.Intn(400) + 1
+		if step%5 == 0 {
+			key += 100000
+		}
+		value := LValue(LNumber(step))
+		if step%3 == 0 {
+			value = LNil
+		}
+		switch step % 3 {
+		case 0:
+			tbl.RawSetInt(key, value)
+		case 1:
+			tbl.RawSet(LNumber(key), value)
+		case 2:
+			tbl.RawSet(LInteger(key), value)
+		}
+		if value == LNil {
+			delete(model, key)
+		} else {
+			model[key] = value
+		}
+		if step%25 == 0 {
+			sparseVisitOnce(t, tbl, len(model))
+			max := 0
+			for k, want := range model {
+				if tbl.RawGetInt(k) != want || tbl.RawGet(LInteger(k)) != want || tbl.RawGet(LNumber(k)) != want {
+					t.Fatalf("step %d lost key %d", step, k)
+				}
+				if k > max {
+					max = k
+				}
+			}
+			if tbl.MaxN() != max {
+				t.Fatalf("step %d maxn=%d, want %d", step, tbl.MaxN(), max)
+			}
+		}
+	}
+}
+
 func TestSparseLuaTableContracts(t *testing.T) {
 	L := NewState()
 	defer L.Close()
@@ -211,5 +286,22 @@ func TestTableRemoveReleasesBackingValue(t *testing.T) {
 		if backing[1] != nil && backing[1] != LNil {
 			t.Fatal("removed value remains retained by array capacity")
 		}
+	}
+}
+
+func TestSparseDenseAccessAllocations(t *testing.T) {
+	tbl := newLTable(32, 0)
+	for i := 1; i <= 32; i++ {
+		tbl.RawSetInt(i, LTrue)
+	}
+	if allocs := testing.AllocsPerRun(1000, func() { tbl.RawSetInt(1, LFalse) }); allocs != 0 {
+		t.Fatalf("dense overwrite allocated %v times", allocs)
+	}
+	if allocs := testing.AllocsPerRun(1000, func() {
+		if tbl.RawGetInt(2) != LTrue {
+			panic("dense read lost its value")
+		}
+	}); allocs != 0 {
+		t.Fatalf("dense read allocated %v times", allocs)
 	}
 }

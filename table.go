@@ -152,17 +152,32 @@ func (tb *LTable) Insert(i int, value LValue) bool {
 	return true
 }
 
-// MaxN returns a maximum number key that nil value does not exist before it.
+// MaxN returns the largest present integer key in the array-index range,
+// including sparse keys held in the hash part.
 func (tb *LTable) MaxN() int {
-	if tb.Array == nil {
-		return 0
-	}
+	max := 0
 	for i := len(tb.Array) - 1; i >= 0; i-- {
 		if tb.Array[i] != LNil {
-			return i + 1
+			max = i + 1
+			break
 		}
 	}
-	return 0
+	for key, value := range tb.Dict {
+		if value == LNil {
+			continue
+		}
+		switch k := key.(type) {
+		case LNumber:
+			if isArrayKey(k) && int(k) > max {
+				max = int(k)
+			}
+		case LInteger:
+			if k > LInteger(max) && k < LInteger(MaxArrayIndex) {
+				max = int(k)
+			}
+		}
+	}
+	return max
 }
 
 // Remove removes from this table the element at a given position.
@@ -184,11 +199,12 @@ func (tb *LTable) Remove(pos int) (LValue, bool) {
 		// nothing to do
 	case i == larray-1 || i < 0:
 		oldval = tb.Array[larray-1]
+		tb.Array[larray-1] = LNil
 		tb.Array = tb.Array[:larray-1]
 	default:
 		oldval = tb.Array[i]
 		copy(tb.Array[i:], tb.Array[i+1:])
-		tb.Array[larray-1] = nil
+		tb.Array[larray-1] = LNil
 		tb.Array = tb.Array[:larray-1]
 	}
 	return oldval, true
@@ -216,8 +232,8 @@ func (tb *LTable) RawSet(key LValue, value LValue) bool {
 			return true
 		}
 	case LInteger:
-		iv := int(v)
-		if iv > 0 && iv < MaxArrayIndex {
+		if v > 0 && v < LInteger(MaxArrayIndex) {
+			iv := int(v)
 			index := iv - 1
 			switch {
 			case index < len(tb.Array):
@@ -260,7 +276,9 @@ func (tb *LTable) setSparseIntKey(key int, value LValue) {
 	index := key - 1
 	alen := len(tb.Array)
 	gap := index - alen
-	if value == LNil || (gap > alen && gap > maxArrayGap) {
+	// A bounded gap keeps allocated holes proportional to writes. Comparing
+	// against array length alone lets a few geometric keys allocate huge arrays.
+	if value == LNil || gap > maxArrayGap {
 		tb.RawSetH(LNumber(key), value)
 		return
 	}
@@ -408,9 +426,8 @@ func (tb *LTable) RawGet(key LValue) LValue {
 			return tb.getIntKey(int(v))
 		}
 	case LInteger:
-		iv := int(v)
-		if iv > 0 && iv < MaxArrayIndex {
-			return tb.getIntKey(iv)
+		if v > 0 && v < LInteger(MaxArrayIndex) {
+			return tb.getIntKey(int(v))
 		}
 	case LString:
 		if tb.Strdict == nil {
@@ -499,35 +516,31 @@ func (tb *LTable) Next(key LValue) (LValue, LValue) {
 	// Lazy initialization - only create ordering when Next() is actually used
 	tb.ensureIterationOrder()
 
-	init := false
-	if key == LNil {
-		key = LNumber(0)
-		init = true
+	if k, ok := key.(LInteger); ok && k > 0 && k < LInteger(MaxArrayIndex) {
+		key = LNumber(k)
 	}
 
-	if init || key != LNumber(0) {
-		if kv, ok := key.(LNumber); ok && IsIntegerValue(kv) && int(kv) >= 0 && kv < LNumber(MaxArrayIndex) {
-			index := int(kv)
-			if tb.Array != nil {
-				for ; index < len(tb.Array); index++ {
-					if v := tb.Array[index]; v != LNil {
-						return LNumber(index + 1), v
-					}
-				}
-			}
-			if tb.Array == nil || index == len(tb.Array) {
-				if len(tb.Keys) == 0 {
-					return LNil, LNil
-				}
-				key = tb.Keys[0]
-				if v := tb.RawGetH(key); v != LNil {
-					return key, v
-				}
-			}
+	hashIndex := 0
+	arrayIndex := 0
+	if key != LNil {
+		if index, hashed := tb.K2i[key]; hashed {
+			// Sparse positive keys are hash keys, not a request to restart
+			// array traversal. Continue from their actual iteration slot.
+			hashIndex = index + 1
+			arrayIndex = len(tb.Array)
+		} else if k, ok := key.(LNumber); ok && isArrayKey(k) {
+			arrayIndex = int(k)
+		} else {
+			return LNil, LNil
 		}
 	}
 
-	for i := tb.K2i[key] + 1; i < len(tb.Keys); i++ {
+	for ; arrayIndex < len(tb.Array); arrayIndex++ {
+		if value := tb.Array[arrayIndex]; value != LNil {
+			return LNumber(arrayIndex + 1), value
+		}
+	}
+	for i := hashIndex; i < len(tb.Keys); i++ {
 		key := tb.Keys[i]
 		if v := tb.RawGetH(key); v != LNil {
 			return key, v
