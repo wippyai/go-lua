@@ -27,7 +27,7 @@ func tableSort(L *LState) int {
 		L.RaiseError("attempt to sort Immutable table")
 		return 0
 	}
-	sorter := lValueArraySorter{L, nil, tbl.Array}
+	sorter := lValueArraySorter{L, nil, tbl.Array[:tbl.Len()]}
 	if L.GetTop() != 1 {
 		sorter.Fn = L.CheckFunction(2)
 	}

@@ -169,6 +169,20 @@ func TestSparseIntegerConversionAndExplicitNext(t *testing.T) {
 	}
 }
 
+func TestSparseForcedHashIntegerIteration(t *testing.T) {
+	for _, dense := range []int{0, 2} {
+		tbl := newLTable(0, 0)
+		for i := 1; i <= dense; i++ {
+			tbl.RawSetInt(i, LTrue)
+		}
+		tbl.RawSetH(LInteger(100000), LFalse)
+		tbl.RawSetH(LNumber(200000), LTrue)
+		tbl.RawSetH(LInteger(0), LTrue)
+		tbl.RawSetH(LInteger(-1), LTrue)
+		sparseVisitOnce(t, tbl, dense+4)
+	}
+}
+
 func TestSparseLuaMaxNHashKeys(t *testing.T) {
 	L := NewState()
 	defer L.Close()
@@ -182,6 +196,44 @@ assert(table.maxn(t) == 1.5)
 assert(table.maxn({[-1] = true}) == 0)
 `); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestSparseSequenceAfterTailDeletion(t *testing.T) {
+	for _, operation := range []struct{ name, code string }{
+		{"remove", `
+local t = {1, 2, 3}
+t[100000] = "far"
+t[3] = nil
+assert(#t == 2)
+assert(table.remove(t) == 2 and #t == 1)
+assert(t[100000] == "far")
+`},
+		{"sort", `
+local t = {3, 2, 1}
+t[100000] = "far"
+t[3] = nil
+assert(#t == 2)
+table.sort(t)
+assert(t[1] == 2 and t[2] == 3 and #t == 2)
+assert(t[100000] == "far")
+`},
+		{"insert", `
+local t = {1, 2, 3}
+t[100000] = "far"
+t[3] = nil
+table.insert(t, 1, 9)
+assert(#t == 3 and t[1] == 9 and t[2] == 1 and t[3] == 2)
+assert(t[100000] == "far")
+`},
+	} {
+		t.Run(operation.name, func(t *testing.T) {
+			L := NewState()
+			defer L.Close()
+			if err := L.DoString(operation.code); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }
 
