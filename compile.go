@@ -559,6 +559,7 @@ func (fc *funcContext) ResolveGoto(from, to *gotoLabelDesc, index int) {
 		varName := fc.Block.LocalVars.Names()[len(fc.Block.LocalVars.Names())-1]
 		raiseCompileError(fc, to.Line+1, "<goto %s> at line %d jumps into the scope of local '%s'", to.Name, from.Line, varName)
 	}
+	fc.Code.SetA(from.Pc-1, to.NumActiveLocalVars)
 	fc.Code.SetSbx(from.Pc, to.Id)
 	delete(fc.unresolvedGotos, index)
 }
