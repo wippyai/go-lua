@@ -1,0 +1,215 @@
+package lua
+
+import (
+	"math/rand"
+	"testing"
+)
+
+func TestSparseStorageBounds(t *testing.T) {
+	for _, setter := range []struct {
+		name string
+		set  func(*LTable, int, LValue)
+	}{
+		{"integer API", func(tbl *LTable, key int, v LValue) { tbl.RawSetInt(key, v) }},
+		{"float key", func(tbl *LTable, key int, v LValue) { tbl.RawSet(LNumber(key), v) }},
+		{"integer key", func(tbl *LTable, key int, v LValue) { tbl.RawSet(LInteger(key), v) }},
+	} {
+		t.Run(setter.name, func(t *testing.T) {
+			tbl := newLTable(0, 0)
+			setter.set(tbl, 100000, LTrue)
+			if got := tbl.RawGetInt(100000); got != LTrue {
+				t.Fatalf("sparse read = %v", got)
+			}
+			if cap(tbl.Array) > defaultArrayCap*2 {
+				t.Fatalf("one sparse key allocated %d array slots", cap(tbl.Array))
+			}
+			setter.set(tbl, 100000, LNil)
+			if tbl.RawGetInt(100000) != LNil || len(tbl.Dict) != 0 {
+				t.Fatal("sparse deletion retained the value")
+			}
+		})
+	}
+	for _, value := range []LValue{LNil, LFalse} {
+		t.Run(value.String(), func(t *testing.T) {
+			tbl := newLTable(0, 0)
+			tbl.RawSetInt(100000, value)
+			if tbl.RawGetInt(100000) != value || cap(tbl.Array) > defaultArrayCap*2 {
+				t.Fatal("nil/false sparse assignment changed value or allocated a large array")
+			}
+		})
+	}
+}
+
+func TestSparseGeometricKeysStayBounded(t *testing.T) {
+	tbl := newLTable(0, 0)
+	count := 0
+	for key := 1; key <= 1<<16; key *= 2 {
+		tbl.RawSetInt(key, LTrue)
+		count++
+		if cap(tbl.Array) > defaultArrayCap*(count+1) {
+			t.Fatalf("%d geometric keys allocated %d array slots", count, cap(tbl.Array))
+		}
+	}
+	for key := 1; key <= 1<<16; key *= 2 {
+		if tbl.RawGetInt(key) != LTrue {
+			t.Fatalf("lost geometric key %d", key)
+		}
+	}
+}
+
+func sparseVisitOnce(t *testing.T, tbl *LTable, want int) {
+	t.Helper()
+	seen := make(map[LValue]bool)
+	key := LNil
+	for steps := 0; steps <= want; steps++ {
+		var value LValue
+		key, value = tbl.Next(key)
+		if key == LNil {
+			if len(seen) != want {
+				t.Fatalf("next visited %d keys, want %d", len(seen), want)
+			}
+			return
+		}
+		if seen[key] || value == LNil || value == nil {
+			t.Fatalf("next repeated key %v or returned an empty value", key)
+		}
+		seen[key] = true
+	}
+	t.Fatal("next did not terminate within the table's key count")
+}
+
+func TestSparseIterationBoundaries(t *testing.T) {
+	for _, dense := range []int{0, 1, 5} {
+		for _, acap := range []int{0, 32} {
+			tbl := newLTable(acap, 0)
+			for i := 1; i <= dense; i++ {
+				tbl.RawSetInt(i, LTrue)
+			}
+			tbl.RawSetInt(100000, LTrue)
+			tbl.RawSet(LInteger(200000), LFalse)
+			tbl.RawSet(LNumber(1.5), LTrue)
+			tbl.RawSetInt(0, LTrue)
+			tbl.RawSetInt(-1, LTrue)
+			tbl.RawSet(LFalse, LTrue)
+			tbl.RawSetString("name", LTrue)
+			sparseVisitOnce(t, tbl, dense+7)
+			sparseVisitOnce(t, tbl, dense+7)
+			count := 0
+			tbl.ForEach(func(_, _ LValue) { count++ })
+			if count != dense+7 {
+				t.Fatalf("ForEach count = %d", count)
+			}
+		}
+	}
+}
+
+func TestSparsePromotionOrders(t *testing.T) {
+	for _, order := range []string{"ascending", "descending", "shuffled"} {
+		t.Run(order, func(t *testing.T) {
+			tbl := newLTable(0, 0)
+			tbl.RawSetInt(300, LNumber(300))
+			// Initialize lazy iteration metadata before moving hash keys to the array.
+			sparseVisitOnce(t, tbl, 1)
+			keys := make([]int, 299)
+			for i := range keys {
+				keys[i] = i + 1
+			}
+			if order == "descending" {
+				for i, j := 0, len(keys)-1; i < j; i, j = i+1, j-1 {
+					keys[i], keys[j] = keys[j], keys[i]
+				}
+			} else if order == "shuffled" {
+				rand.New(rand.NewSource(42)).Shuffle(len(keys), func(i, j int) { keys[i], keys[j] = keys[j], keys[i] })
+			}
+			for _, key := range keys {
+				tbl.RawSetInt(key, LNumber(key))
+			}
+			if tbl.Len() != 300 || len(tbl.Dict) != 0 {
+				t.Fatalf("dense promotion: len=%d hash=%d", tbl.Len(), len(tbl.Dict))
+			}
+			for i := 1; i <= 300; i++ {
+				if tbl.RawGetInt(i) != LNumber(i) {
+					t.Fatalf("promotion lost key %d", i)
+				}
+			}
+			sparseVisitOnce(t, tbl, 300)
+		})
+	}
+}
+
+func TestSparseAliasesAndMaximum(t *testing.T) {
+	tbl := newLTable(0, 0)
+	tbl.RawSetInt(100000, LTrue)
+	if tbl.RawGet(LInteger(100000)) != LTrue || tbl.RawGet(LNumber(100000)) != LTrue {
+		t.Fatal("integer/float aliases lost the sparse value")
+	}
+	tbl.RawSet(LInteger(100000), LFalse)
+	if tbl.RawGetInt(100000) != LFalse || tbl.MaxN() != 100000 {
+		t.Fatal("sparse overwrite or MaxN failed")
+	}
+	tbl.RawSet(LNumber(100000), LNil)
+	if tbl.MaxN() != 0 || len(tbl.Dict) != 0 {
+		t.Fatal("deleting the maximum key retained its value")
+	}
+}
+
+func TestSparseLuaTableContracts(t *testing.T) {
+	L := NewState()
+	defer L.Close()
+	if err := L.DoString(`
+local t = {1, 2, 3}
+t[100000] = "far"
+assert(#t == 3 and table.getn(t) == 3 and table.maxn(t) == 100000)
+local n = 0
+for i, v in ipairs(t) do assert(i == v); n = n + 1 end
+assert(n == 3)
+local count = 0
+for k, v in pairs(t) do
+  count = count + 1
+  assert(count <= 4, "pairs did not terminate")
+end
+assert(count == 4)
+local near = {1, 2}
+near[300] = 300
+for i = 3, 299 do table.insert(near, i) end
+assert(#near == 300 and near[300] == 300)
+assert(table.remove(near) == 300 and #near == 299)
+table.insert(near, 2, 1000)
+assert(near[1] == 1 and near[2] == 1000 and near[3] == 2)
+assert(table.remove(near, 2) == 1000)
+table.sort(near, function(a, b) return a > b end)
+assert(near[1] == 299 and near[299] == 1)
+assert(table.concat({1, 2, 3}, ",") == "1,2,3")
+local a, b, c = unpack({1, 2, 3})
+assert(a == 1 and b == 2 and c == 3)
+local calls = 0
+setmetatable(t, {__index = function() calls = calls + 1; return "fallback" end})
+assert(t[100000] == "far" and calls == 0)
+t[100000] = nil
+assert(t[100000] == "fallback" and calls == 1)
+local frozen = {1, 2}
+frozen[100000] = true
+table.freeze(frozen)
+assert(not pcall(function() frozen[100000] = false end))
+assert(frozen[100000] == true and #frozen == 2)
+`); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestTableRemoveReleasesBackingValue(t *testing.T) {
+	for _, pos := range []int{-1, 0, 2} {
+		tbl := newLTable(2, 0)
+		tbl.Append(LTrue)
+		value := newLTable(0, 0)
+		tbl.Append(value)
+		backing := tbl.Array
+		got, ok := tbl.Remove(pos)
+		if !ok || got != value || len(tbl.Array) != 1 {
+			t.Fatal("remove returned the wrong value")
+		}
+		if backing[1] != nil && backing[1] != LNil {
+			t.Fatal("removed value remains retained by array capacity")
+		}
+	}
+}
