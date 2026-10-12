@@ -131,6 +131,65 @@ assert(reused1 == 98 and reused2 == 99)
 `,
 		},
 		{
+			name: "captured parameter remains live",
+			code: `
+local function run(value, ...)
+    local function current() return value end
+    ::again::
+    value = value + 1
+    if value < 5 then goto again end
+    return current()
+end
+assert(run(1, "unused") == 5)
+`,
+		},
+		{
+			name: "shadowed exit retains outer and closes inner",
+			code: `
+local value = "before"
+local function current() return value end
+local closed
+do
+    local value = "inner"
+    closed = function() return value end
+    goto outside
+end
+::outside::
+value = "after"
+local reused = 99
+assert(current() == "after")
+assert(closed() == "inner")
+assert(reused == 99)
+`,
+		},
+		{
+			name: "goto capture survives coroutine suspension",
+			code: `
+local current
+local co = coroutine.create(function()
+    local content = ""
+    current = function() return content end
+    for _, chunk in ipairs({ "", "Hello", " world" }) do
+        if chunk == "" then goto continue end
+        content = content .. chunk
+        coroutine.yield(content)
+        ::continue::
+    end
+    return current(), content
+end)
+local ok, text = coroutine.resume(co)
+assert(ok and text == "Hello")
+assert(current() == "Hello")
+ok, text = coroutine.resume(co)
+assert(ok and text == "Hello world")
+assert(current() == "Hello world")
+local captured, actual
+ok, captured, actual = coroutine.resume(co)
+assert(ok and captured == actual and actual == "Hello world")
+assert(coroutine.status(co) == "dead")
+`,
+		},
+		{
 			name: "terminal label closes block locals",
 			code: `
 local closed
