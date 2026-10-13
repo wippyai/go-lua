@@ -51,6 +51,8 @@ func resetLState(ls *LState) {
 // Close returns the state to pool if appropriate.
 func (ls *LState) Close() {
 	atomic.AddInt32(&ls.stop, 1)
+	// Captures must keep their values before registers are cleared or reused.
+	ls.closeUpvalues(0)
 
 	// Don't pool if registry has grown beyond initial size
 	shouldPool := ls.reg != nil && cap(ls.reg.array) <= ls.Options.RegistrySize+ls.Options.RegistryGrowStep
