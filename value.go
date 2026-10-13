@@ -156,6 +156,9 @@ func (nm LNumber) Format(f fmt.State, c rune) {
 type LTable struct {
 	Metatable LValue
 	Immutable bool
+	// sparseArrayHash tracks hash storage used only for sparse array keys.
+	// It fits in the existing flag padding without enlarging the table header.
+	sparseArrayHash bool
 
 	Array   []LValue
 	Dict    map[LValue]LValue
