@@ -1122,9 +1122,11 @@ func compileRepeatStmt(context *funcContext, stmt *ast.RepeatStmt) { // {{{
 } // }}}
 
 func compileBreakStmt(context *funcContext, stmt *ast.BreakStmt) { // {{{
+	closeCaptures := false
 	for block := context.Block; block != nil; block = block.Parent {
+		closeCaptures = closeCaptures || block.RefUpvalue
 		if label := block.BreakLabel; label != labelNoJump {
-			if block.RefUpvalue {
+			if closeCaptures {
 				context.Code.AddABC(OP_CLOSE, block.Parent.LocalVars.LastIndex(), 0, 0, sline(stmt))
 			}
 			context.Code.AddASbx(OP_JMP, 0, label, sline(stmt))
