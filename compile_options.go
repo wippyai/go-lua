@@ -53,6 +53,7 @@ func CompileWithOptions(chunk []ast.Stmt, name string, opts CompileOptions) (pro
 	if len(opts.TypeInfo) > 0 {
 		proto.SetTypeInfo(opts.TypeInfo)
 	}
+	covRegisterProto(proto)
 	return
 }
 

@@ -530,6 +530,7 @@ func newLState(options Options) *LState {
 			}
 
 			ls.Env = ls.G.Global
+			covArm(ls)
 			return ls
 		}
 	}
@@ -556,6 +557,7 @@ func newLState(options Options) *LState {
 	}
 	ls.reg = newRegistry(ls, options.RegistrySize, options.RegistryGrowStep, options.RegistryMaxSize)
 	ls.Env = ls.G.Global
+	covArm(ls)
 	return ls
 }
 
