@@ -19,12 +19,54 @@ type iterationPointerKey struct {
 func (iterationPointerKey) String() string   { return "<iteration pointer>" }
 func (iterationPointerKey) Type() LValueType { return LTNil }
 
+// nativeFunctionCursor retains code identity, never a function or its captures.
+type nativeFunctionCursor uintptr
+
+func (nativeFunctionCursor) String() string   { return "<native function cursor>" }
+func (nativeFunctionCursor) Type() LValueType { return LTNil }
+
 func iterationKey(key LValue) LValue {
+	if id, ok := nativeFunctionID(key); ok {
+		return nativeFunctionCursor(id)
+	}
 	v := reflect.ValueOf(key)
 	if v.Kind() == reflect.Pointer || v.Kind() == reflect.Chan {
 		return iterationPointerKey{typ: v.Type(), address: v.Pointer()}
 	}
 	return key
+}
+
+// nativeTableKey returns an ordinary callable, comparable key. Only live keys
+// are retained; deleted-key traversal uses the non-owning cursor identity.
+func (tb *LTable) nativeTableKey(key LValue, create bool) LValue {
+	id, native := nativeFunctionID(key)
+	if !native {
+		return key
+	}
+	// Already-normalized live keys (including Next's internal scan) need no search.
+	if fn, ok := key.(*LFunction); ok {
+		if _, live := tb.Dict[fn]; live {
+			return fn
+		}
+	}
+	// Native keys are rare. Search only on this path to avoid enlarging every
+	// table or introducing a global cache that would retain Go closures.
+	for existing := range tb.Dict {
+		if code, ok := nativeFunctionID(existing); ok && code == id {
+			return existing
+		}
+	}
+	if !create {
+		return nativeFunctionCursor(id)
+	}
+	var gf LGFunction
+	switch fn := key.(type) {
+	case LGoFunc:
+		gf = LGFunction(fn)
+	case *LFunction:
+		gf = fn.GFunction
+	}
+	return &LFunction{IsG: true, nativeKey: true, GFunction: gf}
 }
 
 type lValueArraySorter struct {
@@ -476,6 +518,7 @@ func (tb *LTable) RawSetH(key LValue, value LValue) bool {
 		return tb.RawSetString(string(s), value)
 	}
 
+	key = tb.nativeTableKey(key, value != LNil)
 	if value == LNil {
 		// LAZY: Only delete if Dict exists
 		if tb.Dict != nil {
@@ -499,6 +542,8 @@ func (tb *LTable) RawSetH(key LValue, value LValue) bool {
 // RawGet returns an LValue associated with a given key without __index metamethod.
 func (tb *LTable) RawGet(key LValue) LValue {
 	switch v := key.(type) {
+	case LGoFunc, *LFunction:
+		key = tb.nativeTableKey(key, false)
 	case LNumber:
 		if isArrayKey(v) {
 			return tb.getIntKey(int(v))
@@ -535,6 +580,7 @@ func (tb *LTable) RawGetInt(key int) LValue {
 
 // RawGetH returns an LValue associated with a given key without __index metamethod.
 func (tb *LTable) RawGetH(key LValue) LValue {
+	key = tb.nativeTableKey(key, false)
 	if s, sok := key.(LString); sok {
 		if tb.Strdict == nil {
 			return LNil
@@ -583,7 +629,7 @@ func (tb *LTable) ForEach(cb func(LValue, LValue)) {
 	if tb.Dict != nil {
 		for k, v := range tb.Dict {
 			if v != LNil {
-				cb(k, v)
+				cb(nativeKeyValue(k), v)
 			}
 		}
 	}
@@ -591,6 +637,7 @@ func (tb *LTable) ForEach(cb func(LValue, LValue)) {
 
 // Next is equivalent to lua_next ( http://www.lua.org/manual/5.1/manual.html#lua_next ).
 func (tb *LTable) Next(key LValue) (LValue, LValue) {
+	key = tb.nativeTableKey(key, false)
 	// Lazy initialization - only create ordering when Next() is actually used
 	tb.ensureIterationOrder()
 
@@ -630,7 +677,7 @@ func (tb *LTable) Next(key LValue) (LValue, LValue) {
 			continue
 		}
 		if v := tb.RawGetH(key); v != LNil {
-			return key, v
+			return nativeKeyValue(key), v
 		}
 	}
 	return LNil, LNil
