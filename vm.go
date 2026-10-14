@@ -3483,16 +3483,7 @@ func equals(L *LState, lhs, rhs LValue, raw bool) bool {
 			}
 		}
 	case LTFunction:
-		// LGoFunc is not comparable with ==, so handle functions specially
-		switch l := lhs.(type) {
-		case *LFunction:
-			r, ok := rhs.(*LFunction)
-			ret = ok && l == r
-		case LGoFunc:
-			r, ok := rhs.(LGoFunc)
-			// Compare function pointers via their string representation
-			ret = ok && fmt.Sprintf("%p", l) == fmt.Sprintf("%p", r)
-		}
+		ret = functionsEqual(lhs, rhs)
 	case LTType:
 		ret = TypeEquals(lhs.(*LType), rhs.(*LType))
 	default:
@@ -3517,7 +3508,7 @@ func objectRationalWithError(L *LState, lhs, rhs LValue, event string) bool {
 func objectRational(L *LState, lhs, rhs LValue, event string) int {
 	m1 := L.metaOp1(lhs, event)
 	m2 := L.metaOp1(rhs, event)
-	if m1.Type() == LTFunction && m1 == m2 {
+	if m1.Type() == LTFunction && functionsEqual(m1, m2) {
 		L.reg.Push(m1)
 		L.reg.Push(lhs)
 		L.reg.Push(rhs)

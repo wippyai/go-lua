@@ -48,9 +48,13 @@ func resetLState(ls *LState) {
 	ls.frameExt = nil
 }
 
-// Close returns the state to pool if appropriate.
+// Close returns the state to pool if appropriate. Repeated calls before reuse
+// are harmless. As with any pooled object, callers must not use a state after
+// closing it: the pointer may subsequently belong to a different owner.
 func (ls *LState) Close() {
-	atomic.AddInt32(&ls.stop, 1)
+	if !atomic.CompareAndSwapInt32(&ls.stop, 0, 1) {
+		return
+	}
 	// Captures must keep their values before registers are cleared or reused.
 	ls.closeUpvalues(0)
 
