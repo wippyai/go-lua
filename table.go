@@ -1,8 +1,30 @@
 package lua
 
+import "reflect"
+
 const defaultArrayCap = 32
 const defaultHashCap = 32
 const maxArrayGap = defaultArrayCap
+
+// iterationPointerKey is only a map key, never a Lua value. It lets deleted
+// pointer/channel keys remain valid cursors without retaining their objects.
+// A caller using such a cursor still owns the original key; insertion of a new
+// field reclaims dead cursors before a recycled address can become a live key.
+type iterationPointerKey struct {
+	typ     reflect.Type
+	address uintptr
+}
+
+func (iterationPointerKey) String() string   { return "<iteration pointer>" }
+func (iterationPointerKey) Type() LValueType { return LTNil }
+
+func iterationKey(key LValue) LValue {
+	v := reflect.ValueOf(key)
+	if v.Kind() == reflect.Pointer || v.Kind() == reflect.Chan {
+		return iterationPointerKey{typ: v.Type(), address: v.Pointer()}
+	}
+	return key
+}
 
 type lValueArraySorter struct {
 	L      *LState
@@ -84,6 +106,50 @@ func (tb *LTable) ensureIterationOrder() {
 			tb.Keys = append(tb.Keys, k)
 		}
 	}
+}
+
+// deleteIterationKey leaves a stable slot and cursor for next(t, key), even
+// after t[key] = nil. Moving another key into this slot would skip that key.
+func (tb *LTable) deleteIterationKey(key LValue) {
+	if index, ok := tb.K2i[key]; ok {
+		// Release the slice reference; K2i keeps only the cursor identity until
+		// a new field is inserted. Deletion alone must not invalidate cursors,
+		// including cursors in nested traversals of the same table.
+		tb.Keys[index] = nil
+		if cursor := iterationKey(key); cursor != key {
+			delete(tb.K2i, key)
+			tb.K2i[cursor] = index
+		}
+	}
+}
+
+// addIterationKey is called before storing a non-nil hash value.
+func (tb *LTable) addIterationKey(key LValue) {
+	if tb.Keys == nil {
+		return
+	}
+	if index, ok := tb.K2i[key]; ok && tb.Keys[index] != nil {
+		return
+	}
+	// Inserting a previously absent field may invalidate traversal in Lua.
+	// Reclaim deleted cursors here, so repeated insert/delete cycles cannot
+	// grow iteration metadata indefinitely. Starting another traversal must
+	// not compact it: an outer traversal may still hold a deleted cursor.
+	if len(tb.Keys) > len(tb.Strdict)+len(tb.Dict) {
+		clear(tb.K2i)
+		n := 0
+		for _, existing := range tb.Keys {
+			if existing != nil {
+				tb.K2i[existing] = n
+				tb.Keys[n] = existing
+				n++
+			}
+		}
+		clear(tb.Keys[n:])
+		tb.Keys = tb.Keys[:n]
+	}
+	tb.K2i[key] = len(tb.Keys)
+	tb.Keys = append(tb.Keys, key)
 }
 
 // Len returns length of this LTable without using __len.
@@ -322,6 +388,8 @@ func (tb *LTable) takeHashed(key int) LValue {
 		return LNil
 	}
 	tb.RawSetH(hashed, LNil)
+	// Promotion makes this an array cursor, not a deleted hash cursor.
+	delete(tb.K2i, hashed)
 	return v
 }
 
@@ -357,31 +425,10 @@ func (tb *LTable) RawSetString(key string, value LValue) bool {
 	lkey := LString(key)
 	if value == LNil {
 		delete(tb.Strdict, key)
-		// Only update Keys/K2i if they exist (lazy)
-		if tb.Keys != nil {
-			if idx, ok := tb.K2i[lkey]; ok {
-				lastIdx := len(tb.Keys) - 1
-				lastKey := tb.Keys[lastIdx]
-
-				if idx < lastIdx {
-					tb.Keys[idx] = lastKey
-					tb.K2i[lastKey] = idx
-				}
-
-				tb.Keys[lastIdx] = nil
-				tb.Keys = tb.Keys[:lastIdx]
-				delete(tb.K2i, lkey)
-			}
-		}
+		tb.deleteIterationKey(lkey)
 	} else {
+		tb.addIterationKey(lkey)
 		tb.Strdict[key] = value
-		// Only update Keys/K2i if they exist (lazy)
-		if tb.Keys != nil {
-			if _, ok := tb.K2i[lkey]; !ok {
-				tb.K2i[lkey] = len(tb.Keys)
-				tb.Keys = append(tb.Keys, lkey)
-			}
-		}
 	}
 	return true
 }
@@ -401,22 +448,7 @@ func (tb *LTable) RawSetH(key LValue, value LValue) bool {
 		if tb.Dict != nil {
 			delete(tb.Dict, key)
 		}
-		// Only update Keys/K2i if they exist (lazy)
-		if tb.Keys != nil {
-			if idx, ok := tb.K2i[key]; ok {
-				lastIdx := len(tb.Keys) - 1
-				lastKey := tb.Keys[lastIdx]
-
-				if idx < lastIdx {
-					tb.Keys[idx] = lastKey
-					tb.K2i[lastKey] = idx
-				}
-
-				tb.Keys[lastIdx] = nil
-				tb.Keys = tb.Keys[:lastIdx]
-				delete(tb.K2i, key)
-			}
-		}
+		tb.deleteIterationKey(key)
 		tb.releaseEmptySparseHash()
 	} else {
 		// Explicit hash keys preserve the existing hash/object storage origin.
@@ -425,14 +457,8 @@ func (tb *LTable) RawSetH(key LValue, value LValue) bool {
 		if tb.Dict == nil {
 			tb.Dict = make(map[LValue]LValue, 8) // Start small for rare use case
 		}
+		tb.addIterationKey(key)
 		tb.Dict[key] = value
-		// Only update Keys/K2i if they exist (lazy)
-		if tb.Keys != nil {
-			if _, ok := tb.K2i[key]; !ok {
-				tb.K2i[key] = len(tb.Keys)
-				tb.Keys = append(tb.Keys, key)
-			}
-		}
 	}
 	return true
 }
@@ -544,7 +570,11 @@ func (tb *LTable) Next(key LValue) (LValue, LValue) {
 	hashIndex := 0
 	arrayIndex := 0
 	if key != LNil {
-		if index, hashed := tb.K2i[key]; hashed {
+		index, hashed := tb.K2i[key]
+		if !hashed {
+			index, hashed = tb.K2i[iterationKey(key)]
+		}
+		if hashed {
 			// Sparse positive keys are hash keys, not a request to restart
 			// array traversal. Continue from their actual iteration slot.
 			hashIndex = index + 1
@@ -563,6 +593,9 @@ func (tb *LTable) Next(key LValue) (LValue, LValue) {
 	}
 	for i := hashIndex; i < len(tb.Keys); i++ {
 		key := tb.Keys[i]
+		if key == nil {
+			continue
+		}
 		if v := tb.RawGetH(key); v != LNil {
 			return key, v
 		}
