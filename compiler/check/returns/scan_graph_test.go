@@ -8,7 +8,7 @@ import (
 )
 
 func sharedScanGraph(depth int) typ.Type {
-	var node typ.Type = typ.String
+	node := typ.String
 	for range depth {
 		node = &typ.Tuple{Elements: []typ.Type{node, node}}
 	}
