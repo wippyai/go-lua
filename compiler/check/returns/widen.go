@@ -4,7 +4,6 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
-	"github.com/wippyai/go-lua/internal"
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/narrow"
@@ -97,7 +96,7 @@ func hasHigherOrderGrowthRisk(t typ.Type) bool {
 	if t == nil {
 		return false
 	}
-	return scanType(t, typ.NewGuard(), func(node typ.Type) (bool, bool) {
+	return scanType(t, nil, func(node typ.Type) (bool, bool) {
 		switch n := node.(type) {
 		case *typ.Function:
 			for _, ret := range n.Returns {
@@ -118,7 +117,7 @@ func typeContainsFunction(t typ.Type) bool {
 	if t == nil {
 		return false
 	}
-	return scanType(t, typ.NewGuard(), func(node typ.Type) (bool, bool) {
+	return scanType(t, nil, func(node typ.Type) (bool, bool) {
 		// Interface method signatures are behavioral contracts, not first-class
 		// returned function values. Ignore them for higher-order growth risk.
 		if _, ok := node.(*typ.Interface); ok {
@@ -150,7 +149,7 @@ func methodTypeHasSelfRecursiveReturn(t typ.Type, owner *typ.Record) bool {
 	if t == nil || owner == nil {
 		return false
 	}
-	return scanType(t, typ.NewGuard(), func(node typ.Type) (bool, bool) {
+	return scanType(t, nil, func(node typ.Type) (bool, bool) {
 		// Interface method signatures are behavioral contracts, not concrete
 		// record method bodies. Treating them as self-recursive growth risk
 		// over-applies monotone widening and blocks valid summary refinement.
@@ -178,25 +177,23 @@ func methodTypeHasSelfRecursiveReturn(t typ.Type, owner *typ.Record) bool {
 
 func scanType(
 	t typ.Type,
-	guard internal.RecursionGuard,
+	seen map[typ.Type]bool,
 	visit func(node typ.Type) (stop bool, descend bool),
 ) bool {
 	if t == nil {
 		return false
 	}
-	next, ok := guard.Enter(t)
-	if !ok {
+	if seen == nil {
+		seen = make(map[typ.Type]bool)
+	}
+	if seen[t] {
 		return false
 	}
-
-	node := t
-	for {
-		ann, ok := node.(*typ.Annotated)
-		if !ok || ann.Inner == nil || ann.Inner == node {
-			break
-		}
-		node = ann.Inner
+	seen[t] = true
+	if ann, ok := t.(*typ.Annotated); ok && ann.Inner != nil {
+		return scanType(ann.Inner, seen, visit)
 	}
+	node := t
 
 	if stop, descend := visit(node); stop {
 		return true
@@ -206,69 +203,69 @@ func scanType(
 
 	switch n := node.(type) {
 	case *typ.Optional:
-		return scanType(n.Inner, next, visit)
+		return scanType(n.Inner, seen, visit)
 	case *typ.Union:
 		for _, m := range n.Members {
-			if scanType(m, next, visit) {
+			if scanType(m, seen, visit) {
 				return true
 			}
 		}
 		return false
 	case *typ.Intersection:
 		for _, m := range n.Members {
-			if scanType(m, next, visit) {
+			if scanType(m, seen, visit) {
 				return true
 			}
 		}
 		return false
 	case *typ.Array:
-		return scanType(n.Element, next, visit)
+		return scanType(n.Element, seen, visit)
 	case *typ.Map:
-		return scanType(n.Key, next, visit) || scanType(n.Value, next, visit)
+		return scanType(n.Key, seen, visit) || scanType(n.Value, seen, visit)
 	case *typ.Tuple:
 		for _, e := range n.Elements {
-			if scanType(e, next, visit) {
+			if scanType(e, seen, visit) {
 				return true
 			}
 		}
 		return false
 	case *typ.Function:
 		for _, p := range n.Params {
-			if scanType(p.Type, next, visit) {
+			if scanType(p.Type, seen, visit) {
 				return true
 			}
 		}
 		for _, r := range n.Returns {
-			if scanType(r, next, visit) {
+			if scanType(r, seen, visit) {
 				return true
 			}
 		}
-		return n.Variadic != nil && scanType(n.Variadic, next, visit)
+		return n.Variadic != nil && scanType(n.Variadic, seen, visit)
 	case *typ.Record:
 		for _, f := range n.Fields {
-			if scanType(f.Type, next, visit) {
+			if scanType(f.Type, seen, visit) {
 				return true
 			}
 		}
-		if n.Metatable != nil && scanType(n.Metatable, next, visit) {
+		if n.Metatable != nil && scanType(n.Metatable, seen, visit) {
 			return true
 		}
 		if n.HasMapComponent() {
-			return scanType(n.MapKey, next, visit) || scanType(n.MapValue, next, visit)
+			return scanType(n.MapKey, seen, visit) || scanType(n.MapValue, seen, visit)
 		}
 		return false
 	case *typ.Alias:
-		return scanType(n.Target, next, visit)
+		return scanType(n.Target, seen, visit)
 	case *typ.Instantiated:
 		for _, a := range n.TypeArgs {
-			if scanType(a, next, visit) {
+			if scanType(a, seen, visit) {
 				return true
 			}
 		}
 		return false
 	case *typ.Interface:
 		for _, m := range n.Methods {
-			if m.Type != nil && scanType(m.Type, next, visit) {
+			if m.Type != nil && scanType(m.Type, seen, visit) {
 				return true
 			}
 		}
