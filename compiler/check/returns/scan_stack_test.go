@@ -24,7 +24,7 @@ func TestScanTypeDeepGraph(t *testing.T) {
 	}
 
 	debug.SetMaxStack(1 << 20)
-	var node typ.Type = typ.String
+	node := typ.String
 	for range 20000 {
 		node = &typ.Array{Element: node}
 	}
