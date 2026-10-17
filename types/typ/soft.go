@@ -23,54 +23,72 @@ func IsSoft(t Type, policy SoftPolicy) bool {
 	return isSoft(t, policy, make(map[Type]bool))
 }
 
-func isSoft(t Type, policy SoftPolicy, seen map[Type]bool) (soft bool) {
-	if t == nil {
-		return false
+func isSoft(t Type, policy SoftPolicy, seen map[Type]bool) bool {
+	type frame struct {
+		node     Type
+		complete bool
 	}
-	if result, visited := seen[t]; visited {
-		return result
-	}
-	// Softness requires placeholder evidence along every edge. A cycle with
-	// no terminal evidence stays non-soft; completed nodes retain their result.
-	seen[t] = false
-	defer func() { seen[t] = soft }()
-	node := unwrapTransparentSoft(t)
-	switch node.(type) {
-	case *Alias, *Optional, *Array, *Map, *Record, *Union:
-		// recurse below
-	default:
-		return node.Kind().IsPlaceholder()
-	}
-
-	switch tt := node.(type) {
-	case *Alias:
-		return isSoft(tt.Target, policy, seen)
-	case *Optional:
-		return isSoft(tt.Inner, policy, seen)
-	case *Array:
-		return isSoft(tt.Element, policy, seen)
-	case *Map:
-		return isSoft(tt.Value, policy, seen)
-	case *Record:
-		if len(tt.Fields) == 0 && !tt.HasMapComponent() {
-			return policy.AllowEmptyRecord
-		}
-		if tt.HasMapComponent() && len(tt.Fields) == 0 {
-			return isSoft(tt.MapValue, policy, seen)
-		}
-		return false
-	case *Union:
-		if len(tt.Members) == 0 {
+	var local [32]frame
+	pending := append(local[:0], frame{node: t})
+	for len(pending) > 0 {
+		last := len(pending) - 1
+		current := pending[last]
+		pending[last] = frame{}
+		pending = pending[:last]
+		node := current.node
+		if node == nil {
 			return false
 		}
-		for _, m := range tt.Members {
-			if !isSoft(m, policy, seen) {
+		if current.complete {
+			seen[node] = true
+			continue
+		}
+		if result, visited := seen[node]; visited {
+			if !result {
+				return false
+			}
+			continue
+		}
+		// Active nodes remain false until every child proves soft. A cycle
+		// therefore cannot supply its own placeholder evidence.
+		seen[node] = false
+		pending = append(pending, frame{node: node, complete: true})
+		switch n := node.(type) {
+		case *Annotated:
+			if n.Inner != nil {
+				pending = append(pending, frame{node: n.Inner})
+			}
+		case *Alias:
+			pending = append(pending, frame{node: n.Target})
+		case *Optional:
+			pending = append(pending, frame{node: n.Inner})
+		case *Array:
+			pending = append(pending, frame{node: n.Element})
+		case *Map:
+			pending = append(pending, frame{node: n.Value})
+		case *Record:
+			if len(n.Fields) != 0 {
+				return false
+			}
+			if n.HasMapComponent() {
+				pending = append(pending, frame{node: n.MapValue})
+			} else if !policy.AllowEmptyRecord {
+				return false
+			}
+		case *Union:
+			if len(n.Members) == 0 {
+				return false
+			}
+			for i := len(n.Members) - 1; i >= 0; i-- {
+				pending = append(pending, frame{node: n.Members[i]})
+			}
+		default:
+			if !node.Kind().IsPlaceholder() {
 				return false
 			}
 		}
-		return true
 	}
-	return false
+	return true
 }
 
 func unwrapTransparentSoft(t Type) Type {
