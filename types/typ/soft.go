@@ -20,13 +20,20 @@ var SoftPlaceholderPolicy = SoftPolicy{AllowEmptyRecord: true}
 
 // IsSoft reports whether a type should be treated as a soft placeholder under policy.
 func IsSoft(t Type, policy SoftPolicy) bool {
-	return isSoft(t, NewGuard(), policy)
+	return isSoft(t, policy, make(map[Type]bool))
 }
 
-func isSoft(t Type, guard internal.RecursionGuard, policy SoftPolicy) bool {
+func isSoft(t Type, policy SoftPolicy, seen map[Type]bool) (soft bool) {
 	if t == nil {
 		return false
 	}
+	if result, visited := seen[t]; visited {
+		return result
+	}
+	// Softness requires placeholder evidence along every edge. A cycle with
+	// no terminal evidence stays non-soft; completed nodes retain their result.
+	seen[t] = false
+	defer func() { seen[t] = soft }()
 	node := unwrapTransparentSoft(t)
 	switch node.(type) {
 	case *Alias, *Optional, *Array, *Map, *Record, *Union:
@@ -35,26 +42,21 @@ func isSoft(t Type, guard internal.RecursionGuard, policy SoftPolicy) bool {
 		return node.Kind().IsPlaceholder()
 	}
 
-	next, ok := guard.Enter(node)
-	if !ok {
-		return false
-	}
-
 	switch tt := node.(type) {
 	case *Alias:
-		return isSoft(tt.Target, next, policy)
+		return isSoft(tt.Target, policy, seen)
 	case *Optional:
-		return isSoft(tt.Inner, next, policy)
+		return isSoft(tt.Inner, policy, seen)
 	case *Array:
-		return isSoft(tt.Element, next, policy)
+		return isSoft(tt.Element, policy, seen)
 	case *Map:
-		return isSoft(tt.Value, next, policy)
+		return isSoft(tt.Value, policy, seen)
 	case *Record:
 		if len(tt.Fields) == 0 && !tt.HasMapComponent() {
 			return policy.AllowEmptyRecord
 		}
 		if tt.HasMapComponent() && len(tt.Fields) == 0 {
-			return isSoft(tt.MapValue, next, policy)
+			return isSoft(tt.MapValue, policy, seen)
 		}
 		return false
 	case *Union:
@@ -62,7 +64,7 @@ func isSoft(t Type, guard internal.RecursionGuard, policy SoftPolicy) bool {
 			return false
 		}
 		for _, m := range tt.Members {
-			if !isSoft(m, next, policy) {
+			if !isSoft(m, policy, seen) {
 				return false
 			}
 		}
@@ -472,7 +474,7 @@ func isSoftWithMemo(t Type, policy SoftPolicy, memo map[Type]bool) bool {
 			return cached
 		}
 	}
-	soft := IsSoft(node, policy)
+	soft := isSoft(node, policy, memo)
 	memo[t] = soft
 	if node != t {
 		memo[node] = soft
