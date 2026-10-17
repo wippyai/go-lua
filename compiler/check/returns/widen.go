@@ -180,99 +180,81 @@ func scanType(
 	seen map[typ.Type]bool,
 	visit func(node typ.Type) (stop bool, descend bool),
 ) bool {
-	if t == nil {
-		return false
-	}
 	if seen == nil {
 		seen = make(map[typ.Type]bool)
 	}
-	if seen[t] {
-		return false
-	}
-	seen[t] = true
-	if ann, ok := t.(*typ.Annotated); ok && ann.Inner != nil {
-		return scanType(ann.Inner, seen, visit)
-	}
-	node := t
-
-	if stop, descend := visit(node); stop {
-		return true
-	} else if !descend {
-		return false
-	}
-
-	switch n := node.(type) {
-	case *typ.Optional:
-		return scanType(n.Inner, seen, visit)
-	case *typ.Union:
-		for _, m := range n.Members {
-			if scanType(m, seen, visit) {
-				return true
-			}
+	var local [32]typ.Type
+	pending := append(local[:0], t)
+	for len(pending) > 0 {
+		last := len(pending) - 1
+		node := pending[last]
+		pending[last] = nil
+		pending = pending[:last]
+		if node == nil || seen[node] {
+			continue
 		}
-		return false
-	case *typ.Intersection:
-		for _, m := range n.Members {
-			if scanType(m, seen, visit) {
-				return true
-			}
+		seen[node] = true
+		if ann, ok := node.(*typ.Annotated); ok && ann.Inner != nil {
+			pending = append(pending, ann.Inner)
+			continue
 		}
-		return false
-	case *typ.Array:
-		return scanType(n.Element, seen, visit)
-	case *typ.Map:
-		return scanType(n.Key, seen, visit) || scanType(n.Value, seen, visit)
-	case *typ.Tuple:
-		for _, e := range n.Elements {
-			if scanType(e, seen, visit) {
-				return true
-			}
-		}
-		return false
-	case *typ.Function:
-		for _, p := range n.Params {
-			if scanType(p.Type, seen, visit) {
-				return true
-			}
-		}
-		for _, r := range n.Returns {
-			if scanType(r, seen, visit) {
-				return true
-			}
-		}
-		return n.Variadic != nil && scanType(n.Variadic, seen, visit)
-	case *typ.Record:
-		for _, f := range n.Fields {
-			if scanType(f.Type, seen, visit) {
-				return true
-			}
-		}
-		if n.Metatable != nil && scanType(n.Metatable, seen, visit) {
+		if stop, descend := visit(node); stop {
 			return true
+		} else if !descend {
+			continue
 		}
-		if n.HasMapComponent() {
-			return scanType(n.MapKey, seen, visit) || scanType(n.MapValue, seen, visit)
-		}
-		return false
-	case *typ.Alias:
-		return scanType(n.Target, seen, visit)
-	case *typ.Instantiated:
-		for _, a := range n.TypeArgs {
-			if scanType(a, seen, visit) {
-				return true
+
+		// Push children in reverse order to retain depth-first visitation.
+		switch n := node.(type) {
+		case *typ.Optional:
+			pending = append(pending, n.Inner)
+		case *typ.Union:
+			for i := len(n.Members) - 1; i >= 0; i-- {
+				pending = append(pending, n.Members[i])
+			}
+		case *typ.Intersection:
+			for i := len(n.Members) - 1; i >= 0; i-- {
+				pending = append(pending, n.Members[i])
+			}
+		case *typ.Array:
+			pending = append(pending, n.Element)
+		case *typ.Map:
+			pending = append(pending, n.Value, n.Key)
+		case *typ.Tuple:
+			for i := len(n.Elements) - 1; i >= 0; i-- {
+				pending = append(pending, n.Elements[i])
+			}
+		case *typ.Function:
+			pending = append(pending, n.Variadic)
+			for i := len(n.Returns) - 1; i >= 0; i-- {
+				pending = append(pending, n.Returns[i])
+			}
+			for i := len(n.Params) - 1; i >= 0; i-- {
+				pending = append(pending, n.Params[i].Type)
+			}
+		case *typ.Record:
+			if n.HasMapComponent() {
+				pending = append(pending, n.MapValue, n.MapKey)
+			}
+			pending = append(pending, n.Metatable)
+			for i := len(n.Fields) - 1; i >= 0; i-- {
+				pending = append(pending, n.Fields[i].Type)
+			}
+		case *typ.Alias:
+			pending = append(pending, n.Target)
+		case *typ.Instantiated:
+			for i := len(n.TypeArgs) - 1; i >= 0; i-- {
+				pending = append(pending, n.TypeArgs[i])
+			}
+		case *typ.Interface:
+			for i := len(n.Methods) - 1; i >= 0; i-- {
+				if n.Methods[i].Type != nil {
+					pending = append(pending, n.Methods[i].Type)
+				}
 			}
 		}
-		return false
-	case *typ.Interface:
-		for _, m := range n.Methods {
-			if m.Type != nil && scanType(m.Type, seen, visit) {
-				return true
-			}
-		}
-		return false
-	default:
-		return false
 	}
+	return false
 }
 
 func joinReturnVectorsMonotone(a, b []typ.Type) []typ.Type {
