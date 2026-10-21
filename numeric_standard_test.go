@@ -117,3 +117,26 @@ func TestNumericHashLookupDoesNotAllocate(t *testing.T) {
 		})
 	}
 }
+
+func TestNumericKeyEqualityUsesExactValues(t *testing.T) {
+	L := NewState()
+	defer L.Close()
+	if err := L.DoString(`
+  local a,b=9007199254740992,9007199254740993
+  assert(a~=b and not rawequal(a,b))
+  local f=9007199254740992.0
+  assert(a==f and f==a and rawequal(a,f))
+  assert(b~=f and f~=b and not rawequal(b,f))
+  local max=9223372036854775807
+  assert(max~=9223372036854775808.0)
+  local t={[a]="a",[b]="b"}
+  assert(t[f]=="a" and t[b]=="b")
+  assert(0==-0.0 and -0.0==0)
+  assert(rawequal(1,1.0) and rawequal(1.0,1))
+  local mt={__eq=function() return true end}
+  local x,y=setmetatable({},mt),setmetatable({},mt)
+  assert(x==y and not rawequal(x,y) and rawequal(x,x))
+ `); err != nil {
+		t.Fatal(err)
+	}
+}

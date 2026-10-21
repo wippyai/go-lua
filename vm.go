@@ -3312,11 +3312,15 @@ func equals(L *LState, lhs, rhs LValue, raw bool) bool {
 	lt := lhs.Type()
 	rt := rhs.Type()
 
-	// Numeric equality: LNumber and LInteger can be compared
-	if (lt == LTNumber || lt == LTInteger) && (rt == LTNumber || rt == LTInteger) {
-		v1, _ := toNumber(lhs)
-		v2, _ := toNumber(rhs)
-		return v1 == v2
+	// Mixed equality must convert the float exactly, rather than rounding the
+	// integer to float64. Otherwise adjacent wide integer keys compare equal.
+	if lt == LTInteger && rt == LTNumber {
+		integer, ok := floatToInteger(rhs.(LNumber))
+		return ok && lhs.(LInteger) == integer
+	}
+	if lt == LTNumber && rt == LTInteger {
+		integer, ok := floatToInteger(lhs.(LNumber))
+		return ok && integer == rhs.(LInteger)
 	}
 
 	if lt != rt {
