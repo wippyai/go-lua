@@ -36,9 +36,24 @@ func iterationKey(key LValue) LValue {
 	return key
 }
 
-// nativeTableKey returns an ordinary callable, comparable key. Only live keys
-// are retained; deleted-key traversal uses the non-owning cursor identity.
-func (tb *LTable) nativeTableKey(key LValue, create bool) LValue {
+// tableKey preserves array-index representation and normalizes other integral
+// floats to full-width integers. Native keys retain only live callables;
+// deleted-key traversal uses the non-owning cursor identity.
+func (tb *LTable) tableKey(key LValue, create bool) LValue {
+	switch k := key.(type) {
+	case LInteger:
+		if k > 0 && k < LInteger(MaxArrayIndex) {
+			return LNumber(k)
+		}
+		return key
+	case LNumber:
+		if !isArrayKey(k) && k >= -0x1p63 && k < 0x1p63 {
+			if integer := LInteger(k); LNumber(integer) == k {
+				return integer
+			}
+		}
+		return key
+	}
 	id, native := nativeFunctionID(key)
 	if !native {
 		return key
@@ -393,7 +408,7 @@ func (tb *LTable) RawSetInt(key int, value LValue) bool {
 		return false
 	}
 	if key < 1 || key >= MaxArrayIndex {
-		return tb.RawSetH(LNumber(key), value)
+		return tb.RawSetH(LInteger(key), value)
 	}
 	index := key - 1
 	switch {
@@ -518,7 +533,7 @@ func (tb *LTable) RawSetH(key LValue, value LValue) bool {
 		return tb.RawSetString(string(s), value)
 	}
 
-	key = tb.nativeTableKey(key, value != LNil)
+	key = tb.tableKey(key, value != LNil)
 	if value == LNil {
 		// LAZY: Only delete if Dict exists
 		if tb.Dict != nil {
@@ -542,8 +557,6 @@ func (tb *LTable) RawSetH(key LValue, value LValue) bool {
 // RawGet returns an LValue associated with a given key without __index metamethod.
 func (tb *LTable) RawGet(key LValue) LValue {
 	switch v := key.(type) {
-	case LGoFunc, *LFunction:
-		key = tb.nativeTableKey(key, false)
 	case LNumber:
 		if isArrayKey(v) {
 			return tb.getIntKey(int(v))
@@ -561,26 +574,20 @@ func (tb *LTable) RawGet(key LValue) LValue {
 		}
 		return LNil
 	}
-	if tb.Dict == nil {
-		return LNil
-	}
-	if v, ok := tb.Dict[key]; ok {
-		return v
-	}
-	return LNil
+	return tb.RawGetH(key)
 }
 
 // RawGetInt returns an LValue at position `key` without __index metamethod.
 func (tb *LTable) RawGetInt(key int) LValue {
-	if key < 1 {
-		return LNil
+	if key < 1 || key >= MaxArrayIndex {
+		return tb.RawGetH(LInteger(key))
 	}
 	return tb.getIntKey(key)
 }
 
 // RawGetH returns an LValue associated with a given key without __index metamethod.
 func (tb *LTable) RawGetH(key LValue) LValue {
-	key = tb.nativeTableKey(key, false)
+	key = tb.tableKey(key, false)
 	if s, sok := key.(LString); sok {
 		if tb.Strdict == nil {
 			return LNil
@@ -637,15 +644,9 @@ func (tb *LTable) ForEach(cb func(LValue, LValue)) {
 
 // Next is equivalent to lua_next ( http://www.lua.org/manual/5.1/manual.html#lua_next ).
 func (tb *LTable) Next(key LValue) (LValue, LValue) {
-	key = tb.nativeTableKey(key, false)
+	key = tb.tableKey(key, false)
 	// Lazy initialization - only create ordering when Next() is actually used
 	tb.ensureIterationOrder()
-
-	if k, ok := key.(LInteger); ok && k > 0 && k < LInteger(MaxArrayIndex) {
-		if _, hashed := tb.K2i[key]; !hashed {
-			key = LNumber(k)
-		}
-	}
 
 	hashIndex := 0
 	arrayIndex := 0
