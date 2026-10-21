@@ -1384,12 +1384,6 @@ func constFold(exp ast.Expr) ast.Expr { // {{{
 					return &constLValueExpr{Value: li * ri}
 				}
 			}
-			if !lint {
-				li = LInteger(lvalue)
-			}
-			if !rint {
-				ri = LInteger(rvalue)
-			}
 			switch expr.Operator {
 			case "+":
 				return &constLValueExpr{Value: lvalue + rvalue}
@@ -1400,37 +1394,38 @@ func constFold(exp ast.Expr) ast.Expr { // {{{
 			case "/":
 				return &constLValueExpr{Value: lvalue / rvalue}
 			case "%":
+				if lint && rint {
+					if ri == 0 {
+						return expr
+					}
+					return &constLValueExpr{Value: integerModulo(li, ri)}
+				}
 				return &constLValueExpr{Value: luaModulo(lvalue, rvalue)}
 			case "^":
 				return &constLValueExpr{Value: LNumber(math.Pow(float64(lvalue), float64(rvalue)))}
 			case "//":
-				if ri == 0 {
+				if value, ok := floorDivision(lhs, rhs); ok {
+					return &constLValueExpr{Value: value}
+				}
+				return expr
+			case "&", "|", "~", "<<", ">>":
+				li, lok := exactInteger(lhs)
+				ri, rok := exactInteger(rhs)
+				if !lok || !rok {
 					return expr
 				}
-				q := li / ri
-				if (li^ri) < 0 && li%ri != 0 {
-					q--
+				var value LInteger
+				switch expr.Operator {
+				case "&":
+					value = li & ri
+				case "|":
+					value = li | ri
+				case "~":
+					value = li ^ ri
+				case "<<", ">>":
+					value = integerShift(li, ri, expr.Operator == "<<")
 				}
-				return &constLValueExpr{Value: q}
-			case "&":
-				return &constLValueExpr{Value: li & ri}
-			case "|":
-				return &constLValueExpr{Value: li | ri}
-			case "~":
-				return &constLValueExpr{Value: li ^ ri}
-			case "<<", ">>":
-				if ri >= 64 || ri < -63 {
-					return &constLValueExpr{Value: LInteger(0)}
-				}
-				left := expr.Operator == "<<"
-				if ri < 0 {
-					left = !left
-					ri = -ri
-				}
-				if left {
-					return &constLValueExpr{Value: li << uint(ri)}
-				}
-				return &constLValueExpr{Value: li >> uint(ri)}
+				return &constLValueExpr{Value: value}
 			default:
 				panic(fmt.Sprintf("unknown binop: %v", expr.Operator))
 			}
@@ -1439,6 +1434,9 @@ func constFold(exp ast.Expr) ast.Expr { // {{{
 		}
 	case *ast.UnaryMinusOpExpr:
 		expr.Expr = constFold(expr.Expr)
+		if value, ok := constantNumberValue(expr.Expr).(LInteger); ok {
+			return &constLValueExpr{Value: -value}
+		}
 		if value, ok := toNumber(constantNumberValue(expr.Expr)); ok {
 			return &constLValueExpr{Value: -value}
 		}
