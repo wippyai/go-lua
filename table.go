@@ -36,23 +36,30 @@ func iterationKey(key LValue) LValue {
 	return key
 }
 
-// tableKey preserves array-index representation and normalizes other integral
-// floats to full-width integers. Native keys retain only live callables;
-// deleted-key traversal uses the non-owning cursor identity.
-func (tb *LTable) tableKey(key LValue, create bool) LValue {
+// numericTableKey is small enough to inline into read paths. Keeping numeric
+// normalization separate from callable-key lookup lets temporary map keys stay
+// on the stack instead of allocating on every integral-float hash read.
+func numericTableKey(key LValue) LValue {
 	switch k := key.(type) {
 	case LInteger:
 		if k > 0 && k < LInteger(MaxArrayIndex) {
 			return LNumber(k)
 		}
-		return key
 	case LNumber:
-		if !isArrayKey(k) && k >= -0x1p63 && k < 0x1p63 {
-			if integer := LInteger(k); LNumber(integer) == k {
-				return integer
-			}
+		if integer, ok := floatToInteger(k); ok && (integer <= 0 || integer >= LInteger(MaxArrayIndex)) {
+			return integer
 		}
-		return key
+	}
+	return key
+}
+
+// tableKey preserves array-index representation and normalizes other integral
+// floats to full-width integers. Native keys retain only live callables;
+// deleted-key traversal uses the non-owning cursor identity.
+func (tb *LTable) tableKey(key LValue, create bool) LValue {
+	switch key.(type) {
+	case LInteger, LNumber:
+		return numericTableKey(key)
 	}
 	id, native := nativeFunctionID(key)
 	if !native {
@@ -587,7 +594,10 @@ func (tb *LTable) RawGetInt(key int) LValue {
 
 // RawGetH returns an LValue associated with a given key without __index metamethod.
 func (tb *LTable) RawGetH(key LValue) LValue {
-	key = tb.tableKey(key, false)
+	switch key.(type) {
+	case LGoFunc, *LFunction:
+		key = tb.tableKey(key, false)
+	}
 	if s, sok := key.(LString); sok {
 		if tb.Strdict == nil {
 			return LNil
@@ -600,7 +610,8 @@ func (tb *LTable) RawGetH(key LValue) LValue {
 	if tb.Dict == nil {
 		return LNil
 	}
-	if v, ok := tb.Dict[key]; ok {
+	lookupKey := numericTableKey(key)
+	if v, ok := tb.Dict[lookupKey]; ok {
 		return v
 	}
 	return LNil

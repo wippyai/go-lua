@@ -905,6 +905,16 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			C := int(inst>>9) & 0x1ff //GETC
 			lhs := L.rkValue(B)
 			rhs := L.rkValue(C)
+			if l, ok := lhs.(LInteger); ok {
+				if r, ok := rhs.(LInteger); ok {
+					if r == 0 {
+						L.RaiseError("attempt to perform modulo by zero")
+						continue
+					}
+					reg.Set(RA, lintegerToValue(integerModulo(l, r)))
+					continue
+				}
+			}
 			v1, ok1 := toNumber(lhs)
 			v2, ok2 := toNumber(rhs)
 			if ok1 && ok2 {
@@ -1025,53 +1035,17 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			}
 
 		case OP_IDIV:
-			reg := L.reg
-			lbase := cf.LocalBase
 			A := int(inst>>18) & 0xff
-			RA := int(lbase) + A
-			B := int(inst & 0x1ff)
-			C := int(inst>>9) & 0x1ff
-			lhs := L.rkValue(B)
-			rhs := L.rkValue(C)
-			var l, r int64
-			switch lv := lhs.(type) {
-			case LInteger:
-				l = int64(lv)
-			case LNumber:
-				l = int64(lv)
-			default:
-				L.RaiseError("attempt to perform arithmetic on a %s value", lhs.Type().String())
-				continue
-			}
-			switch rv := rhs.(type) {
-			case LInteger:
-				r = int64(rv)
-			case LNumber:
-				r = int64(rv)
-			default:
-				L.RaiseError("attempt to perform arithmetic on a %s value", rhs.Type().String())
-				continue
-			}
-			if r == 0 {
-				L.RaiseError("attempt to divide by zero")
-				continue
-			}
-			{
-				rg := reg
-				regi := RA
-				// Floor division: rounds toward negative infinity (Lua 5.3 semantics)
-				q := l / r
-				if (l^r) < 0 && l%r != 0 {
-					q--
-				}
-				vali := lintegerToValue(LInteger(q))
-				newSize := regi + 1
-				if newSize > cap(rg.array) {
-					rg.resize(newSize)
-				}
-				rg.array[regi] = vali
-				if regi >= rg.top {
-					rg.top = regi + 1
+			RA := int(cf.LocalBase) + A
+			lhs := L.rkValue(int(inst & 0x1ff))
+			rhs := L.rkValue(int(inst>>9) & 0x1ff)
+			if value, ok := floorDivision(lhs, rhs); ok {
+				L.reg.Set(RA, value)
+			} else {
+				if _, ok := lhs.(LInteger); ok && rhs == LInteger(0) {
+					L.RaiseError("attempt to divide by zero")
+				} else {
+					L.RaiseError("attempt to perform arithmetic on a non-number value")
 				}
 			}
 
@@ -1084,25 +1058,8 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			C := int(inst>>9) & 0x1ff
 			lhs := L.rkValue(B)
 			rhs := L.rkValue(C)
-			var l, r int64
-			switch lv := lhs.(type) {
-			case LInteger:
-				l = int64(lv)
-			case LNumber:
-				l = int64(lv)
-			default:
-				L.RaiseError("attempt to perform bitwise operation on a %s value", lhs.Type().String())
-				continue
-			}
-			switch rv := rhs.(type) {
-			case LInteger:
-				r = int64(rv)
-			case LNumber:
-				r = int64(rv)
-			default:
-				L.RaiseError("attempt to perform bitwise operation on a %s value", rhs.Type().String())
-				continue
-			}
+			l := bitwiseOperand(L, lhs)
+			r := bitwiseOperand(L, rhs)
 			{
 				rg := reg
 				regi := RA
@@ -1126,25 +1083,8 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			C := int(inst>>9) & 0x1ff
 			lhs := L.rkValue(B)
 			rhs := L.rkValue(C)
-			var l, r int64
-			switch lv := lhs.(type) {
-			case LInteger:
-				l = int64(lv)
-			case LNumber:
-				l = int64(lv)
-			default:
-				L.RaiseError("attempt to perform bitwise operation on a %s value", lhs.Type().String())
-				continue
-			}
-			switch rv := rhs.(type) {
-			case LInteger:
-				r = int64(rv)
-			case LNumber:
-				r = int64(rv)
-			default:
-				L.RaiseError("attempt to perform bitwise operation on a %s value", rhs.Type().String())
-				continue
-			}
+			l := bitwiseOperand(L, lhs)
+			r := bitwiseOperand(L, rhs)
 			{
 				rg := reg
 				regi := RA
@@ -1168,25 +1108,8 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			C := int(inst>>9) & 0x1ff
 			lhs := L.rkValue(B)
 			rhs := L.rkValue(C)
-			var l, r int64
-			switch lv := lhs.(type) {
-			case LInteger:
-				l = int64(lv)
-			case LNumber:
-				l = int64(lv)
-			default:
-				L.RaiseError("attempt to perform bitwise operation on a %s value", lhs.Type().String())
-				continue
-			}
-			switch rv := rhs.(type) {
-			case LInteger:
-				r = int64(rv)
-			case LNumber:
-				r = int64(rv)
-			default:
-				L.RaiseError("attempt to perform bitwise operation on a %s value", rhs.Type().String())
-				continue
-			}
+			l := bitwiseOperand(L, lhs)
+			r := bitwiseOperand(L, rhs)
 			{
 				rg := reg
 				regi := RA
@@ -1210,33 +1133,9 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			C := int(inst>>9) & 0x1ff
 			lhs := L.rkValue(B)
 			rhs := L.rkValue(C)
-			var l, r int64
-			switch lv := lhs.(type) {
-			case LInteger:
-				l = int64(lv)
-			case LNumber:
-				l = int64(lv)
-			default:
-				L.RaiseError("attempt to perform bitwise operation on a %s value", lhs.Type().String())
-				continue
-			}
-			switch rv := rhs.(type) {
-			case LInteger:
-				r = int64(rv)
-			case LNumber:
-				r = int64(rv)
-			default:
-				L.RaiseError("attempt to perform bitwise operation on a %s value", rhs.Type().String())
-				continue
-			}
-			var result int64
-			if r >= 64 || r < -63 {
-				result = 0
-			} else if r >= 0 {
-				result = l << uint(r)
-			} else {
-				result = l >> uint(-r)
-			}
+			l := bitwiseOperand(L, lhs)
+			r := bitwiseOperand(L, rhs)
+			result := integerShift(l, r, true)
 			{
 				rg := reg
 				regi := RA
@@ -1260,33 +1159,9 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			C := int(inst>>9) & 0x1ff
 			lhs := L.rkValue(B)
 			rhs := L.rkValue(C)
-			var l, r int64
-			switch lv := lhs.(type) {
-			case LInteger:
-				l = int64(lv)
-			case LNumber:
-				l = int64(lv)
-			default:
-				L.RaiseError("attempt to perform bitwise operation on a %s value", lhs.Type().String())
-				continue
-			}
-			switch rv := rhs.(type) {
-			case LInteger:
-				r = int64(rv)
-			case LNumber:
-				r = int64(rv)
-			default:
-				L.RaiseError("attempt to perform bitwise operation on a %s value", rhs.Type().String())
-				continue
-			}
-			var result int64
-			if r >= 64 || r < -63 {
-				result = 0
-			} else if r >= 0 {
-				result = l >> uint(r)
-			} else {
-				result = l << uint(-r)
-			}
+			l := bitwiseOperand(L, lhs)
+			r := bitwiseOperand(L, rhs)
+			result := integerShift(l, r, false)
 			{
 				rg := reg
 				regi := RA
@@ -1308,6 +1183,10 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			RA := int(lbase) + A
 			B := int(inst & 0x1ff) //GETB
 			unaryv := L.rkValue(B)
+			if n, ok := unaryv.(LInteger); ok {
+				reg.Set(RA, lintegerToValue(-n))
+				continue
+			}
 			if nm, ok := toNumber(unaryv); ok {
 				// this section is inlined by go-inline
 				// source function is 'func (rg *registry) Set(regi int, vali LValue) ' in '_state.go'
@@ -1399,16 +1278,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			RA := int(lbase) + A
 			B := int(inst & 0x1ff)
 			unaryv := L.rkValue(B)
-			var n int64
-			switch v := unaryv.(type) {
-			case LInteger:
-				n = int64(v)
-			case LNumber:
-				n = int64(v)
-			default:
-				L.RaiseError("attempt to perform bitwise operation on a %s value", unaryv.Type().String())
-				continue
-			}
+			n := bitwiseOperand(L, unaryv)
 			{
 				rg := reg
 				regi := RA
