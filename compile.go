@@ -144,27 +144,20 @@ func isVarArgReturnExpr(expr ast.Expr) bool {
 	return false
 }
 
-func lnumberValue(expr ast.Expr) (LNumber, bool) {
+func constantNumberValue(expr ast.Expr) LValue {
 	if ex, ok := expr.(*ast.NumberExpr); ok {
 		lv, err := parseNumberValue(ex.Value)
 		if err != nil {
-			return LNumber(math.NaN()), true
+			return LNumber(math.NaN())
 		}
-		switch v := lv.(type) {
-		case LNumber:
-			return v, true
-		case LInteger:
-			return LNumber(v), true
-		}
+		return lv
 	} else if ex, ok := expr.(*constLValueExpr); ok {
-		switch v := ex.Value.(type) {
-		case LNumber:
-			return v, true
-		case LInteger:
-			return LNumber(v), true
+		switch ex.Value.(type) {
+		case LNumber, LInteger:
+			return ex.Value
 		}
 	}
-	return 0, false
+	return nil
 }
 
 /* utilities }}} */
@@ -1374,9 +1367,29 @@ func compileExprWithMVPropagation(context *funcContext, expr ast.Expr, reg *int,
 func constFold(exp ast.Expr) ast.Expr { // {{{
 	switch expr := exp.(type) {
 	case *ast.ArithmeticOpExpr:
-		lvalue, lisconst := lnumberValue(constFold(expr.Lhs))
-		rvalue, risconst := lnumberValue(constFold(expr.Rhs))
+		lhs := constantNumberValue(constFold(expr.Lhs))
+		rhs := constantNumberValue(constFold(expr.Rhs))
+		lvalue, lisconst := toNumber(lhs)
+		rvalue, risconst := toNumber(rhs)
 		if lisconst && risconst {
+			li, lint := lhs.(LInteger)
+			ri, rint := rhs.(LInteger)
+			if lint && rint {
+				switch expr.Operator {
+				case "+":
+					return &constLValueExpr{Value: li + ri}
+				case "-":
+					return &constLValueExpr{Value: li - ri}
+				case "*":
+					return &constLValueExpr{Value: li * ri}
+				}
+			}
+			if !lint {
+				li = LInteger(lvalue)
+			}
+			if !rint {
+				ri = LInteger(rvalue)
+			}
 			switch expr.Operator {
 			case "+":
 				return &constLValueExpr{Value: lvalue + rvalue}
@@ -1391,17 +1404,33 @@ func constFold(exp ast.Expr) ast.Expr { // {{{
 			case "^":
 				return &constLValueExpr{Value: LNumber(math.Pow(float64(lvalue), float64(rvalue)))}
 			case "//":
-				return &constLValueExpr{Value: LNumber(math.Floor(float64(lvalue) / float64(rvalue)))}
+				if ri == 0 {
+					return expr
+				}
+				q := li / ri
+				if (li^ri) < 0 && li%ri != 0 {
+					q--
+				}
+				return &constLValueExpr{Value: q}
 			case "&":
-				return &constLValueExpr{Value: LNumber(int64(lvalue) & int64(rvalue))}
+				return &constLValueExpr{Value: li & ri}
 			case "|":
-				return &constLValueExpr{Value: LNumber(int64(lvalue) | int64(rvalue))}
+				return &constLValueExpr{Value: li | ri}
 			case "~":
-				return &constLValueExpr{Value: LNumber(int64(lvalue) ^ int64(rvalue))}
-			case "<<":
-				return &constLValueExpr{Value: LNumber(int64(lvalue) << uint64(rvalue))}
-			case ">>":
-				return &constLValueExpr{Value: LNumber(int64(lvalue) >> uint64(rvalue))}
+				return &constLValueExpr{Value: li ^ ri}
+			case "<<", ">>":
+				if ri >= 64 || ri < -63 {
+					return &constLValueExpr{Value: LInteger(0)}
+				}
+				left := expr.Operator == "<<"
+				if ri < 0 {
+					left = !left
+					ri = -ri
+				}
+				if left {
+					return &constLValueExpr{Value: li << uint(ri)}
+				}
+				return &constLValueExpr{Value: li >> uint(ri)}
 			default:
 				panic(fmt.Sprintf("unknown binop: %v", expr.Operator))
 			}
@@ -1410,7 +1439,7 @@ func constFold(exp ast.Expr) ast.Expr { // {{{
 		}
 	case *ast.UnaryMinusOpExpr:
 		expr.Expr = constFold(expr.Expr)
-		if value, ok := lnumberValue(expr.Expr); ok {
+		if value, ok := toNumber(constantNumberValue(expr.Expr)); ok {
 			return &constLValueExpr{Value: -value}
 		}
 		return expr
