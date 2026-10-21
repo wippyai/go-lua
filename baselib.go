@@ -243,27 +243,7 @@ func basePrint(L *LState) int {
 func baseRawEqual(L *LState) int {
 	lhs := L.CheckAny(1)
 	rhs := L.CheckAny(2)
-
-	// Handle LGoFunc specially since function types are not comparable with ==
-	if lhs.Type() == LTFunction && rhs.Type() == LTFunction {
-		l, lok := lhs.(LGoFunc)
-		r, rok := rhs.(LGoFunc)
-		if lok && rok {
-			// Compare function pointers via their string representation
-			if fmt.Sprintf("%p", l) == fmt.Sprintf("%p", r) {
-				L.Push(LTrue)
-			} else {
-				L.Push(LFalse)
-			}
-			return 1
-		}
-	}
-
-	if lhs == rhs {
-		L.Push(LTrue)
-	} else {
-		L.Push(LFalse)
-	}
+	L.Push(LBool(L.RawEqual(lhs, rhs)))
 	return 1
 }
 
