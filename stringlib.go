@@ -167,7 +167,7 @@ func strGsub(L *LState) int {
 		L.Push(LString(strGsubStr(L, str, string(lv), mds)))
 	case *LTable:
 		L.Push(LString(strGsubTable(L, str, lv, mds)))
-	case *LFunction:
+	case *LFunction, LGoFunc:
 		L.Push(LString(strGsubFunc(L, str, lv, mds)))
 	}
 	L.Push(LNumber(len(mds)))
@@ -262,7 +262,7 @@ func strGsubTable(L *LState, str string, repl *LTable, matches []*pm.MatchData) 
 	return strGsubDoReplace(str, infoList)
 }
 
-func strGsubFunc(L *LState, str string, repl *LFunction, matches []*pm.MatchData) string {
+func strGsubFunc(L *LState, str string, repl LValue, matches []*pm.MatchData) string {
 	infoList := make([]replaceInfo, 0, len(matches))
 	for _, match := range matches {
 		start, end := match.Capture(0), match.Capture(1)
@@ -284,6 +284,11 @@ func strGsubFunc(L *LState, str string, repl *LFunction, matches []*pm.MatchData
 		L.Call(nargs, 1)
 		ret := L.reg.Pop()
 		if !LVIsFalse(ret) {
+			switch ret.(type) {
+			case LString, LNumber, LInteger:
+			default:
+				L.RaiseError("invalid replacement value (a %s)", ret.Type())
+			}
 			infoList = append(infoList, replaceInfo{[]int{start, end}, LVAsString(ret)})
 		}
 	}
