@@ -213,3 +213,77 @@ func TestGsubSpecialCases(t *testing.T) {
 		})
 	}
 }
+
+func TestGsubCallbackReturnValue(t *testing.T) {
+	cases := map[string]string{
+		"native":                   `local value, count = string.gsub("home_city", "^%l", string.upper); assert(type(value) == "string", type(value)); assert(value == "Home_city", tostring(value)); assert(count == 1)`,
+		"chained_native":           `local value = ("home_city"):gsub("_", " "):gsub("^%l", string.upper); assert(type(value) == "string", type(value)); assert(value == "Home city", tostring(value))`,
+		"native_captures":          `local value, count = ("a1 b2"):gsub("(%a)%d", string.upper); assert(value == "A B", tostring(value)); assert(count == 2)`,
+		"native_multiple_captures": `local value, count = ("%s:%s a b"):gsub("(%%s:%%s) (%a) (%a)", string.format); assert(value == "a:b", tostring(value)); assert(count == 1)`,
+		"native_position_capture":  `local value, count = ("ab"):gsub("(%a)()", string.rep); assert(value == "aabbb", tostring(value)); assert(count == 2)`,
+		"native_no_match":          `local value, count = ("123"):gsub("%a", string.upper); assert(value == "123", tostring(value)); assert(count == 0)`,
+		"lua":                      `local value, count = ("ab"):gsub("%a", function(c) return c .. c end); assert(value == "aabb", tostring(value)); assert(count == 2)`,
+	}
+	for name, source := range cases {
+		t.Run(name, func(t *testing.T) {
+			L := NewState()
+			defer L.Close()
+			if err := L.DoString(source); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestGsubCallbackResults(t *testing.T) {
+	cases := []struct {
+		name, result, want string
+		invalid            bool
+	}{
+		{name: "string", result: `"X"`, want: "aXc"},
+		{name: "empty_string", result: `""`, want: "ac"},
+		{name: "integer", result: `42`, want: "a42c"},
+		{name: "number", result: `1.5`, want: "a1.5c"},
+		{name: "nil", result: `nil`, want: "abc"},
+		{name: "false", result: `false`, want: "abc"},
+		{name: "true", result: `true`, invalid: true},
+		{name: "table", result: `{}`, invalid: true},
+		{name: "function", result: `function() end`, invalid: true},
+		{name: "thread", result: `coroutine.create(function() end)`, invalid: true},
+	}
+	for _, kind := range []string{"native", "go_closure", "lua_closure"} {
+		for _, tc := range cases {
+			t.Run(kind+"/"+tc.name, func(t *testing.T) {
+				L := NewState()
+				defer L.Close()
+				if err := L.DoString(`replacementResult = ` + tc.result); err != nil {
+					t.Fatal(err)
+				}
+				callback := LGFunction(func(L *LState) int {
+					L.Push(L.GetGlobal("replacementResult"))
+					return 1
+				})
+				switch kind {
+				case "native":
+					L.SetGlobal("callback", LGoFunc(callback))
+				case "go_closure":
+					L.SetGlobal("callback", L.NewFunction(callback))
+				case "lua_closure":
+					if err := L.DoString(`callback = function() return replacementResult end`); err != nil {
+						t.Fatal(err)
+					}
+				}
+				source := fmt.Sprintf(`local value, count = ("abc"):gsub("b", callback)
+                    assert(value == %q, tostring(value)); assert(count == 1)`, tc.want)
+				if tc.invalid {
+					source = `local ok, err = pcall(string.gsub, "abc", "b", callback)
+                        assert(not ok, "expected invalid replacement error")
+                        assert(string.find(err, "invalid replacement value", 1, true), err)`
+				}
+				if err := L.DoString(source); err != nil {
+					t.Fatal(err)
+				}
+			})
+		}
+	}
+}
