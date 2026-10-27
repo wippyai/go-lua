@@ -134,18 +134,6 @@ func strFind(L *LState) int {
 	return md.CaptureLength()/2 + 1
 }
 
-func strFormat(L *LState) int {
-	str := L.CheckString(1)
-	args := make([]any, L.GetTop()-1)
-	top := L.GetTop()
-	for i := 2; i <= top; i++ {
-		args[i-2] = L.Get(i)
-	}
-	npat := strings.Count(str, "%") - strings.Count(str, "%%")
-	L.Push(LString(fmt.Sprintf(str, args[:intMin(npat, len(args))]...)))
-	return 1
-}
-
 func strGsub(L *LState) int {
 	str := L.CheckString(1)
 	pat := L.CheckString(2)
