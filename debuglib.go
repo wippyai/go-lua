@@ -7,9 +7,11 @@ import (
 
 var debugFuncs = map[string]LGoFunc{
 	"getinfo":      debugGetInfo,
+	"gethook":      debugGetHook,
 	"getlocal":     debugGetLocal,
 	"getmetatable": debugGetMetatable,
 	"getupvalue":   debugGetUpvalue,
+	"sethook":      debugSetHook,
 	"setlocal":     debugSetLocal,
 	"setmetatable": debugSetMetatable,
 	"setupvalue":   debugSetUpvalue,
