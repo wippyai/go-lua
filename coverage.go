@@ -10,7 +10,7 @@ import (
 
 // Line coverage built on the debug hook (hook.go). Enabled by setting
 // WIPPY_COVERAGE in the environment before the process starts. When on, every
-// LState is armed with a line hook (covArm) so the hook's line-event path in
+// LState enters the shared hook dispatcher, where
 // callHook records each executing source line — coverage is a hook consumer,
 // not a separate instrumentation path. The denominator (coverable lines,
 // including never-executed functions) is gathered from every compiled prototype
@@ -24,16 +24,6 @@ var (
 
 // CoverageEnabled reports whether coverage collection is active.
 func CoverageEnabled() bool { return covOn }
-
-// covArm turns on the line hook for a freshly created/pooled LState so the hook
-// records coverage. No-op unless WIPPY_COVERAGE is set, so non-coverage runs and
-// explicit debug.sethook users are unaffected.
-func covArm(ls *LState) {
-	if covOn {
-		ls.hookMask |= HookMaskLine
-		ls.hookLastLine = 0
-	}
-}
 
 // covRecordHit is called from the hook's line-event path in callHook.
 func covRecordHit(src string, line int) {

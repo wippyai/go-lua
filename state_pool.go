@@ -44,6 +44,10 @@ func resetLState(ls *LState) {
 	ls.wrapped = false
 	ls.yieldState = yieldNone
 
+	// Debug callbacks and their dispatch history belong to the prior owner.
+	ls.clearHook()
+	ls.inHook = false
+
 	// Clear frame extensions to prevent stale continuations from being invoked
 	ls.frameExt = nil
 }
@@ -95,7 +99,6 @@ func newLStateWithGlobal(options Options, G *Global, env *LTable) *LState {
 			ls.reg.handler = ls
 		}
 
-		covArm(ls)
 		return ls
 	}
 
@@ -123,6 +126,5 @@ func newLStateWithGlobal(options Options, G *Global, env *LTable) *LState {
 	ls.reg = newRegistry(ls, options.RegistrySize, options.RegistryGrowStep, options.RegistryMaxSize)
 	ls.Env = env
 
-	covArm(ls)
 	return ls
 }

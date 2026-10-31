@@ -75,7 +75,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			continue
 		}
 
-		if L.hookMask != 0 {
+		if L.hookMask != 0 || covOn {
 			L.callHook(cf)
 			cf = L.currentFrame
 		}
