@@ -13,7 +13,8 @@ func TestReviewCoverageRecordsSeparateChunksWithEqualLineNumbers(t *testing.T) {
 	}
 	L := NewState()
 	defer L.Close()
-	for _, source := range []string{"@review-cov-first.lua", "@review-cov-second.lua"} {
+	for _, name := range []string{"first.lua", "second.lua"} {
+		source := "@" + filepath.ToSlash(filepath.Join(t.TempDir(), name))
 		fn, err := L.Load(strings.NewReader("return 42"), source)
 		if err != nil {
 			t.Fatal(err)
@@ -38,7 +39,7 @@ func TestReviewCoverageSurvivesClearingUserDebugHooks(t *testing.T) {
 	if err := L.DoString(`debug.sethook(nil)`); err != nil {
 		t.Fatal(err)
 	}
-	source := "@review-cov-after-clear.lua"
+	source := "@" + filepath.ToSlash(filepath.Join(t.TempDir(), "after-clear.lua"))
 	fn, err := L.Load(strings.NewReader("return 42"), source)
 	if err != nil {
 		t.Fatal(err)
@@ -59,7 +60,7 @@ func TestReviewCoverageIncludesDebugHookCallbackCode(t *testing.T) {
 	}
 	L := NewState()
 	defer L.Close()
-	source := "@review-cov-callback.lua"
+	source := "@" + filepath.ToSlash(filepath.Join(t.TempDir(), "callback.lua"))
 	fn, err := L.Load(strings.NewReader("return function()\n local n = 42\n return n\nend"), source)
 	if err != nil {
 		t.Fatal(err)
@@ -94,7 +95,7 @@ func TestReviewCoverageRetainsUnexecutedFunctionLines(t *testing.T) {
 	}
 	L := NewState()
 	defer L.Close()
-	source := "@review-cov-unexecuted.lua"
+	source := "@" + filepath.ToSlash(filepath.Join(t.TempDir(), "unexecuted.lua"))
 	fn, err := L.Load(strings.NewReader("local function unused()\n return 99\nend\nreturn 42"), source)
 	if err != nil {
 		t.Fatal(err)
