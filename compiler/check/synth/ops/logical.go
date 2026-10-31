@@ -20,8 +20,9 @@ import (
 //   - `nil and x` -> nil
 //   - `string? and number` -> nil | number
 func LogicalAndTyped(left, right typ.Type) typ.Type {
-	left = ExtractFirstValue(left)
-	right = ExtractFirstValue(right)
+	// Operands keep their shape here: call results are already truncated to
+	// their first value at synthesis, so a surviving tuple is a table value
+	// and unwrapping it would mistype the table as its element type.
 
 	// Unknown left type: cannot determine result
 	if left == nil {
@@ -35,6 +36,13 @@ func LogicalAndTyped(left, right typ.Type) typ.Type {
 
 	if right != nil && right.Kind().IsNever() {
 		return typ.Never
+	}
+
+	// An any-valued left operand can itself be the result of `and` on the
+	// falsy path. Keep that gradual uncertainty instead of materializing its
+	// possible nil/false values as a concrete optional return type.
+	if typ.IsAny(left) {
+		return typ.Any
 	}
 
 	// If left is definitely truthy (cannot be nil or false), result is right
@@ -77,8 +85,9 @@ func LogicalAndTyped(left, right typ.Type) typ.Type {
 // Canonical policy: merge via typ.JoinBranchOutcome to preserve runtime
 // uncertainty while still preferring concrete alternatives over soft placeholders.
 func LogicalOrTyped(left, right typ.Type) typ.Type {
-	left = ExtractFirstValue(left)
-	right = ExtractFirstValue(right)
+	// Operands keep their shape here: call results are already truncated to
+	// their first value at synthesis, so a surviving tuple is a table value
+	// and unwrapping it would mistype the table as its element type.
 
 	// Unknown left type: cannot determine result
 	if left == nil {

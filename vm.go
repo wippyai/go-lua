@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"runtime/debug"
 	"strings"
 	"sync"
 )
@@ -909,6 +910,16 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			C := int(inst>>9) & 0x1ff //GETC
 			lhs := L.rkValue(B)
 			rhs := L.rkValue(C)
+			if l, ok := lhs.(LInteger); ok {
+				if r, ok := rhs.(LInteger); ok {
+					if r == 0 {
+						L.RaiseError("attempt to perform modulo by zero")
+						continue
+					}
+					reg.Set(RA, lintegerToValue(integerModulo(l, r)))
+					continue
+				}
+			}
 			v1, ok1 := toNumber(lhs)
 			v2, ok2 := toNumber(rhs)
 			if ok1 && ok2 {
@@ -1029,53 +1040,17 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			}
 
 		case OP_IDIV:
-			reg := L.reg
-			lbase := cf.LocalBase
 			A := int(inst>>18) & 0xff
-			RA := int(lbase) + A
-			B := int(inst & 0x1ff)
-			C := int(inst>>9) & 0x1ff
-			lhs := L.rkValue(B)
-			rhs := L.rkValue(C)
-			var l, r int64
-			switch lv := lhs.(type) {
-			case LInteger:
-				l = int64(lv)
-			case LNumber:
-				l = int64(lv)
-			default:
-				L.RaiseError("attempt to perform arithmetic on a %s value", lhs.Type().String())
-				continue
-			}
-			switch rv := rhs.(type) {
-			case LInteger:
-				r = int64(rv)
-			case LNumber:
-				r = int64(rv)
-			default:
-				L.RaiseError("attempt to perform arithmetic on a %s value", rhs.Type().String())
-				continue
-			}
-			if r == 0 {
-				L.RaiseError("attempt to divide by zero")
-				continue
-			}
-			{
-				rg := reg
-				regi := RA
-				// Floor division: rounds toward negative infinity (Lua 5.3 semantics)
-				q := l / r
-				if (l^r) < 0 && l%r != 0 {
-					q--
-				}
-				vali := lintegerToValue(LInteger(q))
-				newSize := regi + 1
-				if newSize > cap(rg.array) {
-					rg.resize(newSize)
-				}
-				rg.array[regi] = vali
-				if regi >= rg.top {
-					rg.top = regi + 1
+			RA := int(cf.LocalBase) + A
+			lhs := L.rkValue(int(inst & 0x1ff))
+			rhs := L.rkValue(int(inst>>9) & 0x1ff)
+			if value, ok := floorDivision(lhs, rhs); ok {
+				L.reg.Set(RA, value)
+			} else {
+				if _, ok := lhs.(LInteger); ok && rhs == LInteger(0) {
+					L.RaiseError("attempt to divide by zero")
+				} else {
+					L.RaiseError("attempt to perform arithmetic on a non-number value")
 				}
 			}
 
@@ -1088,25 +1063,8 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			C := int(inst>>9) & 0x1ff
 			lhs := L.rkValue(B)
 			rhs := L.rkValue(C)
-			var l, r int64
-			switch lv := lhs.(type) {
-			case LInteger:
-				l = int64(lv)
-			case LNumber:
-				l = int64(lv)
-			default:
-				L.RaiseError("attempt to perform bitwise operation on a %s value", lhs.Type().String())
-				continue
-			}
-			switch rv := rhs.(type) {
-			case LInteger:
-				r = int64(rv)
-			case LNumber:
-				r = int64(rv)
-			default:
-				L.RaiseError("attempt to perform bitwise operation on a %s value", rhs.Type().String())
-				continue
-			}
+			l := bitwiseOperand(L, lhs)
+			r := bitwiseOperand(L, rhs)
 			{
 				rg := reg
 				regi := RA
@@ -1130,25 +1088,8 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			C := int(inst>>9) & 0x1ff
 			lhs := L.rkValue(B)
 			rhs := L.rkValue(C)
-			var l, r int64
-			switch lv := lhs.(type) {
-			case LInteger:
-				l = int64(lv)
-			case LNumber:
-				l = int64(lv)
-			default:
-				L.RaiseError("attempt to perform bitwise operation on a %s value", lhs.Type().String())
-				continue
-			}
-			switch rv := rhs.(type) {
-			case LInteger:
-				r = int64(rv)
-			case LNumber:
-				r = int64(rv)
-			default:
-				L.RaiseError("attempt to perform bitwise operation on a %s value", rhs.Type().String())
-				continue
-			}
+			l := bitwiseOperand(L, lhs)
+			r := bitwiseOperand(L, rhs)
 			{
 				rg := reg
 				regi := RA
@@ -1172,25 +1113,8 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			C := int(inst>>9) & 0x1ff
 			lhs := L.rkValue(B)
 			rhs := L.rkValue(C)
-			var l, r int64
-			switch lv := lhs.(type) {
-			case LInteger:
-				l = int64(lv)
-			case LNumber:
-				l = int64(lv)
-			default:
-				L.RaiseError("attempt to perform bitwise operation on a %s value", lhs.Type().String())
-				continue
-			}
-			switch rv := rhs.(type) {
-			case LInteger:
-				r = int64(rv)
-			case LNumber:
-				r = int64(rv)
-			default:
-				L.RaiseError("attempt to perform bitwise operation on a %s value", rhs.Type().String())
-				continue
-			}
+			l := bitwiseOperand(L, lhs)
+			r := bitwiseOperand(L, rhs)
 			{
 				rg := reg
 				regi := RA
@@ -1214,33 +1138,9 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			C := int(inst>>9) & 0x1ff
 			lhs := L.rkValue(B)
 			rhs := L.rkValue(C)
-			var l, r int64
-			switch lv := lhs.(type) {
-			case LInteger:
-				l = int64(lv)
-			case LNumber:
-				l = int64(lv)
-			default:
-				L.RaiseError("attempt to perform bitwise operation on a %s value", lhs.Type().String())
-				continue
-			}
-			switch rv := rhs.(type) {
-			case LInteger:
-				r = int64(rv)
-			case LNumber:
-				r = int64(rv)
-			default:
-				L.RaiseError("attempt to perform bitwise operation on a %s value", rhs.Type().String())
-				continue
-			}
-			var result int64
-			if r >= 64 || r < -63 {
-				result = 0
-			} else if r >= 0 {
-				result = l << uint(r)
-			} else {
-				result = l >> uint(-r)
-			}
+			l := bitwiseOperand(L, lhs)
+			r := bitwiseOperand(L, rhs)
+			result := integerShift(l, r, true)
 			{
 				rg := reg
 				regi := RA
@@ -1264,33 +1164,9 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			C := int(inst>>9) & 0x1ff
 			lhs := L.rkValue(B)
 			rhs := L.rkValue(C)
-			var l, r int64
-			switch lv := lhs.(type) {
-			case LInteger:
-				l = int64(lv)
-			case LNumber:
-				l = int64(lv)
-			default:
-				L.RaiseError("attempt to perform bitwise operation on a %s value", lhs.Type().String())
-				continue
-			}
-			switch rv := rhs.(type) {
-			case LInteger:
-				r = int64(rv)
-			case LNumber:
-				r = int64(rv)
-			default:
-				L.RaiseError("attempt to perform bitwise operation on a %s value", rhs.Type().String())
-				continue
-			}
-			var result int64
-			if r >= 64 || r < -63 {
-				result = 0
-			} else if r >= 0 {
-				result = l >> uint(r)
-			} else {
-				result = l << uint(-r)
-			}
+			l := bitwiseOperand(L, lhs)
+			r := bitwiseOperand(L, rhs)
+			result := integerShift(l, r, false)
 			{
 				rg := reg
 				regi := RA
@@ -1312,6 +1188,10 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			RA := int(lbase) + A
 			B := int(inst & 0x1ff) //GETB
 			unaryv := L.rkValue(B)
+			if n, ok := unaryv.(LInteger); ok {
+				reg.Set(RA, lintegerToValue(-n))
+				continue
+			}
 			if nm, ok := toNumber(unaryv); ok {
 				// this section is inlined by go-inline
 				// source function is 'func (rg *registry) Set(regi int, vali LValue) ' in '_state.go'
@@ -1403,16 +1283,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			RA := int(lbase) + A
 			B := int(inst & 0x1ff)
 			unaryv := L.rkValue(B)
-			var n int64
-			switch v := unaryv.(type) {
-			case LInteger:
-				n = int64(v)
-			case LNumber:
-				n = int64(v)
-			default:
-				L.RaiseError("attempt to perform bitwise operation on a %s value", unaryv.Type().String())
-				continue
-			}
+			n := bitwiseOperand(L, unaryv)
 			{
 				rg := reg
 				regi := RA
@@ -3033,7 +2904,11 @@ func callGFunction(L *LState, tailcall bool) bool {
 		// Subsequent Go functions returning -1 (pcall, xpcall, coResume) detect
 		// the yield via yieldState and propagate it without a second thread switch.
 		if L.yieldState == yieldNone {
-			switchToParentThread(L, L.GetTop(), false, false)
+			if L.Parent != nil && L.stack.Sp() == 1 {
+				preserveSoleGoYield(L)
+			} else {
+				switchToParentThread(L, L.GetTop(), false, false)
+			}
 			// -2 = user yield (coroutine.yield), -1 = system yield (Go function)
 			if gfnret == -2 {
 				L.yieldState = yieldUser
@@ -3047,7 +2922,11 @@ func callGFunction(L *LState, tailcall bool) bool {
 		wantret = int16(gfnret)
 	}
 
-	if tailcall && L.Parent != nil && L.stack.Sp() == 1 {
+	// A sole Go frame is the coroutine entry frame. This is also how a
+	// tail-called Go function looks after yielding: the initial tail call
+	// collapsed its Lua caller, and resume invokes the continuation with
+	// tailcall=false. Either path must transfer final results to the resumer.
+	if L.Parent != nil && L.stack.Sp() == 1 {
 		switchToParentThread(L, int(wantret), false, true)
 		return true
 	}
@@ -3090,6 +2969,33 @@ func callGFunction(L *LState, tailcall bool) bool {
 	return false
 }
 
+// preserveSoleGoYield transfers a root or tail-called Go function's yield
+// values without discarding its only frame. The continuation turns the next
+// Resume arguments into the function's final results, matching how a surviving
+// Lua caller receives resume values after a non-root Go function yields.
+func preserveSoleGoYield(L *LState) {
+	parent := L.Parent
+	if parent == nil {
+		L.RaiseError("can not yield from outside of a coroutine")
+	}
+
+	if !L.wrapped {
+		parent.Push(LTrue)
+	}
+	L.XMoveTo(parent, L.GetTop())
+	L.G.CurrentThread = parent
+	L.Parent = nil
+	L.yieldState = yieldSystem
+
+	ext := L.setFrameExt(L.currentFrame)
+	ext.Continuation = resumeYieldedGoFunction
+	ext.ContinuationCtx = nil
+}
+
+func resumeYieldedGoFunction(L *LState, _ any, _ ResumeState) int {
+	return L.GetTop()
+}
+
 func threadRun(L *LState) {
 	if L.stack.IsEmpty() {
 		return
@@ -3105,7 +3011,12 @@ func threadRun(L *LState) {
 					SetErrorMetatable(L, e)
 				}
 			} else {
-				lv = LString(fmt.Sprint(rcv))
+				message := fmt.Sprint(rcv)
+				if L.Options.IncludeGoStackTrace {
+					message += "\n" + string(debug.Stack())
+				}
+				reportPanic(L, message)
+				lv = LString(message)
 			}
 
 			// Check if there's a protected frame that should catch this error
@@ -3116,6 +3027,7 @@ func threadRun(L *LState) {
 				return
 			}
 
+			L.closeUpvalues(0)
 			if parent := L.Parent; parent != nil {
 				if L.wrapped {
 					L.Push(lv)
@@ -3133,6 +3045,16 @@ func threadRun(L *LState) {
 	L.mainLoop(L, nil)
 }
 
+func reportPanic(L *LState, message string) {
+	if L.Options.PanicHandler == nil {
+		return
+	}
+	defer func() {
+		_ = recover()
+	}()
+	L.Options.PanicHandler(L, message)
+}
+
 // handleProtectedError searches for a protected (pcall) frame and handles the error.
 // Returns true if error was handled, false if it should propagate.
 func handleProtectedError(L *LState, errValue LValue, _ interface{}) bool {
@@ -3146,6 +3068,7 @@ func handleProtectedError(L *LState, errValue LValue, _ interface{}) bool {
 		if frame.Protected {
 			// Capture frame values before popping (frame memory may be reused after pop)
 			returnBase := frame.ReturnBase
+			L.closeUpvalues(int(frame.LocalBase))
 			var errFunc *LFunction
 			if ext := L.getFrameExt(frame); ext != nil {
 				errFunc = ext.ErrFunc
@@ -3394,11 +3317,15 @@ func equals(L *LState, lhs, rhs LValue, raw bool) bool {
 	lt := lhs.Type()
 	rt := rhs.Type()
 
-	// Numeric equality: LNumber and LInteger can be compared
-	if (lt == LTNumber || lt == LTInteger) && (rt == LTNumber || rt == LTInteger) {
-		v1, _ := toNumber(lhs)
-		v2, _ := toNumber(rhs)
-		return v1 == v2
+	// Mixed equality must convert the float exactly, rather than rounding the
+	// integer to float64. Otherwise adjacent wide integer keys compare equal.
+	if lt == LTInteger && rt == LTNumber {
+		integer, ok := floatToInteger(rhs.(LNumber))
+		return ok && lhs.(LInteger) == integer
+	}
+	if lt == LTNumber && rt == LTInteger {
+		integer, ok := floatToInteger(lhs.(LNumber))
+		return ok && integer == rhs.(LInteger)
 	}
 
 	if lt != rt {
@@ -3435,16 +3362,7 @@ func equals(L *LState, lhs, rhs LValue, raw bool) bool {
 			}
 		}
 	case LTFunction:
-		// LGoFunc is not comparable with ==, so handle functions specially
-		switch l := lhs.(type) {
-		case *LFunction:
-			r, ok := rhs.(*LFunction)
-			ret = ok && l == r
-		case LGoFunc:
-			r, ok := rhs.(LGoFunc)
-			// Compare function pointers via their string representation
-			ret = ok && fmt.Sprintf("%p", l) == fmt.Sprintf("%p", r)
-		}
+		ret = functionsEqual(lhs, rhs)
 	case LTType:
 		ret = TypeEquals(lhs.(*LType), rhs.(*LType))
 	default:
@@ -3469,7 +3387,7 @@ func objectRationalWithError(L *LState, lhs, rhs LValue, event string) bool {
 func objectRational(L *LState, lhs, rhs LValue, event string) int {
 	m1 := L.metaOp1(lhs, event)
 	m2 := L.metaOp1(rhs, event)
-	if m1.Type() == LTFunction && m1 == m2 {
+	if m1.Type() == LTFunction && functionsEqual(m1, m2) {
 		L.reg.Push(m1)
 		L.reg.Push(lhs)
 		L.reg.Push(rhs)

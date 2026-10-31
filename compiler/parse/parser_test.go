@@ -2019,3 +2019,35 @@ func TestParseVoidReturnAllForms(t *testing.T) {
 		})
 	}
 }
+
+func TestParseQualifiedGenericType(t *testing.T) {
+	inputs := map[string]string{
+		"local":  "local ch: channel.Channel<Msg> = x",
+		"cast":   "local ch = x :: channel.Channel<Msg>",
+		"param":  "local function f(ch: channel.Channel<Msg>) end",
+		"return": "local function f(): channel.Channel<Msg> end",
+		"alias":  "type C = channel.Channel<Msg>",
+		"nested": "local m: {[string]: channel.Channel<channel.Channel<Msg>>}",
+	}
+	for name, input := range inputs {
+		if _, err := Parse(strings.NewReader(input), "test"); err != nil {
+			t.Errorf("%s: Parse(%q) error: %v", name, input, err)
+		}
+	}
+
+	stmts, err := Parse(strings.NewReader(inputs["cast"]), "test")
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+	cast := stmts[0].(*ast.LocalAssignStmt).Exprs[0].(*ast.CastExpr)
+	gen, ok := cast.Type.(*ast.GenericTypeExpr)
+	if !ok {
+		t.Fatalf("cast type = %T, want *ast.GenericTypeExpr", cast.Type)
+	}
+	if strings.Join(gen.Base.Path, ".") != "channel.Channel" {
+		t.Errorf("base = %v, want [channel Channel]", gen.Base.Path)
+	}
+	if len(gen.Args) != 1 {
+		t.Errorf("got %d args, want 1", len(gen.Args))
+	}
+}

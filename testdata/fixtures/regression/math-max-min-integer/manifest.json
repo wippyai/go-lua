@@ -1,0 +1,4 @@
+{
+  "description": "math.max and math.min keep integer arguments integer.",
+  "files": ["main.lua"]
+}

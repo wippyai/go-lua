@@ -67,20 +67,7 @@ func EnrichExportWithEffects(export typ.Type, rootName string, effectsBySym map[
 		if !changed {
 			return export
 		}
-		builder := typ.NewRecord()
-		if v.Open {
-			builder.SetOpen(true)
-		}
-		if v.HasMapComponent() {
-			builder.MapComponent(v.MapKey, v.MapValue)
-		}
-		if v.Metatable != nil {
-			builder.Metatable(v.Metatable)
-		}
-		for _, f := range fields {
-			builder = appendRecordField(builder, f)
-		}
-		return builder.Build()
+		return v.WithChildren(fields, v.Metatable, v.MapKey, v.MapValue)
 	case *typ.Interface:
 		changed := false
 		methods := make([]typ.Method, len(v.Methods))
@@ -143,19 +130,6 @@ func exportFieldNameFromEffectSymbol(rootName, name string) (string, bool) {
 		return "", false
 	}
 	return rest, true
-}
-
-func appendRecordField(builder *typ.RecordBuilder, f typ.Field) *typ.RecordBuilder {
-	if f.Optional && f.Readonly {
-		return builder.OptReadonlyField(f.Name, f.Type)
-	}
-	if f.Optional {
-		return builder.OptField(f.Name, f.Type)
-	}
-	if f.Readonly {
-		return builder.ReadonlyField(f.Name, f.Type)
-	}
-	return builder.Field(f.Name, f.Type)
 }
 
 func applyFunctionRefinement(fn *typ.Function, eff *constraint.FunctionRefinement) *typ.Function {

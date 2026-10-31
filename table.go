@@ -1,7 +1,95 @@
 package lua
 
+import "reflect"
+
 const defaultArrayCap = 32
 const defaultHashCap = 32
+const maxArrayGap = defaultArrayCap
+
+// iterationPointerKey is only a map key, never a Lua value. It lets deleted
+// pointer/channel keys remain valid cursors without retaining their objects.
+// A caller using such a cursor still owns the original key. Live keys keep
+// their original map identity and are checked first, so a recycled address
+// cannot shadow a newly inserted key before dead cursors are compacted.
+type iterationPointerKey struct {
+	typ     reflect.Type
+	address uintptr
+}
+
+func (iterationPointerKey) String() string   { return "<iteration pointer>" }
+func (iterationPointerKey) Type() LValueType { return LTNil }
+
+// nativeFunctionCursor retains code identity, never a function or its captures.
+type nativeFunctionCursor uintptr
+
+func (nativeFunctionCursor) String() string   { return "<native function cursor>" }
+func (nativeFunctionCursor) Type() LValueType { return LTNil }
+
+func iterationKey(key LValue) LValue {
+	if id, ok := nativeFunctionID(key); ok {
+		return nativeFunctionCursor(id)
+	}
+	v := reflect.ValueOf(key)
+	if v.Kind() == reflect.Pointer || v.Kind() == reflect.Chan {
+		return iterationPointerKey{typ: v.Type(), address: v.Pointer()}
+	}
+	return key
+}
+
+// numericTableKey is small enough to inline into read paths. Keeping numeric
+// normalization separate from callable-key lookup lets temporary map keys stay
+// on the stack instead of allocating on every integral-float hash read.
+func numericTableKey(key LValue) LValue {
+	switch k := key.(type) {
+	case LInteger:
+		if k > 0 && k < LInteger(MaxArrayIndex) {
+			return LNumber(k)
+		}
+	case LNumber:
+		if integer, ok := floatToInteger(k); ok && (integer <= 0 || integer >= LInteger(MaxArrayIndex)) {
+			return integer
+		}
+	}
+	return key
+}
+
+// tableKey preserves array-index representation and normalizes other integral
+// floats to full-width integers. Native keys retain only live callables;
+// deleted-key traversal uses the non-owning cursor identity.
+func (tb *LTable) tableKey(key LValue, create bool) LValue {
+	switch key.(type) {
+	case LInteger, LNumber:
+		return numericTableKey(key)
+	}
+	id, native := nativeFunctionID(key)
+	if !native {
+		return key
+	}
+	// Already-normalized live keys (including Next's internal scan) need no search.
+	if fn, ok := key.(*LFunction); ok {
+		if _, live := tb.Dict[fn]; live {
+			return fn
+		}
+	}
+	// Native keys are rare. Search only on this path to avoid enlarging every
+	// table or introducing a global cache that would retain Go closures.
+	for existing := range tb.Dict {
+		if code, ok := nativeFunctionID(existing); ok && code == id {
+			return existing
+		}
+	}
+	if !create {
+		return nativeFunctionCursor(id)
+	}
+	var gf LGFunction
+	switch fn := key.(type) {
+	case LGoFunc:
+		gf = LGFunction(fn)
+	case *LFunction:
+		gf = fn.GFunction
+	}
+	return &LFunction{IsG: true, nativeKey: true, GFunction: gf}
+}
 
 type lValueArraySorter struct {
 	L      *LState
@@ -85,6 +173,67 @@ func (tb *LTable) ensureIterationOrder() {
 	}
 }
 
+// deleteIterationKey leaves a stable slot and cursor for next(t, key), even
+// after t[key] = nil. Moving another key into this slot would skip that key.
+func (tb *LTable) deleteIterationKey(key LValue) {
+	if index, ok := tb.K2i[key]; ok {
+		// Release the slice reference; K2i keeps only the cursor identity until
+		// a new field is inserted. Deletion alone must not invalidate cursors,
+		// including cursors in nested traversals of the same table.
+		tb.Keys[index] = nil
+		if cursor := iterationKey(key); cursor != key {
+			delete(tb.K2i, key)
+			tb.K2i[cursor] = index
+		}
+	}
+}
+
+// addIterationKey is called before storing a non-nil hash value.
+func (tb *LTable) addIterationKey(key LValue) {
+	if tb.Keys == nil {
+		return
+	}
+	if index, ok := tb.K2i[key]; ok && tb.Keys[index] != nil {
+		return
+	}
+	// Inserting a previously absent field may invalidate traversal in Lua.
+	// Reclaim deleted cursors once at least half the slots are dead. This
+	// bounds metadata while amortizing the rebuild over intervening mutations;
+	// compacting after every deletion makes ordinary hash churn quadratic.
+	// Starting another traversal must not compact it: an outer traversal may
+	// still hold a deleted cursor.
+	live := len(tb.Strdict) + len(tb.Dict)
+	if len(tb.Keys) > live && len(tb.Keys)-live >= live {
+		clear(tb.K2i)
+		n := 0
+		for _, existing := range tb.Keys {
+			if existing != nil {
+				tb.K2i[existing] = n
+				tb.Keys[n] = existing
+				n++
+			}
+		}
+		clear(tb.Keys[n:])
+		tb.Keys = tb.Keys[:n]
+	}
+	tb.K2i[key] = len(tb.Keys)
+	tb.Keys = append(tb.Keys, key)
+}
+
+// forgetDeletedArrayKey retires old sparse cursors when their position becomes
+// part of the array. They must not reappear if Remove later shrinks the array.
+// Live explicit hash keys keep their own cursor, including integer Go keys.
+func (tb *LTable) forgetDeletedArrayKey(key int) {
+	if len(tb.K2i) == 0 {
+		return
+	}
+	for _, candidate := range [2]LValue{LNumber(key), LInteger(key)} {
+		if index, ok := tb.K2i[candidate]; ok && tb.Keys[index] == nil {
+			delete(tb.K2i, candidate)
+		}
+	}
+}
+
 // Len returns length of this LTable without using __len.
 func (tb *LTable) Len() int {
 	if tb.Array == nil {
@@ -114,6 +263,10 @@ func (tb *LTable) Append(value LValue) bool {
 	}
 	if len(tb.Array) == 0 || tb.Array[len(tb.Array)-1] != LNil {
 		tb.Array = append(tb.Array, value)
+		tb.forgetDeletedArrayKey(len(tb.Array))
+		if len(tb.Dict) > 0 {
+			tb.pullHashed()
+		}
 	} else {
 		i := len(tb.Array) - 2
 		for ; i >= 0; i-- {
@@ -122,6 +275,7 @@ func (tb *LTable) Append(value LValue) bool {
 			}
 		}
 		tb.Array[i+1] = value
+		tb.forgetDeletedArrayKey(i + 2)
 	}
 	return true
 }
@@ -131,33 +285,50 @@ func (tb *LTable) Insert(i int, value LValue) bool {
 	if tb.Immutable {
 		return false
 	}
-	if tb.Array == nil {
-		tb.Array = make([]LValue, 0, defaultArrayCap)
-	}
-	if i > len(tb.Array) {
+	length := tb.Len()
+	if i > length {
 		return tb.RawSetInt(i, value)
 	}
 	if i <= 0 {
 		return tb.RawSet(LNumber(i), value)
 	}
 	i -= 1
-	tb.Array = append(tb.Array, LNil)
-	copy(tb.Array[i+1:], tb.Array[i:])
+	if length == len(tb.Array) {
+		tb.Array = append(tb.Array, LNil)
+	}
+	copy(tb.Array[i+1:length+1], tb.Array[i:length])
 	tb.Array[i] = value
+	tb.forgetDeletedArrayKey(length + 1)
+	tb.pullHashed()
 	return true
 }
 
-// MaxN returns a maximum number key that nil value does not exist before it.
+// MaxN returns the largest present integer key in the array-index range,
+// including sparse keys held in the hash part.
 func (tb *LTable) MaxN() int {
-	if tb.Array == nil {
-		return 0
-	}
+	max := 0
 	for i := len(tb.Array) - 1; i >= 0; i-- {
 		if tb.Array[i] != LNil {
-			return i + 1
+			max = i + 1
+			break
 		}
 	}
-	return 0
+	for key, value := range tb.Dict {
+		if value == LNil {
+			continue
+		}
+		switch k := key.(type) {
+		case LNumber:
+			if isArrayKey(k) && int(k) > max {
+				max = int(k)
+			}
+		case LInteger:
+			if k > LInteger(max) && k < LInteger(MaxArrayIndex) {
+				max = int(k)
+			}
+		}
+	}
+	return max
 }
 
 // Remove removes from this table the element at a given position.
@@ -168,7 +339,7 @@ func (tb *LTable) Remove(pos int) (LValue, bool) {
 	if tb.Array == nil {
 		return LNil, true
 	}
-	larray := len(tb.Array)
+	larray := tb.Len()
 	if larray == 0 {
 		return LNil, true
 	}
@@ -177,15 +348,18 @@ func (tb *LTable) Remove(pos int) (LValue, bool) {
 	switch {
 	case i >= larray:
 		// nothing to do
+		return oldval, true
 	case i == larray-1 || i < 0:
 		oldval = tb.Array[larray-1]
+		tb.Array[larray-1] = LNil
 		tb.Array = tb.Array[:larray-1]
 	default:
 		oldval = tb.Array[i]
-		copy(tb.Array[i:], tb.Array[i+1:])
-		tb.Array[larray-1] = nil
+		copy(tb.Array[i:larray-1], tb.Array[i+1:larray])
+		tb.Array[larray-1] = LNil
 		tb.Array = tb.Array[:larray-1]
 	}
+	tb.forgetDeletedArrayKey(larray)
 	return oldval, true
 }
 
@@ -199,42 +373,32 @@ func (tb *LTable) RawSet(key LValue, value LValue) bool {
 	switch v := key.(type) {
 	case LNumber:
 		if isArrayKey(v) {
-			if tb.Array == nil {
-				tb.Array = make([]LValue, 0, defaultArrayCap)
-			}
 			index := int(v) - 1
-			alen := len(tb.Array)
 			switch {
-			case index == alen:
-				tb.Array = append(tb.Array, value)
-			case index > alen:
-				for i := 0; i < (index - alen); i++ {
-					tb.Array = append(tb.Array, LNil)
-				}
-				tb.Array = append(tb.Array, value)
-			case index < alen:
+			case index < len(tb.Array):
 				tb.Array[index] = value
+				tb.forgetDeletedArrayKey(int(v))
+			case index == len(tb.Array) && tb.Array != nil && value != LNil && len(tb.Dict) == 0:
+				tb.Array = append(tb.Array, value)
+				tb.forgetDeletedArrayKey(int(v))
+			default:
+				tb.setSparseIntKey(int(v), value)
 			}
 			return true
 		}
 	case LInteger:
-		iv := int(v)
-		if iv > 0 && iv < MaxArrayIndex {
-			if tb.Array == nil {
-				tb.Array = make([]LValue, 0, defaultArrayCap)
-			}
+		if v > 0 && v < LInteger(MaxArrayIndex) {
+			iv := int(v)
 			index := iv - 1
-			alen := len(tb.Array)
 			switch {
-			case index == alen:
-				tb.Array = append(tb.Array, value)
-			case index > alen:
-				for i := 0; i < (index - alen); i++ {
-					tb.Array = append(tb.Array, LNil)
-				}
-				tb.Array = append(tb.Array, value)
-			case index < alen:
+			case index < len(tb.Array):
 				tb.Array[index] = value
+				tb.forgetDeletedArrayKey(iv)
+			case index == len(tb.Array) && tb.Array != nil && value != LNil && len(tb.Dict) == 0:
+				tb.Array = append(tb.Array, value)
+				tb.forgetDeletedArrayKey(iv)
+			default:
+				tb.setSparseIntKey(iv, value)
 			}
 			return true
 		}
@@ -251,25 +415,98 @@ func (tb *LTable) RawSetInt(key int, value LValue) bool {
 		return false
 	}
 	if key < 1 || key >= MaxArrayIndex {
-		return tb.RawSetH(LNumber(key), value)
+		return tb.RawSetH(LInteger(key), value)
+	}
+	index := key - 1
+	switch {
+	case index < len(tb.Array):
+		tb.Array[index] = value
+		tb.forgetDeletedArrayKey(key)
+	case index == len(tb.Array) && tb.Array != nil && value != LNil && len(tb.Dict) == 0:
+		tb.Array = append(tb.Array, value)
+		tb.forgetDeletedArrayKey(key)
+	default:
+		tb.setSparseIntKey(key, value)
+	}
+	return true
+}
+
+func (tb *LTable) setSparseIntKey(key int, value LValue) {
+	index := key - 1
+	alen := len(tb.Array)
+	gap := index - alen
+	// A bounded gap keeps allocated holes proportional to writes. Comparing
+	// against array length alone lets a few geometric keys allocate huge arrays.
+	_, alreadyHashed := tb.Dict[LNumber(key)]
+	// Updating an existing field must keep its iteration position. Proximity
+	// to the array alone does not authorize promotion during an overwrite.
+	if value == LNil || gap > maxArrayGap || alreadyHashed {
+		sparseOrigin := tb.Dict == nil || tb.sparseArrayHash
+		tb.RawSetH(LNumber(key), value)
+		if sparseOrigin {
+			tb.sparseArrayHash = true
+			tb.releaseEmptySparseHash()
+		}
+		return
 	}
 	if tb.Array == nil {
 		tb.Array = make([]LValue, 0, defaultArrayCap)
 	}
-	index := key - 1
-	alen := len(tb.Array)
-	switch {
-	case index == alen:
-		tb.Array = append(tb.Array, value)
-	case index > alen:
-		for i := 0; i < (index - alen); i++ {
-			tb.Array = append(tb.Array, LNil)
-		}
-		tb.Array = append(tb.Array, value)
-	case index < alen:
-		tb.Array[index] = value
+	for position := alen + 1; position < key; position++ {
+		tb.Array = append(tb.Array, tb.takeHashed(position))
 	}
-	return true
+	tb.takeHashed(key)
+	tb.Array = append(tb.Array, value)
+	tb.pullHashed()
+}
+
+func (tb *LTable) getIntKey(key int) LValue {
+	index := key - 1
+	if index < len(tb.Array) {
+		return tb.Array[index]
+	}
+	if tb.Dict == nil {
+		return LNil
+	}
+	if v, ok := tb.Dict[LNumber(key)]; ok {
+		return v
+	}
+	return LNil
+}
+
+func (tb *LTable) takeHashed(key int) LValue {
+	tb.forgetDeletedArrayKey(key)
+	if len(tb.Dict) == 0 {
+		return LNil
+	}
+	hashed := LNumber(key)
+	v, ok := tb.Dict[hashed]
+	if !ok {
+		return LNil
+	}
+	tb.RawSetH(hashed, LNil)
+	// Promotion makes this an array cursor, not a deleted hash cursor.
+	delete(tb.K2i, hashed)
+	return v
+}
+
+func (tb *LTable) pullHashed() {
+	for len(tb.Dict) > 0 {
+		v := tb.takeHashed(len(tb.Array) + 1)
+		if v == LNil {
+			return
+		}
+		tb.Array = append(tb.Array, v)
+	}
+}
+
+func (tb *LTable) releaseEmptySparseHash() {
+	if tb.sparseArrayHash && len(tb.Dict) == 0 {
+		// Numeric-only hash storage is an array implementation detail. Retaining
+		// an empty Dict would make existing encoders classify it as an object.
+		tb.Dict = nil
+		tb.sparseArrayHash = false
+	}
 }
 
 // RawSetString sets a given LValue to a given string index without the __newindex metamethod.
@@ -285,30 +522,10 @@ func (tb *LTable) RawSetString(key string, value LValue) bool {
 	lkey := LString(key)
 	if value == LNil {
 		delete(tb.Strdict, key)
-		// Only update Keys/K2i if they exist (lazy)
-		if tb.Keys != nil {
-			if idx, ok := tb.K2i[lkey]; ok {
-				lastIdx := len(tb.Keys) - 1
-				lastKey := tb.Keys[lastIdx]
-
-				if idx < lastIdx {
-					tb.Keys[idx] = lastKey
-					tb.K2i[lastKey] = idx
-				}
-
-				tb.Keys = tb.Keys[:lastIdx]
-				delete(tb.K2i, lkey)
-			}
-		}
+		tb.deleteIterationKey(lkey)
 	} else {
+		tb.addIterationKey(lkey)
 		tb.Strdict[key] = value
-		// Only update Keys/K2i if they exist (lazy)
-		if tb.Keys != nil {
-			if _, ok := tb.K2i[lkey]; !ok {
-				tb.K2i[lkey] = len(tb.Keys)
-				tb.Keys = append(tb.Keys, lkey)
-			}
-		}
 	}
 	return true
 }
@@ -323,39 +540,23 @@ func (tb *LTable) RawSetH(key LValue, value LValue) bool {
 		return tb.RawSetString(string(s), value)
 	}
 
+	key = tb.tableKey(key, value != LNil)
 	if value == LNil {
 		// LAZY: Only delete if Dict exists
 		if tb.Dict != nil {
 			delete(tb.Dict, key)
 		}
-		// Only update Keys/K2i if they exist (lazy)
-		if tb.Keys != nil {
-			if idx, ok := tb.K2i[key]; ok {
-				lastIdx := len(tb.Keys) - 1
-				lastKey := tb.Keys[lastIdx]
-
-				if idx < lastIdx {
-					tb.Keys[idx] = lastKey
-					tb.K2i[lastKey] = idx
-				}
-
-				tb.Keys = tb.Keys[:lastIdx]
-				delete(tb.K2i, key)
-			}
-		}
+		tb.deleteIterationKey(key)
+		tb.releaseEmptySparseHash()
 	} else {
+		// Explicit hash keys preserve the existing hash/object storage origin.
+		tb.sparseArrayHash = false
 		// LAZY: Only create Dict when storing non-string, non-int key
 		if tb.Dict == nil {
 			tb.Dict = make(map[LValue]LValue, 8) // Start small for rare use case
 		}
+		tb.addIterationKey(key)
 		tb.Dict[key] = value
-		// Only update Keys/K2i if they exist (lazy)
-		if tb.Keys != nil {
-			if _, ok := tb.K2i[key]; !ok {
-				tb.K2i[key] = len(tb.Keys)
-				tb.Keys = append(tb.Keys, key)
-			}
-		}
 	}
 	return true
 }
@@ -365,26 +566,11 @@ func (tb *LTable) RawGet(key LValue) LValue {
 	switch v := key.(type) {
 	case LNumber:
 		if isArrayKey(v) {
-			if tb.Array == nil {
-				return LNil
-			}
-			index := int(v) - 1
-			if index >= len(tb.Array) {
-				return LNil
-			}
-			return tb.Array[index]
+			return tb.getIntKey(int(v))
 		}
 	case LInteger:
-		iv := int(v)
-		if iv > 0 && iv < MaxArrayIndex {
-			if tb.Array == nil {
-				return LNil
-			}
-			index := iv - 1
-			if index >= len(tb.Array) {
-				return LNil
-			}
-			return tb.Array[index]
+		if v > 0 && v < LInteger(MaxArrayIndex) {
+			return tb.getIntKey(int(v))
 		}
 	case LString:
 		if tb.Strdict == nil {
@@ -395,29 +581,23 @@ func (tb *LTable) RawGet(key LValue) LValue {
 		}
 		return LNil
 	}
-	if tb.Dict == nil {
-		return LNil
-	}
-	if v, ok := tb.Dict[key]; ok {
-		return v
-	}
-	return LNil
+	return tb.RawGetH(key)
 }
 
 // RawGetInt returns an LValue at position `key` without __index metamethod.
 func (tb *LTable) RawGetInt(key int) LValue {
-	if tb.Array == nil {
-		return LNil
+	if key < 1 || key >= MaxArrayIndex {
+		return tb.RawGetH(LInteger(key))
 	}
-	index := int(key) - 1
-	if index >= len(tb.Array) || index < 0 {
-		return LNil
-	}
-	return tb.Array[index]
+	return tb.getIntKey(key)
 }
 
 // RawGetH returns an LValue associated with a given key without __index metamethod.
 func (tb *LTable) RawGetH(key LValue) LValue {
+	switch key.(type) {
+	case LGoFunc, *LFunction:
+		key = tb.tableKey(key, false)
+	}
 	if s, sok := key.(LString); sok {
 		if tb.Strdict == nil {
 			return LNil
@@ -430,7 +610,8 @@ func (tb *LTable) RawGetH(key LValue) LValue {
 	if tb.Dict == nil {
 		return LNil
 	}
-	if v, ok := tb.Dict[key]; ok {
+	lookupKey := numericTableKey(key)
+	if v, ok := tb.Dict[lookupKey]; ok {
 		return v
 	}
 	return LNil
@@ -466,7 +647,7 @@ func (tb *LTable) ForEach(cb func(LValue, LValue)) {
 	if tb.Dict != nil {
 		for k, v := range tb.Dict {
 			if v != LNil {
-				cb(k, v)
+				cb(nativeKeyValue(k), v)
 			}
 		}
 	}
@@ -474,41 +655,41 @@ func (tb *LTable) ForEach(cb func(LValue, LValue)) {
 
 // Next is equivalent to lua_next ( http://www.lua.org/manual/5.1/manual.html#lua_next ).
 func (tb *LTable) Next(key LValue) (LValue, LValue) {
+	key = tb.tableKey(key, false)
 	// Lazy initialization - only create ordering when Next() is actually used
 	tb.ensureIterationOrder()
 
-	init := false
-	if key == LNil {
-		key = LNumber(0)
-		init = true
-	}
-
-	if init || key != LNumber(0) {
-		if kv, ok := key.(LNumber); ok && IsIntegerValue(kv) && int(kv) >= 0 && kv < LNumber(MaxArrayIndex) {
-			index := int(kv)
-			if tb.Array != nil {
-				for ; index < len(tb.Array); index++ {
-					if v := tb.Array[index]; v != LNil {
-						return LNumber(index + 1), v
-					}
-				}
-			}
-			if tb.Array == nil || index == len(tb.Array) {
-				if len(tb.Keys) == 0 {
-					return LNil, LNil
-				}
-				key = tb.Keys[0]
-				if v := tb.RawGetH(key); v != LNil {
-					return key, v
-				}
-			}
+	hashIndex := 0
+	arrayIndex := 0
+	if key != LNil {
+		index, hashed := tb.K2i[key]
+		if !hashed {
+			index, hashed = tb.K2i[iterationKey(key)]
+		}
+		if hashed {
+			// Sparse positive keys are hash keys, not a request to restart
+			// array traversal. Continue from their actual iteration slot.
+			hashIndex = index + 1
+			arrayIndex = len(tb.Array)
+		} else if k, ok := key.(LNumber); ok && isArrayKey(k) {
+			arrayIndex = int(k)
+		} else {
+			return LNil, LNil
 		}
 	}
 
-	for i := tb.K2i[key] + 1; i < len(tb.Keys); i++ {
+	for ; arrayIndex < len(tb.Array); arrayIndex++ {
+		if value := tb.Array[arrayIndex]; value != LNil {
+			return LNumber(arrayIndex + 1), value
+		}
+	}
+	for i := hashIndex; i < len(tb.Keys); i++ {
 		key := tb.Keys[i]
+		if key == nil {
+			continue
+		}
 		if v := tb.RawGetH(key); v != LNil {
-			return key, v
+			return nativeKeyValue(key), v
 		}
 	}
 	return LNil, LNil

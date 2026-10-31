@@ -1,0 +1,1 @@
+{"description": "nested callbacks write fields of a captured table at four closure levels: each write travels up to the defining function and back down to the other levels within the round budget."}

@@ -84,9 +84,26 @@ type Assignment struct {
 	Point cfg.Point
 	// TargetSym is the symbol being assigned (provides unique identity).
 	TargetSym cfg.SymbolID
+	// SourceSym identifies a direct table alias created by this assignment.
+	// A KeyOf fact is dropped when its table is exposed through a new alias.
+	SourceSym cfg.SymbolID
+	// AliasEscape marks a call that can retain a source table without assigning
+	// to its original variable.
+	AliasEscape bool
 	// TargetSegs specifies field path for nested assignments (x.foo.bar = ...).
 	// Empty for simple variable assignments.
 	TargetSegs []constraint.Segment
+	// ChildrenOnly marks a dynamic index write: it can change any child of
+	// TargetSegs, while the table at TargetSegs keeps its identity.
+	ChildrenOnly bool
+	// IndexedChildrenOnly invalidates facts below an indexed child of the
+	// target. Passing an alias to a call can change indexed entries without
+	// changing the value or known static fields of the alias itself.
+	IndexedChildrenOnly bool
+	// BeforeOperands marks a call effect that can run before operand reads of
+	// its statement, as a call nested in an operand does. It kills facts on
+	// entry to the point; other writes kill them on its outgoing edges.
+	BeforeOperands bool
 }
 
 // Inputs provides all data needed for constraint propagation.
@@ -104,6 +121,16 @@ type Inputs struct {
 	DeadPoints map[cfg.Point]bool
 	// Assignments lists all variable assignments for constraint killing.
 	Assignments []Assignment
+	// Facts maps a CFG point to the condition its statement establishes,
+	// such as a key being present in a table after t[k] = v with v non-nil.
+	// It holds on every edge leaving the point; reads at the point itself
+	// happen before the statement's effect and do not see it.
+	Facts map[cfg.Point]constraint.Condition
+	// PhiRenames maps an edge into a join point to the SSA versions its phi
+	// nodes merge from that edge, each to the phi's version. On that edge the
+	// phi version holds the operand's value, so facts about the operand hold
+	// for the phi version.
+	PhiRenames map[EdgeKey]map[constraint.VersionRef]int
 }
 
 // Result holds the computed conditions at each CFG point.
@@ -112,9 +139,10 @@ type Inputs struct {
 // disjunction of all path conditions that reach that point. Unreachable
 // points have False conditions or are absent from the map.
 type Result struct {
-	// PointConditions maps CFG points to the conditions that hold there.
-	// A point's condition is the OR of (predecessor condition AND edge condition)
-	// for all incoming edges.
+	// PointConditions maps CFG points to the conditions that hold when their
+	// statements read operands. A point's condition is the OR of (predecessor
+	// condition after the predecessor's writes AND edge condition) for all
+	// incoming edges.
 	PointConditions map[cfg.Point]constraint.Condition
 }
 
@@ -130,11 +158,15 @@ type Result struct {
 //
 // Condition computation at each point:
 //   - For each predecessor with non-False condition:
+//   - Kill constraints for paths the predecessor's statement writes
 //   - Combine predecessor condition with edge condition (AND)
 //   - Apply loop preheader reinforcement for loop headers
-//   - Kill constraints for reassigned variables
 //   - Merge all incoming conditions (OR)
+//   - Kill constraints for paths nested calls can write before operand reads
 //
+// A point's condition holds when its statement reads its operands: after
+// effects of calls nested in operands, before its own writes and the effects
+// of a call that forms the whole statement.
 // The result maps each point to its computed condition. Points unreachable
 // from entry have False conditions (or are absent).
 func Propagate(inputs *Inputs) *Result {
@@ -154,13 +186,14 @@ func Propagate(inputs *Inputs) *Result {
 
 	// Cache preheader conditions for monotonic convergence
 	preheaderConds := make(map[cfg.Point]constraint.Condition)
+	writes := IndexAssignments(inputs.Assignments)
 
 	for len(worklist) > 0 {
 		p := worklist[0]
 		worklist = worklist[1:]
 		inQueue[p] = false
 
-		newCond := computeConditionAtPoint(inputs, pointConditions, preheaderConds, p)
+		newCond := computeConditionAtPoint(inputs, writes, pointConditions, preheaderConds, p)
 		oldCond := pointConditions[p]
 
 		changed := false
@@ -188,16 +221,18 @@ func Propagate(inputs *Inputs) *Result {
 // computeConditionAtPoint computes the condition for a single CFG point.
 //
 // The condition is computed by combining all incoming paths:
-//   - For each predecessor, AND its condition with the edge condition
+//   - For each predecessor, kill constraints its statement's writes invalidate
+//   - AND the predecessor condition with the edge condition
 //   - Apply loop preheader reinforcement if at a loop header
 //   - OR all the incoming conditions together
-//   - Kill constraints for variables reassigned at this point
+//   - Kill constraints for paths nested calls at this point can write
 //
 // Special handling for loop headers: The preheader condition (before loop entry)
 // is reinforced on backedge paths to preserve invariants. Loop-variant variables
 // are filtered out to avoid unsound conclusions.
 func computeConditionAtPoint(
 	inputs *Inputs,
+	writes map[cfg.Point][]Assignment,
 	pointConditions map[cfg.Point]constraint.Condition,
 	preheaderConds map[cfg.Point]constraint.Condition,
 	p cfg.Point,
@@ -231,6 +266,9 @@ func computeConditionAtPoint(
 			continue
 		}
 
+		// The predecessor's statement writes between its entry and this edge.
+		predCond = KillWrittenConditions(predCond, writes[pred])
+
 		// Loop header preheader reinforcement
 		if node != nil && node.LoopPreheaderSet && pred != node.LoopPreheader {
 			preCond, cached := preheaderConds[p]
@@ -239,7 +277,7 @@ func computeConditionAtPoint(
 				if !ok {
 					goto skipPreheaderReinforcement
 				}
-				preCond = preheaderComputedCond
+				preCond = KillWrittenConditions(preheaderComputedCond, writes[node.LoopPreheader])
 				if preEdge, ok := inputs.EdgeConditions[EdgeKey{From: node.LoopPreheader, To: p}]; ok && preEdge.HasConstraints() {
 					preCond = constraint.And(preCond, preEdge)
 				}
@@ -261,6 +299,10 @@ func computeConditionAtPoint(
 		}
 	skipPreheaderReinforcement:
 
+		if fact, ok := inputs.Facts[pred]; ok && fact.HasConstraints() {
+			predCond = constraint.And(predCond, fact)
+		}
+
 		edgeCond, ok := inputs.EdgeConditions[EdgeKey{From: pred, To: p}]
 		if !ok || (!edgeCond.HasConstraints() && !edgeCond.IsFalse()) {
 			edgeCond = constraint.TrueCondition()
@@ -280,6 +322,9 @@ func computeConditionAtPoint(
 		if combinedCond.IsFalse() {
 			continue
 		}
+		if renames := inputs.PhiRenames[EdgeKey{From: pred, To: p}]; len(renames) > 0 {
+			combinedCond = constraint.RenameVersions(combinedCond, renames)
+		}
 
 		predConds = append(predConds, combinedCond)
 	}
@@ -298,9 +343,7 @@ func computeConditionAtPoint(
 		}
 	}
 
-	result = KillRedefinedConditions(result, p, inputs.Assignments)
-
-	return result
+	return KillOperandEffectConditions(result, writes[p])
 }
 
 // FilterConditionSymbols removes constraints that reference specified symbols.
@@ -376,13 +419,41 @@ func FilterConditionSymbols(cond constraint.Condition, syms []cfg.SymbolID) cons
 // The function checks each constraint path against each assignment at point p.
 // If any constraint path is affected by an assignment, that constraint is removed.
 func KillRedefinedConditions(cond constraint.Condition, p cfg.Point, assignments []Assignment) constraint.Condition {
+	return killConditions(cond, assignments, func(a Assignment) bool { return a.Point == p })
+}
+
+// IndexAssignments groups the assignments that name a target by point.
+func IndexAssignments(assignments []Assignment) map[cfg.Point][]Assignment {
+	byPoint := make(map[cfg.Point][]Assignment)
+	for _, assign := range assignments {
+		if assign.TargetSym != 0 {
+			byPoint[assign.Point] = append(byPoint[assign.Point], assign)
+		}
+	}
+	return byPoint
+}
+
+// KillWrittenConditions removes constraints for paths that writes, the
+// assignments of one statement, change after the statement reads its operands.
+func KillWrittenConditions(cond constraint.Condition, writes []Assignment) constraint.Condition {
+	return killConditions(cond, writes, func(a Assignment) bool { return !a.BeforeOperands })
+}
+
+// KillOperandEffectConditions removes constraints for paths that writes, the
+// assignments of one statement, can change before the statement reads its
+// operands.
+func KillOperandEffectConditions(cond constraint.Condition, writes []Assignment) constraint.Condition {
+	return killConditions(cond, writes, func(a Assignment) bool { return a.BeforeOperands })
+}
+
+func killConditions(cond constraint.Condition, assignments []Assignment, include func(Assignment) bool) constraint.Condition {
 	if !cond.HasConstraints() {
 		return cond
 	}
 
 	var assignedPaths []Assignment
 	for _, assign := range assignments {
-		if assign.Point == p && assign.TargetSym != 0 {
+		if assign.TargetSym != 0 && include(assign) {
 			assignedPaths = append(assignedPaths, assign)
 		}
 	}
@@ -392,16 +463,52 @@ func KillRedefinedConditions(cond constraint.Condition, p cfg.Point, assignments
 	}
 
 	var newDisjuncts [][]constraint.Constraint
+	actualWrites := make([]Assignment, 0, len(assignedPaths))
+	for _, assignment := range assignedPaths {
+		if !assignment.AliasEscape {
+			actualWrites = append(actualWrites, assignment)
+		}
+	}
 	for _, d := range cond.Disjuncts {
+		invalidAliases := aliasesInvalidatedByWrites(d, actualWrites)
 		var kept []constraint.Constraint
 		for _, c := range d {
 			shouldKeep := true
+			if keyOf, ok := c.(constraint.KeyOf); ok {
+				for _, ap := range assignedPaths {
+					if ap.SourceSym != 0 && ap.SourceSym == keyOf.Table.Symbol {
+						shouldKeep = false
+						break
+					}
+				}
+			}
+			if !shouldKeep {
+				continue
+			}
+			if eq, ok := c.(constraint.EqPath); ok &&
+				(invalidAliases[eq.Left.Key()].Symbol != 0 || invalidAliases[eq.Right.Key()].Symbol != 0) {
+				continue
+			}
 			constraint.VisitPaths(c, func(cpath constraint.Path) bool {
 				if cpath.Symbol == 0 {
 					return false
 				}
+				for _, alias := range invalidAliases {
+					if PathAffectedByAssignment(cpath, alias.Symbol, alias.Segments) &&
+						(len(cpath.Segments) > len(alias.Segments) || !rootFactSurvivesChildWrite(c)) {
+						shouldKeep = false
+						return true
+					}
+				}
 				for _, ap := range assignedPaths {
-					if PathAffectedByAssignment(cpath, ap.TargetSym, ap.TargetSegs) {
+					if ap.AliasEscape {
+						continue
+					}
+					if ap.IndexedChildrenOnly && !hasIndexedChild(cpath, ap.TargetSegs) {
+						continue
+					}
+					if PathAffectedByAssignment(cpath, ap.TargetSym, ap.TargetSegs) &&
+						(!ap.ChildrenOnly || len(cpath.Segments) > len(ap.TargetSegs)) {
 						shouldKeep = false
 						return true
 					}
@@ -423,6 +530,81 @@ func KillRedefinedConditions(cond constraint.Condition, p cfg.Point, assignments
 	}
 
 	return constraint.FromDisjuncts(newDisjuncts)
+}
+
+// A child write preserves the table's own truthiness and identity, while
+// predicates about its structure can become false through the alias.
+func rootFactSurvivesChildWrite(c constraint.Constraint) bool {
+	switch c.(type) {
+	case constraint.Truthy, constraint.Falsy, constraint.IsNil, constraint.NotNil, constraint.NotEqPath:
+		return true
+	}
+	return false
+}
+
+// The references stay equal at runtime, but their field types are stored
+// under separate symbols. A write through either reference makes those
+// independent shape facts unsafe to intersect or reuse.
+func aliasesInvalidatedByWrites(disjunct []constraint.Constraint, writes []Assignment) map[constraint.PathKey]constraint.Path {
+	var equalities []constraint.EqPath
+	for _, c := range disjunct {
+		if eq, ok := c.(constraint.EqPath); ok {
+			equalities = append(equalities, eq)
+		}
+	}
+	if len(equalities) == 0 {
+		return nil
+	}
+	invalid := make(map[constraint.PathKey]constraint.Path)
+	for _, eq := range equalities {
+		for _, write := range writes {
+			if mutableWriteTouchesAlias(write, eq.Left) {
+				invalid[eq.Left.Key()] = eq.Left
+			}
+			if mutableWriteTouchesAlias(write, eq.Right) {
+				invalid[eq.Right.Key()] = eq.Right
+			}
+		}
+	}
+	for changed := true; changed; {
+		changed = false
+		for _, eq := range equalities {
+			_, left := invalid[eq.Left.Key()]
+			_, right := invalid[eq.Right.Key()]
+			if left && !right {
+				invalid[eq.Right.Key()] = eq.Right
+				changed = true
+			} else if right && !left {
+				invalid[eq.Left.Key()] = eq.Left
+				changed = true
+			}
+		}
+	}
+	return invalid
+}
+
+func mutableWriteTouchesAlias(write Assignment, alias constraint.Path) bool {
+	if write.IndexedChildrenOnly && !hasIndexedChild(alias, write.TargetSegs) {
+		return false
+	}
+	if alias.Symbol == 0 || (!write.ChildrenOnly && len(write.TargetSegs) == 0) {
+		return false
+	}
+	writePath := constraint.Path{Symbol: write.TargetSym, Segments: write.TargetSegs}
+	return PathAffectedByAssignment(writePath, alias.Symbol, alias.Segments) ||
+		write.ChildrenOnly && PathAffectedByAssignment(alias, write.TargetSym, write.TargetSegs)
+}
+
+func hasIndexedChild(path constraint.Path, prefix []constraint.Segment) bool {
+	if len(path.Segments) <= len(prefix) {
+		return false
+	}
+	for _, segment := range path.Segments[len(prefix):] {
+		if segment.Kind == constraint.SegmentIndexInt {
+			return true
+		}
+	}
+	return false
 }
 
 // PathAffectedByAssignment checks if a constraint path is invalidated by an assignment.
@@ -453,7 +635,12 @@ func PathAffectedByAssignment(cpath constraint.Path, assignSym cfg.SymbolID, ass
 
 	for i, seg := range assignSegs {
 		cseg := cpath.Segments[i]
-		if cseg.Kind != seg.Kind || cseg.Name != seg.Name || cseg.Index != seg.Index {
+		if cseg.Kind == constraint.SegmentIndexInt || seg.Kind == constraint.SegmentIndexInt {
+			if cseg.Kind != seg.Kind || cseg.Index != seg.Index {
+				return false
+			}
+		} else if cseg.Name != seg.Name {
+			// Dot access and string index access name the same Lua field.
 			return false
 		}
 	}

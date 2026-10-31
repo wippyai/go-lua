@@ -17,9 +17,6 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    env:
-      GOCACHE: ${{ runner.temp }}/go-build
-      GOLANGCI_LINT_CACHE: ${{ runner.temp }}/golangci-lint
     steps:
       - name: Check out code
         uses: actions/checkout@v6
@@ -32,6 +29,9 @@ jobs:
 
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v9.2.0
+        env:
+          GOCACHE: ${{ runner.temp }}/go-build
+          GOLANGCI_LINT_CACHE: ${{ runner.temp }}/golangci-lint
         with:
           version: v2.8.0
           only-new-issues: false
@@ -40,13 +40,11 @@ jobs:
   test:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
-    env:
-      GOCACHE: ${{ runner.temp }}/go-build
     steps:
       - name: Check out code
         uses: actions/checkout@v6
@@ -58,14 +56,20 @@ jobs:
           cache: true
 
       - name: Run tests
-        run: go test -timeout 120s ./...
+        env:
+          GOCACHE: ${{ runner.temp }}/go-build
+        # The fixture suite checks the full application corpus and now needs
+        # several minutes to finish on CI runners.
+        run: go test -timeout 25m ./...
 
   race:
-    name: Race Tests
+    name: Race Tests (${{ matrix.shard }})
     runs-on: ubuntu-latest
     timeout-minutes: 40
-    env:
-      GOCACHE: ${{ runner.temp }}/go-build
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [other, ac, dg, hj, k, lr, sz]
     steps:
       - name: Check out code
         uses: actions/checkout@v6
@@ -78,15 +82,15 @@ jobs:
 
       - name: Run race tests
         env:
+          GOCACHE: ${{ runner.temp }}/go-build
           GORACE: "halt_on_error=1"
-        run: go test -race -timeout 120s ./...
+        # Each shard checks disjoint fixtures; "other" runs every non-fixture test.
+        run: bash .github/scripts/race-shard.sh "${{ matrix.shard }}"
 
   fuzz:
     name: Fuzz
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    env:
-      GOCACHE: ${{ runner.temp }}/go-build
     steps:
       - name: Check out code
         uses: actions/checkout@v6
@@ -98,20 +102,24 @@ jobs:
           cache: true
 
       - name: Fuzz type decode
-        run: go test -fuzz=FuzzTypeDecodeToValidation -fuzztime=60s -timeout=120s
+        env:
+          GOCACHE: ${{ runner.temp }}/go-build
+        run: go test -run='^$' -fuzz=FuzzTypeDecodeToValidation -fuzztime=60s -timeout=120s
 
       - name: Fuzz Lua source types
-        run: go test -fuzz=FuzzLuaTypeValidation -fuzztime=60s -timeout=120s
+        env:
+          GOCACHE: ${{ runner.temp }}/go-build
+        run: go test -run='^$' -fuzz=FuzzLuaTypeValidation -fuzztime=60s -timeout=120s
 
       - name: Fuzz Lua with manifest
-        run: go test -fuzz=FuzzLuaWithManifestTypes -fuzztime=60s -timeout=120s
+        env:
+          GOCACHE: ${{ runner.temp }}/go-build
+        run: go test -run='^$' -fuzz=FuzzLuaWithManifestTypes -fuzztime=60s -timeout=120s
 
   bench:
     name: Benchmarks
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    env:
-      GOCACHE: ${{ runner.temp }}/go-build
     steps:
       - name: Check out code
         uses: actions/checkout@v6
@@ -123,7 +131,10 @@ jobs:
           cache: true
 
       - name: Run benchmarks
-        run: go test -bench="Benchmark(Validate|Is)" -benchmem -count=1 -timeout=60s | tee bench.txt
+        shell: bash
+        env:
+          GOCACHE: ${{ runner.temp }}/go-build
+        run: go test -run='^$' -bench="Benchmark(Validate|Is)" -benchmem -count=1 -timeout=60s | tee bench.txt
 
       - name: Upload benchmark results
         uses: actions/upload-artifact@v4

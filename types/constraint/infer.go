@@ -25,7 +25,7 @@ func stopDepthPattern(pattern, concrete typ.Type, depth int) bool {
 //
 // # Algorithm
 //
-// 1. Constraints are added via [InferSet.AddSubtype] and [InferSet.AddEqual]
+// 1. Constraints are added via [InferSet.AddSubtype]
 // 2. Lower bounds (types that are subtypes of the variable) are joined
 // 3. Upper bounds (types that the variable must be a subtype of) are met
 // 4. Cyclic dependencies are resolved using Tarjan's SCC algorithm
@@ -107,12 +107,6 @@ func (c *InferSet) AddSubtype(sub, super typ.Type) {
 			c.unsatisfiable = true
 		}
 	}
-}
-
-// AddEqual records that two types must be equal.
-func (c *InferSet) AddEqual(a, b typ.Type) {
-	c.AddSubtype(a, b)
-	c.AddSubtype(b, a)
 }
 
 // Solve attempts to solve all constraints.
@@ -373,8 +367,6 @@ func (c *InferSet) unifySCC(scc []int) {
 	}
 }
 
-// walkType traverses a type tree, calling pred on each node.
-// Returns true if pred returns true for any node.
 func canContainTypeVar(k kind.Kind) bool {
 	switch k {
 	case kind.Optional, kind.Union, kind.Intersection, kind.Array,
@@ -384,85 +376,6 @@ func canContainTypeVar(k kind.Kind) bool {
 	default:
 		return false
 	}
-}
-
-func walkType(t typ.Type, depth int, pred func(typ.Type) bool) bool {
-	if stopDepth(t, depth) {
-		return false
-	}
-
-	if pred(t) {
-		return true
-	}
-
-	if !canContainTypeVar(t.Kind()) {
-		return false
-	}
-
-	return typ.Visit(t, typ.Visitor[bool]{
-		Optional: func(o *typ.Optional) bool {
-			return walkType(o.Inner, depth+1, pred)
-		},
-		Union: func(u *typ.Union) bool {
-			for _, m := range u.Members {
-				if walkType(m, depth+1, pred) {
-					return true
-				}
-			}
-			return false
-		},
-		Intersection: func(in *typ.Intersection) bool {
-			for _, m := range in.Members {
-				if walkType(m, depth+1, pred) {
-					return true
-				}
-			}
-			return false
-		},
-		Tuple: func(tup *typ.Tuple) bool {
-			for _, e := range tup.Elements {
-				if walkType(e, depth+1, pred) {
-					return true
-				}
-			}
-			return false
-		},
-		Array: func(a *typ.Array) bool {
-			return walkType(a.Element, depth+1, pred)
-		},
-		Map: func(m *typ.Map) bool {
-			return walkType(m.Key, depth+1, pred) || walkType(m.Value, depth+1, pred)
-		},
-		Function: func(fn *typ.Function) bool {
-			for _, p := range fn.Params {
-				if walkType(p.Type, depth+1, pred) {
-					return true
-				}
-			}
-
-			for _, r := range fn.Returns {
-				if walkType(r, depth+1, pred) {
-					return true
-				}
-			}
-
-			return walkType(fn.Variadic, depth+1, pred)
-		},
-		Record: func(r *typ.Record) bool {
-			for _, f := range r.Fields {
-				if walkType(f.Type, depth+1, pred) {
-					return true
-				}
-			}
-			return false
-		},
-		Alias: func(a *typ.Alias) bool {
-			return walkType(a.Target, depth+1, pred)
-		},
-		Default: func(t typ.Type) bool {
-			return false
-		},
-	})
 }
 
 func occursIn(varID int, t typ.Type) bool {
@@ -593,7 +506,9 @@ func (b *Bounds) Solve() (typ.Type, error) {
 
 	lower = subtype.Widen(lower)
 
-	if !typ.IsNever(lower) && !typ.IsAny(upper) {
+	// any is consistent with every bound in either position. The call check
+	// after instantiation applies the assignability mode to the any value.
+	if !typ.IsNever(lower) && !typ.IsAny(lower) && !typ.IsAny(upper) {
 		if !containsTypeVar(lower) && !containsTypeVar(upper) {
 			if !subtype.IsSubtype(lower, upper) {
 				return nil, &BoundsError{Lower: lower, Upper: upper}
@@ -858,7 +773,7 @@ func applyInferSubst(t typ.Type, s InferSubstitution, visited map[int]bool, memo
 				return t
 			}
 
-			return typ.NewArray(elem)
+			return a.WithElement(elem)
 		},
 		Map: func(m *typ.Map) typ.Type {
 			key := applyInferSubst(m.Key, s, visited, memo, depth+1)
@@ -868,7 +783,7 @@ func applyInferSubst(t typ.Type, s InferSubstitution, visited map[int]bool, memo
 				return t
 			}
 
-			return typ.NewMap(key, value)
+			return m.WithTypes(key, value)
 		},
 		Record: func(r *typ.Record) typ.Type {
 			changed := false
@@ -876,7 +791,8 @@ func applyInferSubst(t typ.Type, s InferSubstitution, visited map[int]bool, memo
 
 			for i, f := range r.Fields {
 				fType := applyInferSubst(f.Type, s, visited, memo, depth+1)
-				fields[i] = typ.Field{Name: f.Name, Type: fType, Optional: f.Optional, Readonly: f.Readonly}
+				fields[i] = f
+				fields[i].Type = fType
 
 				if fType != f.Type {
 					changed = true
@@ -887,22 +803,7 @@ func applyInferSubst(t typ.Type, s InferSubstitution, visited map[int]bool, memo
 				return t
 			}
 
-			rb := typ.NewRecord()
-
-			for _, f := range fields {
-				if f.Readonly {
-					rb.ReadonlyField(f.Name, f.Type)
-				} else if f.Optional {
-					rb.OptField(f.Name, f.Type)
-				} else {
-					rb.Field(f.Name, f.Type)
-				}
-			}
-
-			rec := rb.Build()
-			rec.Metatable = r.Metatable
-
-			return rec
+			return r.WithChildren(fields, r.Metatable, r.MapKey, r.MapValue)
 		},
 		Alias: func(a *typ.Alias) typ.Type {
 			target := applyInferSubst(a.Target, s, visited, memo, depth+1)
@@ -918,11 +819,6 @@ func applyInferSubst(t typ.Type, s InferSubstitution, visited map[int]bool, memo
 	})
 	memo[t] = result
 	return result
-}
-
-// Match walks pattern and concrete types in parallel, collecting constraints.
-func Match(pattern, concrete typ.Type, cs *InferSet) {
-	matchDepth(pattern, concrete, cs, subtype.Covariant, 0)
 }
 
 // MatchContra matches with contravariant orientation (for parameter positions).
@@ -999,14 +895,36 @@ func matchDepth(pattern, concrete typ.Type, cs *InferSet, variance subtype.Varia
 
 				matchDepth(p.Key, c.Key, cs, keyVar, depth+1)
 				matchDepth(p.Value, c.Value, cs, valVar, depth+1)
-			} else if c, ok := concrete.(*typ.Record); ok {
+			} else if c, ok := concrete.(*typ.Array); ok {
+				// An array is a map from integer keys to its element.
 				keyVar := subtype.CombineVariance(variance, subtype.Invariant)
 				valVar := subtype.CombineVariance(variance, subtype.Invariant)
 
-				for _, f := range c.Fields {
-					keyType := typ.LiteralString(f.Name)
-					matchDepth(p.Key, keyType, cs, keyVar, depth+1)
-					matchDepth(p.Value, f.Type, cs, valVar, depth+1)
+				matchDepth(p.Key, typ.Integer, cs, keyVar, depth+1)
+				matchDepth(p.Value, c.Element, cs, valVar, depth+1)
+			} else if c, ok := concrete.(*typ.Tuple); ok {
+				// A tuple is a map from integer keys to the join of its elements.
+				keyVar := subtype.CombineVariance(variance, subtype.Invariant)
+				valVar := subtype.CombineVariance(variance, subtype.Invariant)
+
+				matchDepth(p.Key, typ.Integer, cs, keyVar, depth+1)
+				matchDepth(p.Value, typ.JoinAllPreferNonSoft(c.Elements), cs, valVar, depth+1)
+			} else if c, ok := concrete.(*typ.Record); ok {
+				// A record is a map from its field names to the join of its
+				// field types.
+				keyVar := subtype.CombineVariance(variance, subtype.Invariant)
+				valVar := subtype.CombineVariance(variance, subtype.Invariant)
+
+				if len(c.Fields) > 0 {
+					keys := make([]typ.Type, len(c.Fields))
+					values := make([]typ.Type, len(c.Fields))
+					for i, f := range c.Fields {
+						keys[i] = typ.LiteralString(f.Name)
+						values[i] = f.Type
+					}
+
+					matchDepth(p.Key, typ.JoinAllPreferNonSoft(keys), cs, keyVar, depth+1)
+					matchDepth(p.Value, typ.JoinAllPreferNonSoft(values), cs, valVar, depth+1)
 				}
 			} else if c, ok := concrete.(*typ.Intersection); ok {
 				// Match map pattern against intersection by matching with first map member
@@ -1086,6 +1004,12 @@ func matchDepth(pattern, concrete typ.Type, cs *InferSet, variance subtype.Varia
 						break // Only match against first record member
 					}
 				}
+			}
+			return struct{}{}
+		},
+		Meta: func(p *typ.Meta) struct{} {
+			if c, ok := concrete.(*typ.Meta); ok {
+				matchDepth(p.Of, c.Of, cs, variance, depth+1)
 			}
 			return struct{}{}
 		},

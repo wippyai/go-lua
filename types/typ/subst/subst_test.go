@@ -6,49 +6,6 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-func TestSubstitute(t *testing.T) {
-	t.Run("empty subs", func(t *testing.T) {
-		if Substitute(typ.String, nil) != typ.String {
-			t.Error("empty subs should return original")
-		}
-	})
-
-	t.Run("type param", func(t *testing.T) {
-		tp := typ.NewTypeParam("T", nil)
-		subs := map[string]typ.Type{"T": typ.String}
-		result := Substitute(tp, subs)
-		if result != typ.String {
-			t.Error("should substitute type param")
-		}
-	})
-
-	t.Run("no match", func(t *testing.T) {
-		tp := typ.NewTypeParam("T", nil)
-		subs := map[string]typ.Type{"U": typ.String}
-		result := Substitute(tp, subs)
-		if result != tp {
-			t.Error("unmatched param should remain")
-		}
-	})
-
-	t.Run("in function", func(t *testing.T) {
-		tp := typ.NewTypeParam("T", nil)
-		fn := typ.Func().Param("x", tp).Returns(tp).Build()
-		subs := map[string]typ.Type{"T": typ.Number}
-		result := Substitute(fn, subs)
-		resultFn, ok := result.(*typ.Function)
-		if !ok {
-			t.Fatal("result should be function")
-		}
-		if resultFn.Params[0].Type != typ.Number {
-			t.Error("param type should be substituted")
-		}
-		if resultFn.Returns[0] != typ.Number {
-			t.Error("return type should be substituted")
-		}
-	})
-}
-
 func TestParams(t *testing.T) {
 	t.Run("mismatched lengths", func(t *testing.T) {
 		tp := typ.NewTypeParam("T", nil)
@@ -145,4 +102,27 @@ func TestExpandInstantiated(t *testing.T) {
 			t.Error("should expand nested instantiated")
 		}
 	})
+}
+
+// A type argument may contain a type parameter of another binder with the
+// same name as the callee's; substitution keeps the two distinct.
+func TestParamsKeepsForeignSameNamedParam(t *testing.T) {
+	fn := typ.Func().TypeParam("T", nil).
+		Param("list", typ.NewArray(typ.NewTypeParam("T", nil))).
+		Returns(typ.NewTypeParam("T", nil)).
+		Build()
+	foreign := typ.NewTypeParam("T", typ.Number)
+	arg := typ.NewRecord().Field("v", foreign).Build()
+
+	result, ok := Params(fn, fn.TypeParams, []typ.Type{arg}).(*typ.Function)
+	if !ok {
+		t.Fatal("result should be a function")
+	}
+	elem := result.Params[0].Type.(*typ.Array).Element.(*typ.Record)
+	if got := elem.GetField("v").Type; got != foreign {
+		t.Fatalf("parameter element field: want the foreign %s, got %s", foreign, got)
+	}
+	if got := result.Returns[0].(*typ.Record).GetField("v").Type; got != foreign {
+		t.Fatalf("return field: want the foreign %s, got %s", foreign, got)
+	}
 }

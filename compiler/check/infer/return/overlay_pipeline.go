@@ -5,9 +5,9 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/assign"
-	fbcore "github.com/wippyai/go-lua/compiler/check/flowbuild/core"
 	"github.com/wippyai/go-lua/compiler/check/flowbuild/mutator"
-	"github.com/wippyai/go-lua/compiler/check/flowbuild/resolve"
+	"github.com/wippyai/go-lua/compiler/check/infer/paramhints"
+	"github.com/wippyai/go-lua/compiler/check/overlaymut"
 	"github.com/wippyai/go-lua/compiler/check/phase"
 	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/compiler/check/scope"
@@ -46,19 +46,17 @@ func (i *Inferencer) buildParameterOverlay(ctx *returnInferenceContext) map[cfg.
 		}
 		if typ.IsAbsentOrUnknown(paramType) {
 			if ctx.info.ParamHints != nil && i < len(ctx.info.ParamHints) && ctx.info.ParamHints[i] != nil {
-				paramType = ctx.info.ParamHints[i]
+				paramType = paramhints.BodyParamType(ctx.info.ParamHints[i])
 			}
 		}
 		if slot.TypeAnnotation != nil {
 			resolved := ctx.engine.ResolveType(slot.TypeAnnotation, ctx.resolveScope)
 			if resolved != nil {
-				if typ.IsRefinableAnnotation(resolved) {
-					if typ.IsAbsentOrUnknown(paramType) {
-						paramType = resolved
-					}
-				} else {
-					paramType = resolved
+				hint := typ.Type(nil)
+				if ctx.info.ParamHints != nil && i < len(ctx.info.ParamHints) {
+					hint = ctx.info.ParamHints[i]
 				}
+				paramType = paramhints.RefineAnnotation(resolved, hint)
 			}
 		}
 		overlay[slot.Symbol] = paramType
@@ -82,9 +80,8 @@ func (i *Inferencer) enrichOverlayWithSiblings(
 		}
 	}
 	siblingOverlay := siblings.BuildOverlay(siblings.OverlayConfig{
-		Summaries:  ctx.summaries,
-		Siblings:   siblingEntries,
-		CurrentSym: ctx.info.Sym,
+		Summaries: ctx.summaries,
+		Siblings:  siblingEntries,
 		Services: siblings.OverlayServicesFuncs{
 			SeedTypeFn: func(fn *ast.FunctionExpr) typ.Type {
 				var bindings interface {
@@ -141,6 +138,31 @@ func (i *Inferencer) summaryFromSnapshot(
 		return nil
 	}
 	return normalized
+}
+
+// scratchCallables presents current group estimates to synthesis during this
+// iteration; stable facts are read separately from the previous snapshot.
+func (i *Inferencer) scratchCallables(ctx *returnInferenceContext) api.Callables {
+	if ctx == nil || ctx.info == nil || ctx.info.Graph == nil {
+		return nil
+	}
+	graph, summaries := ctx.info.Graph, ctx.summaries
+	out := make(api.Callables)
+	parentScope := api.ParentScopeForGraph(i.store, graph.ID(), ctx.info.DefScope)
+	owned := i.store.GetCallablesSnapshot(graph, parentScope)
+	graph.EachLocalFunction(func(_ cfg.Point, sym cfg.SymbolID, fn *ast.FunctionExpr) {
+		var fact api.FunctionFact
+		if summary := summaries[sym]; len(summary) > 0 {
+			fact.Summary, fact.Narrow = summary, summary
+		}
+		if inter, ok := owned[fn].Func.(*typ.Intersection); ok {
+			fact.Func = inter
+		}
+		if fact.Func != nil || len(fact.Summary) > 0 {
+			out[fn] = fact
+		}
+	})
+	return out
 }
 
 func (i *Inferencer) resolveLocalFunctionSummary(
@@ -242,24 +264,6 @@ func (i *Inferencer) enrichOverlayWithCaptured(
 	if localBindings == nil {
 		return
 	}
-	if i.store != nil && ctx.info.DefScope != nil {
-		parentScope := api.ParentScopeForGraph(i.store, ctx.info.Graph.ID(), ctx.info.DefScope)
-		if capturedTypes := i.store.GetCapturedTypesSnapshot(ctx.info.Graph, parentScope); len(capturedTypes) > 0 {
-			for _, sym := range cfg.SortedSymbolIDs(capturedTypes) {
-				t := capturedTypes[sym]
-				if sym == 0 || t == nil {
-					continue
-				}
-				if existing, ok := overlay[sym]; ok && existing != nil && !typ.IsSoft(existing, typ.SoftAnnotationPolicy) {
-					continue
-				}
-				overlay[sym] = t
-			}
-		}
-	}
-	if ctx.parentFacts == nil {
-		return
-	}
 	resolveCapturedAnnotation := func(sym cfg.SymbolID) typ.Type {
 		parentGraph := ctx.info.ParentGraph
 		if parentGraph == nil || sym == 0 {
@@ -287,19 +291,38 @@ func (i *Inferencer) enrichOverlayWithCaptured(
 		})
 		return annType
 	}
+	var capturedTypes map[cfg.SymbolID]typ.Type
+	if i.store != nil && ctx.info.DefScope != nil {
+		parentScope := api.ParentScopeForGraph(i.store, ctx.info.Graph.ID(), ctx.info.DefScope)
+		capturedTypes = i.store.GetCapturedTypesSnapshot(ctx.info.Graph, parentScope)
+	}
 	for _, sym := range localBindings.CapturedSymbols(ctx.info.Fn) {
 		if sym == 0 {
-			continue
-		}
-		if existing, ok := overlay[sym]; ok && existing != nil && !typ.IsSoft(existing, typ.SoftAnnotationPolicy) {
 			continue
 		}
 		if annType := resolveCapturedAnnotation(sym); annType != nil {
 			overlay[sym] = annType
 			continue
 		}
-		if tv := ctx.parentFacts.EffectiveTypeAt(defPoint, sym); tv.State == flow.StateResolved && tv.Type != nil {
-			overlay[sym] = tv.Type
+		if existing, ok := overlay[sym]; ok && existing != nil && !typ.IsSoft(existing, typ.SoftAnnotationPolicy) {
+			continue
+		}
+		if captured := capturedTypes[sym]; captured != nil {
+			overlay[sym] = captured
+			continue
+		}
+		if ctx.parentFacts != nil {
+			if tv := ctx.parentFacts.EffectiveTypeAt(defPoint, sym); tv.State == flow.StateResolved && tv.Type != nil {
+				overlay[sym] = tv.Type
+				continue
+			}
+		}
+		if declared := i.parentDeclared[sym]; declared != nil {
+			overlay[sym] = declared
+		} else if _, pendingLocalFunction := localBindings.FuncLitBySymbol(sym); pendingLocalFunction {
+			// A captured local function without parent facts is a fixpoint
+			// dependency. Other missing captures retain the legacy behavior.
+			overlay[sym] = typ.Unresolved
 		}
 	}
 }
@@ -310,88 +333,41 @@ func (i *Inferencer) inferLocalVariableTypes(
 	overlay map[cfg.SymbolID]typ.Type,
 ) (map[cfg.SymbolID]typ.Type, *synth.Engine, func(ast.Expr, cfg.Point) typ.Type) {
 	fnGraph := ctx.info.Graph
-	annotated := make(map[cfg.SymbolID]bool, len(overlay))
-	paramSet := make(map[cfg.SymbolID]bool)
-	for _, sym := range fnGraph.ParamSymbols() {
-		if sym != 0 {
-			paramSet[sym] = true
-		}
-	}
-	for sym, tp := range overlay {
-		if paramSet[sym] {
-			annotated[sym] = true
-			continue
-		}
-		if tp != nil && !typ.IsSoft(tp, typ.SoftAnnotationPolicy) {
-			annotated[sym] = true
-		}
-	}
-
-	fnGraph.EachAssign(func(_ cfg.Point, assignInfo *cfg.AssignInfo) {
-		if assignInfo == nil || len(assignInfo.TypeAnnotations) == 0 {
-			return
-		}
-		for idx, target := range assignInfo.Targets {
-			if target.Kind != cfg.TargetIdent || target.Symbol == 0 {
-				continue
-			}
-			if idx < len(assignInfo.TypeAnnotations) && assignInfo.TypeAnnotations[idx] != nil {
-				if tp, ok := overlay[target.Symbol]; ok && tp != nil {
-					if !typ.IsSoft(tp, typ.SoftAnnotationPolicy) {
-						annotated[target.Symbol] = true
-					}
-				} else if resolved := ctx.engine.ResolveType(assignInfo.TypeAnnotations[idx], ctx.resolveScope); resolved != nil {
-					if !typ.IsSoft(resolved, typ.SoftAnnotationPolicy) {
-						annotated[target.Symbol] = true
-					}
-				}
-			}
-		}
+	annotated := assign.AnnotatedSymbols(fnGraph, overlay, func(expr ast.TypeExpr) typ.Type {
+		return ctx.engine.ResolveType(expr, ctx.resolveScope)
 	})
-
-	fnScopes := uniformFunctionScopes(fnGraph, ctx.resolveScope)
-
-	prelimCtx := api.NewReturnInferenceEnv(api.ReturnInferenceEnvConfig{
-		Graph:           fnGraph,
-		Bindings:        ctx.bindings,
-		BaseScope:       ctx.resolveScope,
-		DeclaredTypes:   overlay,
-		GlobalTypes:     i.globalTypes,
-		ModuleAliases:   ctx.moduleAliases,
-		ReturnSummaries: ctx.summaries,
-	})
-
-	prelimEngine := i.newReturnInferenceEngine(ctx.run, fnScopes, prelimCtx)
+	fnScopes := assign.UniformScopes(fnGraph, ctx.resolveScope)
+	prelimCtx, prelimEngine := i.newOverlayEngine(ctx, fnScopes, overlay)
 
 	synthAdapter := func(expr ast.Expr, p cfg.Point) typ.Type {
 		return prelimEngine.TypeOf(expr, p)
 	}
-	symResolver := func(p cfg.Point, sym cfg.SymbolID) (typ.Type, bool) {
-		if prelimCtx == nil || prelimCtx.Types() == nil {
-			return nil, false
-		}
-		tv := prelimCtx.Types().EffectiveTypeAt(p, sym)
-		if tv.State == flow.StateResolved && tv.Type != nil {
-			return tv.Type, true
-		}
-		if t, ok := prelimCtx.GlobalType(sym); ok && t != nil {
-			return t, true
-		}
-		return nil, false
+	var env api.BaseEnv
+	if prelimCtx != nil {
+		env = prelimCtx
 	}
-
-	inferred := assign.CollectInferredTypes(&fbcore.FlowContext{
-		Graph:   fnGraph,
-		Scopes:  fnScopes,
-		API:     prelimEngine,
-		CallCtx: ctx.run.Ctx,
-		TypeOps: i.types,
-		Derived: &fbcore.Derived{
-			SymResolver: symResolver,
-		},
-	}, overlay, annotated, nil)
+	inferred := assign.FunctionLocals(fnGraph, fnScopes, prelimEngine, env, ctx.run.Env.Ctx, i.types, overlay, annotated)
 
 	return inferred, prelimEngine, synthAdapter
+}
+
+// newOverlayEngine builds a return-inference engine whose declared types are
+// overlay.
+func (i *Inferencer) newOverlayEngine(
+	ctx *returnInferenceContext,
+	fnScopes map[cfg.Point]*scope.State,
+	overlay map[cfg.SymbolID]typ.Type,
+) (*api.DeclaredEnvImpl, *synth.Engine) {
+	env := api.NewReturnInferenceEnv(api.ReturnInferenceEnvConfig{
+		Graph:         ctx.info.Graph,
+		Bindings:      ctx.bindings,
+		BaseScope:     ctx.resolveScope,
+		DeclaredTypes: overlay,
+		GlobalTypes:   i.globalTypes,
+		ModuleAliases: ctx.moduleAliases,
+		Callables:     i.scratchCallables(ctx),
+	})
+	return env, i.newReturnInferenceEngine(ctx.run, fnScopes, env)
 }
 
 func (i *Inferencer) enrichOverlayWithLocalDeclarations(
@@ -450,13 +426,6 @@ func (i *Inferencer) enrichOverlayWithLocalDeclarations(
 				}
 				return
 			}
-			if idx < len(info.Sources) {
-				if _, ok := info.Sources[idx].(*ast.TableExpr); ok {
-					if seeded := ctx.engine.TypeOf(info.Sources[idx], p); seeded != nil {
-						overlay[target.Symbol] = seeded
-					}
-				}
-			}
 		})
 	})
 
@@ -484,6 +453,14 @@ func (i *Inferencer) collectAndApplyMutations(
 ) map[cfg.SymbolID]typ.Type {
 	stage := newOverlayMutationStage(ctx, overlay, inferred, synthAdapter)
 	mergeInferredIntoOverlay(stage.finalOverlay, stage.inferred, stage.paramSyms)
+	// Mutations are read with the local types phase 1 published: a key or
+	// value expression such as `#t + 1` reads its locals through them.
+	if stage.fnGraph != nil {
+		_, published := i.newOverlayEngine(ctx, assign.UniformScopes(stage.fnGraph, ctx.resolveScope), cloneOverlay(stage.finalOverlay, 0))
+		stage.synthAdapter = func(expr ast.Expr, p cfg.Point) typ.Type {
+			return published.TypeOf(expr, p)
+		}
+	}
 	stage.enrichedSynthAdapter = buildEnrichedSynthAdapter(stage.fnGraph.Bindings(), stage.inferred, stage.finalOverlay, stage.synthAdapter)
 
 	i.applyFieldMutations(ctx, &stage)
@@ -600,17 +577,8 @@ func buildRecordWithMap(template *typ.Record, mapKey, mapValue typ.Type) *typ.Re
 	if template == nil {
 		return nil
 	}
-	builder := typ.NewRecord()
-	if template.Open {
-		builder.SetOpen(true)
-	}
-	for _, f := range template.Fields {
-		builder.Field(f.Name, f.Type)
-	}
-	if template.Metatable != nil {
-		builder.Metatable(template.Metatable)
-	}
-	builder.MapComponent(mapKey, mapValue)
+	builder := template.Builder()
+	builder.MapComponentWithFlags(mapKey, mapValue, template.MapInferredPresence, template.MapExplicitNilWrite)
 	return builder.Build()
 }
 
@@ -620,7 +588,7 @@ func reconcileSoftAnnotatedInference(baseType, inferredType typ.Type) typ.Type {
 		case *typ.Map:
 			mergedKey := typ.JoinPreferNonSoft(baseMap.Key, inferred.Key)
 			mergedVal := typ.JoinPreferNonSoft(baseMap.Value, inferred.Value)
-			return typ.NewMap(mergedKey, mergedVal)
+			return inferred.WithTypes(mergedKey, mergedVal)
 		case *typ.Record:
 			if inferred.HasMapComponent() {
 				mergedKey := typ.JoinPreferNonSoft(baseMap.Key, inferred.MapKey)
@@ -698,22 +666,9 @@ func (i *Inferencer) applyFieldMutations(ctx *returnInferenceContext, stage *ove
 	}
 	fieldAssignments := assign.CollectFieldAssignments(stage.fnGraph, stage.enrichedSynthAdapter, nil)
 
-	nestedBindings := stage.fnGraph.Bindings()
-	if nestedBindings == nil {
-		nestedBindings = i.store.ModuleBindings()
-	}
-	var capturedByCallee map[cfg.SymbolID]map[cfg.SymbolID]map[string]typ.Type
-	if i.store != nil {
-		capturedParent := api.ParentScopeForGraph(i.store, stage.fnGraph.ID(), ctx.info.DefScope)
-		capturedByCallee = i.store.GetCapturedFieldAssignsSnapshot(stage.fnGraph, capturedParent)
-	}
-	calleeTypeResolver := func(info *cfg.CallInfo, p cfg.Point) typ.Type {
-		return resolve.CalleeType(info, p, stage.enrichedSynthAdapter, nil, nil, stage.fnGraph, nestedBindings, i.store.ModuleBindings())
-	}
-	nestedFieldAssignments := returns.CollectCalledNestedFieldAssignments(stage.fnGraph, nestedBindings, capturedByCallee, calleeTypeResolver)
-	returns.MergeFieldAssignments(fieldAssignments, nestedFieldAssignments)
+	writes := overlaymut.FieldWriteSets(fieldAssignments)
 
-	returns.ApplyFieldMergeToOverlay(stage.finalOverlay, fieldAssignments)
+	overlaymut.ApplyFieldWritesToOverlay(stage.finalOverlay, writes)
 }
 
 func (i *Inferencer) applyIndexerMutations(stage *overlayMutationStage) {
@@ -748,21 +703,18 @@ type phase2InferenceState struct {
 	deadPoints map[cfg.Point]bool
 }
 
-// runPhase2FlowNarrowing executes extract->solve->narrow over the final overlay.
-// This makes return summary collection path-sensitive instead of declared-only.
-func (i *Inferencer) runPhase2FlowNarrowing(
+// extractForReturn runs flow extraction over the final overlay and returns
+// the environment, scope output, and extraction output for solve/narrow or
+// flow input inspection.
+func (i *Inferencer) extractForReturn(
 	ctx *returnInferenceContext,
 	finalOverlay map[cfg.SymbolID]typ.Type,
-) phase2InferenceState {
+) (phase.PhaseEnv, phase.ScopeOutput, phase.FlowExtractOutput) {
 	fnGraph := ctx.info.Graph
-	if fnGraph == nil {
-		return phase2InferenceState{}
-	}
-
-	fnScopes := uniformFunctionScopes(fnGraph, ctx.resolveScope)
+	fnScopes := assign.UniformScopes(fnGraph, ctx.resolveScope)
 
 	phaseEnv := phase.PhaseEnv{
-		Ctx:            ctx.run.Ctx,
+		Ctx:            ctx.run.Env.Ctx,
 		Graph:          fnGraph,
 		Fn:             ctx.info.Fn,
 		Types:          i.types,
@@ -781,18 +733,42 @@ func (i *Inferencer) runPhase2FlowNarrowing(
 			return ctx.engine.ResolveFunctionSignature(fn, sc)
 		}),
 	}
-	phaseReturnSummaries := summarizeWithoutCurrent(ctx.summaries, ctx.info)
 
 	extractOut := phase.RunExtract(phase.FlowExtractInput{
-		PhaseEnv:        phaseEnv,
-		Resolve:         phase.ResolveOutput{TypeResolver: ctx.engine},
-		Scope:           scopeOut,
-		ReturnSummaries: phaseReturnSummaries,
+		PhaseEnv:  phaseEnv,
+		Resolve:   phase.ResolveOutput{TypeResolver: ctx.engine},
+		Scope:     scopeOut,
+		Callables: i.scratchCallables(ctx),
 	})
-	if extractOut.Inputs == nil {
+	if extractOut.Inputs != nil && i.store != nil {
+		bindings := fnGraph.Bindings()
+		if bindings == nil {
+			bindings = i.store.ModuleBindings()
+		}
+		parent := api.ParentScopeForGraph(i.store, fnGraph.ID(), ctx.info.DefScope)
+		extractOut.Inputs.FieldWriteEffects = append(extractOut.Inputs.FieldWriteEffects,
+			returns.CollectFieldWriteEffects(fnGraph, bindings,
+				i.store.GetFieldWritesSnapshot(fnGraph, parent),
+				&returns.StoreFieldWriteSource{Store: i.store, Bindings: bindings})...)
+	}
+	return phaseEnv, scopeOut, extractOut
+}
+
+// runPhase2FlowNarrowing executes extract->solve->narrow over the final overlay.
+// This makes return summary collection path-sensitive instead of declared-only.
+func (i *Inferencer) runPhase2FlowNarrowing(
+	ctx *returnInferenceContext,
+	finalOverlay map[cfg.SymbolID]typ.Type,
+) phase2InferenceState {
+	fnGraph := ctx.info.Graph
+	if fnGraph == nil {
 		return phase2InferenceState{}
 	}
 
+	phaseEnv, scopeOut, extractOut := i.extractForReturn(ctx, finalOverlay)
+	if extractOut.Inputs == nil {
+		return phase2InferenceState{}
+	}
 	solveOut := phase.RunSolve(phase.FlowSolveInput{
 		PhaseEnv: phaseEnv,
 		Extract:  extractOut,
@@ -800,11 +776,11 @@ func (i *Inferencer) runPhase2FlowNarrowing(
 	})
 
 	narrowOut := phase.RunNarrow(phase.NarrowInput{
-		PhaseEnv:              phaseEnv,
-		Scope:                 scopeOut,
-		Extract:               extractOut,
-		Solve:                 solveOut,
-		NarrowReturnSummaries: phaseReturnSummaries,
+		PhaseEnv:  phaseEnv,
+		Scope:     scopeOut,
+		Extract:   extractOut,
+		Solve:     solveOut,
+		Callables: i.scratchCallables(ctx),
 	})
 
 	deadPoints := map[cfg.Point]bool{}
@@ -825,48 +801,16 @@ func (i *Inferencer) runPhase2FlowNarrowing(
 
 	// Fallback: declared-phase synth (should be uncommon, e.g. nil solution path).
 	fnCheckCtx := api.NewReturnInferenceEnv(api.ReturnInferenceEnvConfig{
-		Graph:           fnGraph,
-		Bindings:        ctx.bindings,
-		BaseScope:       ctx.resolveScope,
-		DeclaredTypes:   finalOverlay,
-		GlobalTypes:     i.globalTypes,
-		ModuleAliases:   ctx.moduleAliases,
-		ReturnSummaries: phaseReturnSummaries,
+		Graph:         fnGraph,
+		Bindings:      ctx.bindings,
+		BaseScope:     ctx.resolveScope,
+		DeclaredTypes: finalOverlay,
+		GlobalTypes:   i.globalTypes,
+		ModuleAliases: ctx.moduleAliases,
+		Callables:     i.scratchCallables(ctx),
 	})
 	return phase2InferenceState{
-		synth:      i.newReturnInferenceEngine(ctx.run, fnScopes, fnCheckCtx),
+		synth:      i.newReturnInferenceEngine(ctx.run, phaseEnv.Scopes, fnCheckCtx),
 		deadPoints: deadPoints,
 	}
-}
-
-func summarizeWithoutCurrent(
-	summaries map[cfg.SymbolID][]typ.Type,
-	info *returns.LocalFuncInfo,
-) map[cfg.SymbolID][]typ.Type {
-	if len(summaries) == 0 || info == nil || info.Sym == 0 {
-		return summaries
-	}
-	if _, ok := summaries[info.Sym]; !ok {
-		return summaries
-	}
-	out := make(map[cfg.SymbolID][]typ.Type, len(summaries)-1)
-	for _, sym := range cfg.SortedSymbolIDs(summaries) {
-		if sym == info.Sym {
-			continue
-		}
-		out[sym] = summaries[sym]
-	}
-	return out
-}
-
-func uniformFunctionScopes(graph *cfg.Graph, base *scope.State) map[cfg.Point]*scope.State {
-	if graph == nil {
-		return nil
-	}
-	scopes := make(map[cfg.Point]*scope.State)
-	graph.EachNode(func(p cfg.Point, _ cfg.NodeInfo) {
-		scopes[p] = base
-	})
-	scopes[graph.Entry()] = base
-	return scopes
 }

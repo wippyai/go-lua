@@ -1,0 +1,1 @@
+{"description":"Seven channel source assertions after called fixture append writes","files":["test_state.lua","thread_bridge_stub.lua","automations_lib_stub.lua","main.lua"],"check":{"errors":0}}

@@ -4,6 +4,7 @@ import (
 	"slices"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
@@ -102,14 +103,21 @@ func (s *Solution) setValue(key string, t typ.Type) {
 		return
 	}
 	s.values[key] = t
-	if s.fieldOverlayCache == nil {
+	if s.fieldOverlayCache == nil && s.childFieldCache == nil {
 		return
 	}
 	_, _, suffix, ok := pathkey.ParseKeyUnchecked(constraint.PathKey(key))
 	if !ok || suffix == "" {
 		return
 	}
-	delete(s.fieldOverlayCache, key[:len(key)-len(suffix)])
+	// Every ancestor prefix composes this child fact into its fields.
+	root := key[:len(key)-len(suffix)]
+	segs := pathkey.ParseSuffix(suffix)
+	for i := 0; i < len(segs); i++ {
+		prefix := root + pathkey.SegmentsSuffix(segs[:i])
+		delete(s.fieldOverlayCache, prefix)
+		delete(s.childFieldCache, prefix)
+	}
 }
 
 // dependencyMap tracks which CFG points depend on a given canonical key.
@@ -138,6 +146,28 @@ func symbolDependencyKey(sym cfg.SymbolID) string {
 func (dm dependencyMap) register(key constraint.PathKey, point cfg.Point) {
 	if key != "" {
 		dm[string(key)] = append(dm[string(key)], point)
+	}
+}
+
+// versionDependencyKey keys the points that read every fact stored below a
+// symbol version: a phi joins its operands' field suffix facts as well as
+// their base values.
+func versionDependencyKey(base string) string {
+	return "$ver:" + base
+}
+
+// versionBaseOfKey returns the symbol-version prefix of a canonical key, or
+// "" when the key is a base key itself.
+func versionBaseOfKey(key string) string {
+	if i := strings.IndexAny(key, ".["); i > 0 {
+		return key[:i]
+	}
+	return ""
+}
+
+func (dm dependencyMap) registerVersion(key constraint.PathKey, point cfg.Point) {
+	if key != "" {
+		dm[versionDependencyKey(string(key))] = append(dm[versionDependencyKey(string(key))], point)
 	}
 }
 
@@ -171,6 +201,7 @@ func (s *Solution) buildPhiDependencies() dependencyMap {
 		for _, op := range phi.Operands {
 			opKey := s.pkResolver.KeyAtVersion(op.Version.Symbol, op.Version.ID, nil)
 			deps.register(opKey, phi.Point)
+			deps.registerVersion(opKey, phi.Point)
 		}
 	}
 	return deps
@@ -190,6 +221,21 @@ func (s *Solution) buildPhiDependencies() dependencyMap {
 func (s *Solution) buildAssignmentDependencies() dependencyMap {
 	deps := make(dependencyMap)
 
+	registerMapElement := func(p cfg.Point, src *MapElementSource) {
+		if src == nil {
+			return
+		}
+		if src.MapPath.Symbol != 0 {
+			deps.register(s.pkResolver.KeyAt(p, src.MapPath), p)
+			deps.registerSymbol(src.MapPath.Symbol, p)
+		}
+		if src.KeySymbol != 0 {
+			keyPath := constraint.Path{Root: src.KeyVar, Symbol: src.KeySymbol}
+			deps.register(s.pkResolver.KeyAt(p, keyPath), p)
+			deps.registerSymbol(src.KeySymbol, p)
+		}
+	}
+
 	// Regular assignments
 	for _, assign := range s.inputs.Assignments {
 		if assign.SourcePath.Symbol != 0 {
@@ -201,11 +247,7 @@ func (s *Solution) buildAssignmentDependencies() dependencyMap {
 			deps.register(srcKey, assign.Point)
 			deps.registerSymbol(assign.IterSource.Path.Symbol, assign.Point)
 		}
-		if assign.MapElementSource != nil && assign.MapElementSource.MapPath.Symbol != 0 {
-			srcKey := s.pkResolver.KeyAt(assign.Point, assign.MapElementSource.MapPath)
-			deps.register(srcKey, assign.Point)
-			deps.registerSymbol(assign.MapElementSource.MapPath.Symbol, assign.Point)
-		}
+		registerMapElement(assign.Point, assign.MapElementSource)
 		if assign.ContainerElementSource != nil && assign.ContainerElementSource.ContainerPath.Symbol != 0 {
 			srcKey := s.pkResolver.KeyAt(assign.Point, assign.ContainerElementSource.ContainerPath)
 			deps.register(srcKey, assign.Point)
@@ -213,12 +255,29 @@ func (s *Solution) buildAssignmentDependencies() dependencyMap {
 		}
 	}
 
-	// Table mutator value paths
-	for _, tm := range s.inputs.TableMutatorAssignments {
-		if tm.ValuePath.Symbol != 0 {
-			srcKey := s.pkResolver.KeyAt(tm.Point, tm.ValuePath)
-			deps.register(srcKey, tm.Point)
+	// Paths read by the values that writes publish.
+	var registerValue func(cfg.Point, ValueSource)
+	registerValue = func(p cfg.Point, v ValueSource) {
+		if v.ValuePath.Symbol != 0 {
+			deps.register(s.pkResolver.KeyAt(p, v.ValuePath), p)
+			deps.registerSymbol(v.ValuePath.Symbol, p)
 		}
+		registerMapElement(p, v.MapElementSource)
+		for _, field := range v.ValueFields {
+			registerValue(p, field.ValueSource)
+		}
+		for _, element := range v.ValueElements {
+			registerValue(p, element)
+		}
+	}
+	for _, tm := range s.inputs.TableMutatorAssignments {
+		registerValue(tm.Point, tm.ValueSource)
+	}
+	for _, cm := range s.inputs.ContainerMutatorAssignments {
+		registerValue(cm.Point, cm.ValueSource)
+	}
+	for _, ia := range s.inputs.IndexerAssignments {
+		registerValue(ia.Point, ia.ValueSource)
 	}
 
 	return deps
@@ -304,6 +363,15 @@ func addDependentPoints(deps dependencyMap, changedKeys []string, worklist []cfg
 		}
 		if sym := pathkey.KeySymbolUnchecked(constraint.PathKey(key)); sym != 0 {
 			for _, point := range deps[symbolDependencyKey(sym)] {
+				if inQueue[point] || pending[point] {
+					continue
+				}
+				pending[point] = true
+				points = append(points, point)
+			}
+		}
+		if base := versionBaseOfKey(key); base != "" {
+			for _, point := range deps[versionDependencyKey(base)] {
 				if inQueue[point] || pending[point] {
 					continue
 				}

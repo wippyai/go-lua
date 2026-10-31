@@ -1,0 +1,5 @@
+{
+  "description": "A callee writing entries into an array below its parameter by a key of unknown type keeps the array an array in the caller.",
+  "files": ["main.lua"],
+  "check": {"errors": 0}
+}

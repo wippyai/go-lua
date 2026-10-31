@@ -89,8 +89,8 @@ func TestInterprocFactWriter_WriteLiteralSignatures(t *testing.T) {
 		t.Fatalf("expected literal sigs stored for graph %d", graph.ID())
 	}
 	gotFacts := stub.factsByGraphKeyNext[key]
-	if gotFacts.LiteralSigs == nil || gotFacts.LiteralSigs[fn] != sig {
-		t.Fatalf("expected literal sig in facts update, got %#v", gotFacts.LiteralSigs)
+	if gotFacts.Callables == nil || gotFacts.Callables[fn].Sig != sig {
+		t.Fatalf("expected literal sig in facts update, got %#v", gotFacts.Callables)
 	}
 }
 

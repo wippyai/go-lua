@@ -55,15 +55,23 @@
 package check
 
 import (
+	"fmt"
+	"os"
+	"reflect"
+	"regexp"
+
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/pipeline"
+	"github.com/wippyai/go-lua/compiler/check/returns"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/parse"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/diag"
+	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/query/core"
+	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -137,11 +145,14 @@ func WithComputePass(p api.ComputePass) Option {
 type Checker struct {
 	db                        *db.DB
 	deps                      Deps
+	options                   Options
 	passes                    []Pass
 	computePasses             []api.ComputePass
 	maxIterations             int
 	maxScopeDepth             int
 	emitScopeDepthDiagnostics bool
+	disableLeafFastPath       bool
+	disableWorklist           bool
 }
 
 // NewChecker creates a new Checker instance with the given database, dependencies, and options.
@@ -180,6 +191,7 @@ func NewChecker(database *db.DB, deps Deps, opts ...Option) *Checker {
 }
 
 func (c *Checker) newPipeline() *pipeline.Driver {
+	profile := pipeline.NewFixpointProfile()
 	runner := pipeline.NewRunner(pipeline.RunnerConfig{
 		Types:         c.deps.Types,
 		GlobalTypes:   c.deps.GlobalTypes,
@@ -188,22 +200,64 @@ func (c *Checker) newPipeline() *pipeline.Driver {
 		Resolver:      c.deps.Resolver,
 		MaxScopeDepth: c.maxScopeDepth,
 		ComputePasses: c.computePasses,
+		Profile:       profile,
 	})
 	funcResultQ := db.NewQuery("FuncResult", runner.Run, funcResultEqual)
 	return pipeline.New(pipeline.Config{
-		Types:         c.deps.Types,
-		GlobalTypes:   c.deps.GlobalTypes,
-		Stdlib:        c.deps.Stdlib,
-		Manifests:     c.db,
-		MaxIterations: c.maxIterations,
-		MaxScopeDepth: c.maxScopeDepth,
-		EmitScopeDiag: c.emitScopeDepthDiagnostics,
-		FuncResultQ:   funcResultQ,
+		Types:               c.deps.Types,
+		GlobalTypes:         c.deps.GlobalTypes,
+		Stdlib:              c.deps.Stdlib,
+		Manifests:           c.db,
+		MaxIterations:       c.maxIterations,
+		MaxScopeDepth:       c.maxScopeDepth,
+		EmitScopeDiag:       c.emitScopeDepthDiagnostics,
+		FuncResultQ:         funcResultQ,
+		Profile:             profile,
+		DisableLeafFastPath: c.disableLeafFastPath,
+		DisableWorklist:     c.disableWorklist || len(c.computePasses) > 0,
 	})
 }
 
-// WithMaxIterations configures the maximum number of fixpoint iterations.
-// Values less than 1 are clamped to 1.
+// Options holds the type-checking semantics an embedder selects for its
+// programs, as opposed to the analysis limits other options configure. The
+// zero value is the default semantics.
+type Options struct {
+	// Strict enables stricter type-checking semantics. Its first rule makes
+	// any behave as unknown: an any value must be narrowed before it is
+	// accepted where a specific type is expected. Further strict rules can
+	// be added here. By default, any is gradual at assignments, arguments and
+	// returns.
+	Strict bool
+}
+
+// Assignability returns the relation that decides use-site assignability
+// under o.
+func (o Options) Assignability() subtype.Assignability {
+	if o.Strict {
+		return subtype.Strict
+	}
+	return subtype.Gradual
+}
+
+// WithOptions configures the type-checking semantics.
+func WithOptions(o Options) Option {
+	return func(c *Checker) {
+		c.options = o
+	}
+}
+
+// newQueryContext creates the query context of one check session, carrying
+// the session's assignability mode.
+func (c *Checker) newQueryContext() *db.QueryContext {
+	ctx := db.NewQueryContext(c.db)
+	core.WithAssignability(ctx, c.options.Assignability())
+	return ctx
+}
+
+// WithMaxIterations configures the minimum round budget of the inter-function
+// fixpoint. A chunk whose closure nesting and local call chains need more
+// rounds to propagate facts gets a larger budget. Values less than 1 are
+// clamped to 1.
 func WithMaxIterations(n int) Option {
 	return func(c *Checker) {
 		if n < 1 {
@@ -251,7 +305,7 @@ func WithScopeDepthDiagnostics(enabled bool) Option {
 //   - Diagnostics: Type errors, warnings, and suggestions
 //   - Store: Inter-function channel data for advanced introspection
 func (c *Checker) Check(source, name string) *Session {
-	ctx := db.NewQueryContext(c.db)
+	ctx := c.newQueryContext()
 	sess := New(ctx, name)
 	// Ensure each top-level Check starts from clean inter-function channel state.
 	// These are iteration-stable caches and must not persist across separate runs.
@@ -288,7 +342,95 @@ func (c *Checker) Check(source, name string) *Session {
 	}
 
 	c.checkChunk(sess, chunk)
+	if os.Getenv("WIPPY_FIXPOINT_ASSERT") == "1" {
+		reference := *c
+		reference.disableLeafFastPath = true
+		reference.disableWorklist = true
+		assertFixpointMatches(sess, reference.checkPrepared(sess))
+	}
 	return sess
+}
+
+// assertFixpointMatches runs only in the opt-in debug mode. The reference
+// checker follows the original full return-inference schedule.
+func (c *Checker) checkPrepared(original *Session) *Session {
+	reference := New(c.newQueryContext(), original.SourceName)
+	module := *original.Store.Module
+	module.Parents = make(map[uint64]*scope.State)
+	reference.Store.Module = &module
+	reference.Store.ReuseClassIdentitiesForDebug(original.Store)
+	for fn, graph := range original.cfgCache {
+		reference.cfgCache[fn] = graph
+	}
+	c.newPipeline().RunPrepared(reference, original.RootFunc)
+	c.runPasses(reference)
+	pipeline.SortDiagnostics(reference.Diagnostics)
+	return reference
+}
+
+func assertFixpointMatches(got, want *Session) {
+	if !reflect.DeepEqual(normalizeReplayDiagnostics(got.Diagnostics), normalizeReplayDiagnostics(want.Diagnostics)) {
+		panic(fmt.Sprintf("fixpoint assertion: diagnostics differ from full schedule\ngot: %#v\nwant: %#v", got.Diagnostics, want.Diagnostics))
+	}
+	a, b := got.Store.InterprocPrev, want.Store.InterprocPrev
+	if len(a.Facts) != len(b.Facts) {
+		panic("fixpoint assertion: fact key count differs from full schedule")
+	}
+	for key, facts := range a.Facts {
+		other, ok := b.Facts[key]
+		if !ok || !returns.FactsEqual(facts, other) {
+			panic(fmt.Sprintf("fixpoint assertion: facts differ for graph %d", key.GraphID))
+		}
+	}
+	if len(a.Refinements) != len(b.Refinements) {
+		panic("fixpoint assertion: refinement count differs from full schedule")
+	}
+	for sym, refinement := range a.Refinements {
+		other, ok := b.Refinements[sym]
+		if !ok || !refinement.Equals(other) {
+			panic(fmt.Sprintf("fixpoint assertion: refinement differs for symbol %d", sym))
+		}
+	}
+	if !returns.ConstructorFieldsEqual(a.ConstructorFields, b.ConstructorFields) {
+		panic("fixpoint assertion: constructor fields differ from full schedule")
+	}
+	if len(got.Results) != len(want.Results) {
+		panic("fixpoint assertion: function result count differs from full schedule")
+	}
+	for fn, result := range got.Results {
+		other := want.Results[fn]
+		if result == nil || other == nil || result.Graph == nil || other.Graph != result.Graph {
+			panic("fixpoint assertion: function result identity differs from full schedule")
+		}
+		for sym := range result.Graph.AllSymbolIDs() {
+			if result.Facts.IsAnnotated(sym) != other.Facts.IsAnnotated(sym) {
+				panic(fmt.Sprintf("fixpoint assertion: annotation differs for symbol %d", sym))
+			}
+			for _, point := range result.Graph.RPO() {
+				if !sameTypedValue(result.Facts.DeclaredAt(point, sym), other.Facts.DeclaredAt(point, sym)) ||
+					!sameTypedValue(result.Facts.RefinedAt(point, sym), other.Facts.RefinedAt(point, sym)) ||
+					!sameTypedValue(result.Facts.EffectiveTypeAt(point, sym), other.Facts.EffectiveTypeAt(point, sym)) {
+					panic(fmt.Sprintf("fixpoint assertion: flow facts differ for graph %d point %d symbol %d", result.Graph.ID(), point, sym))
+				}
+			}
+		}
+	}
+}
+
+var replayRecursiveID = regexp.MustCompile(`rec#[0-9]+`)
+
+// Recursive IDs use a process-global counter. The replay runs after the
+// original check, so its numbering differs even for the same schedule.
+func normalizeReplayDiagnostics(diags []diag.Diagnostic) []diag.Diagnostic {
+	copyOf := append([]diag.Diagnostic(nil), diags...)
+	for index := range copyOf {
+		copyOf[index].Message = replayRecursiveID.ReplaceAllString(copyOf[index].Message, "rec#")
+	}
+	return copyOf
+}
+
+func sameTypedValue(a, b flow.TypedValue) bool {
+	return a.State == b.State && typ.TypeEquals(a.Type, b.Type)
 }
 
 // CheckChunk analyzes a pre-parsed AST chunk, returning a Session with results.
@@ -299,7 +441,7 @@ func (c *Checker) Check(source, name string) *Session {
 // Analysis proceeds identically to Check: binding, CFG construction, fixpoint
 // iteration, and diagnostic generation.
 func (c *Checker) CheckChunk(chunk []ast.Stmt, name string) *Session {
-	ctx := db.NewQueryContext(c.db)
+	ctx := c.newQueryContext()
 	sess := New(ctx, name)
 	// Attach store accessor and compute context for interproc queries
 	if sess.Store != nil {
@@ -357,9 +499,4 @@ func funcResultEqual(a, b *api.FuncResult) bool {
 func (c *Checker) ClearCache() {
 	// Function-result memoization is session-local and discarded at the end of Check.
 	// Kept for API compatibility.
-}
-
-// Database returns the checker's type database for connecting external manifests.
-func (c *Checker) Database() *db.DB {
-	return c.db
 }

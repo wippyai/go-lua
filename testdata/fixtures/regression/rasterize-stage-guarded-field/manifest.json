@@ -1,0 +1,26 @@
+{
+  "description": "kickside.uploads.rasterize:stage: `type(primary.artifact) == \"table\" and primary.artifact.artifact_id or nil` over a dynamic artifact is dynamic in assignment inference as in the check, so it passes as string?",
+  "files": [
+    "json.lua",
+    "uuid.lua",
+    "hash.lua",
+    "logger.lua",
+    "sql.lua",
+    "errors.lua",
+    "uploads_resources.lua",
+    "artifact_schema.lua",
+    "contract.lua",
+    "registry.lua",
+    "artifact_repo.lua",
+    "rasterizer.lua",
+    "page_images.lua",
+    "main.lua"
+  ],
+  "packages": [
+    "time",
+    "funcs"
+  ],
+  "check": {
+    "errors": 0
+  }
+}

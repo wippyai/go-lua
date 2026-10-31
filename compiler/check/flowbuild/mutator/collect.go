@@ -49,6 +49,12 @@ func CollectTableInsertMutations(
 		if !ok {
 			return
 		}
+		// A static path such as t.k locates one list, which
+		// CollectTableInsertOnDirect collects; only a dynamic key widens the
+		// base table's map.
+		if _, segments, static := callsite.StaticPathWithBaseSymbol(bindings, targetExpr); static && len(segments) > 0 {
+			return
+		}
 
 		baseSym := callsite.SymbolOrCreateFieldFromExpr(targetAttr.Object, bindings)
 		if baseSym == 0 {

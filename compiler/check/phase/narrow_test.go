@@ -106,7 +106,7 @@ func TestNewPathFromExprFunc_NilSolution(t *testing.T) {
 	if pathFunc == nil {
 		t.Fatal("expected non-nil PathFromExprFunc")
 	}
-	result := pathFunc(0, nil, nil)
+	result := pathFunc(0, nil, nil, nil)
 	if !result.IsEmpty() {
 		t.Errorf("expected empty path for nil solution, got %v", result)
 	}
@@ -118,7 +118,7 @@ func TestNewPathFromExprFunc_ValidSolution(t *testing.T) {
 	if pathFunc == nil {
 		t.Fatal("expected non-nil PathFromExprFunc")
 	}
-	result := pathFunc(0, nil, nil)
+	result := pathFunc(0, nil, nil, nil)
 	// Empty path is valid for nil expr
 	if result.Root != "" && result.Symbol != 0 {
 		t.Error("expected empty path for nil expr")
@@ -129,7 +129,7 @@ func TestNewPathFromExprFunc_WithIdent(t *testing.T) {
 	solution := &flow.Solution{}
 	pathFunc := newPathFromExprFunc(solution, nil)
 	ident := &ast.IdentExpr{Value: "x"}
-	result := pathFunc(0, ident, nil)
+	result := pathFunc(0, ident, nil, nil)
 	// Without bindings, path may be empty or have root "x"
 	if result.Root != "" && result.Root != "x" {
 		t.Errorf("path root should be empty or 'x', got %v", result.Root)

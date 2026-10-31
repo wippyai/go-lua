@@ -24,13 +24,12 @@ var tableInsertSpec = contract.NewSpec().
 var tableMethods = typ.NewRecord().
 	Field("remove", func() typ.Type {
 		elem := typ.NewTypeParam("T", nil)
-		return typ.Func().
-			TypeParam("T", nil).
-			Param("list", typ.NewArray(elem)).
-			OptParam("pos", typ.Integer).
-			Returns(typ.NewOptional(elem)).
-			Effects(effect.Mutates(0, effect.Unchanged{})).
-			Build()
+		return typ.NewIntersection(
+			typ.Func().TypeParam("T", nil).Param("list", typ.NewArray(elem)).
+				Returns(typ.NewOptional(elem)).Effects(effect.Mutates(0, effect.Unchanged{})).Build(),
+			typ.Func().TypeParam("T", nil).Param("list", typ.NewArray(elem)).Param("pos", typ.Integer).
+				Returns(typ.NewOptional(elem)).Effects(effect.Mutates(0, effect.Unchanged{})).Build(),
+		)
 	}()).
 	Field("concat", typ.Func().
 		Param("list", typ.Any).
@@ -53,13 +52,12 @@ var tableMethods = typ.NewRecord().
 			Returns(tp).
 			Build()
 	}()).
-	Field("insert", typ.Func().
-		Param("list", typ.Any).
-		Param("pos_or_value", typ.Any).
-		OptParam("value", typ.Any).
-		Effects(effect.StoresParam(-1, 0)).
-		Spec(tableInsertSpec).
-		Build()).
+	Field("insert", typ.NewIntersection(
+		typ.Func().Param("list", typ.Any).Param("value", typ.Any).
+			Effects(effect.StoresParam(-1, 0)).Spec(tableInsertSpec).Build(),
+		typ.Func().Param("list", typ.Any).Param("pos", typ.Integer).Param("value", typ.Any).
+			Effects(effect.StoresParam(-1, 0)).Spec(tableInsertSpec).Build(),
+	)).
 	Field("move", typ.Func().
 		Param("a1", typ.Any).
 		Param("f", typ.Integer).
@@ -72,11 +70,19 @@ var tableMethods = typ.NewRecord().
 		Variadic(typ.Any).
 		Returns(typ.Any).
 		Build()).
-	Field("sort", typ.Func().
-		Param("list", typ.Any).
-		OptParam("comp", typ.Any).
-		Effects(effect.Mutates(0, effect.Unchanged{})).
-		Build()).
+	// sort orders the values at integer keys 1..#list, so it takes any
+	// integer-keyed table; an array is one.
+	Field("sort", func() typ.Type {
+		elem := typ.NewTypeParam("T", nil)
+		list := typ.NewMap(typ.Integer, elem)
+		return typ.NewIntersection(
+			typ.Func().TypeParam("T", nil).Param("list", list).
+				Effects(effect.Mutates(0, effect.Unchanged{})).Build(),
+			typ.Func().TypeParam("T", nil).Param("list", list).
+				Param("comp", typ.Func().Param("a", elem).Param("b", elem).Returns(typ.Boolean).Build()).
+				Effects(effect.Mutates(0, effect.Unchanged{})).Build(),
+		)
+	}()).
 	Field("unpack", typ.Func().
 		Param("list", typ.Any).
 		OptParam("i", typ.Integer).

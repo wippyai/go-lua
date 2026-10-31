@@ -39,6 +39,10 @@ type TypeOps interface {
 	// IsSubtype checks whether sub is a subtype of super.
 	IsSubtype(ctx *db.QueryContext, sub, super typ.Type) bool
 
+	// IsAssignable checks whether a value of type sub may be used where super
+	// is expected, under the assignability mode attached to ctx.
+	IsAssignable(ctx *db.QueryContext, sub, super typ.Type) bool
+
 	// ExpandInstantiated expands generic instantiations in a type.
 	ExpandInstantiated(ctx *db.QueryContext, t typ.Type) typ.Type
 

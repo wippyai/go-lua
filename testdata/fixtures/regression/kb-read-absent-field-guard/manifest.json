@@ -1,0 +1,1 @@
+{"description": "Full real keeper.knowledge.tools:kb_read source; guard on an absent node field must make its read safe.", "check": {"errors": 0}}

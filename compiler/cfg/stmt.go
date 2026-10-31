@@ -432,7 +432,16 @@ func (b *Builder) WhileStmt(s *ast.WhileStmt) {
 	loopExit := b.Cfg.AddNode(basecfg.NodeScopeExit, 0, "")
 	b.ScopeTracker.SnapshotVisibility(loopExit)
 	join := b.Cfg.AddNode(basecfg.NodeJoin, 0, "")
-	condEntry := b.AddConditionEdges(s.Condition, bodyStart, join)
+	_, alwaysTrue := s.Condition.(*ast.TrueExpr)
+	var condEntry Point
+	if alwaysTrue {
+		// An unconditional loop has no false edge. Its only path to the
+		// following statement is an explicit break from this loop.
+		condEntry = b.AddCondBranch(s.Condition)
+		b.Cfg.AddEdge(condEntry, bodyStart, true)
+	} else {
+		condEntry = b.AddConditionEdges(s.Condition, bodyStart, join)
+	}
 
 	if loopVarIdents := extraction.AssignedOuterIdentsInBlock(s.Stmts); len(loopVarIdents) > 0 {
 		b.Cfg.Nodes[condEntry].LoopVars = b.resolveIdentsToSymbols(loopVarIdents)
@@ -461,7 +470,7 @@ func (b *Builder) WhileStmt(s *ast.WhileStmt) {
 	b.Cfg.AddEdge(loopExit, join, false)
 
 	b.Current = join
-	b.CurrentLive = entryLive
+	b.CurrentLive = entryLive && (!alwaysTrue || len(b.Cfg.Predecessors(loopExit)) > 0)
 	b.ScopeTracker.SnapshotVisibility(join)
 }
 

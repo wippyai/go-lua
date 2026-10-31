@@ -116,20 +116,22 @@ func typeEqualsGuard(a, b Type, guard internal.RecursionGuard, seen map[typePair
 		return true
 	case *Array:
 		vb, ok := b.(*Array)
-		return ok && typeEqualsGuard(va.Element, vb.Element, next, seen)
+		return ok && va.InferredPresence == vb.InferredPresence && va.ExplicitNilWrite == vb.ExplicitNilWrite && typeEqualsGuard(va.Element, vb.Element, next, seen)
 	case *Map:
 		vb, ok := b.(*Map)
 		return ok &&
+			va.InferredPresence == vb.InferredPresence &&
+			va.ExplicitNilWrite == vb.ExplicitNilWrite &&
 			typeEqualsGuard(va.Key, vb.Key, next, seen) &&
 			typeEqualsGuard(va.Value, vb.Value, next, seen)
 	case *Record:
 		vb, ok := b.(*Record)
-		if !ok || va.Open != vb.Open || len(va.Fields) != len(vb.Fields) {
+		if !ok || va.Open != vb.Open || va.Complete != vb.Complete || va.Declared != vb.Declared || va.MapInferredPresence != vb.MapInferredPresence || va.MapExplicitNilWrite != vb.MapExplicitNilWrite || len(va.Fields) != len(vb.Fields) {
 			return false
 		}
 		for i, f := range va.Fields {
 			fb := vb.Fields[i]
-			if f.Name != fb.Name || f.Optional != fb.Optional || f.Readonly != fb.Readonly {
+			if f.Name != fb.Name || f.Optional != fb.Optional || f.InferredPresence != fb.InferredPresence || f.Readonly != fb.Readonly {
 				return false
 			}
 			if !typeEqualsGuard(f.Type, fb.Type, next, seen) {
@@ -213,12 +215,6 @@ func typeEqualsGuard(a, b Type, guard internal.RecursionGuard, seen map[typePair
 	case *Recursive:
 		vb, ok := b.(*Recursive)
 		if !ok {
-			return false
-		}
-		if va.ID == vb.ID {
-			return true
-		}
-		if va.Name != vb.Name {
 			return false
 		}
 		return typeEqualsGuard(va.Body, vb.Body, next, seen)

@@ -98,13 +98,20 @@ func exportModule(t *testing.T, name, source string, opts ...testutil.Option) *i
 	if result.HasError() {
 		t.Fatalf("%s export failed: %v", name, result.Errors)
 	}
-	encoded, err := io.EncodeManifest(result.Manifest)
+	return reloadManifest(t, result.Manifest)
+}
+
+// reloadManifest round-trips a manifest through its encoded form, as a
+// persisted manifest or typecheck cache entry is loaded.
+func reloadManifest(t *testing.T, m *io.Manifest) *io.Manifest {
+	t.Helper()
+	encoded, err := io.EncodeManifest(m)
 	if err != nil {
-		t.Fatalf("EncodeManifest(%s) failed: %v", name, err)
+		t.Fatalf("EncodeManifest(%s) failed: %v", m.Path, err)
 	}
 	decoded, err := io.DecodeManifest(encoded)
 	if err != nil {
-		t.Fatalf("DecodeManifest(%s) failed: %v", name, err)
+		t.Fatalf("DecodeManifest(%s) failed: %v", m.Path, err)
 	}
 	return decoded
 }

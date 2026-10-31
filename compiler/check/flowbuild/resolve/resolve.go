@@ -209,17 +209,23 @@ func ResolveCalleeToFunctionLiteral(callee ast.Expr, graph *cfg.Graph) *ast.Func
 		return nil
 	}
 
-	for _, field := range tableLit.Fields {
-		fieldSeg, ok := pathseg.StaticTableFieldKeySegment(field.Key)
+	var fieldKey ast.Expr
+	var function *ast.FunctionExpr
+	ast.WalkExprChildren(tableLit, func(child ast.Expr, index int) {
+		if function != nil {
+			return
+		}
+		if index%2 == 0 {
+			fieldKey = child
+			return
+		}
+		fieldSeg, ok := pathseg.StaticTableFieldKeySegment(fieldKey)
 		if !ok || fieldSeg != calleeSeg {
-			continue
+			return
 		}
-		if fn, ok := field.Value.(*ast.FunctionExpr); ok {
-			return fn
-		}
-	}
-
-	return nil
+		function, _ = child.(*ast.FunctionExpr)
+	})
+	return function
 }
 
 // Ref resolves typ.Ref to its actual type using scope type lookup.
@@ -334,12 +340,12 @@ func BuildContextTypeKeyResolver(ctx api.BaseEnv) func(string, *scope.State) (na
 			return key, true
 		}
 		if ctx != nil && ctx.TypeNames() != nil {
-			if t, ok := ctx.TypeNames().LookupType(name); ok && t != nil {
+			if t, ok := ctx.TypeNames().LookupValueType(name); ok && t != nil {
 				return narrow.HashTypeKey(t.Hash()), true
 			}
 		}
 		if sc != nil {
-			if t, ok := sc.LookupType(name); ok && t != nil {
+			if t, ok := sc.LookupValueType(name); ok && t != nil {
 				return narrow.HashTypeKey(t.Hash()), true
 			}
 		}
@@ -470,26 +476,7 @@ func ExtractIteratorSource(
 			return nil
 		}
 	} else {
-		ident, ok := call.Func.(*ast.IdentExpr)
-		if !ok || ident == nil {
-			return nil
-		}
-		if bindings != nil {
-			if sym, ok := bindings.SymbolOf(ident); ok && sym != 0 {
-				if symKind, ok := bindings.Kind(sym); ok && symKind != cfg.SymbolGlobal {
-					return nil
-				}
-			}
-		}
-		switch ident.Value {
-		case "ipairs":
-			iterKind = flow.IterateIndexed
-		case "pairs":
-			iterKind = flow.IterateKeyed
-		default:
-			return nil
-		}
-		idx = 0
+		return nil
 	}
 
 	if idx < 0 || idx >= len(call.Args) {

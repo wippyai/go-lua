@@ -1,0 +1,4 @@
+{
+  "description": "session 0.4.3 checkpoint function over its reader: a guarded read of the newest conversation summary.",
+  "files": ["prompt.lua", "session.lua", "main.lua"]
+}

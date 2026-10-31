@@ -11,20 +11,6 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-func TestEnrichTableTypeWithFuncTypes_NilInputs(t *testing.T) {
-	result := EnrichTableTypeWithFuncTypes(nil, nil, nil, nil)
-	if rec, ok := result.(*typ.Record); !ok || rec != nil {
-		t.Error("expected nil record for nil inputs")
-	}
-}
-
-func TestEnrichTableTypeWithFuncTypes_NilRecord(t *testing.T) {
-	result := EnrichTableTypeWithFuncTypes(nil, nil, &cfg.Graph{}, nil)
-	if rec, ok := result.(*typ.Record); !ok || rec != nil {
-		t.Error("expected nil record for nil record input")
-	}
-}
-
 func TestCollectCapturedFieldAssignments_NilGraph(t *testing.T) {
 	result := CollectCapturedFieldAssignments(nil, nil, nil)
 	if result == nil {
@@ -32,6 +18,37 @@ func TestCollectCapturedFieldAssignments_NilGraph(t *testing.T) {
 	}
 	if len(result) != 0 {
 		t.Errorf("expected empty map, got %v", result)
+	}
+}
+
+func TestCapturedSlotComparisonUsesSemanticAliasIdentity(t *testing.T) {
+	union := func() typ.Type { return typ.NewUnion(typ.LiteralString("ok"), typ.LiteralString("failed")) }
+	for _, tc := range []struct {
+		name           string
+		current, bound typ.Type
+		wantSame       bool
+	}{
+		{"equal_allocations", union(), union(), true},
+		{"same_alias", typ.NewAlias("Outcome", union()), typ.NewAlias("Outcome", union()), true},
+		{"restore_alias", union(), typ.NewAlias("Outcome", union()), false},
+		{"different_alias", typ.NewAlias("Other", union()), typ.NewAlias("Outcome", union()), false},
+		{"widen_domain", typ.LiteralString("ok"), typ.NewAlias("Outcome", union()), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			current := typ.NewRecord().Field("outcome", tc.current).Build()
+			bound := typ.NewRecord().Field("outcome", tc.bound).Build()
+			got := NormalizeCapturedTableType(current, cfg.TableMutation{Escaped: true}, bound)
+			if tc.wantSame && got != current {
+				t.Fatal("semantically identical bound rebuilds capture")
+			}
+			if !tc.wantSame {
+				field := got.(*typ.Record).GetField("outcome")
+				alias, ok := field.Type.(*typ.Alias)
+				if !ok || alias.Name != "Outcome" {
+					t.Fatalf("lost alias bound: %v", field.Type)
+				}
+			}
+		})
 	}
 }
 

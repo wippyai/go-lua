@@ -1,0 +1,1 @@
+{"description": "A typed Field stays Field when a reset mutates its optional text widget (bee.application:forms:700).", "files": ["main.lua"], "check": {"errors": 0, "modes": ["gradual", "strict"]}}

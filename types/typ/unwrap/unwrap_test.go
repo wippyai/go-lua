@@ -152,6 +152,8 @@ func TestIsBuiltinTableTop(t *testing.T) {
 	}{
 		{"builtin table marker", tableTop, true},
 		{"aliased builtin table marker", aliasedTable, true},
+		{"unresolved builtin table reference", typ.NewRef("", "table"), true},
+		{"module table reference", typ.NewRef("other", "table"), false},
 		{"non-table interface", nonTableIface, false},
 		{"string", typ.String, false},
 		{"nil", nil, false},
@@ -192,6 +194,20 @@ func TestFunction(t *testing.T) {
 	t.Run("non-function", func(t *testing.T) {
 		if Function(typ.String) != nil {
 			t.Error("should return nil for non-function")
+		}
+	})
+
+	t.Run("function intersection", func(t *testing.T) {
+		special := typ.Func().Param("mode", typ.LiteralString("w")).Returns(typ.Number).Build()
+		general := typ.Func().Param("mode", typ.String).Returns(typ.String).Build()
+		if got := Function(typ.NewIntersection(special, general)); got != general {
+			t.Errorf("got %v, want general member %v", got, general)
+		}
+	})
+
+	t.Run("mixed intersection", func(t *testing.T) {
+		if got := Function(typ.NewIntersection(fn, typ.String)); got != nil {
+			t.Errorf("mixed intersection is not a function: %v", got)
 		}
 	})
 }

@@ -1,0 +1,4 @@
+{
+  "description": "session 0.4.3 checkpoint over its reader, repositories and a typed sql stand-in: a guarded read of the newest conversation summary.",
+  "files": ["sql.lua", "consts.lua", "artifact_repo.lua", "context_repo.lua", "message_repo.lua", "session_contexts_repo.lua", "session_repo.lua", "session.lua", "prompt.lua", "main.lua"]
+}

@@ -11,81 +11,8 @@ import (
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
+	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
-
-// This file provides type enrichment utilities for self-type resolution.
-//
-// When a method is defined in a table literal, the function's literal signature
-// (with inferred refinements and return types) may be more precise than the initially
-// synthesized type. These utilities replace placeholder types with literal sigs.
-
-// EnrichTableTypeWithFuncTypes replaces method function types in a record
-// with canonical function types derived from the interproc queries.
-//
-// For table literals with method fields, the initially synthesized record may
-// have function types without inferred return types. After analyzing the methods,
-// canonical function types are available per symbol. This function updates the
-// record with those more precise signatures.
-func EnrichTableTypeWithFuncTypes(
-	rec *typ.Record,
-	tableExpr *ast.TableExpr,
-	graph *cfg.Graph,
-	funcTypes map[cfg.SymbolID]typ.Type,
-) typ.Type {
-	if rec == nil || tableExpr == nil || graph == nil || len(funcTypes) == 0 {
-		return rec
-	}
-
-	modified := false
-	builder := typ.NewRecord()
-	bindings := graph.Bindings()
-
-	for _, f := range rec.Fields {
-		fieldType := f.Type
-		for _, tf := range tableExpr.Fields {
-			if tf.Key == nil {
-				continue
-			}
-			var keyName string
-			switch k := tf.Key.(type) {
-			case *ast.StringExpr:
-				keyName = k.Value
-			}
-			if keyName != f.Name {
-				continue
-			}
-			fnExpr, ok := tf.Value.(*ast.FunctionExpr)
-			if !ok {
-				continue
-			}
-			if bindings != nil {
-				if sym, ok := bindings.FuncLitSymbol(fnExpr); ok {
-					if t := funcTypes[sym]; t != nil {
-						fieldType = t
-						modified = true
-					}
-				}
-			}
-		}
-		if f.Optional {
-			builder = builder.OptField(f.Name, fieldType)
-		} else {
-			builder = builder.Field(f.Name, fieldType)
-		}
-	}
-
-	if !modified {
-		return rec
-	}
-
-	if rec.Metatable != nil {
-		builder = builder.Metatable(rec.Metatable)
-	}
-	if rec.HasMapComponent() {
-		builder = builder.MapComponent(rec.MapKey, rec.MapValue)
-	}
-	return builder.SetOpen(rec.Open).Build()
-}
 
 // CollectCapturedFieldAssignments scans a nested function's graph for field assignments
 // to captured variables.
@@ -199,6 +126,89 @@ func NormalizeMethodSelfType(selfType typ.Type) typ.Type {
 	return subtype.WidenForInference(selfType)
 }
 
+// NormalizeClassTableType widens the class table type as NormalizeMethodSelfType
+// does, except that a stable field keeps its own literal type. Literals nested
+// inside a field value stay widened because references to that value are not
+// tracked.
+func NormalizeClassTableType(tableType typ.Type, mutation cfg.TableMutation) typ.Type {
+	widened := NormalizeMethodSelfType(tableType)
+	rec, ok := tableType.(*typ.Record)
+	if !ok {
+		return widened
+	}
+	wideRec, ok := widened.(*typ.Record)
+	if !ok || len(wideRec.Fields) != len(rec.Fields) {
+		return widened
+	}
+	fields := append([]typ.Field(nil), wideRec.Fields...)
+	kept := false
+	for i, f := range rec.Fields {
+		if mutation.FieldStable(f.Name) && fields[i].Name == f.Name && typ.TypeEquals(fields[i].Type, subtype.Widen(f.Type)) {
+			fields[i].Type = f.Type
+			kept = true
+		}
+	}
+	if !kept {
+		return widened
+	}
+	return wideRec.WithChildren(fields, wideRec.Metatable, wideRec.MapKey, wideRec.MapValue)
+}
+
+// NormalizeCapturedTableType widens the fields of a captured table that code
+// can change after the closure observes them, so the closure reads every value
+// such a field may hold. Widening bounds preserve declared slots and widen
+// inferred literals; stable fields keep their observed types.
+func NormalizeCapturedTableType(tableType typ.Type, mutation cfg.TableMutation, boundType typ.Type) typ.Type {
+	rec, ok := tableType.(*typ.Record)
+	if !ok {
+		return tableType
+	}
+	fields := append([]typ.Field(nil), rec.Fields...)
+	bound, _ := unwrap.Optional(boundType).(*typ.Record)
+	changed := false
+	for i, f := range fields {
+		if mutation.FieldStable(f.Name) {
+			continue
+		}
+		if bound != nil {
+			if slot := bound.GetField(f.Name); slot != nil {
+				if !sameCapturedSlotType(f.Type, slot.Type) || f.Optional != slot.Optional {
+					fields[i] = *slot
+					changed = true
+				}
+				continue
+			}
+		}
+		if widened := subtype.WidenForInference(f.Type); widened != f.Type {
+			fields[i].Type = widened
+			changed = true
+		}
+	}
+	if !changed {
+		return tableType
+	}
+	return rec.WithChildren(fields, rec.Metatable, rec.MapKey, rec.MapValue)
+}
+
+// sameCapturedSlotType compares value domains and the names that bound
+// inference widening. Structural equality alone erases those alias names.
+func sameCapturedSlotType(a, b typ.Type) bool {
+	if !typ.TypeEquals(a, b) {
+		return false
+	}
+	a, b = typ.UnwrapAnnotated(a), typ.UnwrapAnnotated(b)
+	if optional, ok := a.(*typ.Optional); ok {
+		other, ok := b.(*typ.Optional)
+		return ok && sameCapturedSlotType(optional.Inner, other.Inner)
+	}
+	aa, aAlias := a.(*typ.Alias)
+	bb, bAlias := b.(*typ.Alias)
+	if aAlias || bAlias {
+		return aAlias && bAlias && aa.Name == bb.Name && sameCapturedSlotType(aa.Target, bb.Target)
+	}
+	return true
+}
+
 func mergeFieldsIntoSelfType(selfType typ.Type, fields map[string]typ.Type) typ.Type {
 	if len(fields) == 0 {
 		return selfType
@@ -206,18 +216,10 @@ func mergeFieldsIntoSelfType(selfType typ.Type, fields map[string]typ.Type) typ.
 
 	switch v := selfType.(type) {
 	case *typ.Record:
-		builder := typ.NewRecord()
-		if v.Open {
-			builder.SetOpen(true)
-		}
+		builder := v.Builder()
 
 		existingFields := make(map[string]bool)
 		for _, f := range v.Fields {
-			if f.Optional {
-				builder.OptField(f.Name, f.Type)
-			} else {
-				builder.Field(f.Name, f.Type)
-			}
 			existingFields[f.Name] = true
 		}
 
@@ -227,12 +229,6 @@ func mergeFieldsIntoSelfType(selfType typ.Type, fields map[string]typ.Type) typ.
 			}
 		}
 
-		if v.Metatable != nil {
-			builder.Metatable(v.Metatable)
-		}
-		if v.HasMapComponent() {
-			builder.MapComponent(v.MapKey, v.MapValue)
-		}
 		return builder.Build()
 
 	case *typ.Interface:

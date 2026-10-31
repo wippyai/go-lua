@@ -4,10 +4,12 @@ import (
 	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	flowpath "github.com/wippyai/go-lua/compiler/check/flowbuild/path"
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/kind"
+	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
@@ -21,21 +23,210 @@ func AttachInferredErrorReturnSpec(
 	solution *flow.Solution,
 	synth api.Synth,
 ) *typ.Function {
-	if fn == nil || graph == nil || synth == nil || len(fn.Returns) != 2 {
+	if fn == nil || graph == nil || synth == nil {
 		return fn
 	}
-	if HasErrorReturnLabel(fn) {
-		return fn
-	}
+	// Return relations from an earlier fixpoint round are provisional. Rebuild
+	// them from this round's solved paths so a disproved relation cannot linger.
+	fn = withoutReturnRelations(fn)
 	base := synth.Narrow()
 	if base == nil {
 		base = synth
 	}
-	if !HasStrictInverseReturnPattern(graph, solution, base, 0, 1) {
+	if len(fn.Returns) == 2 &&
+		(unwrap.IsOptionalLike(fn.Returns[0]) || unwrap.IsNilType(fn.Returns[0])) &&
+		!HasErrorReturnLabel(fn) &&
+		HasStrictInverseReturnPattern(graph, solution, base, 0, 1) {
+		fn = AttachErrorReturnSpec(fn, 0, 1)
+	}
+	if len(fn.Returns) == 2 && solution != nil &&
+		(unwrap.IsOptionalLike(fn.Returns[0]) || unwrap.IsNilType(fn.Returns[0])) &&
+		HasStrictInverseReturnPattern(graph, solution, base, 0, 1) &&
+		HasStrictTruthySuccessReturnPattern(graph, solution, base, 0, 1) {
+		fn = attachErrorReturnSpec(fn, 0, 1, true)
+	}
+	if solution != nil && len(fn.Returns) > 2 {
+		for first := 0; first < len(fn.Returns); first++ {
+			for second := first + 1; second < len(fn.Returns); second++ {
+				if (unwrap.IsOptionalLike(fn.Returns[first]) || unwrap.IsNilType(fn.Returns[first])) &&
+					HasStrictInverseReturnPattern(graph, solution, base, first, second) {
+					fn = AttachErrorReturnSpec(fn, first, second)
+				}
+			}
+		}
+	}
+	// A multi-result function can have successful values before a trailing
+	// error, including a string-valued result that makes the error position
+	// ambiguous from the signature alone. Infer co-presence only when every
+	// reachable return branch proves the two slots nil or present together.
+	if len(fn.Returns) > 2 {
+		for i := 0; i < len(fn.Returns); i++ {
+			if !unwrap.IsOptionalLike(fn.Returns[i]) {
+				continue
+			}
+			for j := i + 1; j < len(fn.Returns); j++ {
+				if unwrap.IsOptionalLike(fn.Returns[j]) &&
+					HasStrictSameDirectionReturnPattern(graph, solution, base, i, j) {
+					fn = AttachCorrelatedReturnSpec(fn, i, j)
+				}
+			}
+		}
+	}
+	if solution != nil && len(fn.Returns) >= 2 {
+		if targetType, ok := StrictTruthyReturnTargetType(graph, solution, base, 0, 1); ok {
+			fn = AttachGuardedReturnTypeSpec(fn, 0, 1, targetType)
+		}
+	}
+	return fn
+}
+
+func withoutReturnRelations(fn *typ.Function) *typ.Function {
+	spec := contract.ExtractSpec(fn)
+	if spec == nil {
 		return fn
 	}
+	clean := spec.Effects.Without(func(label effect.Label) bool {
+		switch label.(type) {
+		case effect.ErrorReturn, effect.CorrelatedReturn, effect.GuardedReturnType:
+			return true
+		}
+		return false
+	})
+	if len(clean.Labels) == len(spec.Effects.Labels) {
+		return fn
+	}
+	clone := *spec
+	clone.Effects = clean
+	return cloneFunctionWithSpec(fn, &clone)
+}
 
-	return AttachErrorReturnSpec(fn, 0, 1)
+// StrictTruthyReturnTargetType proves that every truthy guard return has the
+// same concrete target type. A broad or unknown guard branch blocks the proof.
+func StrictTruthyReturnTargetType(graph *cfg.Graph, solution *flow.Solution,
+	synth api.BaseSynth, guardIdx, targetIdx int) (typ.Type, bool) {
+	if graph == nil || solution == nil || synth == nil {
+		return nil, false
+	}
+	var target typ.Type
+	valid, sawTruthy := true, false
+	graph.EachReturn(func(p cfg.Point, info *cfg.ReturnInfo) {
+		if !valid || info == nil || solution.IsPointDead(p) {
+			return
+		}
+		if len(info.Exprs) == 0 {
+			return
+		}
+		values := synth.ExpandValues(info.Exprs, targetIdx+1, p)
+		if len(values) <= guardIdx || len(values) <= targetIdx {
+			valid = false
+			return
+		}
+		guard := values[guardIdx]
+		if guard == nil || typ.IsAny(guard) || typ.IsUnknown(guard) {
+			valid = false
+			return
+		}
+		if typ.IsNever(narrow.ToTruthy(guard)) {
+			return
+		}
+		if !typ.IsNever(narrow.ToFalsy(guard)) {
+			valid = false
+			return
+		}
+		candidate := values[targetIdx]
+		if candidate == nil || typ.IsAny(candidate) || typ.IsUnknown(candidate) || unwrap.IsOptionalLike(candidate) {
+			valid = false
+			return
+		}
+		if target != nil && !typ.TypeEquals(target, candidate) {
+			valid = false
+			return
+		}
+		target = candidate
+		sawTruthy = true
+	})
+	if !valid || !sawTruthy || target == nil {
+		return nil, false
+	}
+	return target, true
+}
+
+func AttachGuardedReturnTypeSpec(fn *typ.Function, guardIdx, targetIdx int, targetType typ.Type) *typ.Function {
+	if fn == nil || targetType == nil {
+		return fn
+	}
+	label := effect.GuardedReturnType{GuardIndex: guardIdx, TargetIndex: targetIdx, TargetHash: targetType.Hash(), TargetType: targetType}
+	if spec := contract.ExtractSpec(fn); spec != nil {
+		for _, existing := range spec.Effects.Labels {
+			if existing.Equals(label) {
+				return fn
+			}
+		}
+	}
+	spec, ok := cloneContractSpec(fn)
+	if !ok {
+		return fn
+	}
+	spec.Effects = spec.Effects.With(label)
+	return cloneFunctionWithSpec(fn, spec)
+}
+
+// HasStrictSameDirectionReturnPattern proves that both result slots have the
+// same nil state on every reachable explicit return, with evidence for both
+// a successful and an absent pair.
+func HasStrictSameDirectionReturnPattern(graph *cfg.Graph, solution *flow.Solution,
+	synth api.BaseSynth, first, second int) bool {
+	if graph == nil || synth == nil || first < 0 || second <= first {
+		return false
+	}
+	var sawPresent, sawNil, incompatible bool
+	graph.EachReturn(func(p cfg.Point, info *cfg.ReturnInfo) {
+		if incompatible || info == nil || solution != nil && solution.IsPointDead(p) {
+			return
+		}
+		if len(info.Exprs) == 0 && info.Stmt == nil {
+			return
+		}
+		values := synth.ExpandValues(info.Exprs, second+1, p)
+		if len(values) <= second {
+			incompatible = true
+			return
+		}
+		states := [2]nilState{}
+		for index, slot := range []int{first, second} {
+			state, ok := classifyNilState(values[slot])
+			if ok && state == nonNilOnly && returnExprMayBeAbsent(info.Exprs, slot, synth, p) {
+				ok = false
+			}
+			if !ok && provenPresent(graph, solution, info.Exprs, slot, p) {
+				state, ok = nonNilOnly, true
+			}
+			if !ok && implicitReturnSlotIsNil(info.Exprs, slot) {
+				state, ok = nilOnly, true
+			}
+			if !ok {
+				incompatible = true
+				return
+			}
+			states[index] = state
+		}
+		if states[0] != states[1] {
+			incompatible = true
+			return
+		}
+		sawPresent = sawPresent || states[0] == nonNilOnly
+		sawNil = sawNil || states[0] == nilOnly
+	})
+	return !incompatible && sawPresent && sawNil
+}
+
+func AttachCorrelatedReturnSpec(fn *typ.Function, first, second int) *typ.Function {
+	spec, ok := cloneContractSpec(fn)
+	if !ok {
+		return fn
+	}
+	spec.Effects = spec.Effects.With(effect.CorrelatedReturn{Indices: []int{first, second}})
+	return cloneFunctionWithSpec(fn, spec)
 }
 
 func HasErrorReturnLabel(fn *typ.Function) bool {
@@ -65,6 +256,7 @@ func HasStrictInverseReturnPattern(
 	var sawFailure bool
 	var incompatible bool
 	var classified bool
+	var forwarded bool
 
 	graph.EachReturn(func(p cfg.Point, info *cfg.ReturnInfo) {
 		if incompatible || info == nil {
@@ -73,13 +265,23 @@ func HasStrictInverseReturnPattern(
 		if solution != nil && solution.IsPointDead(p) {
 			return
 		}
-		// Skip synthetic implicit return nodes; explicit `return` without values
-		// is a real nil,nil return and should block inference.
+		// A reachable implicit return yields nil in both slots and cannot
+		// establish an inverse relation, including during pre-flow inference.
 		if len(info.Exprs) == 0 && info.Stmt == nil {
+			incompatible = true
+			return
+		}
+		if forwardsErrorReturn(info.Exprs, synth, p, valueIdx, errorIdx) {
+			classified = true
+			forwarded = true
 			return
 		}
 
-		values := synth.ExpandValues(info.Exprs, 2, p)
+		needed := valueIdx
+		if errorIdx > needed {
+			needed = errorIdx
+		}
+		values := synth.ExpandValues(info.Exprs, needed+1, p)
 		if valueIdx >= len(values) || errorIdx >= len(values) {
 			incompatible = true
 			return
@@ -87,6 +289,18 @@ func HasStrictInverseReturnPattern(
 
 		valueState, okValue := classifyNilState(values[valueIdx])
 		errorState, okError := classifyNilState(values[errorIdx])
+		if okValue && valueState == nonNilOnly && returnExprMayBeAbsent(info.Exprs, valueIdx, synth, p) {
+			okValue = false
+		}
+		if okError && errorState == nonNilOnly && returnExprMayBeAbsent(info.Exprs, errorIdx, synth, p) {
+			okError = false
+		}
+		if !okValue && provenPresent(graph, solution, info.Exprs, valueIdx, p) {
+			valueState, okValue = nonNilOnly, true
+		}
+		if !okError && provenPresent(graph, solution, info.Exprs, errorIdx, p) {
+			errorState, okError = nonNilOnly, true
+		}
 		if !okValue && implicitReturnSlotIsNil(info.Exprs, valueIdx) {
 			valueState, okValue = nilOnly, true
 		}
@@ -101,6 +315,10 @@ func HasStrictInverseReturnPattern(
 
 		switch {
 		case valueState == nilOnly && errorState == nonNilOnly:
+			if !typ.IsNever(narrow.ToFalsy(values[errorIdx])) {
+				incompatible = true
+				return
+			}
 			sawFailure = true
 		case valueState == nonNilOnly && errorState == nilOnly:
 			sawSuccess = true
@@ -109,21 +327,190 @@ func HasStrictInverseReturnPattern(
 		}
 	})
 
-	return classified && !incompatible && sawSuccess && sawFailure
+	return classified && !incompatible && (solution != nil || forwarded || sawSuccess && sawFailure)
+}
+
+// HasStrictTruthySuccessReturnPattern proves that every success return has a
+// truthy value. It is used only together with the inverse nil-state proof.
+func HasStrictTruthySuccessReturnPattern(graph *cfg.Graph, solution *flow.Solution,
+	synth api.BaseSynth, valueIdx, errorIdx int) bool {
+	if graph == nil || solution == nil || synth == nil {
+		return false
+	}
+	valid, sawSuccess := true, false
+	graph.EachReturn(func(p cfg.Point, info *cfg.ReturnInfo) {
+		if !valid || info == nil || solution.IsPointDead(p) || len(info.Exprs) == 0 && info.Stmt == nil {
+			return
+		}
+		if len(info.Exprs) == 1 {
+			if call, ok := info.Exprs[0].(*ast.FuncCallExpr); ok && !call.AdjustRet {
+				if allCallableAlternativesHaveTruthyErrorReturn(synth.TypeOf(call.Func, p), valueIdx, errorIdx) {
+					sawSuccess = true
+					return
+				}
+			}
+		}
+		values := synth.ExpandValues(info.Exprs, errorIdx+1, p)
+		if len(values) <= errorIdx || len(values) <= valueIdx {
+			valid = false
+			return
+		}
+		errState, ok := classifyNilState(values[errorIdx])
+		if ok && errState == nonNilOnly && returnExprMayBeAbsent(info.Exprs, errorIdx, synth, p) {
+			ok = false
+		}
+		if !ok && provenPresent(graph, solution, info.Exprs, errorIdx, p) {
+			errState, ok = nonNilOnly, true
+		}
+		if !ok && implicitReturnSlotIsNil(info.Exprs, errorIdx) {
+			errState, ok = nilOnly, true
+		}
+		if !ok {
+			valid = false
+			return
+		}
+		if errState != nilOnly {
+			return
+		}
+		sawSuccess = true
+		if (returnExprMayBeAbsent(info.Exprs, valueIdx, synth, p) || !typ.IsNever(narrow.ToFalsy(values[valueIdx]))) &&
+			!provenTruthy(graph, solution, info.Exprs, valueIdx, p) {
+			valid = false
+		}
+	})
+	return valid && sawSuccess
+}
+
+func provenTruthy(graph *cfg.Graph, solution *flow.Solution, exprs []ast.Expr, idx int, p cfg.Point) bool {
+	if solution == nil || graph == nil || idx < 0 || idx >= len(exprs) {
+		return false
+	}
+	path := flowpath.FromExprWithBindingsAt(exprs[idx], nil, graph.Bindings(), graph, p)
+	return !path.IsEmpty() && solution.IsTruthyAt(p, path)
+}
+
+func allCallableAlternativesHaveTruthyErrorReturn(t typ.Type, valueIdx, errorIdx int) bool {
+	if t == nil {
+		return false
+	}
+	if union, ok := typ.UnwrapAnnotated(t).(*typ.Union); ok {
+		if len(union.Members) == 0 {
+			return false
+		}
+		for _, member := range union.Members {
+			if !allCallableAlternativesHaveTruthyErrorReturn(member, valueIdx, errorIdx) {
+				return false
+			}
+		}
+		return true
+	}
+	if intersection, ok := typ.UnwrapAnnotated(t).(*typ.Intersection); ok {
+		if len(intersection.Members) == 0 {
+			return false
+		}
+		for _, member := range intersection.Members {
+			if !allCallableAlternativesHaveTruthyErrorReturn(member, valueIdx, errorIdx) {
+				return false
+			}
+		}
+		return true
+	}
+	spec := contract.ExtractSpec(t)
+	if spec == nil {
+		return false
+	}
+	for _, label := range spec.Effects.Labels {
+		if relation, ok := label.(effect.ErrorReturn); ok && relation.ValueIndex == valueIdx && relation.ErrorIndex == errorIdx && relation.ValueTruthy {
+			return true
+		}
+	}
+	return false
+}
+
+// A direct multi-result return preserves every relation guaranteed by its
+// callee. It needs no independent success and failure witnesses in this body.
+func forwardsErrorReturn(exprs []ast.Expr, synth api.BaseSynth, p cfg.Point, valueIdx, errorIdx int) bool {
+	if len(exprs) != 1 {
+		return false
+	}
+	call, ok := exprs[0].(*ast.FuncCallExpr)
+	if !ok || call.AdjustRet {
+		return false
+	}
+	var t typ.Type
+	if call.Func != nil {
+		t = synth.TypeOf(call.Func, p)
+	} else if call.Receiver != nil && call.Method != "" {
+		t, _ = core.Method(synth.TypeOf(call.Receiver, p), call.Method)
+	}
+	return allCallableAlternativesHaveErrorReturn(t, valueIdx, errorIdx)
+}
+
+func allCallableAlternativesHaveErrorReturn(t typ.Type, valueIdx, errorIdx int) bool {
+	if t == nil {
+		return false
+	}
+	if union, ok := typ.UnwrapAnnotated(t).(*typ.Union); ok {
+		if len(union.Members) == 0 {
+			return false
+		}
+		for _, member := range union.Members {
+			if !allCallableAlternativesHaveErrorReturn(member, valueIdx, errorIdx) {
+				return false
+			}
+		}
+		return true
+	}
+	if unwrap.Function(t) == nil {
+		return false
+	}
+	spec := contract.ExtractSpec(t)
+	if spec == nil {
+		return false
+	}
+	for _, label := range spec.Effects.Labels {
+		if relation, ok := label.(effect.ErrorReturn); ok && relation.ValueIndex == valueIdx && relation.ErrorIndex == errorIdx {
+			return true
+		}
+	}
+	return false
+}
+
+// provenPresent reports whether the returned expression at idx is a path the
+// flow proves present at p, for a value whose type cannot say so, such as a
+// dynamic error a guard found truthy.
+func provenPresent(graph *cfg.Graph, solution *flow.Solution, exprs []ast.Expr, idx int, p cfg.Point) bool {
+	if solution == nil || graph == nil || idx < 0 || idx >= len(exprs) {
+		return false
+	}
+	path := flowpath.FromExprWithBindingsAt(exprs[idx], nil, graph.Bindings(), graph, p)
+	if path.IsEmpty() {
+		return false
+	}
+	return solution.IsNonNilAt(p, path)
 }
 
 func AttachErrorReturnSpec(fn *typ.Function, valueIndex, errorIndex int) *typ.Function {
+	return attachErrorReturnSpec(fn, valueIndex, errorIndex, false)
+}
+
+func attachErrorReturnSpec(fn *typ.Function, valueIndex, errorIndex int, valueTruthy bool) *typ.Function {
 	if fn == nil {
 		return fn
 	}
-	if HasErrorReturnLabel(fn) {
-		return fn
+	if spec := contract.ExtractSpec(fn); spec != nil {
+		for _, label := range spec.Effects.Labels {
+			if existing, ok := label.(effect.ErrorReturn); ok &&
+				existing.ValueIndex == valueIndex && existing.ErrorIndex == errorIndex && existing.ValueTruthy == valueTruthy {
+				return fn
+			}
+		}
 	}
 	spec, ok := cloneContractSpec(fn)
 	if !ok {
 		return fn
 	}
-	spec.Effects = spec.Effects.With(effect.ErrorReturn{ValueIndex: valueIndex, ErrorIndex: errorIndex})
+	spec.Effects = spec.Effects.With(effect.ErrorReturn{ValueIndex: valueIndex, ErrorIndex: errorIndex, ValueTruthy: valueTruthy})
 	return cloneFunctionWithSpec(fn, spec)
 }
 
@@ -153,6 +540,31 @@ func classifyNilState(t typ.Type) (nilState, bool) {
 		return nilUnknown, false
 	}
 	return nonNilOnly, true
+}
+
+// A table lookup can return nil when its key is absent even if the table's
+// element type is nonnil. A required record field is the exception: its shape
+// guarantees presence. Return correlations need this stronger proof than the
+// element type alone supplies.
+func returnExprMayBeAbsent(exprs []ast.Expr, idx int, synth api.BaseSynth, p cfg.Point) bool {
+	if idx < 0 || idx >= len(exprs) {
+		return false
+	}
+	access, ok := exprs[idx].(*ast.AttrGetExpr)
+	if !ok {
+		return false
+	}
+	key, ok := access.Key.(*ast.StringExpr)
+	if !ok {
+		return true
+	}
+	object := unwrap.Alias(typ.UnwrapAnnotated(synth.TypeOf(access.Object, p)))
+	record, ok := object.(*typ.Record)
+	if !ok {
+		return true
+	}
+	field := record.GetField(key.Value)
+	return field == nil || field.Optional || field.InferredPresence || core.ContainsNil(field.Type)
 }
 
 func cloneContractSpec(fn *typ.Function) (*contract.Spec, bool) {

@@ -415,6 +415,13 @@ func TestReturnCodec_RoundTrip(t *testing.T) {
 			},
 		},
 		{
+			name: "type value transform",
+			ret: Return{
+				ReturnIndex: 0,
+				Transform:   TypeValueOf{Source: ParamRef{Index: 1}},
+			},
+		},
+		{
 			name: "deep element of transform",
 			ret: Return{
 				ReturnIndex: 0,
@@ -946,6 +953,10 @@ func TestWriteReadReturnType(t *testing.T) {
 		{
 			name: "same as",
 			rt:   SameAs{Source: ParamRef{Index: 0}},
+		},
+		{
+			name: "type value of",
+			rt:   TypeValueOf{Source: ParamRef{Index: 1}},
 		},
 		{
 			name: "deep element of",

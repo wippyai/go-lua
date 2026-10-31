@@ -1,0 +1,1 @@
+{"description": "wolfy_j.ledger.categorizer:accept: `local o: Row = opts or {}` over an optional Row parameter is a Row", "files": ["types.lua", "main.lua"], "check": {"errors": 0}}

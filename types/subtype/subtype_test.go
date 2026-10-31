@@ -181,6 +181,23 @@ func TestIntersectionSub(t *testing.T) {
 	}
 }
 
+func TestNilFieldSatisfiesOptionalSchemaProperty(t *testing.T) {
+	actual := typ.NewRecord().Field("class", typ.Nil).Build()
+	expected := typ.NewRecord().SetOpen(true).OptField("class", typ.String).Build()
+	if !IsSubtype(actual, expected) {
+		t.Fatalf("Lua nil field is absent and should satisfy optional property: %v <: %v", actual, expected)
+	}
+	containerActual := typ.NewRecord().Field("filters", actual).Build()
+	containerExpected := typ.NewRecord().SetOpen(true).OptField("filters", expected).Build()
+	if !IsSubtype(containerActual, containerExpected) {
+		t.Fatalf("nested Lua nil field should satisfy optional properties: %v <: %v", containerActual, containerExpected)
+	}
+	required := typ.NewRecord().SetOpen(true).Field("class", typ.String).Build()
+	if IsSubtype(actual, required) {
+		t.Fatal("nil field cannot satisfy a required string property")
+	}
+}
+
 func TestFunction(t *testing.T) {
 	// (string) -> number
 	f1 := typ.Func().Param("x", typ.String).Returns(typ.Number).Build()
@@ -233,6 +250,18 @@ func TestArray(t *testing.T) {
 	// Arrays are covariant
 	if !IsSubtype(arrStr, arrAny) {
 		t.Error("string[] should be subtype of any[]")
+	}
+}
+
+func TestNilTableFieldSatisfiesOptionalDestination(t *testing.T) {
+	actual := typ.NewRecord().Field("namespace", typ.Nil).Build()
+	optional := typ.NewRecord().OptField("namespace", typ.String).Build()
+	if !IsSubtype(actual, optional) {
+		t.Fatal("nil table field is absent and satisfies an optional field")
+	}
+	required := typ.NewRecord().Field("namespace", typ.String).Build()
+	if IsSubtype(actual, required) {
+		t.Fatal("nil table field cannot satisfy a required string field")
 	}
 }
 
@@ -1025,12 +1054,29 @@ func TestMutualRecursiveSubtypes(t *testing.T) {
 		t.Error("mutual recursive B should be subtype of itself")
 	}
 
-	// A and B should NOT be subtypes of each other
+	// Both bodies have only optional fields, so each admits the other's
+	// unfolded record under structural width subtyping.
+	if !IsSubtype(recA, recB) {
+		t.Error("A should be subtype of B")
+	}
+	if !IsSubtype(recB, recA) {
+		t.Error("B should be subtype of A")
+	}
+}
+
+func TestMutualRecursiveSubtypesDifferentRequiredFields(t *testing.T) {
+	// Distinct required fields prevent structural subtyping in either direction.
+	// The recursive edges alone do not make these records equivalent.
+	recA := typ.NewRecursivePlaceholder("A")
+	recB := typ.NewRecursivePlaceholder("B")
+	recA.SetBody(typ.NewRecord().Field("b", recB).Field("x", typ.Number).Build())
+	recB.SetBody(typ.NewRecord().Field("a", recA).Field("y", typ.String).Build())
+
 	if IsSubtype(recA, recB) {
-		t.Error("A should not be subtype of B")
+		t.Error("A should not be subtype of B: missing required y")
 	}
 	if IsSubtype(recB, recA) {
-		t.Error("B should not be subtype of A")
+		t.Error("B should not be subtype of A: missing required x")
 	}
 }
 
@@ -1238,12 +1284,12 @@ func TestFunctionParamContravariance(t *testing.T) {
 	}
 }
 
-func TestFunctionArityMismatch(t *testing.T) {
+func TestFunctionIgnoresExtraArguments(t *testing.T) {
 	fn1 := typ.Func().Param("x", typ.Number).Returns(typ.Nil).Build()
 	fn2 := typ.Func().Param("x", typ.Number).Param("y", typ.Number).Returns(typ.Nil).Build()
 
-	if IsSubtype(fn1, fn2) {
-		t.Error("function with fewer params should not be subtype")
+	if !IsSubtype(fn1, fn2) {
+		t.Error("Lua function with fewer params can ignore extra arguments")
 	}
 }
 
@@ -1695,6 +1741,18 @@ func TestRecordToInterfaceWithSelf(t *testing.T) {
 
 	if !IsSubtype(rec, iface) {
 		t.Error("record with method should be subtype of interface")
+	}
+}
+
+func TestRecursiveRecordImplementsSelfInterface(t *testing.T) {
+	rec := typ.NewRecursive("Wrapper", func(self typ.Type) typ.Type {
+		return typ.NewRecord().Field("with_actor", typ.Func().Param("self", typ.Self).Param("actor", typ.Any).Returns(self).Build()).Build()
+	})
+	iface := typ.NewInterface("WrapperInterface", []typ.Method{
+		{Name: "with_actor", Type: typ.Func().Param("self", typ.Self).Param("actor", typ.Any).Returns(typ.Self).Build()},
+	})
+	if !IsSubtype(rec, iface) {
+		t.Fatal("recursive wrapper should implement its Self-returning interface")
 	}
 }
 
@@ -2259,5 +2317,144 @@ func TestNormalizeIntersectionDeepDistribution(t *testing.T) {
 	result := NormalizeIntersection(union, union)
 	if result == nil {
 		t.Error("intersection distribution should produce a result")
+	}
+}
+
+// A map whose values are any is a real member of a union, not a placeholder:
+// the union admits every type its map member admits, and a union holding it
+// is a subtype only if the map member is.
+func TestUnionWithAnyValuedMapMember(t *testing.T) {
+	anyMap := typ.NewMap(typ.String, typ.Any)
+	shape := typ.NewRecord().Field("kind", typ.String).Build()
+
+	if !IsSubtype(shape, anyMap) {
+		t.Fatal("record with string keys must subtype {[string]: any}")
+	}
+	if !IsSubtype(shape, typ.NewUnion(anyMap, typ.Integer)) {
+		t.Fatal("record must subtype a union whose map member it subtypes")
+	}
+	if !IsSubtype(shape, typ.NewOptional(anyMap)) {
+		t.Fatal("record must subtype the optional map")
+	}
+	if IsSubtype(typ.NewUnion(anyMap, typ.Integer), typ.Integer) {
+		t.Fatal("union with a map member must not subtype integer")
+	}
+}
+
+// A map's value slot is invariant, with the same widening allowance a mutable
+// record field has: a value type widens into any, as {x: T} <: {x: any} does.
+func TestMapValueWidensIntoAny(t *testing.T) {
+	entry := typ.NewRecord().Field("id", typ.String).Build()
+	if !IsSubtype(typ.NewMap(typ.String, entry), typ.NewMap(typ.String, typ.Any)) {
+		t.Fatal("{[string]: T} must subtype {[string]: any}")
+	}
+	if !IsSubtype(typ.NewRecord().Field("x", entry).Build(), typ.NewRecord().Field("x", typ.Any).Build()) {
+		t.Fatal("record field widening into any must hold")
+	}
+	if IsSubtype(typ.NewMap(typ.String, typ.Any), typ.NewMap(typ.String, entry)) {
+		t.Fatal("{[string]: any} must not subtype {[string]: T}")
+	}
+	if IsSubtype(typ.NewMap(typ.String, typ.Integer), typ.NewMap(typ.String, typ.String)) {
+		t.Fatal("unrelated value types stay incompatible")
+	}
+}
+
+// A map's value slot accepts unknown the way it accepts any: returning a
+// concrete-valued map where an unknown-valued map is expected cannot fail at
+// runtime, since Lua tables are dynamic. The reverse stays rejected, so an
+// unknown-valued map still cannot flow where a concrete value is required.
+func TestMapValueWidensIntoUnknown(t *testing.T) {
+	if !IsSubtype(typ.NewMap(typ.String, typ.Integer), typ.NewMap(typ.String, typ.Unknown)) {
+		t.Fatal("{[string]: integer} must subtype {[string]: unknown}")
+	}
+	if IsSubtype(typ.NewMap(typ.String, typ.Unknown), typ.NewMap(typ.String, typ.Integer)) {
+		t.Fatal("{[string]: unknown} must not subtype {[string]: integer}")
+	}
+}
+
+func TestCompleteRecordSatisfiesDeclaredMapComponent(t *testing.T) {
+	target := typ.NewRecord().Field("name", typ.String).MapComponent(typ.String, typ.Integer).SetDeclared(true).Build()
+	good := typ.NewRecord().Field("name", typ.String).Field("count", typ.Integer).SetComplete(true).Build()
+	badValue := typ.NewRecord().Field("name", typ.String).Field("count", typ.String).SetComplete(true).Build()
+	partial := typ.NewRecord().Field("name", typ.String).Field("count", typ.Integer).Build()
+	if !IsSubtype(good, target) {
+		t.Fatal("known extra field must satisfy the map value constraint; declared fields retain their own type")
+	}
+	if IsSubtype(badValue, target) {
+		t.Fatal("incompatible extra field must be rejected")
+	}
+	if IsSubtype(partial, target) {
+		t.Fatal("partial record may contain unseen incompatible fields")
+	}
+}
+
+func TestCompleteRecordMapIgnoresNilExtraFields(t *testing.T) {
+	target := typ.NewMap(typ.String, typ.Integer)
+	for _, fieldType := range []typ.Type{typ.Nil, typ.NewOptional(typ.Integer), typ.NewUnion(typ.Nil, typ.Integer)} {
+		record := typ.NewRecord().Field("extra", fieldType).SetComplete(true).Build()
+		if !IsSubtype(record, target) {
+			t.Errorf("%s should satisfy integer map after nil entries are removed", fieldType)
+		}
+	}
+	bad := typ.NewRecord().Field("extra", typ.NewOptional(typ.String)).SetComplete(true).Build()
+	if IsSubtype(bad, target) {
+		t.Fatal("non-nil string must not satisfy integer map")
+	}
+}
+
+// A value known only to be some table is a dynamic table: it may be used as
+// any table shape, and as nothing else.
+func TestBuiltinTableTopFlowsIntoTableShapes(t *testing.T) {
+	top := typ.NewInterface("table", nil)
+	for _, super := range []typ.Type{
+		typ.NewMap(typ.String, typ.Any),
+		typ.NewArray(typ.Any),
+		typ.NewRecord().OptField("name", typ.String).Build(),
+		typ.NewAlias("Map", typ.NewMap(typ.String, typ.Any)),
+	} {
+		if !IsSubtype(top, super) {
+			t.Errorf("table must subtype %s", super)
+		}
+	}
+	if IsSubtype(top, typ.String) {
+		t.Error("table must not subtype string")
+	}
+}
+
+// A value built by setmetatable(obj, {__index = Class}) reads Class's fields.
+func TestRecordFieldsReachedThroughMetatableIndex(t *testing.T) {
+	methods := typ.NewRecord().Field("get", typ.Func().Param("self", typ.Any).Returns(typ.Number).Build()).Build()
+	mt := typ.NewRecord().Field("__index", methods).Build()
+	obj := typ.NewRecord().Field("n", typ.Number).Build().WithMetatable(mt)
+	reader := typ.NewRecord().
+		Field("n", typ.Number).
+		Field("get", typ.Func().Param("self", typ.Any).Returns(typ.Number).Build()).
+		Build()
+
+	if !IsSubtype(obj, reader) {
+		t.Fatal("inherited method must satisfy the record type")
+	}
+	if IsSubtype(typ.NewRecord().Field("n", typ.Number).Build(), reader) {
+		t.Fatal("without the metatable the method is missing")
+	}
+}
+
+// A session decides each query as IsSubtype does and keeps its decisions for
+// later queries.
+func TestSession_AgreesWithIsSubtype(t *testing.T) {
+	rec := func(v typ.Type) typ.Type {
+		return typ.NewRecord().Field("f", typ.Func().Param("x", v).Returns(v).Build()).Build()
+	}
+	pairs := [][2]typ.Type{
+		{typ.Integer, typ.Number}, {typ.Number, typ.Integer},
+		{rec(typ.String), rec(typ.String)}, {rec(typ.String), rec(typ.Number)},
+	}
+	sess := NewSession()
+	for round := 0; round < 2; round++ {
+		for _, p := range pairs {
+			if got, want := sess.IsSubtype(p[0], p[1]), IsSubtype(p[0], p[1]); got != want {
+				t.Fatalf("round %d: session %v <: %v = %v, want %v", round, p[0], p[1], got, want)
+			}
+		}
 	}
 }

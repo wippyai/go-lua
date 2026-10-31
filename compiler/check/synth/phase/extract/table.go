@@ -37,10 +37,14 @@ func (s *Synthesizer) SynthTableCore(ex *ast.TableExpr, sc *scope.State, recurse
 // Empty tables return an open record (can have any additional fields assigned).
 func (s *Synthesizer) SynthTableWithExpected(ex *ast.TableExpr, sc *scope.State, recurse ExprSynth, expected typ.Type) typ.Type {
 	if len(ex.Fields) == 0 {
-		return typ.NewRecord().SetOpen(true).Build()
+		if expected != nil && !unwrap.Alias(expected).Kind().IsPlaceholder() &&
+			len(ops.CheckTable(querycore.AssignabilityOf(s.deps.Ctx), nil, nil, expected).Errors) == 0 {
+			return expected
+		}
+		return typ.NewRecord().SetOpen(true).SetComplete(true).Build()
 	}
 
-	if _, isUnion := unwrap.Alias(expected).(*typ.Union); isUnion {
+	if _, isUnion := unwrap.Optional(expected).(*typ.Union); isUnion {
 		if match := querycore.TryDiscriminatedUnionMember(ex, expected); match != nil {
 			return s.SynthTableWithExpected(ex, sc, recurse, match.Member)
 		}
@@ -49,50 +53,15 @@ func (s *Synthesizer) SynthTableWithExpected(ex *ast.TableExpr, sc *scope.State,
 	expectedFields := s.resolveExpectedFields(expected)
 	selfType := expected
 	if selfType == nil {
-		selfBuilder := typ.NewRecord()
-		fieldCount := 0
-		for _, field := range ex.Fields {
-			if field.Key == nil {
-				continue
-			}
-			if _, ok := field.Value.(*ast.FunctionExpr); ok {
-				continue
-			}
-			switch k := field.Key.(type) {
-			case *ast.StringExpr:
-				ft := recurse(field.Value)
-				if ft == nil {
-					ft = typ.Unknown
-				}
-				if inner, optional := typ.SplitNilableFieldType(ft); optional {
-					selfBuilder.OptField(k.Value, inner)
-				} else {
-					selfBuilder.Field(k.Value, ft)
-				}
-				fieldCount++
-			case *ast.IdentExpr:
-				ft := recurse(field.Value)
-				if ft == nil {
-					ft = typ.Unknown
-				}
-				if inner, optional := typ.SplitNilableFieldType(ft); optional {
-					selfBuilder.OptField(k.Value, inner)
-				} else {
-					selfBuilder.Field(k.Value, ft)
-				}
-				fieldCount++
-			}
-		}
-		if fieldCount > 0 {
-			selfType = selfBuilder.Build()
-		}
+		selfType = phasecore.ImplicitSelfType(ex, recurse)
 	}
 
-	builder := typ.NewRecord()
+	builder := typ.NewRecord().SetComplete(true)
 	var fieldDefs []ops.FieldDef
 	var arrayElements []typ.Type
 	hasVararg := false
 	fieldCount := 0
+	hasComputed := false
 
 	for _, field := range ex.Fields {
 		if field.Key == nil {
@@ -114,7 +83,7 @@ func (s *Synthesizer) SynthTableWithExpected(ex *ast.TableExpr, sc *scope.State,
 			if ft == nil {
 				ft = typ.Unknown
 			}
-			fieldDefs = append(fieldDefs, ops.FieldDef{Name: k.Value, Type: ft})
+			fieldDefs = append(fieldDefs, ops.FieldDef{Name: k.Value, Type: ft, Shared: phasecore.SharedTableValue(field.Value, ft)})
 			if inner, optional := typ.SplitNilableFieldType(ft); optional {
 				builder.OptField(k.Value, inner)
 			} else {
@@ -126,20 +95,28 @@ func (s *Synthesizer) SynthTableWithExpected(ex *ast.TableExpr, sc *scope.State,
 			if ft == nil {
 				ft = typ.Unknown
 			}
-			fieldDefs = append(fieldDefs, ops.FieldDef{Name: k.Value, Type: ft})
+			fieldDefs = append(fieldDefs, ops.FieldDef{Name: k.Value, Type: ft, Shared: phasecore.SharedTableValue(field.Value, ft)})
 			if inner, optional := typ.SplitNilableFieldType(ft); optional {
 				builder.OptField(k.Value, inner)
 			} else {
 				builder.Field(k.Value, ft)
 			}
 			fieldCount++
-		case *ast.NumberExpr:
-			elemExpected := ops.ExpectedTableElementType(expected, len(arrayElements))
-			elemType := s.synthFieldValueWithExpected(field.Value, sc, recurse, elemExpected, selfType)
-			if elemType == nil {
-				elemType = typ.Unknown
+		default:
+			keyType := recurse(field.Key)
+			if keyType == nil {
+				keyType = typ.Unknown
 			}
-			arrayElements = append(arrayElements, elemType)
+			var valueExpected typ.Type
+			if m, ok := unwrap.Alias(expected).(*typ.Map); ok {
+				valueExpected = m.Value
+			}
+			valueType := s.synthFieldValueWithExpected(field.Value, sc, recurse, valueExpected, selfType)
+			if valueType == nil {
+				valueType = typ.Unknown
+			}
+			fieldDefs = append(fieldDefs, ops.FieldDef{KeyType: keyType, Type: valueType})
+			hasComputed = true
 		}
 	}
 
@@ -152,14 +129,17 @@ func (s *Synthesizer) SynthTableWithExpected(ex *ast.TableExpr, sc *scope.State,
 		} else {
 			result = typ.NewTuple(arrayElements...)
 		}
-		if expected != nil && len(ops.CheckTable(nil, arrayElements, expected).Errors) == 0 {
+		if expected != nil && len(ops.CheckTable(querycore.AssignabilityOf(s.deps.Ctx), nil, arrayElements, expected).Errors) == 0 {
 			return expected
 		}
 		return result
 	}
 
-	result := builder.Build()
-	if expected != nil && len(ops.CheckTable(fieldDefs, arrayElements, expected).Errors) == 0 {
+	var result typ.Type = builder.Build()
+	if hasComputed {
+		result = ops.CheckTable(querycore.AssignabilityOf(s.deps.Ctx), fieldDefs, arrayElements, nil).Type
+	}
+	if expected != nil && len(ops.CheckTable(querycore.AssignabilityOf(s.deps.Ctx), fieldDefs, arrayElements, expected).Errors) == 0 {
 		return expected
 	}
 	return result
@@ -184,7 +164,16 @@ func (s *Synthesizer) synthFieldValueWithExpected(value ast.Expr, sc *scope.Stat
 		}
 		return s.SynthFunctionTypeWithExpected(fn, sc, expectedFn)
 	}
-	return recurse(value)
+	inferred := recurse(value)
+	// Scalar literals can initialize wider slots. Keep their exact value when
+	// context has alternatives, since it selects the applicable record branch.
+	switch value.(type) {
+	case *ast.StringExpr, *ast.NumberExpr:
+		if _, alternatives := unwrap.Optional(expected).(*typ.Union); !alternatives && expected != nil && s.isAssignable(inferred, expected) {
+			return expected
+		}
+	}
+	return inferred
 }
 
 // resolveExpectedFields extracts expected field types from the expected type.
@@ -193,11 +182,11 @@ func (s *Synthesizer) resolveExpectedFields(expected typ.Type) map[string]typ.Ty
 		return nil
 	}
 
-	if _, isUnion := unwrap.Alias(expected).(*typ.Union); !isUnion {
+	if _, isUnion := unwrap.Optional(expected).(*typ.Union); !isUnion {
 		return querycore.AllFieldTypesResolved(expected)
 	}
 
-	union := unwrap.Alias(expected).(*typ.Union)
+	union := unwrap.Optional(expected).(*typ.Union)
 	result := make(map[string]typ.Type)
 
 	fieldNames := make(map[string]struct{})

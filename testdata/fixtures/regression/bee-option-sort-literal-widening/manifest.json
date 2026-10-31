@@ -1,0 +1,1 @@
+{"description": "Literal widening through an option sort comparator (Bee golua-repros2 case 6).", "files": ["main.lua"], "check": {"errors": 0, "modes": ["gradual", "strict"]}}

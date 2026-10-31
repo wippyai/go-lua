@@ -3,6 +3,8 @@ package ops
 import (
 	"testing"
 
+	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/check/callsite"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -199,6 +201,31 @@ func TestCallWithGenericInference_MultiReturn(t *testing.T) {
 	}
 	if result.Returns[0] != typ.String || result.Returns[1] != typ.Boolean {
 		t.Fatalf("unexpected return vector: %v", result.Returns)
+	}
+}
+
+func TestGenericInferenceUsesExpandedSecondArgument(t *testing.T) {
+	typeParam := typ.NewTypeParam("T", nil)
+	fn := typ.Func().TypeParam("T", nil).
+		Param("first", typ.String).Param("second", typeParam).
+		Returns(typeParam).Build()
+	args := callsite.ArgumentTypes([]ast.Expr{&ast.FuncCallExpr{}},
+		func(ast.Expr) typ.Type { return fn },
+		func(ast.Expr) []typ.Type { return []typ.Type{typ.String, typ.Number} },
+	)
+	result := CallWithGenericInference(db.NewQueryContext(db.New()), CallDef{
+		Callee: fn, Args: args.Types, OpenTail: args.OpenTail,
+	})
+	if len(result.Errors) != 0 || !typ.TypeEquals(result.Type, typ.Number) {
+		t.Fatalf("expected T inferred as number from spread, got type %v and errors %v", result.Type, result.Errors)
+	}
+
+	result = CallWithGenericInference(db.NewQueryContext(db.New()), CallDef{
+		Callee: typ.NewIntersection(fn, typ.Func().Param("first", typ.Boolean).Param("second", typ.Boolean).Returns(typ.Boolean).Build()),
+		Args:   args.Types, OpenTail: args.OpenTail,
+	})
+	if len(result.Errors) != 0 || !typ.TypeEquals(result.Type, typ.Number) {
+		t.Fatalf("expected generic overload inferred from spread, got type %v and errors %v", result.Type, result.Errors)
 	}
 }
 
@@ -424,6 +451,138 @@ func TestInferCall_UnionAggregatesExpectedArgsAcrossMembers(t *testing.T) {
 	}
 }
 
+func TestInferCall_UnionSelectsMostSpecificGenericOverload(t *testing.T) {
+	paramT := typ.NewTypeParam("T", nil)
+	typedOptions := typ.NewRecord().
+		Field("message", typ.True).
+		Field("type", typ.NewMeta(paramT)).
+		Build()
+	messageOptions := typ.NewRecord().Field("message", typ.True).Build()
+	typed := typ.Func().
+		TypeParam("T", nil).
+		Param("topic", typ.String).
+		Param("options", typedOptions).
+		Returns(paramT).
+		Build()
+	untyped := typ.Func().
+		Param("topic", typ.String).
+		Param("options", messageOptions).
+		Returns(typ.Any).
+		Build()
+	options := typ.NewRecord().
+		Field("message", typ.True).
+		Field("type", typ.NewMeta(typ.String)).
+		Build()
+
+	wantOptions := typ.NewRecord().
+		Field("message", typ.True).
+		Field("type", typ.NewMeta(typ.String)).
+		Build()
+	orders := []struct {
+		name    string
+		members []typ.Type
+	}{
+		{name: "typed first", members: []typ.Type{typed, untyped}},
+		{name: "typed last", members: []typ.Type{untyped, typed}},
+	}
+	for _, order := range orders {
+		t.Run(order.name, func(t *testing.T) {
+			ctx := db.NewQueryContext(db.New())
+			callee := typ.NewUnion(order.members...)
+			def := CallDef{Callee: callee, Args: []typ.Type{typ.String, options}}
+			infer := InferCall(ctx, def)
+
+			if infer.Kind != InferKindFunction {
+				t.Fatalf("expected most-specific function overload, got %v", infer.Kind)
+			}
+			if len(infer.TypeArgs) != 1 || !typ.TypeEquals(infer.TypeArgs[0], typ.String) {
+				t.Fatalf("T = %v, want string", infer.TypeArgs)
+			}
+			if len(infer.ExpectedArgs) != 2 || !typ.TypeEquals(infer.ExpectedArgs[1], wantOptions) {
+				t.Fatalf("expected typed options %v, got %v", wantOptions, infer.ExpectedArgs)
+			}
+
+			result := FinishCall(ctx, def, infer)
+			if len(result.Errors) != 0 || !typ.TypeEquals(result.Type, typ.String) {
+				t.Fatalf("expected precise string result without errors, got %v (%v)", result.Type, result.Errors)
+			}
+		})
+	}
+}
+
+func TestInferCall_UnionSelectsOnlyViableOverload(t *testing.T) {
+	messageOptions := typ.NewRecord().Field("message", typ.True).Build()
+	rawOptions := typ.NewRecord().OptField("message", typ.False).Build()
+	message := typ.Func().
+		Param("topic", typ.String).
+		Param("options", messageOptions).
+		Returns(typ.String).
+		Build()
+	raw := typ.Func().
+		Param("topic", typ.String).
+		OptParam("options", rawOptions).
+		Returns(typ.Any).
+		Build()
+
+	ctx := db.NewQueryContext(db.New())
+	infer := InferCall(ctx, CallDef{
+		Callee: typ.NewUnion(message, raw),
+		Args: []typ.Type{
+			typ.String,
+			typ.NewRecord().Field("message", typ.True).Build(),
+		},
+	})
+	if infer.Kind != InferKindFunction || infer.Instantiated != message {
+		t.Fatalf("expected only viable message overload, got %+v", infer)
+	}
+	if len(infer.ExpectedArgs) != 2 || !typ.TypeEquals(infer.ExpectedArgs[1], messageOptions) {
+		t.Fatalf("expected message options %v, got %v", messageOptions, infer.ExpectedArgs)
+	}
+}
+
+func TestInferCall_UnionKeepsAmbiguousOverloads(t *testing.T) {
+	tests := []struct {
+		name   string
+		callee typ.Type
+		args   []typ.Type
+	}{
+		{
+			name: "equally specific",
+			callee: typ.NewUnion(
+				typ.Func().Param("value", typ.String).Returns(typ.String).Build(),
+				typ.Func().Param("value", typ.String).Returns(typ.Number).Build(),
+			),
+			args: []typ.Type{typ.String},
+		},
+		{
+			name: "variadic",
+			callee: typ.NewUnion(
+				typ.Func().Param("value", typ.String).Returns(typ.String).Build(),
+				typ.Func().Variadic(typ.String).Returns(typ.Number).Build(),
+			),
+			args: []typ.Type{typ.String},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := db.NewQueryContext(db.New())
+			def := CallDef{Callee: tt.callee, Args: tt.args}
+			infer := InferCall(ctx, def)
+			if infer.Kind != InferKindUnion {
+				t.Fatalf("expected ambiguous overloads to remain a union, got %v", infer.Kind)
+			}
+			result := FinishCall(ctx, def, infer)
+			if len(result.Errors) != 0 {
+				t.Fatalf("expected viable overloads without errors, got %v", result.Errors)
+			}
+			if _, ok := result.Type.(*typ.Union); !ok {
+				t.Fatalf("expected merged union return, got %T (%v)", result.Type, result.Type)
+			}
+		})
+	}
+}
+
 func TestFinishCall_ShortCircuit(t *testing.T) {
 	ctx := db.NewQueryContext(db.New())
 	def := CallDef{
@@ -550,6 +709,9 @@ func TestCallFunction_MethodOnLiteralReceiverConsumesSelf(t *testing.T) {
 		nil,
 		fn,
 		[]typ.Type{typ.Integer, typ.Integer},
+		false,
+		0,
+		false,
 		typ.LiteralString("abc"),
 		true,
 		false,
@@ -571,7 +733,7 @@ func TestCallFunction_UnknownParamStillRequired(t *testing.T) {
 		Build()
 
 	ctx := db.NewQueryContext(db.New())
-	result := callFunction(ctx, nil, fn, nil, nil, false, false, nil)
+	result := callFunction(ctx, nil, fn, nil, false, 0, false, nil, false, false, nil)
 
 	if len(result.Errors) == 0 {
 		t.Fatal("expected arity error for missing required unknown param")
@@ -586,7 +748,7 @@ func TestCallFunction_RequiredAfterOptionalStillRequiresPosition(t *testing.T) {
 		Build()
 
 	ctx := db.NewQueryContext(db.New())
-	result := callFunction(ctx, nil, fn, []typ.Type{typ.Number}, nil, false, false, nil)
+	result := callFunction(ctx, nil, fn, []typ.Type{typ.Number}, false, 0, false, nil, false, false, nil)
 
 	if len(result.Errors) == 0 {
 		t.Fatal("expected arity error when required param appears after optional")
@@ -605,6 +767,9 @@ func TestCallFunction_MethodAlwaysConsumesReceiver(t *testing.T) {
 		nil,
 		fn,
 		[]typ.Type{typ.Number},
+		false,
+		0,
+		false,
 		typ.String,
 		true,
 		true,
@@ -622,7 +787,7 @@ func TestCallFunction_ZeroParamAllowsExtraArgs(t *testing.T) {
 		Build()
 
 	ctx := db.NewQueryContext(db.New())
-	result := callFunction(ctx, nil, fn, []typ.Type{typ.Number, typ.String}, nil, false, false, nil)
+	result := callFunction(ctx, nil, fn, []typ.Type{typ.Number, typ.String}, false, 0, false, nil, false, false, nil)
 
 	if len(result.Errors) != 0 {
 		t.Fatalf("zero-param function should accept extra args, got: %v", result.Errors)

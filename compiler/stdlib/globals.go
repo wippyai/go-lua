@@ -33,12 +33,20 @@ var (
 // Global function type definitions.
 var (
 	// assert(v, message?) -> v
-	// When assert returns, v is truthy (not nil/false)
+	// When assert returns, v is truthy (not nil/false). The return effect
+	// preserves the argument's structural type through the call; the
+	// refinement separately records the normal-return truthiness proof.
+	// The message is a string or an Error, so assert(f()) accepts the error
+	// value of a (value, err) call.
 	Assert = typ.Func().
 		Param("v", typ.Any).
-		OptParam("message", typ.String).
+		OptParam("message", typ.NewUnion(typ.String, typ.LuaError)).
 		Returns(typ.Any).
 		Effects(effect.Throws()).
+		Spec(contract.NewSpec().WithEffects(effect.Return{
+			ReturnIndex: 0,
+			Transform:   effect.SameAs{Source: effect.ParamRef{Index: 0}},
+		})).
 		WithRefinement(&constraint.FunctionRefinement{
 			OnReturn: constraint.FromConstraints(
 				constraint.Truthy{Path: constraint.ParamPath(0)},
@@ -60,7 +68,8 @@ var (
 			Returns(typ.NewOptional(typ.Any)).
 			Build()
 
-	// setmetatable(table, metatable) -> table
+	// setmetatable(table, metatable) -> table, with metatable attached so the
+	// fields and methods of metatable.__index resolve on the result.
 	SetMetatable = func() typ.Type {
 		tp := typ.NewTypeParam("T", nil)
 		return typ.Func().
@@ -69,6 +78,13 @@ var (
 			Param("metatable", typ.NewOptional(typ.Any)).
 			Returns(tp).
 			Effects(effect.StoresParam(1, 0)).
+			Spec(contract.NewSpec().WithEffects(effect.Return{
+				ReturnIndex: 0,
+				Transform: effect.WithMetatable{
+					Table:     effect.ParamRef{Index: 0},
+					Metatable: effect.ParamRef{Index: 1},
+				},
+			})).
 			Build()
 	}()
 

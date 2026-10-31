@@ -1,0 +1,5 @@
+{
+  "description": "An unannotated parameter passed to calls expecting DB and DB | Transaction is inferred as DB: call-site expectations constrain the parameter together.",
+  "files": ["store.lua", "reader.lua", "main.lua"],
+  "check": {"errors": 0}
+}

@@ -1,0 +1,3 @@
+{
+  "description": "A dynamic-key write of a non-nil value proves the entry present for later reads with the same table and key versions, and a join proves it only when every incoming path does"
+}

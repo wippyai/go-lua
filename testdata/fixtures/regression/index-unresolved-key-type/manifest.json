@@ -1,0 +1,4 @@
+{
+  "description": "dataflow run_context lib: an index whose key expression synthesizes no type must not crash the index query.",
+  "files": ["main.lua"]
+}

@@ -3,6 +3,7 @@ package lua
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strconv"
 )
 
@@ -156,6 +157,9 @@ func (nm LNumber) Format(f fmt.State, c rune) {
 type LTable struct {
 	Metatable LValue
 	Immutable bool
+	// sparseArrayHash tracks hash storage used only for sparse array keys.
+	// It fits in the existing flag padding without enlarging the table header.
+	sparseArrayHash bool
 
 	Array   []LValue
 	Dict    map[LValue]LValue
@@ -168,7 +172,9 @@ func (tb *LTable) String() string   { return fmt.Sprintf("table: %p", tb) }
 func (tb *LTable) Type() LValueType { return LTTable }
 
 type LFunction struct {
-	IsG       bool
+	IsG bool
+	// nativeKey marks a callable wrapper used for a stateless function table key.
+	nativeKey bool
 	Env       *LTable
 	Proto     *FunctionProto
 	GFunction LGFunction
@@ -228,7 +234,6 @@ type LState struct {
 	currentFrame *callFrame
 	wrapped      bool
 	uvcache      *Upvalue
-	hasErrorFunc bool
 	mainLoop     func(*LState, *callFrame)
 	ctx          context.Context
 	ctxCancelFn  context.CancelFunc
@@ -263,3 +268,35 @@ func (ud *LUserData) String() string {
 	return fmt.Sprintf("userdata(%T): %p", ud.Value, ud)
 }
 func (ud *LUserData) Type() LValueType { return LTUserData }
+
+// nativeFunctionID follows LGoFunc's stateless, code-address identity. Go
+// closures needing distinct captured state should use LState.NewFunction.
+func nativeFunctionID(value LValue) (uintptr, bool) {
+	switch fn := value.(type) {
+	case LGoFunc:
+		return reflect.ValueOf(fn).Pointer(), true
+	case *LFunction:
+		if fn.nativeKey {
+			return reflect.ValueOf(fn.GFunction).Pointer(), true
+		}
+	}
+	return 0, false
+}
+
+func functionsEqual(lhs, rhs LValue) bool {
+	if id, ok := nativeFunctionID(lhs); ok {
+		other, ok := nativeFunctionID(rhs)
+		return ok && id == other
+	}
+	l, ok := lhs.(*LFunction)
+	r, rok := rhs.(*LFunction)
+	return ok && rok && l == r
+}
+
+// nativeKeyValue keeps internal comparable wrappers out of Lua iteration.
+func nativeKeyValue(value LValue) LValue {
+	if fn, ok := value.(*LFunction); ok && fn.nativeKey {
+		return LGoFunc(fn.GFunction)
+	}
+	return value
+}

@@ -139,6 +139,36 @@ func (i *Intersection) Equals(other Type) bool {
 	return TypeEquals(i, other)
 }
 
+// GeneralMember selects the broad function in a literal-dispatch overload.
+// A plain function is its own general member.
+func GeneralMember(t Type) *Function {
+	if fn, ok := UnwrapAnnotated(t).(*Function); ok {
+		return fn
+	}
+	inter, ok := UnwrapAnnotated(t).(*Intersection)
+	if !ok {
+		return nil
+	}
+	var general *Function
+	fewest := int(^uint(0) >> 1)
+	for _, member := range inter.Members {
+		fn, ok := UnwrapAnnotated(member).(*Function)
+		if !ok {
+			continue
+		}
+		literals := 0
+		for _, param := range fn.Params {
+			if _, ok := UnwrapAnnotated(param.Type).(*Literal); ok {
+				literals++
+			}
+		}
+		if literals < fewest {
+			general, fewest = fn, literals
+		}
+	}
+	return general
+}
+
 // containsNilValue checks if a type can hold nil values.
 func containsNilValue(t Type) bool {
 	if t == nil {

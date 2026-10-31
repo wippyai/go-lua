@@ -234,16 +234,41 @@ func (r Return) Equals(other Label) bool {
 type ErrorReturn struct {
 	ValueIndex int // Value return position (0-based)
 	ErrorIndex int // Error return position (0-based)
+	// ValueTruthy is proved by the body when success returns are truthy.
+	// It lets a falsy guard on the value prove that the error is present.
+	ValueTruthy bool
+}
+
+// GuardedReturnType means a truthy result at GuardIndex always accompanies
+// the return type identified by TargetHash at TargetIndex. The hash must name
+// a member of the function's declared return type at the call site.
+type GuardedReturnType struct {
+	GuardIndex  int
+	TargetIndex int
+	TargetHash  uint64
+	TargetType  any
+}
+
+func (GuardedReturnType) label() {}
+func (g GuardedReturnType) String() string {
+	return fmt.Sprintf("guarded_return_type(%d, %d, %d)", g.GuardIndex, g.TargetIndex, g.TargetHash)
+}
+func (g GuardedReturnType) Equals(other Label) bool {
+	o, ok := other.(GuardedReturnType)
+	return ok && g.GuardIndex == o.GuardIndex && g.TargetIndex == o.TargetIndex && g.TargetHash == o.TargetHash
 }
 
 func (ErrorReturn) label() {}
 func (e ErrorReturn) String() string {
+	if e.ValueTruthy {
+		return fmt.Sprintf("truthy_errret(val[%d], err[%d])", e.ValueIndex, e.ErrorIndex)
+	}
 	return fmt.Sprintf("errret(val[%d], err[%d])", e.ValueIndex, e.ErrorIndex)
 }
 func (e ErrorReturn) Equals(other Label) bool {
 	if o, ok := other.(ErrorReturn); ok {
 		return e.ValueIndex == o.ValueIndex &&
-			e.ErrorIndex == o.ErrorIndex
+			e.ErrorIndex == o.ErrorIndex && e.ValueTruthy == o.ValueTruthy
 	}
 
 	return false
@@ -281,6 +306,9 @@ func (r ReturnLength) Equals(other Label) bool {
 //   - SameAs: Returns the exact type of a parameter (identity).
 //     assert(v) -> typeof(v)
 //
+//   - TypeValueOf: Returns the type represented by a Meta<T> parameter.
+//     decode(s, User) -> User
+//
 //   - CallbackReturn: Returns what a callback parameter returns.
 //     table.sort(t, cmp) where cmp returns boolean -> boolean
 //
@@ -296,6 +324,9 @@ func (r ReturnLength) Equals(other Label) bool {
 //   - SelectCaseOfParam: Builds select case from parameter type.
 //
 //   - SelectResultOfCases: Builds select result from cases and default.
+//
+//   - WithMetatable: Returns a table parameter with another parameter
+//     attached as its metatable, as setmetatable does.
 type ReturnType interface {
 	returnType()
 	String() string
@@ -320,6 +351,19 @@ type SelectResultOfCases struct {
 func (SelectResultOfCases) returnType() {}
 func (s SelectResultOfCases) String() string {
 	return fmt.Sprintf("select_result(%s, %s)", s.Cases, s.Default)
+}
+
+// WithMetatable returns the Table parameter's type with the Metatable
+// parameter's type attached as its metatable, so fields and methods reached
+// through the metatable's __index resolve on the result.
+type WithMetatable struct {
+	Table     ParamRef
+	Metatable ParamRef
+}
+
+func (WithMetatable) returnType() {}
+func (w WithMetatable) String() string {
+	return fmt.Sprintf("with_metatable(%s, %s)", w.Table, w.Metatable)
 }
 
 // ElementOf returns the element type of an array parameter.
@@ -370,6 +414,16 @@ type SameAs struct {
 func (SameAs) returnType() {}
 func (s SameAs) String() string {
 	return fmt.Sprintf("same(%s)", s.Source)
+}
+
+// TypeValueOf returns the type represented by a Meta<T> parameter.
+type TypeValueOf struct {
+	Source ParamRef
+}
+
+func (TypeValueOf) returnType() {}
+func (t TypeValueOf) String() string {
+	return fmt.Sprintf("type_value(%s)", t.Source)
 }
 
 // DeepElementOf recursively extracts non-array leaf types.
@@ -786,6 +840,12 @@ func returnTypeEquals(a, b ReturnType) bool {
 			}
 			return false
 		},
+		TypeValueOf: func(av TypeValueOf) bool {
+			if bv, ok := b.(TypeValueOf); ok {
+				return av.Source.Index == bv.Source.Index
+			}
+			return false
+		},
 		DeepElementOf: func(av DeepElementOf) bool {
 			if bv, ok := b.(DeepElementOf); ok {
 				return av.Source.Index == bv.Source.Index
@@ -807,6 +867,12 @@ func returnTypeEquals(a, b ReturnType) bool {
 		SelectResultOfCases: func(av SelectResultOfCases) bool {
 			if bv, ok := b.(SelectResultOfCases); ok {
 				return av.Cases.Index == bv.Cases.Index && av.Default.Index == bv.Default.Index
+			}
+			return false
+		},
+		WithMetatable: func(av WithMetatable) bool {
+			if bv, ok := b.(WithMetatable); ok {
+				return av.Table.Index == bv.Table.Index && av.Metatable.Index == bv.Metatable.Index
 			}
 			return false
 		},

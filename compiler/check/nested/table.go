@@ -5,146 +5,94 @@ import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 )
 
-// This file provides utilities for finding table literals and their relationships
-// to functions in a CFG. These utilities support self-type resolution for methods
-// defined in table constructors or assigned to table fields.
-
-// FindTableLiteralForSymbol finds the TableExpr assigned to a symbol.
-//
-// This is used to find the table literal that defines a class or object,
-// enabling self-type resolution for methods defined on that table.
-func FindTableLiteralForSymbol(graph *cfg.Graph, sym cfg.SymbolID) (*ast.TableExpr, cfg.Point) {
-	if graph == nil || sym == 0 {
-		return nil, 0
+// MethodOwner returns the table symbol that owns a function definition.
+// Named definitions carry their owner directly; assigned functions use the
+// target at their definition point, or the containing table literal.
+func MethodOwner(graph *cfg.Graph, fn *ast.FunctionExpr, def *cfg.FuncDefInfo, point cfg.Point) cfg.SymbolID {
+	if def != nil && (def.TargetKind == cfg.FuncDefField || def.TargetKind == cfg.FuncDefMethod) && len(def.TargetPath.Segments) > 0 {
+		return def.TargetPath.Symbol
 	}
-	var result *ast.TableExpr
-	var resultPoint cfg.Point
-	graph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
-		if result != nil {
+	if graph == nil || fn == nil {
+		return 0
+	}
+	var owner cfg.SymbolID
+	visit := func(info *cfg.AssignInfo) {
+		if info == nil || owner != 0 {
 			return
 		}
 		info.EachTargetSource(func(_ int, target cfg.AssignTarget, src ast.Expr) {
-			if target.Symbol != sym {
+			if owner != 0 {
 				return
 			}
-			if tbl, ok := src.(*ast.TableExpr); ok {
-				result = tbl
-				resultPoint = p
-			}
-		})
-	})
-	return result, resultPoint
-}
-
-// FindFieldAssignmentBase finds the base object symbol when a function is assigned via field assignment.
-//
-// For patterns like `obj.method = function(self) ... end`, this function finds
-// the base object (obj) so that self can be typed as the object's type. Also
-// returns the table literal assigned to that symbol, if any.
-func FindFieldAssignmentBase(graph *cfg.Graph, fn *ast.FunctionExpr, point cfg.Point) (cfg.SymbolID, *ast.TableExpr, cfg.Point) {
-	if graph == nil || fn == nil {
-		return 0, nil, 0
-	}
-	var baseSym cfg.SymbolID
-	var tblPoint cfg.Point
-	matchFunc := func(expr ast.Expr) bool {
-		if expr == nil {
-			return false
-		}
-		if expr == fn {
-			return true
-		}
-		other, ok := expr.(*ast.FunctionExpr)
-		if !ok || other == nil {
-			return false
-		}
-		return other.Line() == fn.Line() &&
-			other.Column() == fn.Column() &&
-			other.LastLine() == fn.LastLine() &&
-			other.LastColumn() == fn.LastColumn()
-	}
-
-	// Prefer the assignment at the function's definition point.
-	if point != 0 {
-		if info := graph.Assign(point); info != nil {
-			info.EachTargetSource(func(_ int, target cfg.AssignTarget, src ast.Expr) {
-				if !matchFunc(src) {
-					return
-				}
-				if target.Kind == cfg.TargetField && target.BaseSymbol != 0 {
-					baseSym = target.BaseSymbol
-					return
-				}
-				if target.Kind == cfg.TargetIndex && target.BaseSymbol != 0 {
-					baseSym = target.BaseSymbol
-					return
-				}
-			})
-		}
-	}
-
-	graph.EachAssign(func(_ cfg.Point, info *cfg.AssignInfo) {
-		if baseSym != 0 {
-			return
-		}
-		info.EachTargetSource(func(_ int, target cfg.AssignTarget, src ast.Expr) {
-			if !matchFunc(src) {
-				return
-			}
-			if target.Kind == cfg.TargetField && target.BaseSymbol != 0 {
-				baseSym = target.BaseSymbol
-				return
-			}
-			if target.Kind == cfg.TargetIndex && target.BaseSymbol != 0 {
-				baseSym = target.BaseSymbol
-				return
-			}
-		})
-	})
-	if baseSym == 0 {
-		return 0, nil, 0
-	}
-	// Find the table literal assigned to the base symbol.
-	tbl, p := FindTableLiteralForSymbol(graph, baseSym)
-	if p != 0 {
-		tblPoint = p
-	}
-	return baseSym, tbl, tblPoint
-}
-
-// FindTableLiteralOwner finds the table literal containing fn as a field value.
-//
-// For patterns like `local obj = { method = function(self) ... }`, this function
-// finds the containing table so that self can be typed as the table's type.
-// Returns both the TableExpr and its assigned symbol.
-func FindTableLiteralOwner(graph *cfg.Graph, fn *ast.FunctionExpr) (*ast.TableExpr, cfg.SymbolID) {
-	if graph == nil || fn == nil {
-		return nil, 0
-	}
-	var resultTbl *ast.TableExpr
-	var resultSym cfg.SymbolID
-	graph.EachAssign(func(p cfg.Point, info *cfg.AssignInfo) {
-		if resultTbl != nil {
-			return
-		}
-		info.EachSource(func(i int, src ast.Expr) {
-			if resultTbl != nil {
+			if src == fn && (target.Kind == cfg.TargetField || target.Kind == cfg.TargetIndex) {
+				owner = target.BaseSymbol
 				return
 			}
 			tbl, ok := src.(*ast.TableExpr)
-			if !ok {
+			if !ok || target.Symbol == 0 {
 				return
 			}
 			for _, field := range tbl.Fields {
-				if field.Value == fn {
-					resultTbl = tbl
-					if i < len(info.Targets) {
-						resultSym = info.Targets[i].Symbol
-					}
+				if field != nil && field.Value == fn {
+					owner = target.Symbol
 					return
 				}
 			}
 		})
+	}
+	if point != 0 {
+		visit(graph.Assign(point))
+	}
+	if owner == 0 {
+		graph.EachAssign(func(_ cfg.Point, info *cfg.AssignInfo) { visit(info) })
+	}
+	return owner
+}
+
+// ReturnedClassTable identifies a table returned by every non-nil return
+// path when this graph defines a method owned by that table.
+func ReturnedClassTable(graph *cfg.Graph) (cfg.SymbolID, cfg.Point) {
+	if graph == nil {
+		return 0, 0
+	}
+	var symbol cfg.SymbolID
+	var point cfg.Point
+	valid := true
+	graph.EachReturn(func(at cfg.Point, info *cfg.ReturnInfo) {
+		if !valid || len(info.Exprs) == 0 {
+			return
+		}
+		if _, nilReturn := info.Exprs[0].(*ast.NilExpr); nilReturn {
+			return
+		}
+		if len(info.Symbols) == 0 || info.Symbols[0] == 0 || symbol != 0 && symbol != info.Symbols[0] {
+			valid = false
+			return
+		}
+		symbol, point = info.Symbols[0], at
 	})
-	return resultTbl, resultSym
+	if !valid || symbol == 0 {
+		return 0, 0
+	}
+	hasMethod := false
+	graph.EachFuncDef(func(at cfg.Point, info *cfg.FuncDefInfo) {
+		if MethodOwner(graph, info.FuncExpr, info, at) == symbol {
+			hasMethod = true
+		}
+	})
+	graph.EachAssign(func(at cfg.Point, info *cfg.AssignInfo) {
+		if hasMethod {
+			return
+		}
+		info.EachTargetSource(func(_ int, target cfg.AssignTarget, src ast.Expr) {
+			fn, ok := src.(*ast.FunctionExpr)
+			if ok && target.Kind == cfg.TargetField && len(target.FieldPath) > 0 && MethodOwner(graph, fn, nil, at) == symbol {
+				hasMethod = true
+			}
+		})
+	})
+	if !hasMethod {
+		return 0, 0
+	}
+	return symbol, point
 }

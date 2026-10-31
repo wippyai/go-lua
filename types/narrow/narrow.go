@@ -36,6 +36,13 @@ type narrowConfig struct {
 // This is the main entry point for the narrowing machinery. It sets up the
 // recursive traversal and delegates to [narrowTypeImpl] for the actual work.
 func narrowType(t typ.Type, cfg narrowConfig) typ.Type {
+	if t == nil {
+		return typ.Never
+	}
+	if narrowed, ok := narrowTypeLeaf(t, cfg); ok {
+		return narrowed
+	}
+
 	var recurse func(typ.Type) typ.Type
 	recurse = func(inner typ.Type) typ.Type {
 		return narrowTypeImpl(inner, cfg, recurse)
@@ -47,7 +54,8 @@ func narrowType(t typ.Type, cfg narrowConfig) typ.Type {
 //
 // It handles the following type wrappers before delegating to config handlers:
 //   - nil: Returns Never (narrowing nil always produces the empty type).
-//   - Instantiated: Expands generic instantiation and recurses.
+//   - Instantiated: Expands generic instantiation and recurses, keeping the
+//     instantiation when narrowing leaves its expansion unchanged.
 //   - Alias: Recurses into target, preserving alias wrapper if changed.
 //   - Intersection: Recurses into all members; any Never makes result Never.
 //   - Optional: Delegates to handleOptional.
@@ -60,10 +68,15 @@ func narrowTypeImpl(t typ.Type, cfg narrowConfig, recurse func(typ.Type) typ.Typ
 
 	return typ.Visit(t, typ.Visitor[typ.Type]{
 		Instantiated: func(inst *typ.Instantiated) typ.Type {
-			if expanded := unwrap.Instantiated(inst); expanded != inst {
-				return recurse(expanded)
+			expanded := unwrap.Instantiated(inst)
+			if expanded == inst {
+				return t
 			}
-			return t
+			narrowed := recurse(expanded)
+			if typ.TypeEquals(narrowed, expanded) {
+				return t
+			}
+			return narrowed
 		},
 		Alias: func(a *typ.Alias) typ.Type {
 			inner := recurse(a.Target)
@@ -96,6 +109,16 @@ func narrowTypeImpl(t typ.Type, cfg narrowConfig, recurse func(typ.Type) typ.Typ
 			return cfg.handleLeaf(t)
 		},
 	})
+}
+
+func narrowTypeLeaf(t typ.Type, cfg narrowConfig) (typ.Type, bool) {
+	t = typ.UnwrapAnnotated(t)
+	switch t.(type) {
+	case *typ.Alias, *typ.Instantiated, *typ.Intersection, *typ.Optional, *typ.Union, *typ.Annotated:
+		return nil, false
+	default:
+		return cfg.handleLeaf(t), true
+	}
 }
 
 // RemoveNil removes nil from a type, producing the non-nullable subset.
@@ -293,6 +316,9 @@ func ToFalsy(t typ.Type) typ.Type {
 				},
 				Default: func(t typ.Type) typ.Type {
 					k := t.Kind()
+					if k == kind.Unresolved {
+						return t
+					}
 					if k.IsPlaceholder() {
 						return typ.NewUnion(typ.Nil, typ.LiteralBool(false))
 					}
@@ -329,17 +355,17 @@ func TypesOverlap(a, b typ.Type) bool {
 	return subtype.IsSubtype(a, b) || subtype.IsSubtype(b, a)
 }
 
-// ExcludeType removes union members that overlap with the excluded type.
+// ExcludeType removes union members fully covered by the excluded type.
 //
 // For discriminated union narrowing, this operation removes variants that
 // match a specific type after a negative type check.
 //
 // # Behavior by Type
 //
-//   - Union: Removes members that overlap with excluded; returns remaining.
-//   - Optional<T>: If T overlaps with excluded, returns nil; else unchanged.
+//   - Union: Removes members fully covered by excluded; returns remaining.
+//   - Optional<T>: Removes T when fully covered; keeps nil unless excluded.
 //   - Placeholder (Any, Unknown): Returns unchanged (cannot narrow).
-//   - Other: Returns Never if overlaps with excluded; else unchanged.
+//   - Other: Returns Never when fully covered; else unchanged.
 //
 // # Examples
 //
@@ -364,7 +390,7 @@ func ExcludeType(t typ.Type, excluded typ.Type) typ.Type {
 		handleUnion: func(u *typ.Union, _ func(typ.Type) typ.Type) typ.Type {
 			var kept []typ.Type
 			for _, m := range u.Members {
-				if !TypesOverlap(m, excluded) {
+				if !subtype.IsSubtype(m, excluded) {
 					kept = append(kept, m)
 				}
 			}
@@ -383,7 +409,7 @@ func ExcludeType(t typ.Type, excluded typ.Type) typ.Type {
 			if t.Kind().IsPlaceholder() {
 				return t
 			}
-			if TypesOverlap(t, excluded) {
+			if subtype.IsSubtype(t, excluded) {
 				return typ.Never
 			}
 			return t
@@ -429,12 +455,24 @@ func ExcludeKind(t typ.Type, target kind.Kind) typ.Type {
 			}
 			return typ.NewOptional(inner)
 		},
-		handleUnion: func(u *typ.Union, _ func(typ.Type) typ.Type) typ.Type {
+		handleUnion: func(u *typ.Union, recurse func(typ.Type) typ.Type) typ.Type {
 			var kept []typ.Type
+			changed := false
 			for _, m := range u.Members {
-				if !KindMatches(m, target) {
-					kept = append(kept, m)
+				if KindMatches(m, target) {
+					changed = true
+					continue
 				}
+				nm := recurse(m)
+				if nm == nil || nm.Kind().IsNever() {
+					changed = true
+					continue
+				}
+				changed = changed || nm != m
+				kept = append(kept, nm)
+			}
+			if !changed {
+				return u
 			}
 			if len(kept) == 0 {
 				return typ.Never
@@ -470,6 +508,7 @@ func ExcludeKind(t typ.Type, target kind.Kind) typ.Type {
 //   - kind.Record matches: Record, Map, Array, Tuple, Interface, Intersection
 //     (all are "table" in Lua typeof).
 //   - kind.Number matches: Number and Integer (integer is a subtype of number).
+//   - Literals match by their base kind: 50 is a number, "x" a string.
 //   - Instantiated types: Match based on the underlying generic body's kind.
 //
 // # Examples
@@ -482,6 +521,10 @@ func KindMatches(t typ.Type, target kind.Kind) bool {
 		return false
 	}
 	k := t.Kind()
+	// A literal has the typeof kind of its base primitive.
+	if lit, ok := t.(*typ.Literal); ok {
+		k = lit.Base
+	}
 	if k == target {
 		return true
 	}
@@ -519,8 +562,8 @@ func KindMatches(t typ.Type, target kind.Kind) bool {
 //  1. If either type is a placeholder (Any, Unknown), return the other.
 //  2. Unwrap aliases and instantiated generics.
 //  3. If either is an intersection, merge members.
-//  4. If a <: b, return a (more specific); if b <: a, return b.
-//  5. For unions, filter to overlapping members.
+//  4. Distribute unions and optionals over overlapping branches.
+//  5. If a <: b, return a (more specific); if b <: a, return b.
 //  6. Otherwise, create a new intersection type.
 //
 // # Examples
@@ -565,6 +608,19 @@ func Intersect(a, b typ.Type) typ.Type {
 		return typ.NewIntersection(members...)
 	}
 
+	// A meet distributes over a join: (A | B) & C = (A & C) | (B & C).
+	// Narrowing a union or an optional therefore narrows each member and drops
+	// the ones that cannot overlap, rather than wrapping the whole type in an
+	// intersection. Without this, narrowing T? by a shape refinement yields
+	// `shape & T?` instead of plain T, and the two spellings of one type make
+	// flow joins produce a different result for equal inputs.
+	if members, ok := joinMembers(a); ok {
+		return distributeIntersect(members, b)
+	}
+	if members, ok := joinMembers(b); ok {
+		return distributeIntersect(members, a)
+	}
+
 	if subtype.IsSubtype(a, b) {
 		return a
 	}
@@ -572,42 +628,41 @@ func Intersect(a, b typ.Type) typ.Type {
 		return b
 	}
 
-	if ua, ok := a.(*typ.Union); ok {
-		filtered := filterUnionByOverlap(ua, b)
-		if filtered != nil {
-			return filtered
-		}
-	}
-	if ub, ok := b.(*typ.Union); ok {
-		filtered := filterUnionByOverlap(ub, a)
-		if filtered != nil {
-			return filtered
-		}
-	}
-
 	return typ.NewIntersection(a, b)
 }
 
-// filterUnionByOverlap filters a union to members that overlap with another type.
-//
-// This helper is used by [Intersect] to narrow unions. It keeps only those
-// union members that have some overlap with the other type.
-//
-// Returns Never if no members overlap. Returns nil if the union is nil.
-func filterUnionByOverlap(u *typ.Union, other typ.Type) typ.Type {
-	if u == nil || other == nil {
-		return nil
+// joinMembers returns the members of a union or optional, which are the
+// branches a meet distributes over. Optional(T) contributes T and nil.
+func joinMembers(t typ.Type) ([]typ.Type, bool) {
+	switch v := t.(type) {
+	case *typ.Union:
+		return v.Members, true
+	case *typ.Optional:
+		return []typ.Type{v.Inner, typ.Nil}, true
+	default:
+		return nil, false
 	}
+}
 
-	var kept []typ.Type
-	for _, m := range u.Members {
-		if TypesOverlap(m, other) {
-			kept = append(kept, m)
+// distributeIntersect intersects other with every member, keeping the members
+// that still overlap it.
+func distributeIntersect(members []typ.Type, other typ.Type) typ.Type {
+	kept := make([]typ.Type, 0, len(members))
+	for _, m := range members {
+		if m == nil || !TypesOverlap(m, other) {
+			continue
 		}
+		narrowed := Intersect(m, other)
+		if narrowed == nil || typ.IsNever(narrowed) {
+			continue
+		}
+		kept = append(kept, narrowed)
 	}
-
 	if len(kept) == 0 {
 		return typ.Never
+	}
+	if len(kept) == 1 {
+		return kept[0]
 	}
 	return typ.NewUnion(kept...)
 }
@@ -632,6 +687,10 @@ func filterUnionByOverlap(u *typ.Union, other typ.Type) typ.Type {
 func FilterByKind(t typ.Type, target kind.Kind) typ.Type {
 	if t == nil {
 		return nil
+	}
+	// A pending value has no evidence a kind test can filter yet.
+	if typ.IsUnresolved(t) {
+		return t
 	}
 	if t.Kind().IsPlaceholder() {
 		return TypeForKind(target)
@@ -664,6 +723,9 @@ func FilterByKind(t typ.Type, target kind.Kind) typ.Type {
 			return typ.NewUnion(kept...)
 		},
 		handleLeaf: func(t typ.Type) typ.Type {
+			if typ.IsUnresolved(t) {
+				return t
+			}
 			if t.Kind().IsPlaceholder() {
 				return TypeForKind(target)
 			}

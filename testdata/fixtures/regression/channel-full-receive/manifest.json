@@ -1,0 +1,25 @@
+{
+  "description": "Complete registry sources for app:receive_test",
+  "files": [
+    "agent_ref.lua",
+    "channel_consts.lua",
+    "channel_persist.lua",
+    "test_state.lua",
+    "channel_run_as.lua",
+    "channel_thread_bridge.lua",
+    "channel_types.lua",
+    "component.lua",
+    "contract.lua",
+    "trace_context.lua",
+    "receive.lua",
+    "main.lua"
+  ],
+  "packages": [
+    "process",
+    "sql",
+    "time"
+  ],
+  "check": {
+    "errors": 0
+  }
+}

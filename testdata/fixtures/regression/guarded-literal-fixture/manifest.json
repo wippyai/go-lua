@@ -1,0 +1,1 @@
+{"description":"Literal records written to a locally owned empty map retain their value fields after a guarded lookup.","check":{"errors":0}}

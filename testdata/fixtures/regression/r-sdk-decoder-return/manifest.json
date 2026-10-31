@@ -1,0 +1,1 @@
+{"description":"The r sdk decoder returns every branch type, so callers index its table results.","files":["r_sdk.lua","main.lua"],"packages":["funcs"]}

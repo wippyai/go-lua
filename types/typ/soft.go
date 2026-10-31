@@ -20,55 +20,75 @@ var SoftPlaceholderPolicy = SoftPolicy{AllowEmptyRecord: true}
 
 // IsSoft reports whether a type should be treated as a soft placeholder under policy.
 func IsSoft(t Type, policy SoftPolicy) bool {
-	return isSoft(t, NewGuard(), policy)
+	return isSoft(t, policy, make(map[Type]bool))
 }
 
-func isSoft(t Type, guard internal.RecursionGuard, policy SoftPolicy) bool {
-	if t == nil {
-		return false
+func isSoft(t Type, policy SoftPolicy, seen map[Type]bool) bool {
+	type frame struct {
+		node     Type
+		complete bool
 	}
-	node := unwrapTransparentSoft(t)
-	switch node.(type) {
-	case *Alias, *Optional, *Array, *Map, *Record, *Union:
-		// recurse below
-	default:
-		return node.Kind().IsPlaceholder()
-	}
-
-	next, ok := guard.Enter(node)
-	if !ok {
-		return false
-	}
-
-	switch tt := node.(type) {
-	case *Alias:
-		return isSoft(tt.Target, next, policy)
-	case *Optional:
-		return isSoft(tt.Inner, next, policy)
-	case *Array:
-		return isSoft(tt.Element, next, policy)
-	case *Map:
-		return isSoft(tt.Value, next, policy)
-	case *Record:
-		if len(tt.Fields) == 0 && !tt.HasMapComponent() {
-			return policy.AllowEmptyRecord
-		}
-		if tt.HasMapComponent() && len(tt.Fields) == 0 {
-			return isSoft(tt.MapValue, next, policy)
-		}
-		return false
-	case *Union:
-		if len(tt.Members) == 0 {
+	var local [32]frame
+	pending := append(local[:0], frame{node: t})
+	for len(pending) > 0 {
+		last := len(pending) - 1
+		current := pending[last]
+		pending[last] = frame{}
+		pending = pending[:last]
+		node := current.node
+		if node == nil {
 			return false
 		}
-		for _, m := range tt.Members {
-			if !isSoft(m, next, policy) {
+		if current.complete {
+			seen[node] = true
+			continue
+		}
+		if result, visited := seen[node]; visited {
+			if !result {
+				return false
+			}
+			continue
+		}
+		// Active nodes remain false until every child proves soft. A cycle
+		// therefore cannot supply its own placeholder evidence.
+		seen[node] = false
+		pending = append(pending, frame{node: node, complete: true})
+		switch n := node.(type) {
+		case *Annotated:
+			if n.Inner != nil {
+				pending = append(pending, frame{node: n.Inner})
+			}
+		case *Alias:
+			pending = append(pending, frame{node: n.Target})
+		case *Optional:
+			pending = append(pending, frame{node: n.Inner})
+		case *Array:
+			pending = append(pending, frame{node: n.Element})
+		case *Map:
+			pending = append(pending, frame{node: n.Value})
+		case *Record:
+			if len(n.Fields) != 0 {
+				return false
+			}
+			if n.HasMapComponent() {
+				pending = append(pending, frame{node: n.MapValue})
+			} else if !policy.AllowEmptyRecord {
+				return false
+			}
+		case *Union:
+			if len(n.Members) == 0 {
+				return false
+			}
+			for i := len(n.Members) - 1; i >= 0; i-- {
+				pending = append(pending, frame{node: n.Members[i]})
+			}
+		default:
+			if !node.Kind().IsPlaceholder() {
 				return false
 			}
 		}
-		return true
 	}
-	return false
+	return true
 }
 
 func unwrapTransparentSoft(t Type) Type {
@@ -176,9 +196,10 @@ func pruneSoftUnionMembersMemo(
 	case *Record:
 		out = pruneSoftRecord(node, t, next, memo, visiting, softMemo)
 	case *Union:
-		// Fast path: if this union has no soft members and no nested changes needed,
-		// skip the expensive isSoftWithMemo checks entirely.
-		if !node.HasSoftMember() {
+		// Pending union paths cannot borrow evidence from other members. Keep
+		// every runtime alternative while still pruning their nested types.
+		// Unions without soft members take the same fast path.
+		if !node.HasSoftMember() || node.Contains(Unresolved) {
 			anyChildChanged := false
 			var rewrittenFast []Type
 			for idx, m := range node.Members {
@@ -261,7 +282,7 @@ func pruneSoftUnionMembersMemo(
 			out = t
 			break
 		}
-		out = NewArray(elem)
+		out = node.WithElement(elem)
 	case *Map:
 		key := pruneSoftUnionMembersMemo(node.Key, next, memo, visiting, softMemo)
 		val := pruneSoftUnionMembersMemo(node.Value, next, memo, visiting, softMemo)
@@ -269,7 +290,7 @@ func pruneSoftUnionMembersMemo(
 			out = t
 			break
 		}
-		out = NewMap(key, val)
+		out = node.WithTypes(key, val)
 	case *Tuple:
 		var elems []Type
 		for i, e := range node.Elements {
@@ -415,7 +436,8 @@ func pruneSoftRecord(
 				copy(fields, r.Fields)
 			}
 			changed = true
-			fields[i] = Field{Name: f.Name, Type: newType, Optional: f.Optional, Readonly: f.Readonly}
+			fields[i] = f
+			fields[i].Type = newType
 		} else if fields != nil {
 			fields[i] = f
 		}
@@ -453,7 +475,7 @@ func pruneSoftRecord(
 	if fields != nil {
 		fieldsSrc = fields
 	}
-	return buildRecordType(fieldsSrc, metatable, mapKey, mapValue, r.Open, true)
+	return r.WithChildren(fieldsSrc, metatable, mapKey, mapValue)
 }
 
 func isSoftWithMemo(t Type, policy SoftPolicy, memo map[Type]bool) bool {
@@ -470,7 +492,7 @@ func isSoftWithMemo(t Type, policy SoftPolicy, memo map[Type]bool) bool {
 			return cached
 		}
 	}
-	soft := IsSoft(node, policy)
+	soft := isSoft(node, policy, memo)
 	memo[t] = soft
 	if node != t {
 		memo[node] = soft

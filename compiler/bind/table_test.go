@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/compiler/parse"
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
 )
@@ -701,6 +702,43 @@ func TestBindingTable_AllSymbols_IncludesGenericFor(t *testing.T) {
 	for _, expected := range syms {
 		if !symSet[expected] {
 			t.Errorf("AllSymbols missing generic for symbol %v", expected)
+		}
+	}
+}
+
+func TestBindingTable_CapturedSymbols_ExcludesNestedFunctionDeclarations(t *testing.T) {
+	stmts, err := parse.ParseString(`
+local up = 1
+local function outer()
+	local obj = {}
+	obj.m = function(self, arg)
+		local inner = arg
+		for i = 1, 2 do inner = inner + i end
+		return inner + up
+	end
+	local function helper(p) return p end
+	return helper(obj)
+end
+`, "test.lua")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	root := &ast.FunctionExpr{ParList: &ast.ParList{HasVargs: true}, Stmts: stmts}
+	table := Bind(root, nil)
+
+	outerStmt := stmts[1].(*ast.LocalAssignStmt)
+	outer := outerStmt.Exprs[0].(*ast.FunctionExpr)
+
+	names := make(map[string]bool)
+	for _, sym := range table.CapturedSymbols(outer) {
+		names[table.Name(sym)] = true
+	}
+	if !names["up"] {
+		t.Errorf("outer captures up, got %v", names)
+	}
+	for _, name := range []string{"self", "arg", "inner", "i", "p", "obj", "helper"} {
+		if names[name] {
+			t.Errorf("%s is declared inside outer and is not a capture, got %v", name, names)
 		}
 	}
 }

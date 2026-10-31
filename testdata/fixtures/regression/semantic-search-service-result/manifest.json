@@ -1,0 +1,30 @@
+{
+  "description": "Actual keeper.knowledge.service:service and keeper.knowledge.api:semantic_search sources with typed service dependencies.",
+  "files": [
+    "sql.lua",
+    "json.lua",
+    "uuid.lua",
+    "time.lua",
+    "registry.lua",
+    "notify.lua",
+    "models.lua",
+    "providers.lua",
+    "contract.lua",
+    "security.lua",
+    "kb_consts.lua",
+    "kb_repo.lua",
+    "llm.lua",
+    "embedder.lua",
+    "flow.lua",
+    "http.lua",
+    "kb_service.lua",
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0,
+    "export_contains": {
+      "kb_repo.search_by_embedding": "-> ({",
+      "kb_service.search_semantic": "nodes: {"
+    }
+  }
+}

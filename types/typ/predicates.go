@@ -17,11 +17,12 @@ func IsNever(t Type) bool {
 	return t != nil && t.Kind() == kind.Never
 }
 
-// IsAbsentOrUnknown reports whether t is missing (nil) or unknown.
+// IsAbsentOrUnknown reports whether t is missing (nil), unknown, or pending
+// inference (unresolved).
 //
 // This intentionally does not treat the explicit nil type as unknown.
 func IsAbsentOrUnknown(t Type) bool {
-	return t == nil || IsUnknown(t)
+	return t == nil || IsUnknown(t) || IsUnresolved(t)
 }
 
 // IsUnknownOrNil reports whether t is missing (nil), unknown, or explicit nil type.

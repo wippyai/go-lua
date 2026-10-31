@@ -22,27 +22,25 @@ func TestBuildOverlay_WithSummaries(t *testing.T) {
 			1: {typ.String},
 			2: {typ.Number},
 		},
-		CurrentSym: 1,
 	}
 	result := BuildOverlay(conf)
-	if result[1] != nil {
-		t.Error("current symbol should be excluded")
-	}
-	if result[2] == nil {
-		t.Error("other symbols should be included")
+	if result[1] == nil || result[2] == nil {
+		t.Error("every summarized symbol should be included")
 	}
 }
 
-func TestBuildOverlay_ExcludesCurrent(t *testing.T) {
+// The function being inferred is in its own overlay: its recursive calls are
+// typed with its current summary, the recursion variable of the fixpoint.
+func TestBuildOverlay_IncludesTheInferredFunction(t *testing.T) {
 	conf := OverlayConfig{
 		Summaries: map[cfg.SymbolID][]typ.Type{
 			1: {typ.String},
 		},
-		CurrentSym: 1,
 	}
 	result := BuildOverlay(conf)
-	if _, exists := result[cfg.SymbolID(1)]; exists {
-		t.Error("current symbol should not be in overlay")
+	fn, ok := result[cfg.SymbolID(1)].(*typ.Function)
+	if !ok || len(fn.Returns) != 1 || !typ.TypeEquals(fn.Returns[0], typ.String) {
+		t.Errorf("the inferred function should return its summary in the overlay, got %v", result[1])
 	}
 }
 
@@ -63,7 +61,6 @@ func TestBuildOverlay_SeedsSiblingsWithoutSummaries(t *testing.T) {
 		Siblings: []OverlayEntry{
 			{Symbol: 1, Func: fn},
 		},
-		CurrentSym: 999,
 		Services: OverlayServicesFuncs{
 			SeedTypeFn: func(f *ast.FunctionExpr) typ.Type {
 				return seedType
@@ -85,7 +82,6 @@ func TestBuildOverlay_SummaryOverridesSeed(t *testing.T) {
 		Siblings: []OverlayEntry{
 			{Symbol: 1, Func: fn},
 		},
-		CurrentSym: 999,
 		Services: OverlayServicesFuncs{
 			SeedTypeFn: func(f *ast.FunctionExpr) typ.Type {
 				return typ.Func().Returns(typ.Number).Build()
@@ -108,8 +104,7 @@ func TestBuildOverlay_NilSeedType(t *testing.T) {
 		Siblings: []OverlayEntry{
 			{Symbol: 1, Func: fn},
 		},
-		CurrentSym: 999,
-		Services:   nil,
+		Services: nil,
 	}
 	result := BuildOverlay(conf)
 	if result[1] != nil {
@@ -122,7 +117,6 @@ func TestBuildOverlay_NilFunc(t *testing.T) {
 		Siblings: []OverlayEntry{
 			{Symbol: 1, Func: nil},
 		},
-		CurrentSym: 999,
 		Services: OverlayServicesFuncs{
 			SeedTypeFn: func(f *ast.FunctionExpr) typ.Type {
 				return typ.Func().Build()

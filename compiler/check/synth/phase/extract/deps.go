@@ -36,6 +36,9 @@ type Deps struct {
 
 	Flow  api.FlowOps
 	Paths api.PathFromExprFunc
+	// Conditions gives the conditions an expression establishes, for typing
+	// the right operand of `and`/`or` under its left operand.
+	Conditions api.ConditionFromExprFunc
 
 	PreCache    api.Cache
 	NarrowCache api.Cache

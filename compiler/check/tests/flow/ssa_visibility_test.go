@@ -1,11 +1,13 @@
 package flow
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/tests/testutil"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/diag"
 	"github.com/wippyai/go-lua/types/kind"
 )
 
@@ -167,11 +169,15 @@ func TestSSAVisibility_NestedFuncSeesWrongVersion(t *testing.T) {
 	`
 
 	result := testutil.Check(source, testutil.WithStdlib())
-	// If the bug exists (nested func sees later assignment), x.name is string, assignment works.
-	// If the bug is fixed, x.name is Unknown, assignment to string fails.
-	if !result.HasError() {
-		t.Error("nested function before assignment should NOT see later assignment's type - assigning Unknown to string should fail")
+	// If the bug exists (nested func sees later assignment), x.name is string
+	// and the assignment is plain. If it is fixed, x.name is unknown, which
+	// gradual assignability accepts with an implicit unknown hint.
+	for _, d := range result.Diagnostics {
+		if d.Severity == diag.SeverityHint && strings.Contains(d.Message, "implicit unknown flows into declared string") {
+			return
+		}
 	}
+	t.Errorf("nested function before assignment should NOT see later assignment's type - x.name must be unknown: %v", testutil.ErrorMessages(result.Diagnostics))
 }
 
 // TestSSAVisibility_NestedFuncScopeInspection traces the scope at nested function definition

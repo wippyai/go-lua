@@ -1,0 +1,5 @@
+{
+  "description": "The dataflow parallel node: success and failure entries joined from different call sites keep both record shapes, so reading entry.result after a nil check is valid. A stale fact without a field does not stand for one that has it.",
+  "files": ["node.lua", "template_graph.lua", "iterator.lua", "funcs.lua", "json.lua", "uuid.lua", "consts.lua", "node_reader.lua", "main.lua"],
+  "check": {"errors": 0}
+}

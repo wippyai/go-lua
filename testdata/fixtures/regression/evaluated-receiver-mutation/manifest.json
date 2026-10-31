@@ -1,0 +1,1 @@
+{"description":"A call that mutates a captured receiver invalidates an earlier dereference fact.","check":{"errors":2}}

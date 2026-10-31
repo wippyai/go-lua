@@ -1,0 +1,1 @@
+{"description":"Inferred writes to locally built indexed fixtures preserve gradual presence; declared optionality and explicit nil remain checked.","files":["iterator.lua","main.lua"],"check":{"errors":4}}

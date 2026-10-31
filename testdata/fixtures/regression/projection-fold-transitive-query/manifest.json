@@ -1,0 +1,1 @@
+{"description":"From spiralscout.estimation:projection_fold_test: count calls rows, whose query proves db non-nil before release.","files":["sql.lua","test.lua","main.lua"],"check":{"errors":0}}

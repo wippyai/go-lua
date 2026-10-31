@@ -97,7 +97,7 @@ func TestSequentialGuardNarrowing(t *testing.T) {
 					if err then
 						if type(err) == "userdata" or type(err) == "table" then
 							if err.retryable then
-								local r: boolean = err:retryable()
+								local r: boolean? = err:retryable()
 							end
 							if err.message then
 								local m: string = err:message()

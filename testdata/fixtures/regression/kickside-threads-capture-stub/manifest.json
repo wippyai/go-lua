@@ -1,0 +1,1 @@
+{"description": "app:threads_capture_stub (kickside channel test): a factory returning a table whose methods return it is bound as a class table and as a returned method table in one round; both share one snapshot, so the stub converges."}

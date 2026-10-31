@@ -1,0 +1,1 @@
+{"description": "Full source of kickside.core.projections.persist:writer from kickside/crm/test", "files": ["sql.lua", "json.lua", "uuid.lua", "time.lua", "clock.lua", "types.lua", "core_types.lua", "proj_env.lua", "execution_identity.lua", "autoinit.lua", "proj_worker.lua", "main.lua"], "check": {"errors": 0}}

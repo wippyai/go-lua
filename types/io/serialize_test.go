@@ -380,6 +380,29 @@ func TestEncodeDecode_Record(t *testing.T) {
 		}
 	})
 
+	t.Run("field-flags", func(t *testing.T) {
+		original := typ.NewRecord().
+			Field("name", typ.String).
+			OptField("age", typ.Integer).
+			ReadonlyField("id", typ.Number).
+			OptReadonlyField("cursor", typ.Integer).
+			Build()
+
+		data, err := Encode(original)
+		if err != nil {
+			t.Fatalf("Encode: %v", err)
+		}
+
+		decoded, err := Decode(data)
+		if err != nil {
+			t.Fatalf("Decode: %v", err)
+		}
+
+		if !typ.TypeEquals(decoded, original) {
+			t.Errorf("expected %s, got %s", original, decoded)
+		}
+	})
+
 	t.Run("with-metatable", func(t *testing.T) {
 		meta := typ.NewRecord().
 			Field("__index", typ.Any).
@@ -1394,6 +1417,17 @@ func TestDecode_ReadString_Empty(t *testing.T) {
 
 	if s != "" || r.err != nil {
 		t.Errorf("expected empty string, got %q, err: %v", s, r.err)
+	}
+}
+
+func TestDecode_ReadString_RejectsLengthBeyondInput(t *testing.T) {
+	var buf bytes.Buffer
+	tw := &typeWriter{w: &buf}
+	tw.writeUint32(1024)
+
+	r := &typeReader{r: bytes.NewReader(buf.Bytes())}
+	if got := r.readString(); got != "" || !errors.Is(r.err, ErrCorruptedData) {
+		t.Fatalf("readString() = %q, err=%v", got, r.err)
 	}
 }
 

@@ -134,18 +134,6 @@ func strFind(L *LState) int {
 	return md.CaptureLength()/2 + 1
 }
 
-func strFormat(L *LState) int {
-	str := L.CheckString(1)
-	args := make([]any, L.GetTop()-1)
-	top := L.GetTop()
-	for i := 2; i <= top; i++ {
-		args[i-2] = L.Get(i)
-	}
-	npat := strings.Count(str, "%") - strings.Count(str, "%%")
-	L.Push(LString(fmt.Sprintf(str, args[:intMin(npat, len(args))]...)))
-	return 1
-}
-
 func strGsub(L *LState) int {
 	str := L.CheckString(1)
 	pat := L.CheckString(2)
@@ -167,7 +155,7 @@ func strGsub(L *LState) int {
 		L.Push(LString(strGsubStr(L, str, string(lv), mds)))
 	case *LTable:
 		L.Push(LString(strGsubTable(L, str, lv, mds)))
-	case *LFunction:
+	case *LFunction, LGoFunc:
 		L.Push(LString(strGsubFunc(L, str, lv, mds)))
 	}
 	L.Push(LNumber(len(mds)))
@@ -201,21 +189,19 @@ func capturedString(L *LState, m *pm.MatchData, str string, idx int) string {
 }
 
 func strGsubDoReplace(str string, info []replaceInfo) string {
-	offset := 0
-	buf := []byte(str)
-	for _, replace := range info {
-		oldlen := len(buf)
-		b1 := append([]byte(""), buf[0:offset+replace.Indicies[0]]...)
-		b2 := []byte("")
-		index2 := offset + replace.Indicies[1]
-		if index2 <= len(buf) {
-			b2 = append(b2, buf[index2:]...)
-		}
-		buf = append(b1, replace.String...)
-		buf = append(buf, b2...)
-		offset += len(buf) - oldlen
+	if len(info) == 0 {
+		return str
 	}
-	return string(buf)
+	var buf strings.Builder
+	buf.Grow(len(str))
+	offset := 0
+	for _, replace := range info {
+		buf.WriteString(str[offset:replace.Indicies[0]])
+		buf.WriteString(replace.String)
+		offset = replace.Indicies[1]
+	}
+	buf.WriteString(str[offset:])
+	return buf.String()
 }
 
 func strGsubStr(L *LState, str string, repl string, matches []*pm.MatchData) string {
@@ -264,7 +250,7 @@ func strGsubTable(L *LState, str string, repl *LTable, matches []*pm.MatchData) 
 	return strGsubDoReplace(str, infoList)
 }
 
-func strGsubFunc(L *LState, str string, repl *LFunction, matches []*pm.MatchData) string {
+func strGsubFunc(L *LState, str string, repl LValue, matches []*pm.MatchData) string {
 	infoList := make([]replaceInfo, 0, len(matches))
 	for _, match := range matches {
 		start, end := match.Capture(0), match.Capture(1)
@@ -286,6 +272,11 @@ func strGsubFunc(L *LState, str string, repl *LFunction, matches []*pm.MatchData
 		L.Call(nargs, 1)
 		ret := L.reg.Pop()
 		if !LVIsFalse(ret) {
+			switch ret.(type) {
+			case LString, LNumber, LInteger:
+			default:
+				L.RaiseError("invalid replacement value (a %s)", ret.Type())
+			}
 			infoList = append(infoList, replaceInfo{[]int{start, end}, LVAsString(ret)})
 		}
 	}

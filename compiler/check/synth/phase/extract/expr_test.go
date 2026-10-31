@@ -142,69 +142,9 @@ func TestExpandValues_Empty(t *testing.T) {
 	}
 }
 
-func TestMapValueType_Map(t *testing.T) {
-	m := typ.NewMap(typ.String, typ.Integer)
-	result := mapValueType(m)
-	if result != typ.Integer {
-		t.Fatalf("got %v, want integer", result)
-	}
-}
-
-func TestMapValueType_Optional(t *testing.T) {
-	m := typ.NewMap(typ.String, typ.Integer)
-	opt := typ.NewOptional(m)
-	result := mapValueType(opt)
-	if result != typ.Integer {
-		t.Fatalf("got %v, want integer", result)
-	}
-}
-
-func TestMapValueType_Nil(t *testing.T) {
-	result := mapValueType(nil)
-	if result != nil {
-		t.Fatal("expected nil for nil input")
-	}
-}
-
-func TestMapValueType_NonMap(t *testing.T) {
-	result := mapValueType(typ.String)
-	if result != nil {
-		t.Fatal("expected nil for non-map")
-	}
-}
-
-func TestFieldOnPartialUnion_NotUnion(t *testing.T) {
-	result := fieldOnPartialUnion(typ.String, "foo", mockTypeQuerier{}, nil)
-	if result != nil {
-		t.Fatal("expected nil for non-union")
-	}
-}
-
-func TestFieldOnPartialUnion_WithField(t *testing.T) {
-	rec1 := typ.NewRecord().Field("name", typ.String).Build()
-	rec2 := typ.NewRecord().Build()
-	union := typ.NewUnion(rec1, rec2)
-
-	result := fieldOnPartialUnion(union, "name", mockTypeQuerier{}, nil)
-	if result == nil {
-		t.Fatal("expected non-nil result")
-	}
-}
-
-func TestFieldOnPartialUnion_NoField(t *testing.T) {
-	rec1 := typ.NewRecord().Build()
-	rec2 := typ.NewRecord().Build()
-	union := typ.NewUnion(rec1, rec2)
-
-	result := fieldOnPartialUnion(union, "name", mockTypeQuerier{}, nil)
-	if result != nil {
-		t.Fatal("expected nil when no member has field")
-	}
-}
-
 func TestNarrowTupleIndex_NotTuple(t *testing.T) {
 	s := newTestSynthesizer()
-	result := s.narrowTupleIndex(typ.String, "i", typ.Integer, 0, nil)
+	result := s.narrowTupleIndex(typ.String, &ast.IdentExpr{Value: "i"}, typ.Integer, 0, nil, nil)
 	if result != nil {
 		t.Fatal("expected nil for non-tuple")
 	}
@@ -213,7 +153,7 @@ func TestNarrowTupleIndex_NotTuple(t *testing.T) {
 func TestNarrowTupleIndex_NilNarrower(t *testing.T) {
 	s := newTestSynthesizer()
 	tuple := typ.NewTuple(typ.String, typ.Integer)
-	result := s.narrowTupleIndex(tuple, "i", typ.Integer, 0, nil)
+	result := s.narrowTupleIndex(tuple, &ast.IdentExpr{Value: "i"}, typ.Integer, 0, nil, nil)
 	if result != nil {
 		t.Fatal("expected nil without narrower")
 	}

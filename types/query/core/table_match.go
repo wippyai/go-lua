@@ -35,7 +35,7 @@ type TableMatchResult struct {
 //   - Multiple union members match
 //   - No union members match
 func TryDiscriminatedUnionMember(table *ast.TableExpr, expected typ.Type) *TableMatchResult {
-	union, ok := unwrap.Alias(expected).(*typ.Union)
+	union, ok := unwrap.Optional(expected).(*typ.Union)
 	if !ok {
 		return nil
 	}

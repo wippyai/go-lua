@@ -27,7 +27,7 @@ func tableSort(L *LState) int {
 		L.RaiseError("attempt to sort Immutable table")
 		return 0
 	}
-	sorter := lValueArraySorter{L, nil, tbl.Array}
+	sorter := lValueArraySorter{L, nil, tbl.Array[:tbl.Len()]}
 	if L.GetTop() != 1 {
 		sorter.Fn = L.CheckFunction(2)
 	}
@@ -62,7 +62,22 @@ func tableGetN(L *LState) int {
 }
 
 func tableMaxN(L *LState) int {
-	L.Push(LNumber(L.CheckTable(1).MaxN()))
+	tbl := L.CheckTable(1)
+	var max LValue = LNumber(tbl.MaxN())
+	// Lua's maxn includes numeric hash keys, including fractional keys and
+	// integers outside the array-index range of the Go MaxN API.
+	for key, value := range tbl.Dict {
+		if value == LNil {
+			continue
+		}
+		switch key.(type) {
+		case LNumber, LInteger:
+			if lessThan(L, max, key) {
+				max = key
+			}
+		}
+	}
+	L.Push(max)
 	return 1
 }
 

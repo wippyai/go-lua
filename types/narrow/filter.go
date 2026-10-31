@@ -1,6 +1,7 @@
 package narrow
 
 import (
+	"github.com/wippyai/go-lua/types/kind"
 	"github.com/wippyai/go-lua/types/typ"
 	"github.com/wippyai/go-lua/types/typ/unwrap"
 )
@@ -59,7 +60,7 @@ func ByFieldFalsy(t typ.Type, field string, resolver Resolver) typ.Type {
 //
 // Keeps only type members where the matcher returns true:
 //   - Union: keeps members where matcher(member) == true.
-//   - Optional: returns inner type if matcher(inner) == true, else Never.
+//   - Optional: filters the inner type without retaining nil.
 //   - Intersection: returns type if matcher(intersection) == true, else Never.
 //   - Other: returns type if matcher(type) == true, else Never.
 //
@@ -67,7 +68,7 @@ func ByFieldFalsy(t typ.Type, field string, resolver Resolver) typ.Type {
 //
 // Removes type members where the matcher returns true:
 //   - Union: keeps members where matcher(member) == false.
-//   - Optional: returns Nil if matcher(inner) == true, else unchanged.
+//   - Optional: filters the inner type and retains nil.
 //   - Intersection: returns Never if matcher(intersection) == true, else unchanged.
 //   - Other: returns Never if matcher(type) == true, else unchanged.
 //
@@ -104,7 +105,11 @@ func FilterByMatch(t typ.Type, matches TypeMatcher, exclude bool) typ.Type {
 	}
 
 	if expanded := unwrap.Instantiated(t); expanded != t {
-		return FilterByMatch(expanded, matches, exclude)
+		filtered := FilterByMatch(expanded, matches, exclude)
+		if typ.TypeEquals(filtered, expanded) {
+			return t
+		}
+		return filtered
 	}
 
 	if exclude {
@@ -178,7 +183,7 @@ func fieldCanBeFalsy(t typ.Type, field string, resolver Resolver) bool {
 // This function handles the positive case where we want to keep types that
 // satisfy the matcher. It processes each type variant appropriately:
 //   - Intersections are matched atomically.
-//   - Optionals unwrap to their inner type when matched.
+//   - Optionals filter their inner type without retaining nil.
 //   - Unions filter to only matching members.
 //   - Other types return themselves if matched, Never otherwise.
 func filterNarrow(t typ.Type, matches TypeMatcher) typ.Type {
@@ -190,27 +195,15 @@ func filterNarrow(t typ.Type, matches TypeMatcher) typ.Type {
 	}
 
 	if opt, ok := t.(*typ.Optional); ok {
-		if matches(opt.Inner) {
-			return opt.Inner
-		}
-
-		return typ.Never
+		return FilterByMatch(opt.Inner, matches, false)
 	}
 
 	if u, ok := t.(*typ.Union); ok {
 		var kept []typ.Type
 
 		for _, m := range u.Members {
-			if opt, ok := m.(*typ.Optional); ok {
-				if matches(opt.Inner) {
-					kept = append(kept, opt.Inner)
-				}
-
-				continue
-			}
-
-			if matches(m) {
-				kept = append(kept, m)
+			if filtered := FilterByMatch(m, matches, false); !typ.IsNever(filtered) {
+				kept = append(kept, filtered)
 			}
 		}
 
@@ -245,10 +238,11 @@ func filterExclude(t typ.Type, matches TypeMatcher) typ.Type {
 	}
 
 	if opt, ok := t.(*typ.Optional); ok {
-		if matches(opt.Inner) {
-			return typ.Nil
+		filtered := FilterByMatch(opt.Inner, matches, true)
+		if typ.TypeEquals(filtered, opt.Inner) {
+			return t
 		}
-		return t
+		return typ.NewUnion(filtered, typ.Nil)
 	}
 
 	u, ok := t.(*typ.Union)
@@ -263,16 +257,8 @@ func filterExclude(t typ.Type, matches TypeMatcher) typ.Type {
 	var kept []typ.Type
 
 	for _, m := range u.Members {
-		if opt, ok := m.(*typ.Optional); ok {
-			if !matches(opt.Inner) {
-				kept = append(kept, m)
-			}
-
-			continue
-		}
-
-		if !matches(m) {
-			kept = append(kept, m)
+		if filtered := FilterByMatch(m, matches, true); !typ.IsNever(filtered) {
+			kept = append(kept, filtered)
 		}
 	}
 
@@ -325,10 +311,16 @@ func ByFieldLiteral(t typ.Type, field string, lit *typ.Literal, resolver Resolve
 	if t == nil || field == "" || lit == nil || resolver == nil {
 		return t
 	}
-	if t.Kind().IsPlaceholder() || unwrap.IsBuiltinTableTop(t) {
+	if t.Kind() == kind.Any {
+		// A dynamic value stays dynamic: the discriminant is known on the field
+		// path itself, and the value's other fields remain any rather than
+		// becoming the unknown fields of an open record.
+		return t
+	}
+	if t.Kind() == kind.Unknown || unwrap.IsBuiltinTableTop(t) {
 		// Refining `table` by a field literal should materialize a structural
 		// shape so downstream assignment/subtyping can use the discriminant.
-		// This also makes narrowing order-independent when placeholder and
+		// This also makes narrowing order-independent when unknown and
 		// table-type constraints are both present.
 		return typ.NewRecord().Field(field, lit).SetOpen(true).Build()
 	}

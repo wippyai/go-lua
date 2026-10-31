@@ -1,0 +1,4 @@
+{
+  "description": "A method defined on a table inside another method takes that table as its receiver.",
+  "files": ["main.lua"]
+}

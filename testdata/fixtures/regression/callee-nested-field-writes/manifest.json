@@ -1,0 +1,5 @@
+{
+  "description": "Field and dynamic-key writes a function makes into a table reached by static fields below a captured variable or an argument widen that table in the caller.",
+  "files": ["main.lua"],
+  "check": {"errors": 0}
+}

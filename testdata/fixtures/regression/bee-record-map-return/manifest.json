@@ -1,0 +1,7 @@
+{
+  "description": "A returned record omitting a nil-admitting field satisfies Call, including its unknown-valued input map, under call-site specialization (bee.hive.supervisor:owner_stop_test:11).",
+  "check": {
+    "errors": 0,
+    "modes": ["gradual", "strict"]
+  }
+}

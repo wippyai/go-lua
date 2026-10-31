@@ -1,0 +1,1 @@
+{"description":"A nested helper's dereference does not survive a skipped argument, callback rebinding, or assignment overwriting the receiver.","files":["sql.lua","main.lua"],"check":{"errors":3}}

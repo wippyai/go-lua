@@ -1,0 +1,14 @@
+{
+  "description": "Complete registry sources for app:responder_test; test_state.state is an inferred table so its absent public_state read is gradual",
+  "files": [
+    "test_state.lua",
+    "automations_lib.lua",
+    "channel_consts.lua",
+    "component.lua",
+    "responder.lua",
+    "main.lua"
+  ],
+  "packages": [
+    "funcs"
+  ]
+}

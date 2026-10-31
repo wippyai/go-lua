@@ -1,0 +1,1 @@
+{"description": "a field read on string | table without a table guard still reports the string branch", "check": {"errors": 1}}

@@ -1,0 +1,7 @@
+{
+  "description": "Nested field writes below a dynamic index of a declared Window array keep Window[] (bee.desktop:model:350).",
+  "check": {
+    "errors": 0,
+    "modes": ["gradual", "strict"]
+  }
+}

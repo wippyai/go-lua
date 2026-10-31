@@ -228,3 +228,27 @@ func TestTypeNameFacts(t *testing.T) {
 		t.Errorf("LookupType(MyType) = (%v, %v), want (String, true)", myType, ok)
 	}
 }
+
+// A declared unknown is a final dynamic type, distinct from a symbol with no
+// declared type.
+func TestDeclaredEnv_DeclaredUnknownIsResolved(t *testing.T) {
+	graph := newMockGraph()
+	point := cfg.Point(10)
+	symX := cfg.SymbolID(1)
+	symY := cfg.SymbolID(2)
+	graph.addSymbol(point, "x", symX, cfg.SymbolLocal)
+	graph.addSymbol(point, "y", symY, cfg.SymbolLocal)
+
+	env := NewDeclaredEnv(DeclaredEnvConfig{
+		Graph:         graph,
+		DeclaredTypes: flow.DeclaredTypes{symX: typ.Unknown},
+		BaseScope:     scope.NewWithBuiltins(),
+	})
+	declared := env.Types().DeclaredAt(point, symX)
+	if declared.State != flow.StateResolved || !typ.IsUnknown(declared.Type) {
+		t.Fatalf("DeclaredAt(x: unknown) = %v/%v, want resolved unknown", declared.Type, declared.State)
+	}
+	if absent := env.Types().DeclaredAt(point, symY); absent.State == flow.StateResolved {
+		t.Fatalf("DeclaredAt(y) with no declaration = %v/%v, want unresolved state", absent.Type, absent.State)
+	}
+}

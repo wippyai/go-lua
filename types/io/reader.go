@@ -13,12 +13,15 @@ import (
 	"github.com/wippyai/go-lua/types/typ"
 )
 
-const maxTypeDepth = 32
-const maxTypeNodes = 1024
+const maxTypeDepth = 256
+const maxTypeNodes = 1 << 20
+const maxCollectionLen = 1 << 20
+const maxStringLen = 16 << 20
 
 type typeReader struct {
-	r   *bytes.Reader
-	err error
+	r       *bytes.Reader
+	err     error
+	version byte // zero means current standalone type encoding
 
 	recursive map[uint64]*typ.Recursive
 	depth     int
@@ -71,7 +74,7 @@ func (r *typeReader) readString() string {
 		return ""
 	}
 
-	if length > maxSliceLen {
+	if length > maxStringLen || uint64(length) > uint64(r.r.Len()) {
 		r.err = ErrCorruptedData
 		return ""
 	}
@@ -87,7 +90,7 @@ func (r *typeReader) readBool() bool {
 }
 
 func (r *typeReader) checkSliceLen(n uint32) bool {
-	if n > maxSliceLen {
+	if n > maxCollectionLen || uint64(n) > uint64(r.r.Len()) {
 		r.err = ErrCorruptedData
 		return false
 	}
@@ -265,7 +268,18 @@ func (r *typeReader) readType() typ.Type {
 		if r.err != nil {
 			return nil
 		}
-		return typ.NewArray(elem)
+		a := typ.NewArray(elem)
+		if r.version == 13 {
+			return a
+		}
+		inferred, explicitNil := r.readBool(), r.readBool()
+		if inferred {
+			a = a.WithInferredPresence(true)
+		}
+		if explicitNil {
+			a = a.WithExplicitNilWrite()
+		}
+		return a
 
 	case kind.Map:
 		key := r.readTypeNonNil()
@@ -275,7 +289,18 @@ func (r *typeReader) readType() typ.Type {
 			return nil
 		}
 
-		return typ.NewMap(key, value)
+		m := typ.NewMap(key, value)
+		if r.version == 13 {
+			return m
+		}
+		inferred, explicitNil := r.readBool(), r.readBool()
+		if inferred {
+			m = m.WithInferredPresence(true)
+		}
+		if explicitNil {
+			m = m.WithExplicitNilWrite()
+		}
+		return m
 
 	case kind.Record:
 		fieldCount := r.readUint32()
@@ -296,14 +321,11 @@ func (r *typeReader) readType() typ.Type {
 			optional := r.readBool()
 			readonly := r.readBool()
 
-			switch {
-			case readonly:
-				rb.ReadonlyField(name, fType)
-			case optional:
-				rb.OptField(name, fType)
-			default:
-				rb.Field(name, fType)
+			inferred := false
+			if r.version != 13 {
+				inferred = r.readBool()
 			}
+			rb.AddField(typ.Field{Name: name, Type: fType, Optional: optional, Readonly: readonly, InferredPresence: inferred})
 		}
 
 		if r.readBool() {
@@ -314,6 +336,7 @@ func (r *typeReader) readType() typ.Type {
 		}
 		open := r.readBool()
 		rb.SetOpen(open)
+		rb.SetDeclared(r.readBool())
 		hasMap := r.readBool()
 		if hasMap {
 			key := r.readTypeNonNil()
@@ -321,7 +344,14 @@ func (r *typeReader) readType() typ.Type {
 			if r.err != nil {
 				return nil
 			}
-			rb.MapComponent(key, value)
+			if r.version == 13 {
+				rb.MapComponent(key, value)
+			} else {
+				rb.MapComponentWithFlags(key, value, r.readBool(), r.readBool())
+			}
+		}
+		if r.version != 13 {
+			rb.SetComplete(r.readBool())
 		}
 
 		return rb.Build()
