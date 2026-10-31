@@ -9,10 +9,23 @@ const (
 )
 
 // callHook is invoked from the interpreter dispatch loop before each
-// instruction executes, but only when L.hookMask != 0. It emits the "count"
-// and "line" debug events. It is a no-op while a hook is already running
-// (L.inHook) so a hook cannot recursively trigger itself.
+// instruction executes when a debug hook or coverage is active. It records
+// coverage before dispatching "count" and "line" debug events. User callbacks
+// cannot recursively trigger themselves while L.inHook is set.
 func (ls *LState) callHook(cf *callFrame) {
+	// Coverage consumes the same dispatch as debug hooks, including dispatches
+	// inside a callback. User hook masks and reentrancy must not disable it.
+	pc := int(cf.Pc - 1)
+	line := int32(-1)
+	if (covOn || ls.hookMask&HookMaskLine != 0) && cf.Fn != nil {
+		positions := cf.Fn.Proto.DbgSourcePositions
+		if pc >= 0 && pc < len(positions) {
+			line = int32(positions[pc])
+			if covOn {
+				covRecordHit(cf.Fn.Proto.SourceName, int(line))
+			}
+		}
+	}
 	if ls.inHook {
 		return
 	}
@@ -26,20 +39,15 @@ func (ls *LState) callHook(cf *callFrame) {
 		}
 	}
 
-	if ls.hookMask&HookMaskLine != 0 && cf.Fn != nil {
-		positions := cf.Fn.Proto.DbgSourcePositions
-		pc := int(cf.Pc - 1)
-		if pc >= 0 && pc < len(positions) {
-			line := int32(positions[pc])
-			// A source line alone cannot identify a dispatch location: two
-			// chunks can use the same line number, and loops revisit a line.
-			fire := cf.Fn.Proto != ls.hookLastProto || pc <= ls.hookLastPC || line != ls.hookLastLine
-			ls.hookLastProto = cf.Fn.Proto
-			ls.hookLastPC = pc
-			ls.hookLastLine = line
-			if fire {
-				ls.fireHook("line", line)
-			}
+	if ls.hookMask&HookMaskLine != 0 && line >= 0 {
+		// A source line alone cannot identify a dispatch location: two
+		// chunks can use the same line number, and loops revisit a line.
+		fire := cf.Fn.Proto != ls.hookLastProto || pc <= ls.hookLastPC || line != ls.hookLastLine
+		ls.hookLastProto = cf.Fn.Proto
+		ls.hookLastPC = pc
+		ls.hookLastLine = line
+		if fire {
+			ls.fireHook("line", line)
 		}
 	}
 }
