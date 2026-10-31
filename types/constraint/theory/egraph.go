@@ -68,35 +68,38 @@ type parentInfo struct {
 // NewEGraph creates a new E-graph.
 func NewEGraph() *EGraph {
 	return &EGraph{
-		parent:   make(map[constraint.PathKey]constraint.PathKey),
-		rank:     make(map[constraint.PathKey]int),
-		children: make(map[constraint.PathKey]map[string]constraint.PathKey),
-		parentOf: make(map[constraint.PathKey]parentInfo),
+		parent: make(map[constraint.PathKey]constraint.PathKey),
 	}
 }
 
 // Clone creates a deep copy of the E-graph.
 func (e *EGraph) Clone() *EGraph {
 	c := &EGraph{
-		parent:   make(map[constraint.PathKey]constraint.PathKey, len(e.parent)),
-		rank:     make(map[constraint.PathKey]int, len(e.rank)),
-		children: make(map[constraint.PathKey]map[string]constraint.PathKey, len(e.children)),
-		parentOf: make(map[constraint.PathKey]parentInfo, len(e.parentOf)),
+		parent: make(map[constraint.PathKey]constraint.PathKey, len(e.parent)),
 	}
 	for k, v := range e.parent {
 		c.parent[k] = v
 	}
-	for k, v := range e.rank {
-		c.rank[k] = v
-	}
-	for k, segs := range e.children {
-		c.children[k] = make(map[string]constraint.PathKey, len(segs))
-		for s, child := range segs {
-			c.children[k][s] = child
+	if len(e.rank) > 0 {
+		c.rank = make(map[constraint.PathKey]int, len(e.rank))
+		for k, v := range e.rank {
+			c.rank[k] = v
 		}
 	}
-	for k, v := range e.parentOf {
-		c.parentOf[k] = v
+	if len(e.children) > 0 {
+		c.children = make(map[constraint.PathKey]map[string]constraint.PathKey, len(e.children))
+		for k, segs := range e.children {
+			c.children[k] = make(map[string]constraint.PathKey, len(segs))
+			for s, child := range segs {
+				c.children[k][s] = child
+			}
+		}
+	}
+	if len(e.parentOf) > 0 {
+		c.parentOf = make(map[constraint.PathKey]parentInfo, len(e.parentOf))
+		for k, v := range e.parentOf {
+			c.parentOf[k] = v
+		}
 	}
 	return c
 }
@@ -122,11 +125,17 @@ func (e *EGraph) Register(path constraint.Path) {
 		segKey := segmentKey(lastSeg)
 
 		if e.children[parentKey] == nil {
+			if e.children == nil {
+				e.children = make(map[constraint.PathKey]map[string]constraint.PathKey)
+			}
 			e.children[parentKey] = make(map[string]constraint.PathKey)
 		}
 		e.children[parentKey][segKey] = key
 
 		// Track reverse mapping
+		if e.parentOf == nil {
+			e.parentOf = make(map[constraint.PathKey]parentInfo)
+		}
 		e.parentOf[key] = parentInfo{parent: parentKey, segment: segKey}
 	}
 }
@@ -147,7 +156,6 @@ func segmentKey(seg constraint.Segment) string {
 func (e *EGraph) makeSet(key constraint.PathKey) {
 	if _, ok := e.parent[key]; !ok {
 		e.parent[key] = key
-		e.rank[key] = 0
 	}
 }
 
@@ -178,6 +186,9 @@ func (e *EGraph) Union(x, y constraint.PathKey) bool {
 	}
 	e.parent[rootY] = rootX
 	if e.rank[rootX] == e.rank[rootY] {
+		if e.rank == nil {
+			e.rank = make(map[constraint.PathKey]int)
+		}
 		e.rank[rootX]++
 	}
 

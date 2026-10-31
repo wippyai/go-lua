@@ -77,6 +77,7 @@ func (uv *Upvalue) Close() {
 	value := uv.Value()
 	uv.closed = true
 	uv.value = value
+	uv.reg = nil
 }
 
 func (uv *Upvalue) IsClosed() bool {

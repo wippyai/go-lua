@@ -16,11 +16,11 @@ var stringUnpackSpec = contract.NewSpec().WithEffects(
 var stringMethods = typ.NewRecord().
 	Field("byte", typ.Func().
 		Param("s", typ.String).
-		OptParam("i", typ.Integer).
-		OptParam("j", typ.Integer).
+		OptParam("i", typ.Number).
+		OptParam("j", typ.Number).
 		Returns(typ.Integer).Build()).
 	Field("char", typ.Func().
-		Variadic(typ.Integer).
+		Variadic(typ.Number).
 		Returns(typ.String).Build()).
 	Field("dump", typ.Func().
 		Param("function", typ.Any).
@@ -29,7 +29,7 @@ var stringMethods = typ.NewRecord().
 	Field("find", typ.Func().
 		Param("s", typ.String).
 		Param("pattern", typ.String).
-		OptParam("init", typ.Integer).
+		OptParam("init", typ.Number).
 		OptParam("plain", typ.Boolean).
 		Returns(typ.NewOptional(typ.Integer), typ.NewOptional(typ.Integer)).
 		Spec(contract.NewSpec().WithEffects(effect.CorrelatedReturn{Indices: []int{0, 1}})).Build()).
@@ -49,7 +49,7 @@ var stringMethods = typ.NewRecord().
 		Param("s", typ.String).
 		Param("pattern", typ.String).
 		Param("repl", typ.Any).
-		OptParam("n", typ.Integer).
+		OptParam("n", typ.Number).
 		Returns(typ.String, typ.Integer).Build()).
 	Field("len", typ.Func().
 		Param("s", typ.String).
@@ -60,7 +60,7 @@ var stringMethods = typ.NewRecord().
 	Field("match", typ.Func().
 		Param("s", typ.String).
 		Param("pattern", typ.String).
-		OptParam("init", typ.Integer).
+		OptParam("init", typ.Number).
 		Returns(typ.NewOptional(typ.String)).Build()).
 	Field("pack", typ.Func().
 		Param("fmt", typ.String).
@@ -71,7 +71,7 @@ var stringMethods = typ.NewRecord().
 		Returns(typ.Integer).Build()).
 	Field("rep", typ.Func().
 		Param("s", typ.String).
-		Param("n", typ.Integer).
+		Param("n", typ.Number).
 		OptParam("sep", typ.String).
 		Returns(typ.String).Build()).
 	Field("reverse", typ.Func().
@@ -79,13 +79,13 @@ var stringMethods = typ.NewRecord().
 		Returns(typ.String).Build()).
 	Field("sub", typ.Func().
 		Param("s", typ.String).
-		Param("i", typ.Integer).
-		OptParam("j", typ.Integer).
+		Param("i", typ.Number).
+		OptParam("j", typ.Number).
 		Returns(typ.String).Build()).
 	Field("unpack", typ.Func().
 		Param("fmt", typ.String).
 		Param("s", typ.String).
-		OptParam("pos", typ.Integer).
+		OptParam("pos", typ.Number).
 		Returns(typ.Any).
 		Spec(stringUnpackSpec).
 		Build()).

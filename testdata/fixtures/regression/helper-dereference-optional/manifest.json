@@ -1,0 +1,1 @@
+{"description":"A helper with a normal return path before its dereference must not prove an optional argument non-nil.","check":{"errors":1}}

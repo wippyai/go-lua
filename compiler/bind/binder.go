@@ -112,12 +112,6 @@ func NewBinderWithDeclHint(globals []string, declHint int) *Binder {
 	return b
 }
 
-// NewBinderWithStmtHint preserves the previous API surface; stmtHint is treated
-// as a declaration-density hint.
-func NewBinderWithStmtHint(globals []string, stmtHint int) *Binder {
-	return NewBinderWithDeclHint(globals, stmtHint)
-}
-
 // Bind performs complete name resolution on a function AST.
 //
 // This is the main entry point for the binding phase. It creates a binder
@@ -475,6 +469,37 @@ func (b *Binder) bindAssignStmt(s *ast.AssignStmt) {
 	for _, expr := range s.Lhs {
 		b.bindAssignTarget(expr)
 	}
+	for i, lhs := range s.Lhs {
+		var rhs ast.Expr
+		if i < len(s.Rhs) {
+			rhs = s.Rhs[i]
+		}
+		if ident, ok := lhs.(*ast.IdentExpr); ok {
+			if sym, found := b.table.SymbolOf(ident); found {
+				b.table.setFreshTableLiteral(sym, rhs, false, true)
+			}
+			continue
+		}
+		if sym, fields, ok := b.localTablePath(lhs); ok {
+			b.table.invalidateFreshPath(sym, fields)
+		}
+	}
+}
+
+func (b *Binder) localTablePath(expr ast.Expr) (cfg.SymbolID, []string, bool) {
+	switch v := expr.(type) {
+	case *ast.IdentExpr:
+		sym, ok := b.table.SymbolOf(v)
+		return sym, nil, ok
+	case *ast.AttrGetExpr:
+		sym, fields, ok := b.localTablePath(v.Object)
+		key, isString := v.Key.(*ast.StringExpr)
+		if !ok || !isString {
+			return 0, nil, false
+		}
+		return sym, append(fields, key.Value), true
+	}
+	return 0, nil, false
 }
 
 // bindAssignTarget resolves an assignment target (left-hand side).
@@ -488,6 +513,7 @@ func (b *Binder) bindAssignTarget(expr ast.Expr) {
 			sym = b.declareGlobal(e.Value)
 		}
 		b.table.Bind(e, sym)
+		b.table.MarkReassigned(sym)
 	case *ast.AttrGetExpr:
 		b.bindExpr(e.Object)
 		b.bindExpr(e.Key)
@@ -514,7 +540,13 @@ func (b *Binder) bindLocalAssignStmt(s *ast.LocalAssignStmt) {
 		b.bindExpr(expr)
 	}
 	if len(s.Names) == 1 {
-		b.table.SetLocalSymbol(s, b.declareLocal(s.Names[0]))
+		sym := b.declareLocal(s.Names[0])
+		b.table.SetLocalSymbol(s, sym)
+		var expr ast.Expr
+		if len(s.Exprs) > 0 {
+			expr = s.Exprs[0]
+		}
+		b.table.setFreshTableLiteral(sym, expr, len(s.Types) > 0 && s.Types[0] != nil, false)
 
 		return
 	}
@@ -522,6 +554,11 @@ func (b *Binder) bindLocalAssignStmt(s *ast.LocalAssignStmt) {
 	syms := make([]cfg.SymbolID, len(s.Names))
 	for i, name := range s.Names {
 		syms[i] = b.declareLocal(name)
+		var expr ast.Expr
+		if i < len(s.Exprs) {
+			expr = s.Exprs[i]
+		}
+		b.table.setFreshTableLiteral(syms[i], expr, i < len(s.Types) && s.Types[i] != nil, false)
 	}
 	b.table.SetLocalSymbols(s, syms)
 }
@@ -537,6 +574,8 @@ func (b *Binder) bindFuncDefStmt(s *ast.FuncDefStmt) {
 			sym, ok := b.lookup(ident.Value)
 			if !ok {
 				sym = b.declareGlobal(ident.Value)
+			} else {
+				b.table.MarkReassigned(sym)
 			}
 			b.table.Bind(ident, sym)
 		} else {

@@ -28,9 +28,6 @@ type OverlayConfig struct {
 	// Siblings are the sibling functions in this scope group.
 	Siblings []OverlayEntry
 
-	// CurrentSym is the symbol of the function being analyzed (excluded from overlay).
-	CurrentSym cfg.SymbolID
-
 	// Services provides seed type resolution for siblings without summaries.
 	Services OverlayServices
 }
@@ -56,8 +53,8 @@ func (o OverlayServicesFuncs) SeedType(fn *ast.FunctionExpr) typ.Type {
 //
 // This overlay is used during SCC-based return type inference. It provides
 // function types for sibling functions based on their current return summaries.
-// The current function (CurrentSym) is excluded from the overlay to avoid
-// circular dependence during its own analysis.
+// The function being inferred is included: its recursive calls are typed
+// with its own current summary, the recursion variable of the fixpoint.
 //
 // For siblings without summaries yet, placeholder function types are created
 // using seed type services to preserve parameter arity. This enables the fixpoint
@@ -67,9 +64,6 @@ func BuildOverlay(c OverlayConfig) map[cfg.SymbolID]typ.Type {
 
 	// Add sibling function types with current return summaries.
 	for sym, returnTypes := range c.Summaries {
-		if sym == c.CurrentSym {
-			continue
-		}
 		if len(returnTypes) > 0 {
 			overlay[sym] = buildFunctionFromReturns(returnTypes)
 		}
@@ -77,9 +71,6 @@ func BuildOverlay(c OverlayConfig) map[cfg.SymbolID]typ.Type {
 
 	// Seed siblings without summaries with placeholder function types.
 	for _, sib := range c.Siblings {
-		if sib.Symbol == c.CurrentSym {
-			continue
-		}
 		if _, ok := overlay[sib.Symbol]; ok {
 			continue
 		}

@@ -1,6 +1,7 @@
 package core
 
 import (
+	"github.com/wippyai/go-lua/types/typ/unwrap"
 	"sort"
 
 	"github.com/wippyai/go-lua/types/kind"
@@ -34,6 +35,16 @@ func indexDepth(t, keyType typ.Type, depth int) (typ.Type, bool) {
 	if stopDepth(t, depth) {
 		return nil, false
 	}
+	// A read with a key that may be nil yields what the non-nil key reads, or
+	// nil: t[nil] reads nil.
+	if keyType != nil && !unwrap.IsNilType(keyType) {
+		if present := unwrap.Optional(keyType); present != nil && !typ.TypeEquals(present, keyType) {
+			if res, ok := indexDepth(t, present, depth); ok {
+				return typ.NewOptional(res), true
+			}
+			return nil, false
+		}
+	}
 	if top, ok := specialAccessType(t); ok {
 		return top, true
 	}
@@ -44,7 +55,19 @@ func indexDepth(t, keyType typ.Type, depth int) (typ.Type, bool) {
 				if a.Element == nil {
 					return indexResult{t: typ.Nil, ok: true}
 				}
+				if a.ExplicitNilWrite {
+					return indexResult{t: typ.NewOptional(a.Element), ok: true}
+				}
 				return indexResult{t: a.Element, ok: true}
+			}
+			// A placeholder key may be a valid integer at runtime, and
+			// indexing a table never throws. Read gradually like Map and
+			// Record do instead of rejecting the access.
+			if keyType != nil && keyType.Kind().IsPlaceholder() {
+				if a.Element == nil {
+					return indexResult{t: typ.Nil, ok: true}
+				}
+				return indexResult{t: typ.NewOptional(a.Element), ok: true}
 			}
 			return indexResult{}
 		},
@@ -57,21 +80,30 @@ func indexDepth(t, keyType typ.Type, depth int) (typ.Type, bool) {
 				if m.Value == nil {
 					return indexResult{}
 				}
+				if m.InferredPresence && !m.ExplicitNilWrite {
+					return indexResult{t: m.Value, ok: true}
+				}
 				return indexResult{t: typ.NewOptional(m.Value), ok: true}
 			}
 
-			if subtype.IsSubtype(keyType, m.Key) {
+			if mapKeyDomainsComparable(keyType, m.Key) {
 				if m.Value == nil {
 					return indexResult{}
 				}
 
 				// Map index returns optional because missing keys return nil in Lua
+				if m.InferredPresence && !m.ExplicitNilWrite {
+					return indexResult{t: m.Value, ok: true}
+				}
 				return indexResult{t: typ.NewOptional(m.Value), ok: true}
 			}
 
 			return indexResult{}
 		},
 		Tuple: func(tup *typ.Tuple) indexResult {
+			if keyType == nil {
+				return indexResult{}
+			}
 			// Integer literal index
 			if lit, ok := keyType.(*typ.Literal); ok && lit.Base == kind.Integer {
 				idx := lit.Value.(int64)
@@ -85,12 +117,30 @@ func indexDepth(t, keyType typ.Type, depth int) (typ.Type, bool) {
 			if isNumeric(keyType) && len(tup.Elements) > 0 {
 				return indexResult{t: typ.NewOptional(typ.NewUnion(tup.Elements...)), ok: true}
 			}
+			// A placeholder key may be a valid integer at runtime, and
+			// indexing a table never throws. Read gradually like the unknown
+			// integer index above instead of rejecting the access.
+			if keyType != nil && keyType.Kind().IsPlaceholder() && len(tup.Elements) > 0 {
+				return indexResult{t: typ.NewOptional(typ.NewUnion(tup.Elements...)), ok: true}
+			}
 
 			return indexResult{}
 		},
 		Record: func(r *typ.Record) indexResult {
 			if len(r.Fields) == 0 && !r.HasMapComponent() {
+				if !r.Complete {
+					return indexResult{t: typ.Unknown, ok: true}
+				}
 				return indexResult{t: typ.Nil, ok: true}
+			}
+			if keyType == nil {
+				return indexResult{}
+			}
+			// An incomplete record without a map component describes only its
+			// listed fields. A broad key can reach an unlisted value whose
+			// type is unknown, even when the listed fields are precise.
+			if !r.Complete && !r.HasMapComponent() && (keyType.Kind() == kind.String || keyType.Kind().IsPlaceholder()) {
+				return indexResult{t: typ.Unknown, ok: true}
 			}
 			if keySet, ok := exactStringKeyDomain(keyType, depth+1); ok {
 				return indexRecordByExactStringKeyDomain(r, keySet, depth+1)
@@ -109,7 +159,7 @@ func indexDepth(t, keyType typ.Type, depth int) (typ.Type, bool) {
 					return indexResult{t: typ.Nil, ok: true}
 				}
 
-				return indexResult{t: typ.NewOptional(typ.NewUnion(types...)), ok: true}
+				return indexResult{t: typ.NewOptional(joinProjections(types...)), ok: true}
 			}
 			// Placeholder/unknown keys may still resolve to string fields at runtime.
 			// Keep this sound by returning an optional union of field types.
@@ -124,12 +174,15 @@ func indexDepth(t, keyType typ.Type, depth int) (typ.Type, bool) {
 				if len(types) == 0 {
 					return indexResult{t: typ.Nil, ok: true}
 				}
-				return indexResult{t: typ.NewOptional(typ.NewUnion(types...)), ok: true}
+				return indexResult{t: typ.NewOptional(joinProjections(types...)), ok: true}
 			}
 
 			// Map component fallback for non-string-literal keys.
 			if r.HasMapComponent() && keyType != nil {
-				if keyType.Kind().IsPlaceholder() || subtype.IsSubtype(keyType, r.MapKey) {
+				if keyType.Kind().IsPlaceholder() || mapKeyDomainsComparable(keyType, r.MapKey) {
+					if r.MapInferredPresence && !r.MapExplicitNilWrite {
+						return indexResult{t: r.MapValue, ok: true}
+					}
 					return indexResult{t: typ.NewOptional(r.MapValue), ok: true}
 				}
 			}
@@ -152,7 +205,7 @@ func indexDepth(t, keyType typ.Type, depth int) (typ.Type, bool) {
 				return indexResult{}
 			}
 
-			return indexResult{t: typ.NewUnion(types...), ok: true}
+			return indexResult{t: joinProjections(types...), ok: true}
 		},
 		Intersection: func(in *typ.Intersection) indexResult {
 			var types []typ.Type
@@ -211,6 +264,13 @@ func indexDepth(t, keyType typ.Type, depth int) (typ.Type, bool) {
 	return res.t, res.ok
 }
 
+// mapKeyDomainsComparable accepts a key that may address a stored entry.
+// When the queried domain is broader than the map's key domain, the index
+// remains optional because other queried keys have no entry.
+func mapKeyDomainsComparable(query, stored typ.Type) bool {
+	return subtype.IsSubtype(query, stored) || subtype.IsSubtype(stored, query)
+}
+
 // containsNilOrOptional returns true if the type already contains nil or Optional.
 //
 // This check prevents double-wrapping: if a type is already Optional or contains
@@ -245,6 +305,19 @@ func containsNilOrOptional(t typ.Type) bool {
 			return t.Kind() == kind.Nil
 		},
 	})
+}
+
+// ExactStringKey returns the one string key t represents, when t is exactly
+// a single string literal after traversing wrappers.
+func ExactStringKey(t typ.Type) (string, bool) {
+	if t == nil {
+		return "", false
+	}
+	keys, ok := exactStringKeyDomain(t, 0)
+	if !ok || len(keys) != 1 {
+		return "", false
+	}
+	return keys[0], true
 }
 
 // exactStringKeyDomain returns the finite set of string keys represented by t.
@@ -369,7 +442,7 @@ func indexRecordByExactStringKeyDomain(r *typ.Record, keys []string, depth int) 
 		return indexResult{}
 	}
 
-	out := typ.NewUnion(matched...)
+	out := joinProjections(matched...)
 	if missing && !containsNilOrOptional(out) {
 		out = typ.NewOptional(out)
 	}

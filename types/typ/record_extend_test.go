@@ -17,12 +17,8 @@ func TestExtendRecordWithField_NilBase(t *testing.T) {
 
 func TestExtendRecordWithField_AnyBase(t *testing.T) {
 	result := ExtendRecordWithField(Any, "foo", Integer)
-	rec, ok := result.(*Record)
-	if !ok {
-		t.Fatalf("expected record, got %T", result)
-	}
-	if f := rec.GetField("foo"); f == nil || f.Type != Integer {
-		t.Error("expected field foo with integer type")
+	if result != Any {
+		t.Fatalf("write into any must stay any, got %v", result)
 	}
 }
 

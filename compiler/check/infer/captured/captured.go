@@ -1,9 +1,12 @@
 package captured
 
 import (
+	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
+	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/flow"
+	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -37,6 +40,9 @@ func FromParentFacts(
 		if sym == 0 {
 			continue
 		}
+		// A capture observes the value at its definition point. An annotation
+		// describes the starting type, but a dominating guard can narrow it
+		// before the closure is created.
 		tv := parentFacts.EffectiveTypeAt(defPoint, sym)
 		if tv.State == flow.StateResolved && tv.Type != nil {
 			out[sym] = tv.Type
@@ -46,6 +52,52 @@ func FromParentFacts(
 		return nil
 	}
 	return out
+}
+
+// NarrowRecordFields carries dominating field guards into a closure's capture.
+// Root type facts alone do not contain path refinements such as x.token after
+// `if not x.token then return end`.
+func NarrowRecordFields(base typ.Type, solution *flow.Solution, point cfg.Point, symbol cfg.SymbolID) typ.Type {
+	if base == nil || solution == nil || symbol == 0 {
+		return base
+	}
+	var visit func(typ.Type, []constraint.Segment, int) typ.Type
+	visit = func(current typ.Type, segments []constraint.Segment, depth int) typ.Type {
+		if depth > 8 {
+			return current
+		}
+		unwrapped := typ.UnwrapAnnotated(current)
+		for alias, ok := unwrapped.(*typ.Alias); ok; alias, ok = unwrapped.(*typ.Alias) {
+			unwrapped = alias.UnaliasedTarget()
+		}
+		record, ok := unwrapped.(*typ.Record)
+		if !ok {
+			return current
+		}
+		out := current
+		for _, field := range record.Fields {
+			path := append(append([]constraint.Segment(nil), segments...), constraint.Segment{Kind: constraint.SegmentField, Name: field.Name})
+			declared := field.Type
+			if field.Optional {
+				declared = typ.NewOptional(declared)
+			}
+			narrowed := solution.NarrowedTypeAt(point, constraint.Path{Symbol: symbol, Segments: path})
+			if narrowed == nil || typ.IsUnknown(narrowed) || !subtype.IsSubtype(narrowed, declared) {
+				narrowed = declared
+			}
+			if optional, ok := typ.UnwrapAnnotated(narrowed).(*typ.Optional); ok {
+				inner := visit(optional.Inner, path, depth+1)
+				narrowed = typ.NewOptional(inner)
+			} else {
+				narrowed = visit(narrowed, path, depth+1)
+			}
+			if !typ.TypeEquals(narrowed, declared) {
+				out = typ.ExtendRecordWithField(out, field.Name, narrowed)
+			}
+		}
+		return out
+	}
+	return visit(base, nil, 0)
 }
 
 // MergeCapturedTypes merges captured types into declared types as hints.
@@ -68,4 +120,54 @@ func MergeCapturedTypes(declared flow.DeclaredTypes, captured map[cfg.SymbolID]t
 		}
 	}
 	return declared
+}
+
+// HasUntypedSelf reports whether a recursive local function sees its own
+// binding before that binding has a return type.
+func HasUntypedSelf(bindings *bind.BindingTable, fn *ast.FunctionExpr, types map[cfg.SymbolID]typ.Type) bool {
+	if bindings == nil || fn == nil {
+		return false
+	}
+	for _, sym := range bindings.CapturedSymbols(fn) {
+		if types[sym] != nil && !typ.IsUnresolved(types[sym]) {
+			continue
+		}
+		if own, ok := bindings.FuncLitBySymbol(sym); ok && own == fn {
+			return true
+		}
+	}
+	return false
+}
+
+// HasUntypedAliasCall reports a call through a captured local whose function
+// type is still unavailable. Locally defined functions have their own return
+// summaries; this detects callable aliases such as local sub = string.sub.
+func HasUntypedAliasCall(graph *cfg.Graph, types map[cfg.SymbolID]typ.Type) bool {
+	if graph == nil || graph.Bindings() == nil || graph.Func() == nil {
+		return false
+	}
+	bindings := graph.Bindings()
+	captured := make(map[cfg.SymbolID]bool)
+	for _, sym := range bindings.CapturedSymbols(graph.Func()) {
+		if types[sym] != nil && !typ.IsUnresolved(types[sym]) {
+			continue
+		}
+		if kind, ok := bindings.Kind(sym); ok && kind == cfg.SymbolGlobal {
+			continue
+		}
+		if _, ok := bindings.FuncLitBySymbol(sym); ok {
+			continue
+		}
+		captured[sym] = true
+	}
+	if len(captured) == 0 {
+		return false
+	}
+	untyped := false
+	graph.EachCallSite(func(_ cfg.Point, call *cfg.CallInfo) {
+		if call != nil && captured[call.CalleeSymbol] {
+			untyped = true
+		}
+	})
+	return untyped
 }

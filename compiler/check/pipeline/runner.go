@@ -19,15 +19,14 @@
 package pipeline
 
 import (
-	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/infer/captured"
 	"github.com/wippyai/go-lua/compiler/check/infer/paramhints"
 	"github.com/wippyai/go-lua/compiler/check/modules"
 	"github.com/wippyai/go-lua/compiler/check/phase"
 	"github.com/wippyai/go-lua/compiler/check/scope"
+	storepkg "github.com/wippyai/go-lua/compiler/check/store"
 	"github.com/wippyai/go-lua/types/db"
-	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/io"
 	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/query/core"
@@ -44,6 +43,7 @@ type RunnerConfig struct {
 	MaxScopeDepth int
 
 	ComputePasses []api.ComputePass
+	Profile       *FixpointProfile
 }
 
 // Runner executes the phase pipeline for a single function.
@@ -56,6 +56,7 @@ type Runner struct {
 	resolver      narrow.Resolver
 	maxScopeDepth int
 	computePasses []api.ComputePass
+	profile       *FixpointProfile
 }
 
 // NewRunner returns a configured pipeline runner.
@@ -68,6 +69,7 @@ func NewRunner(cfg RunnerConfig) *Runner {
 		resolver:      cfg.Resolver,
 		maxScopeDepth: cfg.MaxScopeDepth,
 		computePasses: cfg.ComputePasses,
+		profile:       cfg.Profile,
 	}
 }
 
@@ -76,6 +78,11 @@ func (r *Runner) Run(ctx *db.QueryContext, key api.FuncKey) *api.FuncResult {
 	store := api.StoreFrom(ctx)
 	if store == nil {
 		return nil
+	}
+	if concrete, ok := store.(*storepkg.SessionStore); ok && r.manifests != nil {
+		local := *r
+		local.manifests = trackedManifests{ManifestQuerier: r.manifests, store: concrete}
+		r = &local
 	}
 	withPhase := func(_ api.Phase, fn func()) { fn() }
 	if phaser, ok := store.(interface{ WithPhase(api.Phase, func()) }); ok {
@@ -101,19 +108,7 @@ func (r *Runner) Run(ctx *db.QueryContext, key api.FuncKey) *api.FuncResult {
 		setter.SetGraphParentHash(graph.ID(), key.ParentHash)
 	}
 
-	paramHintSigs := paramhints.BuildParamHintSigView(store, graph, parent, r.stdlib)
-	synthSig := r.resolveSynthesizedSignature(ctx, store, graph, fn, parent, paramHintSigs)
-
-	// Canonical local function types for this graph (stable snapshot).
-	siblingTypes := store.GetLocalFuncTypesSnapshot(graph, parent)
-	// Return summaries include captured field assignments (stable snapshot).
-	returnSummaries := store.GetReturnSummariesSnapshot(graph, parent)
-	var narrowReturnSummaries map[cfg.SymbolID][]typ.Type
-	withPhase(api.PhaseNarrowing, func() {
-		narrowReturnSummaries = store.GetNarrowReturnSummariesSnapshot(graph, parent)
-	})
-
-	// Build shared phase environment once.
+	// Build the environment once for signature synthesis and all phases.
 	localAliases := modules.CollectAliases(graph)
 	mergedAliases := modules.MergeAliases(store.ModuleAliases(), localAliases)
 	env := phase.PhaseEnv{
@@ -127,6 +122,13 @@ func (r *Runner) Run(ctx *db.QueryContext, key api.FuncKey) *api.FuncResult {
 		ModuleBindings:  store.ModuleBindings(),
 		RefinementStore: effectStoreFrom(store),
 	}
+	paramHintSigs := paramhints.BuildParamHintSigView(store, graph, parent, r.stdlib)
+	phaseStart := r.profile.start()
+	synthSig := r.resolveSynthesizedSignature(env, store, graph, fn, parent, paramHintSigs)
+
+	// Canonical local function types for this graph (stable snapshot).
+	siblingTypes := store.GetLocalFuncTypesSnapshot(graph, parent)
+	callables := store.GetCallablesSnapshot(graph, parent)
 
 	// Phase A: Resolve type annotations.
 	resolveOut := phase.RunResolve(phase.ResolveInput{
@@ -148,68 +150,61 @@ func (r *Runner) Run(ctx *db.QueryContext, key api.FuncKey) *api.FuncResult {
 		FunctionLiteralSignatures: literalSigs,
 		ParamHintSignatures:       paramHintSigs,
 		SiblingTypes:              siblingTypes,
-		ReturnSummaries:           returnSummaries,
+		Callables:                 callables,
 	})
 	// Declared is the default phase for scope/extract and interproc reads.
 
 	if capturedTypes := store.GetCapturedTypesSnapshot(graph, parent); len(capturedTypes) > 0 {
 		scopeOut.DeclaredTypes = captured.MergeCapturedTypes(scopeOut.DeclaredTypes, capturedTypes)
 	}
-	r.mergeCapturedParentFuncTypes(store, graph, fn, &scopeOut)
+	r.capturedCallablesFromOwner(store, graph, fn, &scopeOut)
 
 	// Populate scopes in env for later phases.
 	env.Scopes = scopeOut.Scopes
 
 	// Phase B (continued): Synthesize function literal types.
 	literalOut := phase.RunLiteral(phase.LiteralInput{
-		PhaseEnv:        env,
-		Scope:           scopeOut,
-		SiblingTypes:    scopeOut.SiblingTypes,
-		ReturnSummaries: returnSummaries,
+		PhaseEnv:     env,
+		Scope:        scopeOut,
+		SiblingTypes: scopeOut.SiblingTypes,
+		Callables:    callables,
 	})
-	// Ensure literal function types use canonical local function types.
-	if len(siblingTypes) > 0 {
-		if literalOut.LiteralTypes == nil {
-			literalOut.LiteralTypes = make(flow.DeclaredTypes, len(siblingTypes))
-		}
-		for sym, fnType := range siblingTypes {
-			if fnType == nil {
-				continue
-			}
-			literalOut.LiteralTypes[sym] = fnType
-		}
-	}
-
 	// Phase B (continued): Extract flow constraints.
 	extractOut := phase.RunExtract(phase.FlowExtractInput{
-		PhaseEnv:        env,
-		Resolve:         resolveOut,
-		Scope:           scopeOut,
-		SiblingTypes:    scopeOut.SiblingTypes,
-		LiteralTypes:    literalOut.LiteralTypes,
-		ReturnSummaries: returnSummaries,
+		PhaseEnv:     env,
+		Resolve:      resolveOut,
+		Scope:        scopeOut,
+		SiblingTypes: scopeOut.SiblingTypes,
+		LiteralTypes: literalOut.LiteralTypes,
+		Callables:    callables,
 	})
-	r.appendCapturedMutatorAssignments(store, graph, parent, env, scopeOut, literalOut, returnSummaries, &extractOut)
+	r.appendCapturedMutatorAssignments(store, graph, parent, env, scopeOut, literalOut, callables, &extractOut)
+	r.appendFieldWriteEffects(store, graph, parent, &extractOut)
+	r.profile.mark(graph.ID(), "synth", phaseStart)
 
 	// Phase C: Solve flow system.
+	phaseStart = r.profile.start()
 	solveOut := phase.RunSolve(phase.FlowSolveInput{
 		PhaseEnv: env,
 		Extract:  extractOut,
 		Resolver: r.resolver,
 	})
+	r.profile.mark(graph.ID(), "flow", phaseStart)
 	// Phase D: Narrowing and effect inference.
+	phaseStart = r.profile.start()
 	var narrowOut phase.NarrowOutput
 	withPhase(api.PhaseNarrowing, func() {
 		narrowOut = phase.RunNarrow(phase.NarrowInput{
-			PhaseEnv:              env,
-			Scope:                 scopeOut,
-			Extract:               extractOut,
-			Solve:                 solveOut,
-			SiblingTypes:          scopeOut.SiblingTypes,
-			LiteralTypes:          literalOut.LiteralTypes,
-			NarrowReturnSummaries: narrowReturnSummaries,
+			PhaseEnv:     env,
+			Scope:        scopeOut,
+			Extract:      extractOut,
+			Solve:        solveOut,
+			SiblingTypes: scopeOut.SiblingTypes,
+			LiteralTypes: literalOut.LiteralTypes,
+			Callables:    callables,
 		})
 	})
+	r.profile.mark(graph.ID(), "narrow", phaseStart)
 
 	extras := r.runComputePasses(graph, scopeOut.Scopes)
 
@@ -221,6 +216,7 @@ func (r *Runner) Run(ctx *db.QueryContext, key api.FuncKey) *api.FuncResult {
 		Facts:              narrowOut.Facts,
 		FlowInputs:         extractOut.Inputs,
 		FlowSolution:       solveOut.Solution,
+		Conditions:         extractOut.Conditions,
 		FnRefinement:       narrowOut.Refinement,
 		NarrowSynth:        narrowOut.Synth,
 		LiteralSignatures:  literalOut.Signatures,

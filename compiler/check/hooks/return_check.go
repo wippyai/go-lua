@@ -32,6 +32,7 @@
 package hooks
 
 import (
+	"github.com/wippyai/go-lua/types/query/core"
 	"strconv"
 
 	"github.com/wippyai/go-lua/compiler/ast"
@@ -39,6 +40,7 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/api"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/types/diag"
+	"github.com/wippyai/go-lua/types/flow"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
 )
@@ -55,6 +57,7 @@ func CheckReturns(
 	baseScope *scope.State,
 	declared api.Synth,
 	narrowView api.BaseSynth,
+	flowSolution *flow.Solution,
 	sourceName string,
 ) []diag.Diagnostic {
 	if fn == nil || graph == nil {
@@ -129,7 +132,8 @@ func CheckReturns(
 	}
 
 	graph.EachReturn(func(p cfg.Point, info *cfg.ReturnInfo) {
-		if info == nil {
+		// Reuse solved reachability: dead exits have no flow value to validate.
+		if info == nil || flowSolution.IsPointDead(p) {
 			return
 		}
 		if len(info.Exprs) == 0 {
@@ -154,7 +158,12 @@ func CheckReturns(
 				actual = typ.Unknown
 			}
 
-			if !subtype.IsSubtype(actual, declaredType) {
+			if core.AssignabilityOf(declared.Context()).Assignable(actual, declaredType) {
+				if subtype.ImplicitUnknownFlow(actual, declaredType) {
+					pos := diag.Position{File: sourceName, Line: expr.Line(), Column: expr.Column()}
+					diags = append(diags, implicitUnknownHint(pos, ast.SpanOf(expr), "", declaredType))
+				}
+			} else {
 				pos := diag.Position{File: sourceName, Line: expr.Line(), Column: expr.Column()}
 				span := ast.SpanOf(expr)
 				msg := formatReturnMismatch(actual, declaredType, i)

@@ -1,0 +1,6 @@
+{
+  "description": "The real wippy.llm.google mapper: map_tool_calls writes provider_metadata into an entry it built, and that partial write does not keep the complete entry shape from refining the tool-call summary.",
+  "files": ["output.lua", "json.lua", "google_mapper.lua", "main.lua"],
+  "packages": ["time"],
+  "check": {"errors": 0}
+}

@@ -1,0 +1,1 @@
+{"description":"Real cron worker result join across pcall success","files":["cron_types.lua","main.lua"],"check":{"errors":0}}

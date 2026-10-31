@@ -1017,17 +1017,17 @@ state 66
 
 
 state 67
-	typednamelist:  typedname.    (237)
+	typednamelist:  typedname.    (238)
 
-	.  reduce 237 (src line 1254)
+	.  reduce 238 (src line 1261)
 
 
 state 68
-	typedname:  TIdent.    (239)
+	typedname:  TIdent.    (240)
 	typedname:  TIdent.':' typeexpr 
 
 	':'  shift 155
-	.  reduce 239 (src line 1262)
+	.  reduce 240 (src line 1269)
 
 
 state 69
@@ -1048,10 +1048,10 @@ state 70
 
 state 71
 	stat:  TInterface TIdent.interfaceextends interfacebody TEnd 
-	interfaceextends: .    (241)
+	interfaceextends: .    (242)
 
 	':'  shift 159
-	.  reduce 241 (src line 1270)
+	.  reduce 242 (src line 1277)
 
 	interfaceextends  goto 158
 
@@ -2626,10 +2626,10 @@ state 157
 state 158
 	stat:  TInterface TIdent interfaceextends.interfacebody TEnd 
 	interfaceextends:  interfaceextends.',' TIdent 
-	interfacebody: .    (244)
+	interfacebody: .    (245)
 
 	','  shift 246
-	.  reduce 244 (src line 1281)
+	.  reduce 245 (src line 1288)
 
 	interfacebody  goto 245
 
@@ -3658,6 +3658,7 @@ state 192
 	primarytypeexpr:  TIdent.    (166)
 	primarytypeexpr:  TIdent.'.' TIdent 
 	primarytypeexpr:  TIdent.'<' typeexprlist closegt 
+	primarytypeexpr:  TIdent.'.' TIdent '<' typeexprlist closegt 
 
 	'<'  shift 257
 	'.'  shift 256
@@ -3855,17 +3856,17 @@ state 207
 
 
 state 208
-	typeparamlist:  typeparam.    (233)
+	typeparamlist:  typeparam.    (234)
 
-	.  reduce 233 (src line 1238)
+	.  reduce 234 (src line 1245)
 
 
 state 209
-	typeparam:  TIdent.    (235)
+	typeparam:  TIdent.    (236)
 	typeparam:  TIdent.':' typeexpr 
 
 	':'  shift 296
-	.  reduce 235 (src line 1246)
+	.  reduce 236 (src line 1253)
 
 
 state 210
@@ -4267,19 +4268,19 @@ state 240
 
 
 state 241
-	typednamelist:  typednamelist ',' typedname.    (238)
+	typednamelist:  typednamelist ',' typedname.    (239)
 
-	.  reduce 238 (src line 1257)
+	.  reduce 239 (src line 1264)
 
 
 state 242
 	typeexpr:  typeexpr.'|' simpletypeexpr 
 	typeexpr:  typeexpr.'&' simpletypeexpr 
-	typedname:  TIdent ':' typeexpr.    (240)
+	typedname:  TIdent ':' typeexpr.    (241)
 
 	'|'  shift 248
 	'&'  shift 249
-	.  reduce 240 (src line 1265)
+	.  reduce 241 (src line 1272)
 
 
 state 243
@@ -4333,9 +4334,9 @@ state 246
 
 
 state 247
-	interfaceextends:  ':' TIdent.    (242)
+	interfaceextends:  ':' TIdent.    (243)
 
-	.  reduce 242 (src line 1273)
+	.  reduce 243 (src line 1280)
 
 
 state 248
@@ -4446,9 +4447,9 @@ state 253
 	primarytypeexpr  goto 186
 
 state 254
-	annotations:  annotation.    (227)
+	annotations:  annotation.    (228)
 
-	.  reduce 227 (src line 1214)
+	.  reduce 228 (src line 1221)
 
 
 state 255
@@ -4462,6 +4463,7 @@ state 255
 
 state 256
 	primarytypeexpr:  TIdent '.'.TIdent 
+	primarytypeexpr:  TIdent '.'.TIdent '<' typeexprlist closegt 
 
 	TIdent  shift 316
 	.  error
@@ -4536,21 +4538,22 @@ state 260
 
 
 state 261
-	primarytypeexpr:  '{' '}'.    (198)
+	primarytypeexpr:  '{' '}'.    (199)
 
-	.  reduce 198 (src line 1102)
+	.  reduce 199 (src line 1109)
 
 
 state 262
-	typefieldlist:  typefield.    (216)
+	typefieldlist:  typefield.    (217)
 
-	.  reduce 216 (src line 1177)
+	.  reduce 217 (src line 1184)
 
 
 state 263
 	primarytypeexpr:  TIdent.    (166)
 	primarytypeexpr:  TIdent.'.' TIdent 
 	primarytypeexpr:  TIdent.'<' typeexprlist closegt 
+	primarytypeexpr:  TIdent.'.' TIdent '<' typeexprlist closegt 
 	typefield:  TIdent.':' typeexpr 
 	typefield:  TIdent.':' typeexpr annotations 
 	typefield:  TIdent.TQuestionColon typeexpr 
@@ -4708,9 +4711,9 @@ state 276
 	funcparamlist  goto 330
 
 state 277
-	funcparamlist:  funcparam.    (212)
+	funcparamlist:  funcparam.    (213)
 
-	.  reduce 212 (src line 1163)
+	.  reduce 213 (src line 1170)
 
 
 state 278
@@ -4740,6 +4743,7 @@ state 279
 	primarytypeexpr:  TIdent.    (166)
 	primarytypeexpr:  TIdent.'.' TIdent 
 	primarytypeexpr:  TIdent.'<' typeexprlist closegt 
+	primarytypeexpr:  TIdent.'.' TIdent '<' typeexprlist closegt 
 	funcparam:  TIdent.':' typeexpr 
 
 	'<'  shift 257
@@ -4751,11 +4755,11 @@ state 279
 state 280
 	typeexpr:  typeexpr.'|' simpletypeexpr 
 	typeexpr:  typeexpr.'&' simpletypeexpr 
-	funcparam:  typeexpr.    (211)
+	funcparam:  typeexpr.    (212)
 
 	'|'  shift 248
 	'&'  shift 249
-	.  reduce 211 (src line 1158)
+	.  reduce 212 (src line 1165)
 
 
 state 281
@@ -4847,11 +4851,11 @@ state 283
 	typefield  goto 262
 
 state 284
-	primarytypeexpr:  TAsserts TIdent.    (199)
+	primarytypeexpr:  TAsserts TIdent.    (200)
 	primarytypeexpr:  TAsserts TIdent.TIs typeexpr 
 
 	TIs  shift 347
-	.  reduce 199 (src line 1106)
+	.  reduce 200 (src line 1113)
 
 
 state 285
@@ -5001,9 +5005,9 @@ state 293
 	returntypeannot  goto 357
 
 state 294
-	typeparams:  '<' typeparamlist '>'.    (232)
+	typeparams:  '<' typeparamlist '>'.    (233)
 
-	.  reduce 232 (src line 1233)
+	.  reduce 233 (src line 1240)
 
 
 state 295
@@ -5177,9 +5181,9 @@ state 305
 
 
 state 306
-	interfacebody:  interfacebody interfacemethod.    (245)
+	interfacebody:  interfacebody interfacemethod.    (246)
 
-	.  reduce 245 (src line 1284)
+	.  reduce 246 (src line 1291)
 
 
 state 307
@@ -5191,9 +5195,9 @@ state 307
 
 
 state 308
-	interfaceextends:  interfaceextends ',' TIdent.    (243)
+	interfaceextends:  interfaceextends ',' TIdent.    (244)
 
-	.  reduce 243 (src line 1276)
+	.  reduce 244 (src line 1283)
 
 
 309: shift/reduce conflict (shift 251(0), red'n 155(4)) on TQuestion
@@ -5223,15 +5227,15 @@ state 311
 
 
 state 312
-	annotations:  annotations annotation.    (228)
+	annotations:  annotations annotation.    (229)
 
-	.  reduce 228 (src line 1217)
+	.  reduce 229 (src line 1224)
 
 
 state 313
-	primarytypeexpr:  primarytypeexpr '[' ']'.    (194)
+	primarytypeexpr:  primarytypeexpr '[' ']'.    (195)
 
-	.  reduce 194 (src line 1084)
+	.  reduce 195 (src line 1091)
 
 
 state 314
@@ -5245,19 +5249,22 @@ state 314
 	.  error
 
 
-315: shift/reduce conflict (shift 369(0), red'n 229(0)) on '('
+315: shift/reduce conflict (shift 369(0), red'n 230(0)) on '('
 state 315
-	annotation:  '@' TIdent.    (229)
+	annotation:  '@' TIdent.    (230)
 	annotation:  '@' TIdent.'(' ')' 
 	annotation:  '@' TIdent.'(' exprlist ')' 
 
 	'('  shift 369
-	.  reduce 229 (src line 1222)
+	.  reduce 230 (src line 1229)
 
 
+316: shift/reduce conflict (shift 370(3), red'n 167(0)) on '<'
 state 316
 	primarytypeexpr:  TIdent '.' TIdent.    (167)
+	primarytypeexpr:  TIdent '.' TIdent.'<' typeexprlist closegt 
 
+	'<'  shift 370
 	.  reduce 167 (src line 973)
 
 
@@ -5265,27 +5272,27 @@ state 317
 	primarytypeexpr:  TIdent '<' typeexprlist.closegt 
 	typeexprlist:  typeexprlist.',' typeexpr 
 
-	TShr  shift 373
-	'>'  shift 372
-	','  shift 371
+	TShr  shift 374
+	'>'  shift 373
+	','  shift 372
 	.  error
 
-	closegt  goto 370
+	closegt  goto 371
 
 state 318
 	typeexpr:  typeexpr.'|' simpletypeexpr 
 	typeexpr:  typeexpr.'&' simpletypeexpr 
-	typeexprlist:  typeexpr.    (204)
+	typeexprlist:  typeexpr.    (205)
 
 	'|'  shift 248
 	'&'  shift 249
-	.  reduce 204 (src line 1128)
+	.  reduce 205 (src line 1135)
 
 
 state 319
-	primarytypeexpr:  '{' typeexpr '}'.    (169)
+	primarytypeexpr:  '{' typeexpr '}'.    (170)
 
-	.  reduce 169 (src line 984)
+	.  reduce 170 (src line 991)
 
 
 state 320
@@ -5295,19 +5302,19 @@ state 320
 
 	'|'  shift 248
 	'&'  shift 249
-	']'  shift 374
+	']'  shift 375
 	.  error
 
 
 state 321
-	primarytypeexpr:  '{' typefieldlist '}'.    (171)
+	primarytypeexpr:  '{' typefieldlist '}'.    (172)
 
-	.  reduce 171 (src line 992)
+	.  reduce 172 (src line 999)
 
 
 state 322
 	typefieldlist:  typefieldlist ','.typefield 
-	typefieldlist:  typefieldlist ','.    (218)
+	typefieldlist:  typefieldlist ','.    (219)
 
 	TType  shift 270
 	TInterface  shift 339
@@ -5319,10 +5326,10 @@ state 322
 	TKeyof  shift 342
 	TExtends  shift 273
 	TIdent  shift 338
-	.  reduce 218 (src line 1183)
+	.  reduce 219 (src line 1190)
 
 	typefieldname  goto 264
-	typefield  goto 375
+	typefield  goto 376
 
 state 323
 	typefield:  TIdent ':'.typeexpr 
@@ -5344,7 +5351,7 @@ state 323
 	'('  shift 194
 	.  error
 
-	typeexpr  goto 376
+	typeexpr  goto 377
 	simpletypeexpr  goto 185
 	primarytypeexpr  goto 186
 
@@ -5368,7 +5375,7 @@ state 324
 	'('  shift 194
 	.  error
 
-	typeexpr  goto 377
+	typeexpr  goto 378
 	simpletypeexpr  goto 185
 	primarytypeexpr  goto 186
 
@@ -5392,7 +5399,7 @@ state 325
 	'('  shift 194
 	.  error
 
-	typeexpr  goto 378
+	typeexpr  goto 379
 	simpletypeexpr  goto 185
 	primarytypeexpr  goto 186
 
@@ -5416,7 +5423,7 @@ state 326
 	'('  shift 194
 	.  error
 
-	typeexpr  goto 379
+	typeexpr  goto 380
 	simpletypeexpr  goto 185
 	primarytypeexpr  goto 186
 
@@ -5425,7 +5432,7 @@ state 327
 	primarytypeexpr:  '(' funcparamlist ')'.TArrow '(' ')' 
 	primarytypeexpr:  '(' funcparamlist ')'.TArrow typeexpr 
 
-	TArrow  shift 380
+	TArrow  shift 381
 	.  error
 
 
@@ -5442,7 +5449,7 @@ state 328
 	TTypeof  shift 199
 	TKeyof  shift 200
 	TFun  shift 195
-	T3Comma  shift 382
+	T3Comma  shift 383
 	TIdent  shift 279
 	TNumber  shift 191
 	TString  shift 190
@@ -5453,7 +5460,7 @@ state 328
 	typeexpr  goto 280
 	simpletypeexpr  goto 185
 	primarytypeexpr  goto 186
-	funcparam  goto 381
+	funcparam  goto 382
 
 state 329
 	primarytypeexpr:  '(' ')' TArrow.'(' typeexprlist2 ')' 
@@ -5473,10 +5480,10 @@ state 329
 	TNumber  shift 191
 	TString  shift 190
 	'{'  shift 193
-	'('  shift 383
+	'('  shift 384
 	.  error
 
-	typeexpr  goto 384
+	typeexpr  goto 385
 	simpletypeexpr  goto 185
 	primarytypeexpr  goto 186
 
@@ -5490,7 +5497,7 @@ state 330
 	funcparamlist:  funcparamlist.',' funcparam 
 	funcparamlist:  funcparamlist.',' T3Comma typeexpr 
 
-	')'  shift 385
+	')'  shift 386
 	','  shift 328
 	.  error
 
@@ -5503,18 +5510,18 @@ state 331
 	primarytypeexpr:  '(' '(' ')'.TArrow '(' typeexprlist2 ')' ')' 
 	primarytypeexpr:  '(' '(' ')'.TArrow '(' ')' ')' 
 
-	TArrow  shift 386
+	TArrow  shift 387
 	.  error
 
 
 state 332
 	typeexpr:  typeexpr.'|' simpletypeexpr 
 	typeexpr:  typeexpr.'&' simpletypeexpr 
-	funcparamlist:  T3Comma typeexpr.    (214)
+	funcparamlist:  T3Comma typeexpr.    (215)
 
 	'|'  shift 248
 	'&'  shift 249
-	.  reduce 214 (src line 1169)
+	.  reduce 215 (src line 1176)
 
 
 state 333
@@ -5536,7 +5543,7 @@ state 333
 	'('  shift 194
 	.  error
 
-	typeexpr  goto 387
+	typeexpr  goto 388
 	simpletypeexpr  goto 185
 	primarytypeexpr  goto 186
 
@@ -5548,20 +5555,20 @@ state 334
 	funcparamlist:  funcparamlist.',' funcparam 
 	funcparamlist:  funcparamlist.',' T3Comma typeexpr 
 
-	')'  shift 388
+	')'  shift 389
 	','  shift 328
 	.  error
 
 
-335: shift/reduce conflict (shift 389(0), red'n 191(0)) on ':'
+335: shift/reduce conflict (shift 390(0), red'n 192(0)) on ':'
 state 335
 	primarytypeexpr:  TFun '(' ')'.':' typeexpr 
 	primarytypeexpr:  TFun '(' ')'.':' '(' typeexprlist2 ')' 
 	primarytypeexpr:  TFun '(' ')'.':' '(' ')' 
-	primarytypeexpr:  TFun '(' ')'.    (191)
+	primarytypeexpr:  TFun '(' ')'.    (192)
 
-	':'  shift 389
-	.  reduce 191 (src line 1072)
+	':'  shift 390
+	.  reduce 192 (src line 1079)
 
 
 state 336
@@ -5569,15 +5576,15 @@ state 336
 	typefieldlist:  typefieldlist.',' typefield 
 	typefieldlist:  typefieldlist.',' 
 
-	'}'  shift 390
+	'}'  shift 391
 	','  shift 322
 	.  error
 
 
 state 337
-	primarytypeexpr:  TInterface '{' '}'.    (193)
+	primarytypeexpr:  TInterface '{' '}'.    (194)
 
-	.  reduce 193 (src line 1080)
+	.  reduce 194 (src line 1087)
 
 
 state 338
@@ -5626,7 +5633,7 @@ state 344
 	typeexpr:  typeexpr.'&' simpletypeexpr 
 	primarytypeexpr:  TReadonly '{' typeexpr.'}' 
 
-	'}'  shift 391
+	'}'  shift 392
 	'|'  shift 248
 	'&'  shift 249
 	.  error
@@ -5651,7 +5658,7 @@ state 345
 	'('  shift 194
 	.  error
 
-	typeexpr  goto 392
+	typeexpr  goto 393
 	simpletypeexpr  goto 185
 	primarytypeexpr  goto 186
 
@@ -5660,7 +5667,7 @@ state 346
 	typefieldlist:  typefieldlist.',' typefield 
 	typefieldlist:  typefieldlist.',' 
 
-	'}'  shift 393
+	'}'  shift 394
 	','  shift 322
 	.  error
 
@@ -5684,7 +5691,7 @@ state 347
 	'('  shift 194
 	.  error
 
-	typeexpr  goto 394
+	typeexpr  goto 395
 	simpletypeexpr  goto 185
 	primarytypeexpr  goto 186
 
@@ -5724,7 +5731,7 @@ state 348
 	TGte  shift 79
 	T2Comma  shift 83
 	T2Colon  shift 97
-	')'  shift 395
+	')'  shift 396
 	TShl  shift 93
 	TShr  shift 94
 	TIdiv  shift 95
@@ -5748,7 +5755,7 @@ state 349
 	typeexpr:  typeexpr.'&' simpletypeexpr 
 	primarytypeexpr:  TKeyof '(' typeexpr.')' 
 
-	')'  shift 396
+	')'  shift 397
 	'|'  shift 248
 	'&'  shift 249
 	.  error
@@ -5762,12 +5769,12 @@ state 350
 
 	chunk  goto 56
 	chunk1  goto 2
-	block  goto 397
+	block  goto 398
 
 state 351
 	funcbody:  '(' ')' returntypeannot block.TEnd 
 
-	TEnd  shift 398
+	TEnd  shift 399
 	.  error
 
 
@@ -5775,7 +5782,7 @@ state 352
 	returntypeannot:  ':' typeexprlist.    (151)
 	typeexprlist:  typeexprlist.',' typeexpr 
 
-	','  shift 371
+	','  shift 372
 	.  reduce 151 (src line 893)
 
 
@@ -5810,10 +5817,10 @@ state 353
 	TString  shift 190
 	'{'  shift 193
 	'('  shift 276
-	')'  shift 399
+	')'  shift 400
 	.  error
 
-	typeexpr  goto 400
+	typeexpr  goto 401
 	simpletypeexpr  goto 185
 	primarytypeexpr  goto 186
 	funcparam  goto 277
@@ -5833,7 +5840,7 @@ state 355
 	parlist:  typednamelist ',' T3Comma.    (120)
 	parlist:  typednamelist ',' T3Comma.':' typeexpr 
 
-	':'  shift 401
+	':'  shift 402
 	.  reduce 120 (src line 775)
 
 
@@ -5844,7 +5851,7 @@ state 356
 	':'  shift 289
 	.  reduce 150 (src line 890)
 
-	returntypeannot  goto 402
+	returntypeannot  goto 403
 
 state 357
 	funcbody:  typeparams '(' ')' returntypeannot.block TEnd 
@@ -5854,22 +5861,22 @@ state 357
 
 	chunk  goto 56
 	chunk1  goto 2
-	block  goto 403
+	block  goto 404
 
 state 358
-	typeparamlist:  typeparamlist ',' typeparam.    (234)
+	typeparamlist:  typeparamlist ',' typeparam.    (235)
 
-	.  reduce 234 (src line 1241)
+	.  reduce 235 (src line 1248)
 
 
 state 359
 	typeexpr:  typeexpr.'|' simpletypeexpr 
 	typeexpr:  typeexpr.'&' simpletypeexpr 
-	typeparam:  TIdent ':' typeexpr.    (236)
+	typeparam:  TIdent ':' typeexpr.    (237)
 
 	'|'  shift 248
 	'&'  shift 249
-	.  reduce 236 (src line 1249)
+	.  reduce 237 (src line 1256)
 
 
 state 360
@@ -5892,7 +5899,7 @@ state 360
 	.  error
 
 	var  goto 42
-	expr  goto 404
+	expr  goto 405
 	string  goto 35
 	prefixexp  goto 34
 	functioncall  goto 23
@@ -5914,7 +5921,7 @@ state 362
 
 	chunk  goto 56
 	chunk1  goto 2
-	block  goto 405
+	block  goto 406
 
 state 363
 	elseifs:  elseifs TElseIf.expr TThen block 
@@ -5936,7 +5943,7 @@ state 363
 	.  error
 
 	var  goto 42
-	expr  goto 406
+	expr  goto 407
 	string  goto 35
 	prefixexp  goto 34
 	functioncall  goto 23
@@ -5973,7 +5980,7 @@ state 364
 	expr:  expr.TBang 
 
 	TAnd  shift 76
-	TDo  shift 407
+	TDo  shift 408
 	TOr  shift 75
 	TAs  shift 96
 	TEqeq  shift 81
@@ -5997,14 +6004,14 @@ state 364
 	'/'  shift 87
 	'%'  shift 88
 	'^'  shift 89
-	','  shift 408
+	','  shift 409
 	.  error
 
 
 state 365
 	stat:  TFor namelist TIn exprlist TDo block.TEnd 
 
-	TEnd  shift 409
+	TEnd  shift 410
 	.  error
 
 
@@ -6012,7 +6019,7 @@ state 366
 	interfacemethod:  TFunction TIdent.'(' ')' returntypeannot 
 	interfacemethod:  TFunction TIdent.'(' typednamelist ')' returntypeannot 
 
-	'('  shift 410
+	'('  shift 411
 	.  error
 
 
@@ -6036,14 +6043,14 @@ state 367
 	'('  shift 194
 	.  reduce 160 (src line 943)
 
-	typeexpr  goto 411
+	typeexpr  goto 412
 	simpletypeexpr  goto 185
 	primarytypeexpr  goto 186
 
 state 368
-	primarytypeexpr:  primarytypeexpr '[' typeexpr ']'.    (203)
+	primarytypeexpr:  primarytypeexpr '[' typeexpr ']'.    (204)
 
-	.  reduce 203 (src line 1122)
+	.  reduce 204 (src line 1129)
 
 
 state 369
@@ -6061,14 +6068,14 @@ state 369
 	TString  shift 43
 	'{'  shift 44
 	'('  shift 24
-	')'  shift 412
+	')'  shift 413
 	'~'  shift 40
 	'-'  shift 37
 	'#'  shift 39
 	.  error
 
 	var  goto 42
-	exprlist  goto 413
+	exprlist  goto 414
 	expr  goto 27
 	string  goto 35
 	prefixexp  goto 34
@@ -6078,12 +6085,36 @@ state 369
 	tableconstructor  goto 36
 
 state 370
+	primarytypeexpr:  TIdent '.' TIdent '<'.typeexprlist closegt 
+
+	TFalse  shift 189
+	TNil  shift 187
+	TTrue  shift 188
+	TInterface  shift 196
+	TReadonly  shift 197
+	TAsserts  shift 198
+	TTypeof  shift 199
+	TKeyof  shift 200
+	TFun  shift 195
+	TIdent  shift 192
+	TNumber  shift 191
+	TString  shift 190
+	'{'  shift 193
+	'('  shift 194
+	.  error
+
+	typeexpr  goto 318
+	simpletypeexpr  goto 185
+	primarytypeexpr  goto 186
+	typeexprlist  goto 415
+
+state 371
 	primarytypeexpr:  TIdent '<' typeexprlist closegt.    (168)
 
 	.  reduce 168 (src line 977)
 
 
-state 371
+state 372
 	typeexprlist:  typeexprlist ','.typeexpr 
 
 	TFalse  shift 189
@@ -6102,92 +6133,92 @@ state 371
 	'('  shift 194
 	.  error
 
-	typeexpr  goto 414
+	typeexpr  goto 416
 	simpletypeexpr  goto 185
 	primarytypeexpr  goto 186
 
-state 372
-	closegt:  '>'.    (208)
-
-	.  reduce 208 (src line 1144)
-
-
 state 373
-	closegt:  TShr.    (209)
+	closegt:  '>'.    (209)
 
-	.  reduce 209 (src line 1146)
+	.  reduce 209 (src line 1151)
 
 
 state 374
-	primarytypeexpr:  '{' '[' typeexpr ']'.':' typeexpr '}' 
+	closegt:  TShr.    (210)
 
-	':'  shift 415
-	.  error
+	.  reduce 210 (src line 1153)
 
 
 state 375
-	typefieldlist:  typefieldlist ',' typefield.    (217)
+	primarytypeexpr:  '{' '[' typeexpr ']'.':' typeexpr '}' 
 
-	.  reduce 217 (src line 1180)
+	':'  shift 417
+	.  error
 
 
 state 376
+	typefieldlist:  typefieldlist ',' typefield.    (218)
+
+	.  reduce 218 (src line 1187)
+
+
+state 377
 	typeexpr:  typeexpr.'|' simpletypeexpr 
 	typeexpr:  typeexpr.'&' simpletypeexpr 
-	typefield:  TIdent ':' typeexpr.    (219)
+	typefield:  TIdent ':' typeexpr.    (220)
 	typefield:  TIdent ':' typeexpr.annotations 
 
 	'|'  shift 248
 	'&'  shift 249
 	'@'  shift 255
-	.  reduce 219 (src line 1188)
+	.  reduce 220 (src line 1195)
 
 	annotation  goto 254
-	annotations  goto 416
+	annotations  goto 418
 
-state 377
+state 378
 	typeexpr:  typeexpr.'|' simpletypeexpr 
 	typeexpr:  typeexpr.'&' simpletypeexpr 
-	typefield:  TIdent TQuestionColon typeexpr.    (221)
+	typefield:  TIdent TQuestionColon typeexpr.    (222)
 	typefield:  TIdent TQuestionColon typeexpr.annotations 
 
 	'|'  shift 248
 	'&'  shift 249
 	'@'  shift 255
-	.  reduce 221 (src line 1194)
+	.  reduce 222 (src line 1201)
 
 	annotation  goto 254
-	annotations  goto 417
+	annotations  goto 419
 
-state 378
+state 379
 	typeexpr:  typeexpr.'|' simpletypeexpr 
 	typeexpr:  typeexpr.'&' simpletypeexpr 
-	typefield:  typefieldname ':' typeexpr.    (223)
+	typefield:  typefieldname ':' typeexpr.    (224)
 	typefield:  typefieldname ':' typeexpr.annotations 
 
 	'|'  shift 248
 	'&'  shift 249
 	'@'  shift 255
-	.  reduce 223 (src line 1200)
+	.  reduce 224 (src line 1207)
 
 	annotation  goto 254
-	annotations  goto 418
+	annotations  goto 420
 
-state 379
+state 380
 	typeexpr:  typeexpr.'|' simpletypeexpr 
 	typeexpr:  typeexpr.'&' simpletypeexpr 
-	typefield:  typefieldname TQuestionColon typeexpr.    (225)
+	typefield:  typefieldname TQuestionColon typeexpr.    (226)
 	typefield:  typefieldname TQuestionColon typeexpr.annotations 
 
 	'|'  shift 248
 	'&'  shift 249
 	'@'  shift 255
-	.  reduce 225 (src line 1206)
+	.  reduce 226 (src line 1213)
 
 	annotation  goto 254
-	annotations  goto 419
+	annotations  goto 421
 
-state 380
+state 381
 	primarytypeexpr:  '(' funcparamlist ')' TArrow.'(' typeexprlist2 ')' 
 	primarytypeexpr:  '(' funcparamlist ')' TArrow.'(' ')' 
 	primarytypeexpr:  '(' funcparamlist ')' TArrow.typeexpr 
@@ -6205,20 +6236,20 @@ state 380
 	TNumber  shift 191
 	TString  shift 190
 	'{'  shift 193
-	'('  shift 420
+	'('  shift 422
 	.  error
 
-	typeexpr  goto 421
+	typeexpr  goto 423
 	simpletypeexpr  goto 185
 	primarytypeexpr  goto 186
 
-state 381
-	funcparamlist:  funcparamlist ',' funcparam.    (213)
-
-	.  reduce 213 (src line 1166)
-
-
 state 382
+	funcparamlist:  funcparamlist ',' funcparam.    (214)
+
+	.  reduce 214 (src line 1173)
+
+
+state 383
 	funcparamlist:  funcparamlist ',' T3Comma.typeexpr 
 
 	TFalse  shift 189
@@ -6237,11 +6268,11 @@ state 382
 	'('  shift 194
 	.  error
 
-	typeexpr  goto 422
+	typeexpr  goto 424
 	simpletypeexpr  goto 185
 	primarytypeexpr  goto 186
 
-state 383
+state 384
 	primarytypeexpr:  '('.funcparamlist ')' TArrow '(' typeexprlist2 ')' 
 	primarytypeexpr:  '('.funcparamlist ')' TArrow '(' ')' 
 	primarytypeexpr:  '('.funcparamlist ')' TArrow typeexpr 
@@ -6272,29 +6303,29 @@ state 383
 	TString  shift 190
 	'{'  shift 193
 	'('  shift 276
-	')'  shift 423
+	')'  shift 425
 	.  error
 
-	typeexpr  goto 425
+	typeexpr  goto 427
 	simpletypeexpr  goto 185
 	primarytypeexpr  goto 186
-	typeexprlist2  goto 424
+	typeexprlist2  goto 426
 	funcparam  goto 277
 	funcparamlist  goto 274
 
-384: shift/reduce conflict (shift 248(4), red'n 176(0)) on '|'
-384: shift/reduce conflict (shift 249(6), red'n 176(0)) on '&'
-state 384
+385: shift/reduce conflict (shift 248(4), red'n 177(0)) on '|'
+385: shift/reduce conflict (shift 249(6), red'n 177(0)) on '&'
+state 385
 	typeexpr:  typeexpr.'|' simpletypeexpr 
 	typeexpr:  typeexpr.'&' simpletypeexpr 
-	primarytypeexpr:  '(' ')' TArrow typeexpr.    (176)
+	primarytypeexpr:  '(' ')' TArrow typeexpr.    (177)
 
 	'|'  shift 248
 	'&'  shift 249
-	.  reduce 176 (src line 1012)
+	.  reduce 177 (src line 1019)
 
 
-state 385
+state 386
 	primarytypeexpr:  '(' funcparamlist ')'.TArrow '(' typeexprlist2 ')' 
 	primarytypeexpr:  '(' funcparamlist ')'.TArrow '(' ')' 
 	primarytypeexpr:  '(' funcparamlist ')'.TArrow typeexpr 
@@ -6302,11 +6333,11 @@ state 385
 	primarytypeexpr:  '(' '(' funcparamlist ')'.TArrow '(' typeexprlist2 ')' ')' 
 	primarytypeexpr:  '(' '(' funcparamlist ')'.TArrow '(' ')' ')' 
 
-	TArrow  shift 426
+	TArrow  shift 428
 	.  error
 
 
-state 386
+state 387
 	primarytypeexpr:  '(' ')' TArrow.'(' typeexprlist2 ')' 
 	primarytypeexpr:  '(' ')' TArrow.typeexpr 
 	primarytypeexpr:  '(' ')' TArrow.'(' ')' 
@@ -6327,35 +6358,35 @@ state 386
 	TNumber  shift 191
 	TString  shift 190
 	'{'  shift 193
-	'('  shift 427
+	'('  shift 429
 	.  error
 
-	typeexpr  goto 428
+	typeexpr  goto 430
 	simpletypeexpr  goto 185
 	primarytypeexpr  goto 186
 
-state 387
+state 388
 	typeexpr:  typeexpr.'|' simpletypeexpr 
 	typeexpr:  typeexpr.'&' simpletypeexpr 
-	funcparam:  TIdent ':' typeexpr.    (210)
+	funcparam:  TIdent ':' typeexpr.    (211)
 
 	'|'  shift 248
 	'&'  shift 249
-	.  reduce 210 (src line 1155)
+	.  reduce 211 (src line 1162)
 
 
-388: shift/reduce conflict (shift 429(0), red'n 190(0)) on ':'
-state 388
+389: shift/reduce conflict (shift 431(0), red'n 191(0)) on ':'
+state 389
 	primarytypeexpr:  TFun '(' funcparamlist ')'.':' typeexpr 
 	primarytypeexpr:  TFun '(' funcparamlist ')'.':' '(' typeexprlist2 ')' 
 	primarytypeexpr:  TFun '(' funcparamlist ')'.':' '(' ')' 
-	primarytypeexpr:  TFun '(' funcparamlist ')'.    (190)
+	primarytypeexpr:  TFun '(' funcparamlist ')'.    (191)
 
-	':'  shift 429
-	.  reduce 190 (src line 1068)
+	':'  shift 431
+	.  reduce 191 (src line 1075)
 
 
-state 389
+state 390
 	primarytypeexpr:  TFun '(' ')' ':'.typeexpr 
 	primarytypeexpr:  TFun '(' ')' ':'.'(' typeexprlist2 ')' 
 	primarytypeexpr:  TFun '(' ')' ':'.'(' ')' 
@@ -6373,80 +6404,80 @@ state 389
 	TNumber  shift 191
 	TString  shift 190
 	'{'  shift 193
-	'('  shift 431
+	'('  shift 433
 	.  error
 
-	typeexpr  goto 430
+	typeexpr  goto 432
 	simpletypeexpr  goto 185
 	primarytypeexpr  goto 186
 
-state 390
-	primarytypeexpr:  TInterface '{' typefieldlist '}'.    (192)
-
-	.  reduce 192 (src line 1076)
-
-
 state 391
-	primarytypeexpr:  TReadonly '{' typeexpr '}'.    (195)
+	primarytypeexpr:  TInterface '{' typefieldlist '}'.    (193)
 
-	.  reduce 195 (src line 1088)
+	.  reduce 193 (src line 1083)
 
 
 state 392
+	primarytypeexpr:  TReadonly '{' typeexpr '}'.    (196)
+
+	.  reduce 196 (src line 1095)
+
+
+state 393
 	typeexpr:  typeexpr.'|' simpletypeexpr 
 	typeexpr:  typeexpr.'&' simpletypeexpr 
 	primarytypeexpr:  TReadonly '{' '[' typeexpr.']' ':' typeexpr '}' 
 
 	'|'  shift 248
 	'&'  shift 249
-	']'  shift 432
+	']'  shift 434
 	.  error
 
 
-state 393
-	primarytypeexpr:  TReadonly '{' typefieldlist '}'.    (197)
-
-	.  reduce 197 (src line 1098)
-
-
-394: shift/reduce conflict (shift 248(4), red'n 200(0)) on '|'
-394: shift/reduce conflict (shift 249(6), red'n 200(0)) on '&'
 state 394
+	primarytypeexpr:  TReadonly '{' typefieldlist '}'.    (198)
+
+	.  reduce 198 (src line 1105)
+
+
+395: shift/reduce conflict (shift 248(4), red'n 201(0)) on '|'
+395: shift/reduce conflict (shift 249(6), red'n 201(0)) on '&'
+state 395
 	typeexpr:  typeexpr.'|' simpletypeexpr 
 	typeexpr:  typeexpr.'&' simpletypeexpr 
-	primarytypeexpr:  TAsserts TIdent TIs typeexpr.    (200)
+	primarytypeexpr:  TAsserts TIdent TIs typeexpr.    (201)
 
 	'|'  shift 248
 	'&'  shift 249
-	.  reduce 200 (src line 1110)
-
-
-state 395
-	primarytypeexpr:  TTypeof '(' expr ')'.    (201)
-
-	.  reduce 201 (src line 1114)
+	.  reduce 201 (src line 1117)
 
 
 state 396
-	primarytypeexpr:  TKeyof '(' typeexpr ')'.    (202)
+	primarytypeexpr:  TTypeof '(' expr ')'.    (202)
 
-	.  reduce 202 (src line 1118)
+	.  reduce 202 (src line 1121)
 
 
 state 397
-	funcbody:  '(' parlist ')' returntypeannot block.TEnd 
+	primarytypeexpr:  TKeyof '(' typeexpr ')'.    (203)
 
-	TEnd  shift 433
-	.  error
+	.  reduce 203 (src line 1125)
 
 
 state 398
+	funcbody:  '(' parlist ')' returntypeannot block.TEnd 
+
+	TEnd  shift 435
+	.  error
+
+
+state 399
 	funcbody:  '(' ')' returntypeannot block TEnd.    (114)
 
 	.  reduce 114 (src line 748)
 
 
-state 399
+state 400
 	returntypeannot:  ':' '(' ')'.    (152)
 	primarytypeexpr:  '(' ')'.TArrow '(' typeexprlist2 ')' 
 	primarytypeexpr:  '(' ')'.TArrow typeexpr 
@@ -6456,20 +6487,20 @@ state 399
 	.  reduce 152 (src line 896)
 
 
-400: shift/reduce conflict (shift 434(0), red'n 211(0)) on ','
-state 400
+401: shift/reduce conflict (shift 436(0), red'n 212(0)) on ','
+state 401
 	returntypeannot:  ':' '(' typeexpr.',' typeexprlist ')' 
 	typeexpr:  typeexpr.'|' simpletypeexpr 
 	typeexpr:  typeexpr.'&' simpletypeexpr 
-	funcparam:  typeexpr.    (211)
+	funcparam:  typeexpr.    (212)
 
 	'|'  shift 248
 	'&'  shift 249
-	','  shift 434
-	.  reduce 211 (src line 1158)
+	','  shift 436
+	.  reduce 212 (src line 1165)
 
 
-state 401
+state 402
 	parlist:  typednamelist ',' T3Comma ':'.typeexpr 
 
 	TFalse  shift 189
@@ -6488,11 +6519,11 @@ state 401
 	'('  shift 194
 	.  error
 
-	typeexpr  goto 435
+	typeexpr  goto 437
 	simpletypeexpr  goto 185
 	primarytypeexpr  goto 186
 
-state 402
+state 403
 	funcbody:  typeparams '(' parlist ')' returntypeannot.block TEnd 
 	chunk1: .    (4)
 
@@ -6500,16 +6531,16 @@ state 402
 
 	chunk  goto 56
 	chunk1  goto 2
-	block  goto 436
+	block  goto 438
 
-state 403
+state 404
 	funcbody:  typeparams '(' ')' returntypeannot block.TEnd 
 
-	TEnd  shift 437
+	TEnd  shift 439
 	.  error
 
 
-state 404
+state 405
 	expr:  expr.TOr expr 
 	expr:  expr.TAnd expr 
 	expr:  expr.'>' expr 
@@ -6563,14 +6594,14 @@ state 404
 	.  reduce 128 (src line 813)
 
 
-state 405
+state 406
 	stat:  TIf expr TThen block elseifs TElse block.TEnd 
 
-	TEnd  shift 438
+	TEnd  shift 440
 	.  error
 
 
-state 406
+state 407
 	elseifs:  elseifs TElseIf expr.TThen block 
 	expr:  expr.TOr expr 
 	expr:  expr.TAnd expr 
@@ -6599,7 +6630,7 @@ state 406
 
 	TAnd  shift 76
 	TOr  shift 75
-	TThen  shift 439
+	TThen  shift 441
 	TAs  shift 96
 	TEqeq  shift 81
 	TNeq  shift 82
@@ -6625,7 +6656,7 @@ state 406
 	.  error
 
 
-state 407
+state 408
 	stat:  TFor TIdent '=' expr ',' expr TDo.block TEnd 
 	chunk1: .    (4)
 
@@ -6633,9 +6664,9 @@ state 407
 
 	chunk  goto 56
 	chunk1  goto 2
-	block  goto 440
+	block  goto 442
 
-state 408
+state 409
 	stat:  TFor TIdent '=' expr ',' expr ','.expr TDo block TEnd 
 
 	TFalse  shift 29
@@ -6655,7 +6686,7 @@ state 408
 	.  error
 
 	var  goto 42
-	expr  goto 441
+	expr  goto 443
 	string  goto 35
 	prefixexp  goto 34
 	functioncall  goto 23
@@ -6663,60 +6694,71 @@ state 408
 	function  goto 33
 	tableconstructor  goto 36
 
-state 409
+state 410
 	stat:  TFor namelist TIn exprlist TDo block TEnd.    (17)
 
 	.  reduce 17 (src line 260)
 
 
-state 410
+state 411
 	interfacemethod:  TFunction TIdent '('.')' returntypeannot 
 	interfacemethod:  TFunction TIdent '('.typednamelist ')' returntypeannot 
 
 	TIdent  shift 68
-	')'  shift 442
+	')'  shift 444
 	.  error
 
-	typednamelist  goto 443
+	typednamelist  goto 445
 	typedname  goto 67
 
-state 411
+state 412
 	typeexpr:  typeexpr.'|' simpletypeexpr 
 	typeexpr:  typeexpr.'&' simpletypeexpr 
 	typeexpr:  simpletypeexpr TExtends simpletypeexpr TQuestion typeexpr.':' typeexpr 
 
 	'|'  shift 248
 	'&'  shift 249
-	':'  shift 444
+	':'  shift 446
 	.  error
 
 
-state 412
-	annotation:  '@' TIdent '(' ')'.    (230)
-
-	.  reduce 230 (src line 1225)
-
-
 state 413
+	annotation:  '@' TIdent '(' ')'.    (231)
+
+	.  reduce 231 (src line 1232)
+
+
+state 414
 	exprlist:  exprlist.',' expr 
 	annotation:  '@' TIdent '(' exprlist.')' 
 
-	')'  shift 445
+	')'  shift 447
 	','  shift 74
 	.  error
 
 
-state 414
+state 415
+	primarytypeexpr:  TIdent '.' TIdent '<' typeexprlist.closegt 
+	typeexprlist:  typeexprlist.',' typeexpr 
+
+	TShr  shift 374
+	'>'  shift 373
+	','  shift 372
+	.  error
+
+	closegt  goto 448
+
+state 416
 	typeexpr:  typeexpr.'|' simpletypeexpr 
 	typeexpr:  typeexpr.'&' simpletypeexpr 
-	typeexprlist:  typeexprlist ',' typeexpr.    (205)
+	typeexprlist:  typeexprlist ',' typeexpr.    (206)
 
 	'|'  shift 248
 	'&'  shift 249
-	.  reduce 205 (src line 1131)
+	.  reduce 206 (src line 1138)
 
 
-state 415
+state 417
 	primarytypeexpr:  '{' '[' typeexpr ']' ':'.typeexpr '}' 
 
 	TFalse  shift 189
@@ -6735,47 +6777,47 @@ state 415
 	'('  shift 194
 	.  error
 
-	typeexpr  goto 446
+	typeexpr  goto 449
 	simpletypeexpr  goto 185
 	primarytypeexpr  goto 186
 
-state 416
-	typefield:  TIdent ':' typeexpr annotations.    (220)
-	annotations:  annotations.annotation 
-
-	'@'  shift 255
-	.  reduce 220 (src line 1191)
-
-	annotation  goto 312
-
-state 417
-	typefield:  TIdent TQuestionColon typeexpr annotations.    (222)
-	annotations:  annotations.annotation 
-
-	'@'  shift 255
-	.  reduce 222 (src line 1197)
-
-	annotation  goto 312
-
 state 418
-	typefield:  typefieldname ':' typeexpr annotations.    (224)
+	typefield:  TIdent ':' typeexpr annotations.    (221)
 	annotations:  annotations.annotation 
 
 	'@'  shift 255
-	.  reduce 224 (src line 1203)
+	.  reduce 221 (src line 1198)
 
 	annotation  goto 312
 
 state 419
-	typefield:  typefieldname TQuestionColon typeexpr annotations.    (226)
+	typefield:  TIdent TQuestionColon typeexpr annotations.    (223)
 	annotations:  annotations.annotation 
 
 	'@'  shift 255
-	.  reduce 226 (src line 1209)
+	.  reduce 223 (src line 1204)
 
 	annotation  goto 312
 
 state 420
+	typefield:  typefieldname ':' typeexpr annotations.    (225)
+	annotations:  annotations.annotation 
+
+	'@'  shift 255
+	.  reduce 225 (src line 1210)
+
+	annotation  goto 312
+
+state 421
+	typefield:  typefieldname TQuestionColon typeexpr annotations.    (227)
+	annotations:  annotations.annotation 
+
+	'@'  shift 255
+	.  reduce 227 (src line 1216)
+
+	annotation  goto 312
+
+state 422
 	primarytypeexpr:  '('.funcparamlist ')' TArrow '(' typeexprlist2 ')' 
 	primarytypeexpr:  '(' funcparamlist ')' TArrow '('.typeexprlist2 ')' 
 	primarytypeexpr:  '('.funcparamlist ')' TArrow '(' ')' 
@@ -6806,71 +6848,71 @@ state 420
 	TString  shift 190
 	'{'  shift 193
 	'('  shift 276
-	')'  shift 448
+	')'  shift 451
 	.  error
 
-	typeexpr  goto 425
+	typeexpr  goto 427
 	simpletypeexpr  goto 185
 	primarytypeexpr  goto 186
-	typeexprlist2  goto 447
+	typeexprlist2  goto 450
 	funcparam  goto 277
 	funcparamlist  goto 274
 
-421: shift/reduce conflict (shift 248(4), red'n 174(0)) on '|'
-421: shift/reduce conflict (shift 249(6), red'n 174(0)) on '&'
-state 421
-	typeexpr:  typeexpr.'|' simpletypeexpr 
-	typeexpr:  typeexpr.'&' simpletypeexpr 
-	primarytypeexpr:  '(' funcparamlist ')' TArrow typeexpr.    (174)
-
-	'|'  shift 248
-	'&'  shift 249
-	.  reduce 174 (src line 1004)
-
-
-state 422
-	typeexpr:  typeexpr.'|' simpletypeexpr 
-	typeexpr:  typeexpr.'&' simpletypeexpr 
-	funcparamlist:  funcparamlist ',' T3Comma typeexpr.    (215)
-
-	'|'  shift 248
-	'&'  shift 249
-	.  reduce 215 (src line 1172)
-
-
+423: shift/reduce conflict (shift 248(4), red'n 175(0)) on '|'
+423: shift/reduce conflict (shift 249(6), red'n 175(0)) on '&'
 state 423
-	primarytypeexpr:  '(' ')'.TArrow '(' typeexprlist2 ')' 
-	primarytypeexpr:  '(' ')'.TArrow typeexpr 
-	primarytypeexpr:  '(' ')'.TArrow '(' ')' 
-	primarytypeexpr:  '(' ')' TArrow '(' ')'.    (177)
+	typeexpr:  typeexpr.'|' simpletypeexpr 
+	typeexpr:  typeexpr.'&' simpletypeexpr 
+	primarytypeexpr:  '(' funcparamlist ')' TArrow typeexpr.    (175)
 
-	TArrow  shift 329
-	.  reduce 177 (src line 1016)
+	'|'  shift 248
+	'&'  shift 249
+	.  reduce 175 (src line 1011)
 
 
 state 424
-	primarytypeexpr:  '(' ')' TArrow '(' typeexprlist2.')' 
-	typeexprlist2:  typeexprlist2.',' typeexpr 
-
-	')'  shift 449
-	','  shift 450
-	.  error
-
-
-425: shift/reduce conflict (shift 451(0), red'n 211(0)) on ','
-state 425
 	typeexpr:  typeexpr.'|' simpletypeexpr 
 	typeexpr:  typeexpr.'&' simpletypeexpr 
-	typeexprlist2:  typeexpr.',' typeexpr 
-	funcparam:  typeexpr.    (211)
+	funcparamlist:  funcparamlist ',' T3Comma typeexpr.    (216)
 
 	'|'  shift 248
 	'&'  shift 249
-	','  shift 451
-	.  reduce 211 (src line 1158)
+	.  reduce 216 (src line 1179)
+
+
+state 425
+	primarytypeexpr:  '(' ')'.TArrow '(' typeexprlist2 ')' 
+	primarytypeexpr:  '(' ')'.TArrow typeexpr 
+	primarytypeexpr:  '(' ')'.TArrow '(' ')' 
+	primarytypeexpr:  '(' ')' TArrow '(' ')'.    (178)
+
+	TArrow  shift 329
+	.  reduce 178 (src line 1023)
 
 
 state 426
+	primarytypeexpr:  '(' ')' TArrow '(' typeexprlist2.')' 
+	typeexprlist2:  typeexprlist2.',' typeexpr 
+
+	')'  shift 452
+	','  shift 453
+	.  error
+
+
+427: shift/reduce conflict (shift 454(0), red'n 212(0)) on ','
+state 427
+	typeexpr:  typeexpr.'|' simpletypeexpr 
+	typeexpr:  typeexpr.'&' simpletypeexpr 
+	typeexprlist2:  typeexpr.',' typeexpr 
+	funcparam:  typeexpr.    (212)
+
+	'|'  shift 248
+	'&'  shift 249
+	','  shift 454
+	.  reduce 212 (src line 1165)
+
+
+state 428
 	primarytypeexpr:  '(' funcparamlist ')' TArrow.'(' typeexprlist2 ')' 
 	primarytypeexpr:  '(' funcparamlist ')' TArrow.'(' ')' 
 	primarytypeexpr:  '(' funcparamlist ')' TArrow.typeexpr 
@@ -6891,14 +6933,14 @@ state 426
 	TNumber  shift 191
 	TString  shift 190
 	'{'  shift 193
-	'('  shift 452
+	'('  shift 455
 	.  error
 
-	typeexpr  goto 453
+	typeexpr  goto 456
 	simpletypeexpr  goto 185
 	primarytypeexpr  goto 186
 
-state 427
+state 429
 	primarytypeexpr:  '('.funcparamlist ')' TArrow '(' typeexprlist2 ')' 
 	primarytypeexpr:  '('.funcparamlist ')' TArrow '(' ')' 
 	primarytypeexpr:  '('.funcparamlist ')' TArrow typeexpr 
@@ -6931,32 +6973,32 @@ state 427
 	TString  shift 190
 	'{'  shift 193
 	'('  shift 276
-	')'  shift 454
+	')'  shift 457
 	.  error
 
-	typeexpr  goto 425
+	typeexpr  goto 427
 	simpletypeexpr  goto 185
 	primarytypeexpr  goto 186
-	typeexprlist2  goto 455
+	typeexprlist2  goto 458
 	funcparam  goto 277
 	funcparamlist  goto 274
 
-428: shift/reduce conflict (shift 456(0), red'n 176(0)) on ')'
-428: shift/reduce conflict (shift 248(4), red'n 176(0)) on '|'
-428: shift/reduce conflict (shift 249(6), red'n 176(0)) on '&'
-state 428
+430: shift/reduce conflict (shift 459(0), red'n 177(0)) on ')'
+430: shift/reduce conflict (shift 248(4), red'n 177(0)) on '|'
+430: shift/reduce conflict (shift 249(6), red'n 177(0)) on '&'
+state 430
 	typeexpr:  typeexpr.'|' simpletypeexpr 
 	typeexpr:  typeexpr.'&' simpletypeexpr 
-	primarytypeexpr:  '(' ')' TArrow typeexpr.    (176)
+	primarytypeexpr:  '(' ')' TArrow typeexpr.    (177)
 	primarytypeexpr:  '(' '(' ')' TArrow typeexpr.')' 
 
-	')'  shift 456
+	')'  shift 459
 	'|'  shift 248
 	'&'  shift 249
-	.  reduce 176 (src line 1012)
+	.  reduce 177 (src line 1019)
 
 
-state 429
+state 431
 	primarytypeexpr:  TFun '(' funcparamlist ')' ':'.typeexpr 
 	primarytypeexpr:  TFun '(' funcparamlist ')' ':'.'(' typeexprlist2 ')' 
 	primarytypeexpr:  TFun '(' funcparamlist ')' ':'.'(' ')' 
@@ -6974,26 +7016,26 @@ state 429
 	TNumber  shift 191
 	TString  shift 190
 	'{'  shift 193
-	'('  shift 458
+	'('  shift 461
 	.  error
 
-	typeexpr  goto 457
+	typeexpr  goto 460
 	simpletypeexpr  goto 185
 	primarytypeexpr  goto 186
 
-430: shift/reduce conflict (shift 248(4), red'n 186(0)) on '|'
-430: shift/reduce conflict (shift 249(6), red'n 186(0)) on '&'
-state 430
+432: shift/reduce conflict (shift 248(4), red'n 187(0)) on '|'
+432: shift/reduce conflict (shift 249(6), red'n 187(0)) on '&'
+state 432
 	typeexpr:  typeexpr.'|' simpletypeexpr 
 	typeexpr:  typeexpr.'&' simpletypeexpr 
-	primarytypeexpr:  TFun '(' ')' ':' typeexpr.    (186)
+	primarytypeexpr:  TFun '(' ')' ':' typeexpr.    (187)
 
 	'|'  shift 248
 	'&'  shift 249
-	.  reduce 186 (src line 1052)
+	.  reduce 187 (src line 1059)
 
 
-state 431
+state 433
 	primarytypeexpr:  '('.funcparamlist ')' TArrow '(' typeexprlist2 ')' 
 	primarytypeexpr:  '('.funcparamlist ')' TArrow '(' ')' 
 	primarytypeexpr:  '('.funcparamlist ')' TArrow typeexpr 
@@ -7024,30 +7066,30 @@ state 431
 	TString  shift 190
 	'{'  shift 193
 	'('  shift 276
-	')'  shift 459
+	')'  shift 462
 	.  error
 
-	typeexpr  goto 425
+	typeexpr  goto 427
 	simpletypeexpr  goto 185
 	primarytypeexpr  goto 186
-	typeexprlist2  goto 460
+	typeexprlist2  goto 463
 	funcparam  goto 277
 	funcparamlist  goto 274
 
-state 432
+state 434
 	primarytypeexpr:  TReadonly '{' '[' typeexpr ']'.':' typeexpr '}' 
 
-	':'  shift 461
+	':'  shift 464
 	.  error
 
 
-state 433
+state 435
 	funcbody:  '(' parlist ')' returntypeannot block TEnd.    (113)
 
 	.  reduce 113 (src line 743)
 
 
-state 434
+state 436
 	returntypeannot:  ':' '(' typeexpr ','.typeexprlist ')' 
 
 	TFalse  shift 189
@@ -7069,9 +7111,9 @@ state 434
 	typeexpr  goto 318
 	simpletypeexpr  goto 185
 	primarytypeexpr  goto 186
-	typeexprlist  goto 462
+	typeexprlist  goto 465
 
-state 435
+state 437
 	parlist:  typednamelist ',' T3Comma ':' typeexpr.    (121)
 	typeexpr:  typeexpr.'|' simpletypeexpr 
 	typeexpr:  typeexpr.'&' simpletypeexpr 
@@ -7081,26 +7123,26 @@ state 435
 	.  reduce 121 (src line 779)
 
 
-state 436
+state 438
 	funcbody:  typeparams '(' parlist ')' returntypeannot block.TEnd 
 
-	TEnd  shift 463
+	TEnd  shift 466
 	.  error
 
 
-state 437
+state 439
 	funcbody:  typeparams '(' ')' returntypeannot block TEnd.    (116)
 
 	.  reduce 116 (src line 758)
 
 
-state 438
+state 440
 	stat:  TIf expr TThen block elseifs TElse block TEnd.    (14)
 
 	.  reduce 14 (src line 239)
 
 
-state 439
+state 441
 	elseifs:  elseifs TElseIf expr TThen.block 
 	chunk1: .    (4)
 
@@ -7108,16 +7150,16 @@ state 439
 
 	chunk  goto 56
 	chunk1  goto 2
-	block  goto 464
+	block  goto 467
 
-state 440
+state 442
 	stat:  TFor TIdent '=' expr ',' expr TDo block.TEnd 
 
-	TEnd  shift 465
+	TEnd  shift 468
 	.  error
 
 
-state 441
+state 443
 	stat:  TFor TIdent '=' expr ',' expr ',' expr.TDo block TEnd 
 	expr:  expr.TOr expr 
 	expr:  expr.TAnd expr 
@@ -7145,7 +7187,7 @@ state 441
 	expr:  expr.TBang 
 
 	TAnd  shift 76
-	TDo  shift 466
+	TDo  shift 469
 	TOr  shift 75
 	TAs  shift 96
 	TEqeq  shift 81
@@ -7172,91 +7214,26 @@ state 441
 	.  error
 
 
-state 442
+state 444
 	interfacemethod:  TFunction TIdent '(' ')'.returntypeannot 
 	returntypeannot: .    (150)
 
 	':'  shift 289
 	.  reduce 150 (src line 890)
 
-	returntypeannot  goto 467
+	returntypeannot  goto 470
 
-state 443
+state 445
 	typednamelist:  typednamelist.',' typedname 
 	interfacemethod:  TFunction TIdent '(' typednamelist.')' returntypeannot 
 
-	')'  shift 468
+	')'  shift 471
 	','  shift 154
 	.  error
 
 
-state 444
-	typeexpr:  simpletypeexpr TExtends simpletypeexpr TQuestion typeexpr ':'.typeexpr 
-
-	TFalse  shift 189
-	TNil  shift 187
-	TTrue  shift 188
-	TInterface  shift 196
-	TReadonly  shift 197
-	TAsserts  shift 198
-	TTypeof  shift 199
-	TKeyof  shift 200
-	TFun  shift 195
-	TIdent  shift 192
-	TNumber  shift 191
-	TString  shift 190
-	'{'  shift 193
-	'('  shift 194
-	.  error
-
-	typeexpr  goto 469
-	simpletypeexpr  goto 185
-	primarytypeexpr  goto 186
-
-state 445
-	annotation:  '@' TIdent '(' exprlist ')'.    (231)
-
-	.  reduce 231 (src line 1228)
-
-
 state 446
-	typeexpr:  typeexpr.'|' simpletypeexpr 
-	typeexpr:  typeexpr.'&' simpletypeexpr 
-	primarytypeexpr:  '{' '[' typeexpr ']' ':' typeexpr.'}' 
-
-	'}'  shift 470
-	'|'  shift 248
-	'&'  shift 249
-	.  error
-
-
-state 447
-	primarytypeexpr:  '(' funcparamlist ')' TArrow '(' typeexprlist2.')' 
-	typeexprlist2:  typeexprlist2.',' typeexpr 
-
-	')'  shift 471
-	','  shift 450
-	.  error
-
-
-state 448
-	primarytypeexpr:  '(' funcparamlist ')' TArrow '(' ')'.    (173)
-	primarytypeexpr:  '(' ')'.TArrow '(' typeexprlist2 ')' 
-	primarytypeexpr:  '(' ')'.TArrow typeexpr 
-	primarytypeexpr:  '(' ')'.TArrow '(' ')' 
-
-	TArrow  shift 329
-	.  reduce 173 (src line 1000)
-
-
-state 449
-	primarytypeexpr:  '(' ')' TArrow '(' typeexprlist2 ')'.    (175)
-
-	.  reduce 175 (src line 1008)
-
-
-state 450
-	typeexprlist2:  typeexprlist2 ','.typeexpr 
+	typeexpr:  simpletypeexpr TExtends simpletypeexpr TQuestion typeexpr ':'.typeexpr 
 
 	TFalse  shift 189
 	TNil  shift 187
@@ -7278,7 +7255,78 @@ state 450
 	simpletypeexpr  goto 185
 	primarytypeexpr  goto 186
 
+state 447
+	annotation:  '@' TIdent '(' exprlist ')'.    (232)
+
+	.  reduce 232 (src line 1235)
+
+
+state 448
+	primarytypeexpr:  TIdent '.' TIdent '<' typeexprlist closegt.    (169)
+
+	.  reduce 169 (src line 984)
+
+
+state 449
+	typeexpr:  typeexpr.'|' simpletypeexpr 
+	typeexpr:  typeexpr.'&' simpletypeexpr 
+	primarytypeexpr:  '{' '[' typeexpr ']' ':' typeexpr.'}' 
+
+	'}'  shift 473
+	'|'  shift 248
+	'&'  shift 249
+	.  error
+
+
+state 450
+	primarytypeexpr:  '(' funcparamlist ')' TArrow '(' typeexprlist2.')' 
+	typeexprlist2:  typeexprlist2.',' typeexpr 
+
+	')'  shift 474
+	','  shift 453
+	.  error
+
+
 state 451
+	primarytypeexpr:  '(' funcparamlist ')' TArrow '(' ')'.    (174)
+	primarytypeexpr:  '(' ')'.TArrow '(' typeexprlist2 ')' 
+	primarytypeexpr:  '(' ')'.TArrow typeexpr 
+	primarytypeexpr:  '(' ')'.TArrow '(' ')' 
+
+	TArrow  shift 329
+	.  reduce 174 (src line 1007)
+
+
+state 452
+	primarytypeexpr:  '(' ')' TArrow '(' typeexprlist2 ')'.    (176)
+
+	.  reduce 176 (src line 1015)
+
+
+state 453
+	typeexprlist2:  typeexprlist2 ','.typeexpr 
+
+	TFalse  shift 189
+	TNil  shift 187
+	TTrue  shift 188
+	TInterface  shift 196
+	TReadonly  shift 197
+	TAsserts  shift 198
+	TTypeof  shift 199
+	TKeyof  shift 200
+	TFun  shift 195
+	TIdent  shift 192
+	TNumber  shift 191
+	TString  shift 190
+	'{'  shift 193
+	'('  shift 194
+	.  error
+
+	typeexpr  goto 475
+	simpletypeexpr  goto 185
+	primarytypeexpr  goto 186
+
+state 454
 	typeexprlist2:  typeexpr ','.typeexpr 
 
 	TFalse  shift 189
@@ -7297,11 +7345,11 @@ state 451
 	'('  shift 194
 	.  error
 
-	typeexpr  goto 473
+	typeexpr  goto 476
 	simpletypeexpr  goto 185
 	primarytypeexpr  goto 186
 
-state 452
+state 455
 	primarytypeexpr:  '('.funcparamlist ')' TArrow '(' typeexprlist2 ')' 
 	primarytypeexpr:  '(' funcparamlist ')' TArrow '('.typeexprlist2 ')' 
 	primarytypeexpr:  '('.funcparamlist ')' TArrow '(' ')' 
@@ -7334,73 +7382,73 @@ state 452
 	TString  shift 190
 	'{'  shift 193
 	'('  shift 276
-	')'  shift 475
+	')'  shift 478
 	.  error
 
-	typeexpr  goto 425
+	typeexpr  goto 427
 	simpletypeexpr  goto 185
 	primarytypeexpr  goto 186
-	typeexprlist2  goto 474
+	typeexprlist2  goto 477
 	funcparam  goto 277
 	funcparamlist  goto 274
 
-453: shift/reduce conflict (shift 476(0), red'n 174(0)) on ')'
-453: shift/reduce conflict (shift 248(4), red'n 174(0)) on '|'
-453: shift/reduce conflict (shift 249(6), red'n 174(0)) on '&'
-state 453
+456: shift/reduce conflict (shift 479(0), red'n 175(0)) on ')'
+456: shift/reduce conflict (shift 248(4), red'n 175(0)) on '|'
+456: shift/reduce conflict (shift 249(6), red'n 175(0)) on '&'
+state 456
 	typeexpr:  typeexpr.'|' simpletypeexpr 
 	typeexpr:  typeexpr.'&' simpletypeexpr 
-	primarytypeexpr:  '(' funcparamlist ')' TArrow typeexpr.    (174)
+	primarytypeexpr:  '(' funcparamlist ')' TArrow typeexpr.    (175)
 	primarytypeexpr:  '(' '(' funcparamlist ')' TArrow typeexpr.')' 
 
-	')'  shift 476
+	')'  shift 479
 	'|'  shift 248
 	'&'  shift 249
-	.  reduce 174 (src line 1004)
+	.  reduce 175 (src line 1011)
 
 
-454: shift/reduce conflict (shift 477(0), red'n 177(0)) on ')'
-state 454
+457: shift/reduce conflict (shift 480(0), red'n 178(0)) on ')'
+state 457
 	primarytypeexpr:  '(' ')'.TArrow '(' typeexprlist2 ')' 
 	primarytypeexpr:  '(' ')'.TArrow typeexpr 
 	primarytypeexpr:  '(' ')'.TArrow '(' ')' 
-	primarytypeexpr:  '(' ')' TArrow '(' ')'.    (177)
+	primarytypeexpr:  '(' ')' TArrow '(' ')'.    (178)
 	primarytypeexpr:  '(' '(' ')' TArrow '(' ')'.')' 
 
-	')'  shift 477
+	')'  shift 480
 	TArrow  shift 329
-	.  reduce 177 (src line 1016)
+	.  reduce 178 (src line 1023)
 
 
-state 455
+state 458
 	primarytypeexpr:  '(' ')' TArrow '(' typeexprlist2.')' 
 	primarytypeexpr:  '(' '(' ')' TArrow '(' typeexprlist2.')' ')' 
 	typeexprlist2:  typeexprlist2.',' typeexpr 
 
-	')'  shift 478
-	','  shift 450
+	')'  shift 481
+	','  shift 453
 	.  error
 
 
-state 456
-	primarytypeexpr:  '(' '(' ')' TArrow typeexpr ')'.    (179)
+state 459
+	primarytypeexpr:  '(' '(' ')' TArrow typeexpr ')'.    (180)
 
-	.  reduce 179 (src line 1024)
+	.  reduce 180 (src line 1031)
 
 
-457: shift/reduce conflict (shift 248(4), red'n 184(0)) on '|'
-457: shift/reduce conflict (shift 249(6), red'n 184(0)) on '&'
-state 457
+460: shift/reduce conflict (shift 248(4), red'n 185(0)) on '|'
+460: shift/reduce conflict (shift 249(6), red'n 185(0)) on '&'
+state 460
 	typeexpr:  typeexpr.'|' simpletypeexpr 
 	typeexpr:  typeexpr.'&' simpletypeexpr 
-	primarytypeexpr:  TFun '(' funcparamlist ')' ':' typeexpr.    (184)
+	primarytypeexpr:  TFun '(' funcparamlist ')' ':' typeexpr.    (185)
 
 	'|'  shift 248
 	'&'  shift 249
-	.  reduce 184 (src line 1044)
+	.  reduce 185 (src line 1051)
 
 
-state 458
+state 461
 	primarytypeexpr:  '('.funcparamlist ')' TArrow '(' typeexprlist2 ')' 
 	primarytypeexpr:  '('.funcparamlist ')' TArrow '(' ')' 
 	primarytypeexpr:  '('.funcparamlist ')' TArrow typeexpr 
@@ -7431,36 +7479,36 @@ state 458
 	TString  shift 190
 	'{'  shift 193
 	'('  shift 276
-	')'  shift 479
+	')'  shift 482
 	.  error
 
-	typeexpr  goto 425
+	typeexpr  goto 427
 	simpletypeexpr  goto 185
 	primarytypeexpr  goto 186
-	typeexprlist2  goto 480
+	typeexprlist2  goto 483
 	funcparam  goto 277
 	funcparamlist  goto 274
 
-state 459
+state 462
 	primarytypeexpr:  '(' ')'.TArrow '(' typeexprlist2 ')' 
 	primarytypeexpr:  '(' ')'.TArrow typeexpr 
 	primarytypeexpr:  '(' ')'.TArrow '(' ')' 
-	primarytypeexpr:  TFun '(' ')' ':' '(' ')'.    (189)
+	primarytypeexpr:  TFun '(' ')' ':' '(' ')'.    (190)
 
 	TArrow  shift 329
-	.  reduce 189 (src line 1064)
+	.  reduce 190 (src line 1071)
 
 
-state 460
+state 463
 	primarytypeexpr:  TFun '(' ')' ':' '(' typeexprlist2.')' 
 	typeexprlist2:  typeexprlist2.',' typeexpr 
 
-	')'  shift 481
-	','  shift 450
+	')'  shift 484
+	','  shift 453
 	.  error
 
 
-state 461
+state 464
 	primarytypeexpr:  TReadonly '{' '[' typeexpr ']' ':'.typeexpr '}' 
 
 	TFalse  shift 189
@@ -7479,38 +7527,38 @@ state 461
 	'('  shift 194
 	.  error
 
-	typeexpr  goto 482
+	typeexpr  goto 485
 	simpletypeexpr  goto 185
 	primarytypeexpr  goto 186
 
-state 462
+state 465
 	returntypeannot:  ':' '(' typeexpr ',' typeexprlist.')' 
 	typeexprlist:  typeexprlist.',' typeexpr 
 
-	')'  shift 483
-	','  shift 371
+	')'  shift 486
+	','  shift 372
 	.  error
 
 
-state 463
+state 466
 	funcbody:  typeparams '(' parlist ')' returntypeannot block TEnd.    (115)
 
 	.  reduce 115 (src line 753)
 
 
-state 464
+state 467
 	elseifs:  elseifs TElseIf expr TThen block.    (28)
 
 	.  reduce 28 (src line 318)
 
 
-state 465
+state 468
 	stat:  TFor TIdent '=' expr ',' expr TDo block TEnd.    (15)
 
 	.  reduce 15 (src line 250)
 
 
-state 466
+state 469
 	stat:  TFor TIdent '=' expr ',' expr ',' expr TDo.block TEnd 
 	chunk1: .    (4)
 
@@ -7518,26 +7566,26 @@ state 466
 
 	chunk  goto 56
 	chunk1  goto 2
-	block  goto 484
+	block  goto 487
 
-state 467
-	interfacemethod:  TFunction TIdent '(' ')' returntypeannot.    (246)
+state 470
+	interfacemethod:  TFunction TIdent '(' ')' returntypeannot.    (247)
 
-	.  reduce 246 (src line 1289)
+	.  reduce 247 (src line 1296)
 
 
-state 468
+state 471
 	interfacemethod:  TFunction TIdent '(' typednamelist ')'.returntypeannot 
 	returntypeannot: .    (150)
 
 	':'  shift 289
 	.  reduce 150 (src line 890)
 
-	returntypeannot  goto 485
+	returntypeannot  goto 488
 
-469: shift/reduce conflict (shift 248(4), red'n 157(0)) on '|'
-469: shift/reduce conflict (shift 249(6), red'n 157(0)) on '&'
-state 469
+472: shift/reduce conflict (shift 248(4), red'n 157(0)) on '|'
+472: shift/reduce conflict (shift 249(6), red'n 157(0)) on '&'
+state 472
 	typeexpr:  typeexpr.'|' simpletypeexpr 
 	typeexpr:  typeexpr.'&' simpletypeexpr 
 	typeexpr:  simpletypeexpr TExtends simpletypeexpr TQuestion typeexpr ':' typeexpr.    (157)
@@ -7547,191 +7595,191 @@ state 469
 	.  reduce 157 (src line 923)
 
 
-state 470
-	primarytypeexpr:  '{' '[' typeexpr ']' ':' typeexpr '}'.    (170)
-
-	.  reduce 170 (src line 988)
-
-
-state 471
-	primarytypeexpr:  '(' funcparamlist ')' TArrow '(' typeexprlist2 ')'.    (172)
-
-	.  reduce 172 (src line 996)
-
-
-state 472
-	typeexpr:  typeexpr.'|' simpletypeexpr 
-	typeexpr:  typeexpr.'&' simpletypeexpr 
-	typeexprlist2:  typeexprlist2 ',' typeexpr.    (207)
-
-	'|'  shift 248
-	'&'  shift 249
-	.  reduce 207 (src line 1139)
-
-
 state 473
-	typeexpr:  typeexpr.'|' simpletypeexpr 
-	typeexpr:  typeexpr.'&' simpletypeexpr 
-	typeexprlist2:  typeexpr ',' typeexpr.    (206)
+	primarytypeexpr:  '{' '[' typeexpr ']' ':' typeexpr '}'.    (171)
 
-	'|'  shift 248
-	'&'  shift 249
-	.  reduce 206 (src line 1136)
+	.  reduce 171 (src line 995)
 
 
 state 474
+	primarytypeexpr:  '(' funcparamlist ')' TArrow '(' typeexprlist2 ')'.    (173)
+
+	.  reduce 173 (src line 1003)
+
+
+state 475
+	typeexpr:  typeexpr.'|' simpletypeexpr 
+	typeexpr:  typeexpr.'&' simpletypeexpr 
+	typeexprlist2:  typeexprlist2 ',' typeexpr.    (208)
+
+	'|'  shift 248
+	'&'  shift 249
+	.  reduce 208 (src line 1146)
+
+
+state 476
+	typeexpr:  typeexpr.'|' simpletypeexpr 
+	typeexpr:  typeexpr.'&' simpletypeexpr 
+	typeexprlist2:  typeexpr ',' typeexpr.    (207)
+
+	'|'  shift 248
+	'&'  shift 249
+	.  reduce 207 (src line 1143)
+
+
+state 477
 	primarytypeexpr:  '(' funcparamlist ')' TArrow '(' typeexprlist2.')' 
 	primarytypeexpr:  '(' '(' funcparamlist ')' TArrow '(' typeexprlist2.')' ')' 
 	typeexprlist2:  typeexprlist2.',' typeexpr 
 
-	')'  shift 486
-	','  shift 450
+	')'  shift 489
+	','  shift 453
 	.  error
 
 
-475: shift/reduce conflict (shift 487(0), red'n 173(0)) on ')'
-state 475
-	primarytypeexpr:  '(' funcparamlist ')' TArrow '(' ')'.    (173)
+478: shift/reduce conflict (shift 490(0), red'n 174(0)) on ')'
+state 478
+	primarytypeexpr:  '(' funcparamlist ')' TArrow '(' ')'.    (174)
 	primarytypeexpr:  '(' ')'.TArrow '(' typeexprlist2 ')' 
 	primarytypeexpr:  '(' ')'.TArrow typeexpr 
 	primarytypeexpr:  '(' ')'.TArrow '(' ')' 
 	primarytypeexpr:  '(' '(' funcparamlist ')' TArrow '(' ')'.')' 
 
-	')'  shift 487
+	')'  shift 490
 	TArrow  shift 329
-	.  reduce 173 (src line 1000)
-
-
-state 476
-	primarytypeexpr:  '(' '(' funcparamlist ')' TArrow typeexpr ')'.    (178)
-
-	.  reduce 178 (src line 1020)
-
-
-state 477
-	primarytypeexpr:  '(' '(' ')' TArrow '(' ')' ')'.    (183)
-
-	.  reduce 183 (src line 1040)
-
-
-478: shift/reduce conflict (shift 488(0), red'n 175(0)) on ')'
-state 478
-	primarytypeexpr:  '(' ')' TArrow '(' typeexprlist2 ')'.    (175)
-	primarytypeexpr:  '(' '(' ')' TArrow '(' typeexprlist2 ')'.')' 
-
-	')'  shift 488
-	.  reduce 175 (src line 1008)
+	.  reduce 174 (src line 1007)
 
 
 state 479
-	primarytypeexpr:  '(' ')'.TArrow '(' typeexprlist2 ')' 
-	primarytypeexpr:  '(' ')'.TArrow typeexpr 
-	primarytypeexpr:  '(' ')'.TArrow '(' ')' 
-	primarytypeexpr:  TFun '(' funcparamlist ')' ':' '(' ')'.    (188)
+	primarytypeexpr:  '(' '(' funcparamlist ')' TArrow typeexpr ')'.    (179)
 
-	TArrow  shift 329
-	.  reduce 188 (src line 1060)
+	.  reduce 179 (src line 1027)
 
 
 state 480
-	primarytypeexpr:  TFun '(' funcparamlist ')' ':' '(' typeexprlist2.')' 
-	typeexprlist2:  typeexprlist2.',' typeexpr 
+	primarytypeexpr:  '(' '(' ')' TArrow '(' ')' ')'.    (184)
 
-	')'  shift 489
-	','  shift 450
-	.  error
+	.  reduce 184 (src line 1047)
 
 
+481: shift/reduce conflict (shift 491(0), red'n 176(0)) on ')'
 state 481
-	primarytypeexpr:  TFun '(' ')' ':' '(' typeexprlist2 ')'.    (187)
+	primarytypeexpr:  '(' ')' TArrow '(' typeexprlist2 ')'.    (176)
+	primarytypeexpr:  '(' '(' ')' TArrow '(' typeexprlist2 ')'.')' 
 
-	.  reduce 187 (src line 1056)
+	')'  shift 491
+	.  reduce 176 (src line 1015)
 
 
 state 482
+	primarytypeexpr:  '(' ')'.TArrow '(' typeexprlist2 ')' 
+	primarytypeexpr:  '(' ')'.TArrow typeexpr 
+	primarytypeexpr:  '(' ')'.TArrow '(' ')' 
+	primarytypeexpr:  TFun '(' funcparamlist ')' ':' '(' ')'.    (189)
+
+	TArrow  shift 329
+	.  reduce 189 (src line 1067)
+
+
+state 483
+	primarytypeexpr:  TFun '(' funcparamlist ')' ':' '(' typeexprlist2.')' 
+	typeexprlist2:  typeexprlist2.',' typeexpr 
+
+	')'  shift 492
+	','  shift 453
+	.  error
+
+
+state 484
+	primarytypeexpr:  TFun '(' ')' ':' '(' typeexprlist2 ')'.    (188)
+
+	.  reduce 188 (src line 1063)
+
+
+state 485
 	typeexpr:  typeexpr.'|' simpletypeexpr 
 	typeexpr:  typeexpr.'&' simpletypeexpr 
 	primarytypeexpr:  TReadonly '{' '[' typeexpr ']' ':' typeexpr.'}' 
 
-	'}'  shift 490
+	'}'  shift 493
 	'|'  shift 248
 	'&'  shift 249
 	.  error
 
 
-state 483
+state 486
 	returntypeannot:  ':' '(' typeexpr ',' typeexprlist ')'.    (153)
 
 	.  reduce 153 (src line 899)
 
 
-state 484
+state 487
 	stat:  TFor TIdent '=' expr ',' expr ',' expr TDo block.TEnd 
 
-	TEnd  shift 491
+	TEnd  shift 494
 	.  error
 
 
-state 485
-	interfacemethod:  TFunction TIdent '(' typednamelist ')' returntypeannot.    (247)
+state 488
+	interfacemethod:  TFunction TIdent '(' typednamelist ')' returntypeannot.    (248)
 
-	.  reduce 247 (src line 1295)
+	.  reduce 248 (src line 1302)
 
 
-486: shift/reduce conflict (shift 492(0), red'n 172(0)) on ')'
-state 486
-	primarytypeexpr:  '(' funcparamlist ')' TArrow '(' typeexprlist2 ')'.    (172)
+489: shift/reduce conflict (shift 495(0), red'n 173(0)) on ')'
+state 489
+	primarytypeexpr:  '(' funcparamlist ')' TArrow '(' typeexprlist2 ')'.    (173)
 	primarytypeexpr:  '(' '(' funcparamlist ')' TArrow '(' typeexprlist2 ')'.')' 
 
-	')'  shift 492
-	.  reduce 172 (src line 996)
-
-
-state 487
-	primarytypeexpr:  '(' '(' funcparamlist ')' TArrow '(' ')' ')'.    (181)
-
-	.  reduce 181 (src line 1032)
-
-
-state 488
-	primarytypeexpr:  '(' '(' ')' TArrow '(' typeexprlist2 ')' ')'.    (182)
-
-	.  reduce 182 (src line 1036)
-
-
-state 489
-	primarytypeexpr:  TFun '(' funcparamlist ')' ':' '(' typeexprlist2 ')'.    (185)
-
-	.  reduce 185 (src line 1048)
+	')'  shift 495
+	.  reduce 173 (src line 1003)
 
 
 state 490
-	primarytypeexpr:  TReadonly '{' '[' typeexpr ']' ':' typeexpr '}'.    (196)
+	primarytypeexpr:  '(' '(' funcparamlist ')' TArrow '(' ')' ')'.    (182)
 
-	.  reduce 196 (src line 1093)
+	.  reduce 182 (src line 1039)
 
 
 state 491
+	primarytypeexpr:  '(' '(' ')' TArrow '(' typeexprlist2 ')' ')'.    (183)
+
+	.  reduce 183 (src line 1043)
+
+
+state 492
+	primarytypeexpr:  TFun '(' funcparamlist ')' ':' '(' typeexprlist2 ')'.    (186)
+
+	.  reduce 186 (src line 1055)
+
+
+state 493
+	primarytypeexpr:  TReadonly '{' '[' typeexpr ']' ':' typeexpr '}'.    (197)
+
+	.  reduce 197 (src line 1100)
+
+
+state 494
 	stat:  TFor TIdent '=' expr ',' expr ',' expr TDo block TEnd.    (16)
 
 	.  reduce 16 (src line 255)
 
 
-state 492
-	primarytypeexpr:  '(' '(' funcparamlist ')' TArrow '(' typeexprlist2 ')' ')'.    (180)
+state 495
+	primarytypeexpr:  '(' '(' funcparamlist ')' TArrow '(' typeexprlist2 ')' ')'.    (181)
 
-	.  reduce 180 (src line 1028)
+	.  reduce 181 (src line 1035)
 
 
 78 terminals, 49 nonterminals
-248 grammar rules, 493/16000 states
-39 shift/reduce, 0 reduce/reduce conflicts reported
+249 grammar rules, 496/16000 states
+40 shift/reduce, 0 reduce/reduce conflicts reported
 98 working sets used
-memory: parser 806/240000
-361 extra closures
-2478 shift entries, 6 exceptions
-222 goto entries
-493 entries saved by goto default
-Optimizer space used: output 1912/240000
-1912 table entries, 586 zero
-maximum spread: 78, maximum offset: 468
+memory: parser 810/240000
+364 extra closures
+2496 shift entries, 6 exceptions
+225 goto entries
+495 entries saved by goto default
+Optimizer space used: output 1937/240000
+1937 table entries, 607 zero
+maximum spread: 78, maximum offset: 471

@@ -3,24 +3,22 @@ package returns
 import (
 	"github.com/wippyai/go-lua/compiler/cfg"
 	"github.com/wippyai/go-lua/compiler/check/api"
+	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
 // FactsEqual checks if two interproc fact bundles are equal.
 func FactsEqual(a, b api.Facts) bool {
-	if !FunctionFactsEqual(canonicalFunctionFacts(a), canonicalFunctionFacts(b)) {
-		return false
-	}
 	if !symbolTypeVectorMapEqual(a.ParamHints, b.ParamHints) {
 		return false
 	}
-	if !LiteralSigsEqual(a.LiteralSigs, b.LiteralSigs) {
+	if !CallablesEqual(a.Callables, b.Callables) {
 		return false
 	}
 	if !symbolTypeMapEqual(a.CapturedTypes, b.CapturedTypes) {
 		return false
 	}
-	if !CapturedFieldAssignsEqual(a.CapturedFields, b.CapturedFields) {
+	if !FieldWritesEqual(a.FieldWrites, b.FieldWrites) {
 		return false
 	}
 	if !CapturedContainerMutationsEqual(a.CapturedContainers, b.CapturedContainers) {
@@ -32,42 +30,28 @@ func FactsEqual(a, b api.Facts) bool {
 	return true
 }
 
-// FunctionFactsEqual checks if two canonical function-fact maps are equal.
-func FunctionFactsEqual(a, b api.FunctionFacts) bool {
+// CallablesEqual checks facts keyed by function literal.
+func CallablesEqual(a, b api.Callables) bool {
 	if len(a) != len(b) {
 		return false
 	}
-	for _, sym := range cfg.SortedSymbolIDs(a) {
-		af := a[sym]
-		bf, ok := b[sym]
-		if !ok {
-			return false
-		}
-		if !ReturnTypesEqual(af.Summary, bf.Summary) {
-			return false
-		}
-		if !ReturnTypesEqual(af.Narrow, bf.Narrow) {
-			return false
-		}
-		if !typ.TypeEquals(af.Func, bf.Func) {
+	for fn, fact := range a {
+		other, ok := b[fn]
+		if !ok || !callableTypeEqual(fact.Sig, other.Sig) || !ReturnTypesEqual(fact.Summary, other.Summary) || !ReturnTypesEqual(fact.Narrow, other.Narrow) || !callableTypeEqual(fact.Func, other.Func) {
 			return false
 		}
 	}
 	return true
 }
 
-// LiteralSigsEqual checks if two literal signature maps are equal.
-func LiteralSigsEqual(a, b api.LiteralSigs) bool {
-	if len(a) != len(b) {
+// Structural type equality deliberately ignores callable contracts, but a
+// newly inferred contract changes how callers narrow the function's results.
+func callableTypeEqual(a, b typ.Type) bool {
+	if !typ.TypeEquals(a, b) {
 		return false
 	}
-	for fn, sig := range a {
-		other, ok := b[fn]
-		if !ok || !typ.TypeEquals(sig, other) {
-			return false
-		}
-	}
-	return true
+	left, right := contract.ExtractSpec(a), contract.ExtractSpec(b)
+	return left.Equals(right)
 }
 
 func symbolTypeVectorMapEqual(a map[cfg.SymbolID][]typ.Type, b map[cfg.SymbolID][]typ.Type) bool {
@@ -98,8 +82,8 @@ func symbolTypeMapEqual(a map[cfg.SymbolID]typ.Type, b map[cfg.SymbolID]typ.Type
 	return true
 }
 
-// CapturedFieldAssignsEqual checks if two captured field assignment maps are equal.
-func CapturedFieldAssignsEqual(a, b api.CapturedFieldAssigns) bool {
+// FieldWritesEqual checks if two field-write maps are equal.
+func FieldWritesEqual(a, b api.FieldWrites) bool {
 	if len(a) != len(b) {
 		return false
 	}
@@ -115,8 +99,8 @@ func CapturedFieldAssignsEqual(a, b api.CapturedFieldAssigns) bool {
 			if len(fields) != len(otherFields) {
 				return false
 			}
-			for _, name := range cfg.SortedFieldNames(fields) {
-				if !typ.TypeEquals(fields[name], otherFields[name]) {
+			for _, key := range api.SortedFieldWriteKeys(fields) {
+				if !typ.TypeEquals(fields[key], otherFields[key]) {
 					return false
 				}
 			}

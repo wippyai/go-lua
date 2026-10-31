@@ -48,6 +48,9 @@ type FuncResult struct {
 	// Provides reachability conditions and exclusion facts for narrowing.
 	FlowSolution *flow.Solution
 
+	// Conditions extracts the same truthy and falsy facts used for CFG edges.
+	Conditions ConditionFromExprFunc
+
 	// FnRefinement captures the function's inferred refinement summary.
 	// It includes propagated effect rows and branch-specific narrowing facts.
 	FnRefinement *constraint.FunctionRefinement

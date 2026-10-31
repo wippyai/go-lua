@@ -1,0 +1,1 @@
+{"description":"Full registry HubSpot association pull test and source with list callback capture","files":["component.lua","api.lua","config.lua","types.lua","transport.lua","association_batch.lua","data_error.lua","time.lua","ctx.lua","json.lua","test.lua","conformance.lua","source.lua","main.lua"],"check":{"errors":0}}

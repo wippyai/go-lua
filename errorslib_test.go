@@ -699,3 +699,19 @@ func TestErrorConcatMeta(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestAssertRaisesErrorMessageValue(t *testing.T) {
+	L := setupErrorsTest(t)
+	defer L.Close()
+
+	if err := L.DoString(`
+		local e = errors.new({message = "missing", kind = errors.NOT_FOUND})
+		local ok, raised = pcall(assert, nil, e)
+		assert(not ok, "assert must fail")
+		assert(type(raised) == "userdata", "expected the Error value, got: " .. tostring(raised))
+		assert(raised:kind() == errors.NOT_FOUND, "kind must survive assert")
+		assert(tostring(raised) == "missing", "message must survive assert")
+	`); err != nil {
+		t.Fatalf("test failed: %v", err)
+	}
+}

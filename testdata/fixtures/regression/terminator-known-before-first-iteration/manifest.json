@@ -1,0 +1,5 @@
+{
+  "description": "A function every path of which ends in error() is known never to return before the first fixpoint iteration, so a caller guarded by it returns a present value in every iteration (crm app:value_store_bench open_db).",
+  "files": ["sql.lua", "main.lua"],
+  "check": {"errors": 0}
+}

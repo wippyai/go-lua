@@ -1,0 +1,1 @@
+{"description":"A closure called before its captured module field is initialized must still report the nil field","check":{"errors":1}}

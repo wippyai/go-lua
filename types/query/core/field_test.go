@@ -14,6 +14,10 @@ func TestField(t *testing.T) {
 	recWithOpt := typ.NewRecord().
 		OptField("name", typ.String).
 		Build()
+	recWithInferredPresence := typ.NewRecord().
+		AddField(typ.Field{Name: "name", Type: typ.String, Optional: true, InferredPresence: true}).
+		AddField(typ.Field{Name: "declared_value", Type: typ.NewOptional(typ.String), Optional: true, InferredPresence: true}).
+		Build()
 
 	iface := typ.NewInterface("Reader", []typ.Method{
 		{Name: "read", Type: typ.Func().Param("n", typ.Integer).Returns(typ.String).Build()},
@@ -32,10 +36,16 @@ func TestField(t *testing.T) {
 		{"record optional field", recWithOpt, "name", true, func(t typ.Type) bool {
 			return typ.TypeEquals(t, typ.NewOptional(typ.String))
 		}},
+		{"inferred presence keeps the written type", recWithInferredPresence, "name", true, func(t typ.Type) bool {
+			return typ.TypeEquals(t, typ.String)
+		}},
+		{"inferred presence preserves a nilable value", recWithInferredPresence, "declared_value", true, func(t typ.Type) bool {
+			return typ.TypeEquals(t, typ.NewOptional(typ.String))
+		}},
 		{"record missing field", rec, "missing", false, nil},
 		{"interface method", iface, "read", true, func(t typ.Type) bool { return t.Kind() == typ.String.Kind() || true }},
 		{"interface missing", iface, "write", false, nil},
-		{"builtin table marker", typ.NewInterface("table", nil), "anything", true, func(t typ.Type) bool { return t == typ.Unknown }},
+		{"builtin table marker", typ.NewInterface("table", nil), "anything", true, func(t typ.Type) bool { return t == typ.Any }},
 		{"any type", typ.Any, "anything", true, func(t typ.Type) bool { return t == typ.Any }},
 		{"unknown type", typ.Unknown, "anything", true, func(t typ.Type) bool { return t == typ.Unknown }},
 		{"never type", typ.Never, "anything", true, func(t typ.Type) bool { return t == typ.Never }},
@@ -91,6 +101,34 @@ func TestFieldUnion(t *testing.T) {
 			t.Error("expected not to find field in empty union")
 		}
 	})
+}
+
+func TestFieldUnionWithBuiltinTableTop(t *testing.T) {
+	for _, top := range []typ.Type{typ.NewInterface("table", nil), typ.NewRef("", "table")} {
+		union := typ.NewUnion(top, typ.NewRecord().Build())
+		got, ok := Field(union, "dynamic")
+		if !ok || !typ.IsAny(got) {
+			t.Fatalf("field of %v | {} = %v, %v; want dynamic any", top, got, ok)
+		}
+	}
+}
+
+func TestFieldUnionWithNilMember(t *testing.T) {
+	rec := typ.NewRecord().Field("value", typ.String).Build()
+	other := typ.NewRecord().Field("other", typ.Integer).Build()
+	for _, member := range []typ.Type{other, typ.Boolean} {
+		got, ok := Field(typ.NewUnion(typ.Nil, rec, member), "value")
+		if !ok || !typ.TypeEquals(got, typ.NewOptional(typ.String)) {
+			t.Fatalf("field of nil | %v | %v = %v, %v; want string?", rec, member, got, ok)
+		}
+	}
+
+	if _, ok := Field(typ.NewUnion(rec, typ.Boolean), "value"); ok {
+		t.Fatal("non-nil primitive branch must still reject the field")
+	}
+	if _, ok := Field(typ.NewUnion(typ.Nil, other, typ.Boolean), "value"); ok {
+		t.Fatal("nil-bearing union without the field must still reject it")
+	}
 }
 
 func TestFieldIntersection(t *testing.T) {

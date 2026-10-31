@@ -28,6 +28,41 @@ func TestDetectKeysCollector_NilFunction(t *testing.T) {
 	}
 }
 
+func TestDetectKeysCollector_ShadowedPairs(t *testing.T) {
+	body, err := parse.ParseString(`
+local pairs = function(_) return function() return "missing", 1 end end
+local keys = {}
+for k in pairs(tbl) do table.insert(keys, k) end
+return keys
+`, "test.lua")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fn := &ast.FunctionExpr{ParList: &ast.ParList{Names: []string{"tbl"}}, Stmts: body}
+	if got := keyscoll.DetectKeysCollector(fn); got != nil {
+		t.Fatalf("shadowed pairs cannot prove returned keys belong to tbl: %+v", got)
+	}
+}
+
+func TestDetectKeysCollector_ReassignedGlobalPairs(t *testing.T) {
+	body, err := parse.ParseString(`
+local keys = {}
+for k in pairs(tbl) do table.insert(keys, k) end
+return keys
+`, "test.lua")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fn := &ast.FunctionExpr{ParList: &ast.ParList{Names: []string{"tbl"}}, Stmts: body}
+	module := bind.NewBindingTable()
+	module.SetKind(1, cfg.SymbolGlobal)
+	module.SetName(1, "pairs")
+	module.MarkReassigned(1)
+	if got := keyscoll.DetectKeysCollectorWithBindings(fn, module); got != nil {
+		t.Fatalf("reassigned pairs cannot prove returned keys belong to tbl: %+v", got)
+	}
+}
+
 func TestDetectKeysCollector_NilStmts(t *testing.T) {
 	fn := &ast.FunctionExpr{Stmts: nil}
 	result := keyscoll.DetectKeysCollector(fn)

@@ -1,0 +1,1 @@
+{"description": "wippy.agent:context_test over wippy.test: mocked contract tables with methods returning their snapshot converge; a refining class snapshot replaces the earlier one in merged returns.", "packages": ["funcs", "time", "process"], "files": ["test.lua", "main.lua"]}

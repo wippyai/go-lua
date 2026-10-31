@@ -1,16 +1,15 @@
 package testutil
 
 import (
+	"os"
 	"testing"
 
 	"github.com/wippyai/go-lua/compiler/check"
 	"github.com/wippyai/go-lua/compiler/check/hooks"
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/stdlib"
-	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/diag"
-	"github.com/wippyai/go-lua/types/effect"
 	"github.com/wippyai/go-lua/types/io"
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
@@ -18,10 +17,11 @@ import (
 
 // Config holds configuration for creating a test checker.
 type Config struct {
-	Stdlib    bool
-	Manifests map[string]*io.Manifest
-	Database  *db.DB
-	Types     map[string]typ.Type
+	Stdlib       bool
+	Manifests    map[string]*io.Manifest
+	Database     *db.DB
+	Types        map[string]typ.Type
+	CheckOptions check.Options
 }
 
 // Option configures a test checker.
@@ -40,7 +40,31 @@ func WithManifest(path string, manifest *io.Manifest) Option {
 		if c.Manifests == nil {
 			c.Manifests = make(map[string]*io.Manifest)
 		}
-		c.Manifests[path] = manifest
+		c.Manifests[path] = testManifest(manifest)
+	}
+}
+
+// testManifest exercises the import boundary through the cache format when
+// the module test suite is run with WIPPY_TEST_MANIFEST_ROUNDTRIP=1.
+func testManifest(manifest *io.Manifest) *io.Manifest {
+	if manifest == nil || os.Getenv("WIPPY_TEST_MANIFEST_ROUNDTRIP") != "1" {
+		return manifest
+	}
+	data, err := manifest.Encode()
+	if err != nil {
+		panic(err)
+	}
+	decoded, err := io.DecodeManifest(data)
+	if err != nil {
+		panic(err)
+	}
+	return decoded
+}
+
+// WithCheckOptions sets the type-checking semantics.
+func WithCheckOptions(o check.Options) Option {
+	return func(c *Config) {
+		c.CheckOptions = o
 	}
 }
 
@@ -64,7 +88,10 @@ func NewChecker(opts ...Option) *check.Checker {
 	for _, opt := range opts {
 		opt(cfg)
 	}
+	return newChecker(cfg)
+}
 
+func newChecker(cfg *Config) *check.Checker {
 	for path, manifest := range cfg.Manifests {
 		cfg.Database.Connect(path, manifest)
 	}
@@ -79,19 +106,18 @@ func NewChecker(opts ...Option) *check.Checker {
 		}
 	}
 
+	manifests := make([]*io.Manifest, 0, len(cfg.Manifests))
 	for _, manifest := range cfg.Manifests {
-		if stdlibScope == nil {
-			stdlibScope = scope.New()
-		}
+		manifests = append(manifests, manifest)
 		if manifest.Export != nil {
 			globalTypes[manifest.Path] = manifest.Export
-		}
-		for name, t := range manifest.Types {
-			stdlibScope = stdlibScope.WithType(name, t)
 		}
 		for name, t := range manifest.AllGlobals() {
 			globalTypes[name] = t
 		}
+	}
+	if len(manifests) > 0 {
+		stdlibScope = stdlibScope.WithModuleTypes(manifests)
 	}
 
 	for name, t := range cfg.Types {
@@ -116,7 +142,7 @@ func NewChecker(opts ...Option) *check.Checker {
 			FieldFunc: core.Field,
 			IndexFunc: core.Index,
 		},
-	}, hooks.All()...)
+	}, append(hooks.All(), check.WithOptions(cfg.CheckOptions))...)
 }
 
 // Result holds the result of a check operation.
@@ -168,6 +194,7 @@ type Case struct {
 	WantError bool
 	Stdlib    bool
 	Manifests map[string]*io.Manifest
+	Options   check.Options
 }
 
 // RunCases runs a slice of test cases.
@@ -175,7 +202,7 @@ func RunCases(t *testing.T, tests []Case) {
 	t.Helper()
 	for _, tt := range tests {
 		t.Run(tt.Name, func(t *testing.T) {
-			var opts []Option
+			opts := []Option{WithCheckOptions(tt.Options)}
 			if tt.Stdlib {
 				opts = append(opts, WithStdlib())
 			}
@@ -212,52 +239,7 @@ func CheckAndExport(source, name string, opts ...Option) *ModuleResult {
 	for _, opt := range opts {
 		opt(cfg)
 	}
-
-	for path, manifest := range cfg.Manifests {
-		cfg.Database.Connect(path, manifest)
-	}
-
-	var stdlibScope *scope.State
-	globalTypes := make(map[string]typ.Type)
-
-	if cfg.Stdlib {
-		stdlibScope = scope.NewWithBuiltins()
-		for sname, t := range stdlib.Library() {
-			globalTypes[sname] = t
-		}
-	}
-
-	for _, manifest := range cfg.Manifests {
-		if stdlibScope == nil {
-			stdlibScope = scope.New()
-		}
-		if manifest.Export != nil {
-			globalTypes[manifest.Path] = manifest.Export
-		}
-		for tname, t := range manifest.Types {
-			stdlibScope = stdlibScope.WithType(tname, t)
-		}
-		for name, t := range manifest.AllGlobals() {
-			globalTypes[name] = t
-		}
-	}
-
-	var engine *core.Engine
-	if cfg.Stdlib {
-		engine = core.NewEngineWithStdlib(stdlib.EngineConfig())
-	} else {
-		engine = core.NewEngine()
-	}
-
-	checker := check.NewChecker(cfg.Database, check.Deps{
-		Types:       engine,
-		Stdlib:      stdlibScope,
-		GlobalTypes: globalTypes,
-		Resolver: &core.FuncResolver{
-			FieldFunc: core.Field,
-			IndexFunc: core.Index,
-		},
-	}, hooks.All()...)
+	checker := newChecker(cfg)
 
 	sess := checker.Check(source, name+".lua")
 	manifest := sess.ExportManifest(name)
@@ -284,104 +266,7 @@ func WithModule(name string, mod *ModuleResult) Option {
 			if cfg.Manifests == nil {
 				cfg.Manifests = make(map[string]*io.Manifest)
 			}
-			cfg.Manifests[name] = mod.Manifest
+			cfg.Manifests[name] = testManifest(mod.Manifest)
 		}
 	}
-}
-
-// ChannelManifest creates a channel manifest with proper types and effects.
-func ChannelManifest() *io.Manifest {
-	m := io.NewManifest("channel")
-
-	selectCaseType := typ.NewInterface("channel.SelectCase", nil)
-	selectCaseChannel := typ.NewTypeParam("C", nil)
-	selectCaseValue := typ.NewTypeParam("T", nil)
-	selectCaseGeneric := typ.NewGeneric("channel.SelectCase", []*typ.TypeParam{selectCaseChannel, selectCaseValue}, selectCaseType)
-
-	channelElem := typ.NewTypeParam("T", nil)
-	channelType := typ.NewInterface("channel.Channel", []typ.Method{
-		{
-			Name: "case_receive",
-			Type: typ.Func().
-				Param("self", typ.Self).
-				Returns(typ.Instantiate(selectCaseGeneric, typ.Self, channelElem)).
-				Build(),
-		},
-		{
-			Name: "receive",
-			Type: typ.Func().
-				Param("self", typ.Self).
-				Returns(channelElem, typ.Boolean).
-				Build(),
-		},
-	})
-	channelGeneric := typ.NewGeneric("channel.Channel", []*typ.TypeParam{channelElem}, channelType)
-
-	selectResultType := typ.NewRecord().
-		Field("channel", typ.Any).
-		Field("value", typ.Unknown).
-		Field("ok", typ.Boolean).
-		Build()
-
-	m.DefineType("Channel", channelGeneric)
-	m.DefineType("SelectCase", selectCaseGeneric)
-	m.DefineType("SelectResult", selectResultType)
-
-	selectFunc := typ.Func().
-		Param("cases", typ.Any).
-		Returns(selectResultType).
-		Spec(contract.NewSpec().WithEffectRow(effect.Returns(0, effect.SelectResultOfCases{
-			Cases:   effect.ParamRef{Index: 0},
-			Default: effect.ParamRef{Index: -1},
-		}))).
-		Build()
-
-	moduleType := typ.NewInterface("channel", []typ.Method{
-		{Name: "select", Type: selectFunc},
-	})
-	m.SetExport(moduleType)
-	return m
-}
-
-// FuncsManifest creates a minimal funcs manifest for tests.
-func FuncsManifest() *io.Manifest {
-	m := io.NewManifest("funcs")
-
-	moduleType := typ.NewInterface("funcs", []typ.Method{
-		{
-			Name: "call",
-			Type: typ.Func().
-				Param("name", typ.String).
-				Variadic(typ.Any).
-				Returns(typ.Any, typ.NewOptional(typ.LuaError)).
-				Build(),
-		},
-	})
-
-	m.SetExport(moduleType)
-	return m
-}
-
-// ProcessManifest creates a process module manifest.
-func ProcessManifest(channelGeneric *typ.Generic, eventType typ.Type) *io.Manifest {
-	m := io.NewManifest("process")
-	eventChannelType := typ.Instantiate(channelGeneric, eventType)
-	moduleType := typ.NewInterface("process", []typ.Method{
-		{Name: "events", Type: typ.Func().Returns(eventChannelType).Build()},
-	})
-	m.SetExport(moduleType)
-	m.DefineType("Event", eventType)
-	return m
-}
-
-// TimeManifest creates a time module manifest.
-func TimeManifest(channelGeneric *typ.Generic, timeType typ.Type) *io.Manifest {
-	m := io.NewManifest("time")
-	timeChannelType := typ.Instantiate(channelGeneric, timeType)
-	moduleType := typ.NewInterface("time", []typ.Method{
-		{Name: "after", Type: typ.Func().Param("d", typ.Any).Returns(timeChannelType).Build()},
-	})
-	m.SetExport(moduleType)
-	m.DefineType("Time", timeType)
-	return m
 }

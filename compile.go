@@ -58,11 +58,10 @@ type expcontext struct {
 }
 
 type assigncontext struct {
-	ec       *expcontext
-	keyrk    int
-	valuerk  int
-	keyks    bool
-	needmove bool
+	ec      *expcontext
+	keyrk   int
+	valuerk int
+	keyks   bool
 }
 
 type lblabels struct {
@@ -145,27 +144,20 @@ func isVarArgReturnExpr(expr ast.Expr) bool {
 	return false
 }
 
-func lnumberValue(expr ast.Expr) (LNumber, bool) {
+func constantNumberValue(expr ast.Expr) LValue {
 	if ex, ok := expr.(*ast.NumberExpr); ok {
 		lv, err := parseNumberValue(ex.Value)
 		if err != nil {
-			return LNumber(math.NaN()), true
+			return LNumber(math.NaN())
 		}
-		switch v := lv.(type) {
-		case LNumber:
-			return v, true
-		case LInteger:
-			return LNumber(v), true
-		}
+		return lv
 	} else if ex, ok := expr.(*constLValueExpr); ok {
-		switch v := ex.Value.(type) {
-		case LNumber:
-			return v, true
-		case LInteger:
-			return LNumber(v), true
+		switch ex.Value.(type) {
+		case LNumber, LInteger:
+			return ex.Value
 		}
 	}
-	return 0, false
+	return nil
 }
 
 /* utilities }}} */
@@ -210,6 +202,12 @@ type codeStore struct { // {{{
 	codes *[]uint32
 	lines *[]int
 	pc    int
+	// lastTarget is the highest pc recorded as a jump-label position.
+	// Instruction-merging peepholes must not fold across it: an instruction
+	// at or before a label boundary can be skipped or jumped past, so
+	// extending it changes behavior on the jumping path. Mirrors PUC Lua's
+	// fs->lasttarget.
+	lastTarget int
 }
 
 func newCodeStore() *codeStore {
@@ -218,9 +216,10 @@ func newCodeStore() *codeStore {
 	*codes = (*codes)[:0]
 	*lines = (*lines)[:0]
 	return &codeStore{
-		codes: codes,
-		lines: lines,
-		pc:    0,
+		codes:      codes,
+		lines:      lines,
+		pc:         0,
+		lastTarget: -1,
 	}
 }
 
@@ -262,7 +261,7 @@ func (cd *codeStore) AddASbx(op int, a int, sbx int, line int) {
 
 func (cd *codeStore) PropagateKMV(top int, save *int, reg *int, inc int) {
 	lastinst := cd.Last()
-	if opGetArgA(lastinst) >= top {
+	if opGetArgA(lastinst) >= top && cd.CanPop() {
 		switch opGetOpCode(lastinst) {
 		case OP_LOADK:
 			cindex := opGetArgBx(lastinst)
@@ -284,7 +283,7 @@ func (cd *codeStore) PropagateKMV(top int, save *int, reg *int, inc int) {
 
 func (cd *codeStore) PropagateMV(top int, save *int, reg *int, inc int) {
 	lastinst := cd.Last()
-	if opGetArgA(lastinst) >= top {
+	if opGetArgA(lastinst) >= top && cd.CanPop() {
 		switch opGetOpCode(lastinst) {
 		case OP_MOVE:
 			cd.Pop()
@@ -297,9 +296,23 @@ func (cd *codeStore) PropagateMV(top int, save *int, reg *int, inc int) {
 	*reg = *reg + inc
 }
 
+func (cd *codeStore) MarkLabelPc(pc int) {
+	if pc > cd.lastTarget {
+		cd.lastTarget = pc
+	}
+}
+
+// CanPop reports whether the last emitted instruction may be removed by a
+// peephole. An instruction at or before a jump-label boundary is the landing
+// site of a jump that is already resolved, so removing it makes that jump skip
+// whatever instruction the caller emits next.
+func (cd *codeStore) CanPop() bool {
+	return cd.LastPC() > cd.lastTarget
+}
+
 func (cd *codeStore) AddLoadNil(a, b, line int) {
 	last := cd.Last()
-	if opGetOpCode(last) == OP_LOADNIL && (opGetArgB(last)+1) == a {
+	if opGetOpCode(last) == OP_LOADNIL && (opGetArgB(last)+1) == a && cd.CanPop() {
 		cd.SetB(cd.LastPC(), b)
 	} else {
 		cd.AddABC(OP_LOADNIL, a, b, 0, line)
@@ -539,6 +552,7 @@ func (fc *funcContext) ResolveGoto(from, to *gotoLabelDesc, index int) {
 		varName := fc.Block.LocalVars.Names()[len(fc.Block.LocalVars.Names())-1]
 		raiseCompileError(fc, to.Line+1, "<goto %s> at line %d jumps into the scope of local '%s'", to.Name, from.Line, varName)
 	}
+	fc.Code.SetA(from.Pc-1, to.NumActiveLocalVars)
 	fc.Code.SetSbx(from.Pc, to.Id)
 	delete(fc.unresolvedGotos, index)
 }
@@ -592,6 +606,7 @@ func (fc *funcContext) NewLabel() int {
 
 func (fc *funcContext) SetLabelPc(label int, pc int) {
 	fc.labelPc[label] = pc
+	fc.Code.MarkLabelPc(pc)
 }
 
 func (fc *funcContext) GetLabelPc(label int) int {
@@ -768,7 +783,7 @@ func compileStmt(context *funcContext, stmt ast.Stmt, isLastStmt bool) { // {{{
 func compileAssignStmtLeft(context *funcContext, stmt *ast.AssignStmt) (int, []*assigncontext) { // {{{
 	reg := context.RegTop()
 	acs := make([]*assigncontext, 0, len(stmt.Lhs))
-	for _, lhs := range stmt.Lhs {
+	for i, lhs := range stmt.Lhs {
 		switch st := lhs.(type) {
 		case *ast.IdentExpr:
 			identtype := getIdentRefType(context, context, st)
@@ -782,10 +797,27 @@ func compileAssignStmtLeft(context *funcContext, stmt *ast.AssignStmt) (int, []*
 				ec.reg = context.FindLocalVar(st.Value)
 			default:
 			}
-			acs = append(acs, &assigncontext{ec, 0, 0, false, false})
+			acs = append(acs, &assigncontext{ec: ec})
 		case *ast.AttrGetExpr:
-			ac := &assigncontext{&expcontext{ecTable, regNotDefined, 0}, 0, 0, false, false}
-			compileExprWithKMVPropagation(context, st.Object, &reg, &ac.ec.reg)
+			ac := &assigncontext{ec: &expcontext{ecTable, regNotDefined, 0}}
+			// Stores run right to left. Save a direct local table reference only
+			// when a later target will overwrite it before this table store.
+			// Otherwise RHS calls may still change the local being referenced.
+			snapshotObject := false
+			if object, ok := st.Object.(*ast.IdentExpr); ok && getIdentRefType(context, context, object) == ecLocal {
+				for _, target := range stmt.Lhs[i+1:] {
+					if ident, ok := target.(*ast.IdentExpr); ok && ident.Value == object.Value {
+						snapshotObject = true
+						break
+					}
+				}
+			}
+			if snapshotObject {
+				ac.ec.reg = reg
+				reg += compileExpr(context, reg, st.Object, ecnone(0))
+			} else {
+				compileExprWithKMVPropagation(context, st.Object, &reg, &ac.ec.reg)
+			}
 			ac.keyrk = reg
 			reg += compileExpr(context, reg, st.Key, ecnone(0))
 			if _, ok := st.Key.(*ast.StringExpr); ok {
@@ -800,14 +832,19 @@ func compileAssignStmtLeft(context *funcContext, stmt *ast.AssignStmt) (int, []*
 	return reg, acs
 } // }}}
 
-func compileAssignStmtRight(context *funcContext, stmt *ast.AssignStmt, reg int, acs []*assigncontext) (int, []*assigncontext) { // {{{
+func compileAssignStmtRight(context *funcContext, stmt *ast.AssignStmt, reg int, acs []*assigncontext) { // {{{
 	lennames := len(stmt.Lhs)
 	lenexprs := len(stmt.Rhs)
+	if lennames == 1 && lenexprs == 1 && acs[0].ec.ctype == ecLocal {
+		// There is no later RHS to observe this write. Keep direct local writes,
+		// including adjacent LOADNIL instructions that the emitter can merge.
+		acs[0].valuerk = acs[0].ec.reg
+		compileExpr(context, reg, stmt.Rhs[0], acs[0].ec)
+		return
+	}
 	namesassigned := 0
 
 	for namesassigned < lennames {
-		ac := acs[namesassigned]
-		ec := ac.ec
 		var expr ast.Expr = nil
 		if namesassigned >= lenexprs {
 			expr = &ast.NilExpr{}
@@ -819,10 +856,7 @@ func compileAssignStmtRight(context *funcContext, stmt *ast.AssignStmt, reg int,
 			reginc := compileExpr(context, reg, stmt.Rhs[namesassigned], ecnone(varargopt))
 			reg += reginc
 			for i := namesassigned; i < namesassigned+reginc; i++ {
-				acs[i].needmove = true
-				if acs[i].ec.ctype == ecTable {
-					acs[i].valuerk = regstart + (i - namesassigned)
-				}
+				acs[i].valuerk = regstart + (i - namesassigned)
 			}
 			namesassigned = lennames
 			continue
@@ -831,23 +865,11 @@ func compileAssignStmtRight(context *funcContext, stmt *ast.AssignStmt, reg int,
 		if expr == nil {
 			expr = stmt.Rhs[namesassigned]
 		}
-		idx := reg
-		reginc := compileExpr(context, reg, expr, ec)
-		if ec.ctype == ecTable {
-			if _, ok := expr.(*ast.LogicalOpExpr); !ok {
-				context.Code.PropagateKMV(context.RegTop(), &ac.valuerk, &reg, reginc)
-			} else {
-				ac.valuerk = idx
-				reg += reginc
-			}
-		} else {
-			ac.needmove = reginc != 0
-			reg += reginc
-		}
+		// RHS values must live outside all target registers until every RHS has run.
+		acs[namesassigned].valuerk = reg
+		reg += compileExpr(context, reg, expr, ecnone(0))
 		namesassigned += 1
 	}
-
-	rightreg := reg - 1
 
 	// extra right exprs
 	for i := namesassigned; i < lenexprs; i++ {
@@ -857,38 +879,32 @@ func compileAssignStmtRight(context *funcContext, stmt *ast.AssignStmt, reg int,
 		}
 		reg += compileExpr(context, reg, stmt.Rhs[i], ecnone(varargopt))
 	}
-	return rightreg, acs
 } // }}}
 
 func compileAssignStmt(context *funcContext, stmt *ast.AssignStmt) { // {{{
 	code := context.Code
 	lennames := len(stmt.Lhs)
 	reg, acs := compileAssignStmtLeft(context, stmt)
-	reg, acs = compileAssignStmtRight(context, stmt, reg, acs)
+	compileAssignStmtRight(context, stmt, reg, acs)
 
 	for i := lennames - 1; i >= 0; i-- {
 		ex := stmt.Lhs[i]
 		switch acs[i].ec.ctype {
 		case ecLocal:
-			if acs[i].needmove {
-				code.AddABC(OP_MOVE, context.FindLocalVar(ex.(*ast.IdentExpr).Value), reg, 0, sline(ex))
-				reg -= 1
+			local := context.FindLocalVar(ex.(*ast.IdentExpr).Value)
+			if local != acs[i].valuerk {
+				code.AddABC(OP_MOVE, local, acs[i].valuerk, 0, sline(ex))
 			}
 		case ecGlobal:
-			code.AddABx(OP_SETGLOBAL, reg, context.ConstIndex(LString(ex.(*ast.IdentExpr).Value)), sline(ex))
-			reg -= 1
+			code.AddABx(OP_SETGLOBAL, acs[i].valuerk, context.ConstIndex(LString(ex.(*ast.IdentExpr).Value)), sline(ex))
 		case ecUpvalue:
-			code.AddABC(OP_SETUPVAL, reg, context.Upvalues.RegisterUnique(ex.(*ast.IdentExpr).Value), 0, sline(ex))
-			reg -= 1
+			code.AddABC(OP_SETUPVAL, acs[i].valuerk, context.Upvalues.RegisterUnique(ex.(*ast.IdentExpr).Value), 0, sline(ex))
 		case ecTable:
 			opcode := OP_SETTABLE
 			if acs[i].keyks {
 				opcode = OP_SETTABLEKS
 			}
 			code.AddABC(opcode, acs[i].ec.reg, acs[i].keyrk, acs[i].valuerk, sline(ex))
-			if !opIsK(acs[i].valuerk) {
-				reg -= 1
-			}
 		default:
 		}
 	}
@@ -1099,9 +1115,11 @@ func compileRepeatStmt(context *funcContext, stmt *ast.RepeatStmt) { // {{{
 } // }}}
 
 func compileBreakStmt(context *funcContext, stmt *ast.BreakStmt) { // {{{
+	closeCaptures := false
 	for block := context.Block; block != nil; block = block.Parent {
+		closeCaptures = closeCaptures || block.RefUpvalue
 		if label := block.BreakLabel; label != labelNoJump {
-			if block.RefUpvalue {
+			if closeCaptures {
 				context.Code.AddABC(OP_CLOSE, block.Parent.LocalVars.LastIndex(), 0, 0, sline(stmt))
 			}
 			context.Code.AddASbx(OP_JMP, 0, label, sline(stmt))
@@ -1335,12 +1353,7 @@ func compileExpr(context *funcContext, reg int, expr ast.Expr, ec *expcontext) i
 
 func compileExprWithPropagation(context *funcContext, expr ast.Expr, reg *int, save *int, propergator func(int, *int, *int, int)) { // {{{
 	reginc := compileExpr(context, *reg, expr, ecnone(0))
-	if _, ok := expr.(*ast.LogicalOpExpr); ok {
-		*save = *reg
-		*reg = *reg + reginc
-	} else {
-		propergator(context.RegTop(), save, reg, reginc)
-	}
+	propergator(context.RegTop(), save, reg, reginc)
 } // }}}
 
 func compileExprWithKMVPropagation(context *funcContext, expr ast.Expr, reg *int, save *int) { // {{{
@@ -1354,9 +1367,23 @@ func compileExprWithMVPropagation(context *funcContext, expr ast.Expr, reg *int,
 func constFold(exp ast.Expr) ast.Expr { // {{{
 	switch expr := exp.(type) {
 	case *ast.ArithmeticOpExpr:
-		lvalue, lisconst := lnumberValue(constFold(expr.Lhs))
-		rvalue, risconst := lnumberValue(constFold(expr.Rhs))
+		lhs := constantNumberValue(constFold(expr.Lhs))
+		rhs := constantNumberValue(constFold(expr.Rhs))
+		lvalue, lisconst := toNumber(lhs)
+		rvalue, risconst := toNumber(rhs)
 		if lisconst && risconst {
+			li, lint := lhs.(LInteger)
+			ri, rint := rhs.(LInteger)
+			if lint && rint {
+				switch expr.Operator {
+				case "+":
+					return &constLValueExpr{Value: li + ri}
+				case "-":
+					return &constLValueExpr{Value: li - ri}
+				case "*":
+					return &constLValueExpr{Value: li * ri}
+				}
+			}
 			switch expr.Operator {
 			case "+":
 				return &constLValueExpr{Value: lvalue + rvalue}
@@ -1367,21 +1394,38 @@ func constFold(exp ast.Expr) ast.Expr { // {{{
 			case "/":
 				return &constLValueExpr{Value: lvalue / rvalue}
 			case "%":
+				if lint && rint {
+					if ri == 0 {
+						return expr
+					}
+					return &constLValueExpr{Value: integerModulo(li, ri)}
+				}
 				return &constLValueExpr{Value: luaModulo(lvalue, rvalue)}
 			case "^":
 				return &constLValueExpr{Value: LNumber(math.Pow(float64(lvalue), float64(rvalue)))}
 			case "//":
-				return &constLValueExpr{Value: LNumber(math.Floor(float64(lvalue) / float64(rvalue)))}
-			case "&":
-				return &constLValueExpr{Value: LNumber(int64(lvalue) & int64(rvalue))}
-			case "|":
-				return &constLValueExpr{Value: LNumber(int64(lvalue) | int64(rvalue))}
-			case "~":
-				return &constLValueExpr{Value: LNumber(int64(lvalue) ^ int64(rvalue))}
-			case "<<":
-				return &constLValueExpr{Value: LNumber(int64(lvalue) << uint64(rvalue))}
-			case ">>":
-				return &constLValueExpr{Value: LNumber(int64(lvalue) >> uint64(rvalue))}
+				if value, ok := floorDivision(lhs, rhs); ok {
+					return &constLValueExpr{Value: value}
+				}
+				return expr
+			case "&", "|", "~", "<<", ">>":
+				li, lok := exactInteger(lhs)
+				ri, rok := exactInteger(rhs)
+				if !lok || !rok {
+					return expr
+				}
+				var value LInteger
+				switch expr.Operator {
+				case "&":
+					value = li & ri
+				case "|":
+					value = li | ri
+				case "~":
+					value = li ^ ri
+				case "<<", ">>":
+					value = integerShift(li, ri, expr.Operator == "<<")
+				}
+				return &constLValueExpr{Value: value}
 			default:
 				panic(fmt.Sprintf("unknown binop: %v", expr.Operator))
 			}
@@ -1390,7 +1434,10 @@ func constFold(exp ast.Expr) ast.Expr { // {{{
 		}
 	case *ast.UnaryMinusOpExpr:
 		expr.Expr = constFold(expr.Expr)
-		if value, ok := lnumberValue(expr.Expr); ok {
+		if value, ok := constantNumberValue(expr.Expr).(LInteger); ok {
+			return &constLValueExpr{Value: -value}
+		}
+		if value, ok := toNumber(constantNumberValue(expr.Expr)); ok {
 			return &constLValueExpr{Value: -value}
 		}
 		return expr
@@ -1573,7 +1620,12 @@ func compileStringConcatOpExpr(context *funcContext, reg int, expr *ast.StringCo
 	}
 	a := savereg(ec, reg)
 	basereg := reg
-	reg += compileExpr(context, reg, expr.Lhs, ecnone(0))
+	// CONCAT always consumes one value from each operand. A call can report
+	// zero new registers when this expression starts below the local register
+	// top (as it does for a generic for's iterator slots), but it still writes
+	// its one adjusted result at reg.
+	compileExpr(context, reg, expr.Lhs, ecnone(0))
+	reg++
 	compileExpr(context, reg, expr.Rhs, ecnone(0))
 	for pc := code.LastPC(); pc != 0 && opGetOpCode(code.At(pc)) == OP_CONCAT; pc-- {
 		code.Pop()
@@ -1790,11 +1842,9 @@ func compileLogicalOpExprAux(context *funcContext, reg int, expr ast.Expr, ec *e
 } // }}}
 
 func compileFuncCallExpr(context *funcContext, reg int, expr *ast.FuncCallExpr, ec *expcontext) int { // {{{
+	// The call frame starts above every live register: the callee, receiver and
+	// arguments may read the local that receives the result.
 	funcreg := reg
-	if ec.ctype == ecLocal && ec.reg == (int(context.Proto.NumParameters)-1) {
-		funcreg = ec.reg
-		reg = ec.reg
-	}
 	argc := len(expr.Args)
 	islastvararg := false
 	var name string

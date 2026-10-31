@@ -1,0 +1,1 @@
+{"description": "Mutating a future surface keeps its declared type (Bee golua-repros2 case 9).", "files": ["main.lua"], "check": {"errors": 0, "modes": ["gradual", "strict"]}}

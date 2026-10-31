@@ -55,6 +55,15 @@ func (e *ApiError) String() string {
 	return e.Object.String()
 }
 
+// Unwrap returns the raised *Error, or the Go error behind a file or syntax
+// error.
+func (e *ApiError) Unwrap() error {
+	if raised, ok := e.Object.(*Error); ok {
+		return raised
+	}
+	return e.Cause
+}
+
 type ApiErrorType int
 
 const (
@@ -108,6 +117,7 @@ type Options struct {
 	SkipOpenLibs bool
 	// Tells whether a Go stacktrace should be included in a Lua stacktrace when panics occur.
 	IncludeGoStackTrace bool
+	PanicHandler        func(*LState, string)
 	// If `MinimizeStackMemory` is set, the call stack will be automatically grown or shrank up to a limit of
 	// `CallStackSize` in order to minimize memory usage. This does incur a slight performance penalty.
 	MinimizeStackMemory bool
@@ -194,6 +204,18 @@ func (ls *LState) clearFrameExt(cf *callFrame) {
 	if ls.frameExt != nil {
 		delete(ls.frameExt, cf.Idx)
 	}
+}
+
+// unwindCallFrames discards frames down to sp and removes their extension
+// metadata first. Extensions are keyed by frame index, so a plain SetSp would
+// let a later, unrelated Go call at a reused index inherit a stale continuation
+// or xpcall error handler.
+func (ls *LState) unwindCallFrames(sp int) {
+	for i := ls.stack.Sp() - 1; i >= sp; i-- {
+		ls.clearFrameExt(ls.stack.At(i))
+	}
+	ls.stack.SetSp(sp)
+	ls.currentFrame = ls.stack.Last()
 }
 
 type callFrame struct {
@@ -481,7 +503,6 @@ func newLState(options Options) *LState {
 			ls.wrapped = false
 			ls.yieldState = yieldNone
 			ls.uvcache = nil
-			ls.hasErrorFunc = false
 			ls.mainLoop = mainLoop
 			ls.ctx = nil
 			ls.ctxDone = nil
@@ -525,7 +546,6 @@ func newLState(options Options) *LState {
 		currentFrame: nil,
 		wrapped:      false,
 		uvcache:      nil,
-		hasErrorFunc: false,
 		mainLoop:     mainLoop,
 		ctx:          nil,
 	}
@@ -539,18 +559,8 @@ func newLState(options Options) *LState {
 	return ls
 }
 
-func (ls *LState) closeAllUpvalues() { // +inline-start
-	for cf := ls.currentFrame; cf != nil; cf = ls.stack.ParentOf(cf) {
-		if cf.Fn != nil && !cf.Fn.IsG {
-			ls.closeUpvalues(int(cf.LocalBase))
-		}
-	}
-} // +inline-end
-
 func (ls *LState) raiseError(level int, format string, args ...any) {
-	if !ls.hasErrorFunc {
-		ls.closeAllUpvalues()
-	}
+	reg := ls.reg
 	message := format
 	if len(args) > 0 {
 		message = fmt.Sprintf(format, args...)
@@ -558,11 +568,11 @@ func (ls *LState) raiseError(level int, format string, args ...any) {
 	if level > 0 {
 		message = fmt.Sprintf("%v %v", ls.where(level-1, true), message)
 	}
-	if ls.reg.IsFull() {
+	if reg.IsFull() {
 		// if the registry is full then it won't be possible to push a value, in this case, force a larger size
-		ls.reg.forceResize(ls.reg.Top() + 1)
+		reg.forceResize(reg.Top() + 1)
 	}
-	ls.reg.Push(LString(message))
+	reg.Push(LString(message))
 	ls.Panic(ls)
 }
 
@@ -1587,9 +1597,6 @@ func (ls *LState) Error(lv LValue, level int) {
 	if str, ok := lv.(LString); ok {
 		ls.raiseError(level, string(str))
 	} else {
-		if !ls.hasErrorFunc {
-			ls.closeAllUpvalues()
-		}
 		ls.Push(lv)
 		ls.Panic(ls)
 	}
@@ -1887,12 +1894,8 @@ func (ls *LState) PCall(nargs, nret int, errfunc *LFunction) (err error) {
 	base := ls.reg.Top() - nargs - 1
 	oldpanic := ls.Panic
 	ls.Panic = panicWithoutTraceback
-	if errfunc != nil {
-		ls.hasErrorFunc = true
-	}
 	defer func() {
 		ls.Panic = oldpanic
-		ls.hasErrorFunc = false
 
 		rcv := recover()
 		if rcv != nil {
@@ -1925,8 +1928,8 @@ func (ls *LState) PCall(nargs, nret int, errfunc *LFunction) (err error) {
 							err = rcv.(*ApiError)
 							err.(*ApiError).StackTrace = ls.stackTrace(0)
 						}
-						ls.stack.SetSp(sp)
-						ls.currentFrame = ls.stack.Last()
+						ls.closeUpvalues(base)
+						ls.unwindCallFrames(sp)
 						ls.reg.SetTop(base)
 					}
 				}()
@@ -1935,15 +1938,15 @@ func (ls *LState) PCall(nargs, nret int, errfunc *LFunction) (err error) {
 			} else if len(err.(*ApiError).StackTrace) == 0 {
 				err.(*ApiError).StackTrace = ls.stackTrace(0)
 			}
-			ls.stack.SetSp(sp)
-			ls.currentFrame = ls.stack.Last()
+			ls.closeUpvalues(base)
+			ls.unwindCallFrames(sp)
 			ls.reg.SetTop(base)
 		}
 		// Skip stack reset if yield happened
 		if ls.yieldState != yieldNone {
 			return
 		}
-		ls.stack.SetSp(sp)
+		ls.unwindCallFrames(sp)
 		if sp == 0 {
 			ls.currentFrame = nil
 		}
@@ -2060,7 +2063,7 @@ func (ls *LState) Resume(th *LState, fn *LFunction, args ...LValue) (ResumeState
 	if th.ctx != nil {
 		select {
 		case <-th.ctx.Done():
-			return ResumeError, nil, newApiErrorS(ApiErrorRun, th.ctx.Err().Error())
+			return ls.abortCanceledResume(th)
 		default:
 		}
 	}
@@ -2079,6 +2082,11 @@ func (ls *LState) Resume(th *LState, fn *LFunction, args ...LValue) (ResumeState
 
 	if haserror {
 		return ResumeError, nil, newApiError(ApiErrorRun, ret[0])
+	} else if th.yieldState != yieldNone {
+		if th.stack.IsEmpty() || th.currentFrame == nil {
+			return ls.abortInvalidResume(th, "yielded thread has no resumable frame")
+		}
+		return ResumeYield, ret, nil
 	} else if th.stack.IsEmpty() {
 		return ResumeOK, ret, nil
 	}
@@ -2138,7 +2146,7 @@ func (ls *LState) ResumeInto(th *LState, fn *LFunction, retBuf []LValue, args ..
 	if th.ctx != nil {
 		select {
 		case <-th.ctx.Done():
-			return ResumeError, nil, newApiErrorS(ApiErrorRun, th.ctx.Err().Error())
+			return ls.abortCanceledResume(th)
 		default:
 		}
 	}
@@ -2165,10 +2173,30 @@ func (ls *LState) ResumeInto(th *LState, fn *LFunction, retBuf []LValue, args ..
 
 	if haserror {
 		return ResumeError, nil, newApiError(ApiErrorRun, ret[0])
+	} else if th.yieldState != yieldNone {
+		if th.stack.IsEmpty() || th.currentFrame == nil {
+			return ls.abortInvalidResume(th, "yielded thread has no resumable frame")
+		}
+		return ResumeYield, ret, nil
 	} else if th.stack.IsEmpty() {
 		return ResumeOK, ret, nil
 	}
 	return ResumeYield, ret, nil
+}
+
+// abortCanceledResume restores the resumer relationship established before
+// the context check. Context cancellation during execution follows the same
+// terminal path through threadRun, so a pre-canceled resume must also leave the
+// child dead and the parent current rather than stranding a "running" thread.
+func (ls *LState) abortCanceledResume(th *LState) (ResumeState, []LValue, error) {
+	return ls.abortInvalidResume(th, th.ctx.Err().Error())
+}
+
+func (ls *LState) abortInvalidResume(th *LState, message string) (ResumeState, []LValue, error) {
+	th.Parent = nil
+	th.kill()
+	ls.G.CurrentThread = ls
+	return ResumeError, nil, newApiErrorS(ApiErrorRun, message)
 }
 
 func (ls *LState) XMoveTo(other *LState, n int) {
@@ -2213,8 +2241,20 @@ func (ls *LState) removeCallerFrame() *callFrame {
 	sp := cs.Sp()
 	parentFrame := cs.At(sp - 2)
 	currentFrame := cs.At(sp - 1)
+	parentIdx := parentFrame.Idx
+	currentIdx := currentFrame.Idx
 	*parentFrame = *currentFrame
-	parentFrame.Idx = int16(sp - 2)
+	parentFrame.Idx = parentIdx
+	if ls.frameExt != nil {
+		// Tail calls replace the caller frame with the callee frame. Move the
+		// callee's lazily stored continuation/error-handler metadata with it;
+		// leaving it keyed by the popped index loses yielding CallK state.
+		delete(ls.frameExt, parentIdx)
+		if ext := ls.frameExt[currentIdx]; ext != nil {
+			ls.frameExt[parentIdx] = ext
+		}
+		delete(ls.frameExt, currentIdx)
+	}
 	cs.Pop()
 	return parentFrame
 }

@@ -1,0 +1,1 @@
+{"description": "Guarded instance effects keep the declared type (Bee golua-repros2 case 2).", "files": ["main.lua"], "check": {"errors": 0, "modes": ["gradual", "strict"]}}

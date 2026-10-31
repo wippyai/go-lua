@@ -1,0 +1,4 @@
+{
+  "description": "A captured variable keeps its declared type inside the closures that write and read it.",
+  "files": ["main.lua"]
+}

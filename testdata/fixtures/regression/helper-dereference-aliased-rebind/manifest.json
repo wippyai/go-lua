@@ -1,0 +1,1 @@
+{"description":"An aliased helper can rebind its captured caller receiver after dereferencing the argument.","check":{"errors":1}}

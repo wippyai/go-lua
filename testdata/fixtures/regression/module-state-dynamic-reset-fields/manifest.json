@@ -1,0 +1,5 @@
+{
+  "description": "A module state table that reset() fills through dynamic keys is open to fields its constructor never wrote; a field-conditional write in one branch does not close it.",
+  "files": ["test_state.lua", "main.lua"],
+  "check": {"errors": 0}
+}

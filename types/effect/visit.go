@@ -6,6 +6,7 @@ type LabelVisitor[R any] struct {
 	Mutate            func(Mutate) R
 	Return            func(Return) R
 	ErrorReturn       func(ErrorReturn) R
+	GuardedReturnType func(GuardedReturnType) R
 	ReturnLength      func(ReturnLength) R
 	Throw             func(Throw) R
 	Diverge           func(Diverge) R
@@ -55,6 +56,14 @@ func VisitLabel[R any](l Label, v LabelVisitor[R]) R {
 	case *ErrorReturn:
 		if v.ErrorReturn != nil {
 			return v.ErrorReturn(*ll)
+		}
+	case GuardedReturnType:
+		if v.GuardedReturnType != nil {
+			return v.GuardedReturnType(ll)
+		}
+	case *GuardedReturnType:
+		if v.GuardedReturnType != nil {
+			return v.GuardedReturnType(*ll)
 		}
 	case ReturnLength:
 		if v.ReturnLength != nil {
@@ -285,10 +294,12 @@ type ReturnTypeVisitor[R any] struct {
 	CallbackReturn        func(CallbackReturn) R
 	ArrayOfCallbackReturn func(ArrayOfCallbackReturn) R
 	SameAs                func(SameAs) R
+	TypeValueOf           func(TypeValueOf) R
 	DeepElementOf         func(DeepElementOf) R
 	StringUnpackValue     func(StringUnpackValue) R
 	SelectCaseOfParam     func(SelectCaseOfParam) R
 	SelectResultOfCases   func(SelectResultOfCases) R
+	WithMetatable         func(WithMetatable) R
 	Default               func(ReturnType) R
 }
 
@@ -335,6 +346,14 @@ func VisitReturnType[R any](t ReturnType, v ReturnTypeVisitor[R]) R {
 		if v.SameAs != nil {
 			return v.SameAs(*tt)
 		}
+	case TypeValueOf:
+		if v.TypeValueOf != nil {
+			return v.TypeValueOf(tt)
+		}
+	case *TypeValueOf:
+		if v.TypeValueOf != nil {
+			return v.TypeValueOf(*tt)
+		}
 	case DeepElementOf:
 		if v.DeepElementOf != nil {
 			return v.DeepElementOf(tt)
@@ -366,6 +385,14 @@ func VisitReturnType[R any](t ReturnType, v ReturnTypeVisitor[R]) R {
 	case *SelectResultOfCases:
 		if v.SelectResultOfCases != nil {
 			return v.SelectResultOfCases(*tt)
+		}
+	case WithMetatable:
+		if v.WithMetatable != nil {
+			return v.WithMetatable(tt)
+		}
+	case *WithMetatable:
+		if v.WithMetatable != nil {
+			return v.WithMetatable(*tt)
 		}
 	}
 	if v.Default != nil {

@@ -291,9 +291,21 @@ func TestTableInference_RecordField(t *testing.T) {
 			Stdlib:    true,
 		},
 		{
-			Name: "missing field fails",
+			// An inferred table literal is open: the missing field may be added
+			// later through an alias or a write, so the read stays gradual.
+			Name: "missing field on inferred table reads gradually",
 			Code: `
 				local obj = {name = "test"}
+				local v = obj.missing
+			`,
+			WantError: false,
+			Stdlib:    true,
+		},
+		{
+			// The same read on a declared record is closed and must error.
+			Name: "missing field on declared record fails",
+			Code: `
+				local obj: {name: string} = {name = "test"}
 				local v = obj.missing
 			`,
 			WantError: true,

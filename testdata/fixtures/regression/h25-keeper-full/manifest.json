@@ -1,0 +1,1 @@
+{"description": "Full registry source of keeper.git.service:state and direct dependencies from foundation", "files": ["push_policy.lua", "json.lua", "sql.lua", "schema.lua", "snapshot.lua", "run_repo.lua", "git_consts.lua", "main.lua"], "check": {"errors": 0}}

@@ -675,3 +675,15 @@ func TestUnaryOp_Unknown(t *testing.T) {
 		}
 	})
 }
+
+func TestUnaryOp_LengthOfRecursiveType(t *testing.T) {
+	list := typ.NewRecursive("List", func(self typ.Type) typ.Type {
+		return typ.NewUnion(typ.NewArray(typ.String), typ.NewRecord().Field("next", self).Build(), self)
+	})
+	if got := UnaryOp("#", list); !typ.TypeEquals(got, typ.Integer) {
+		t.Fatalf("#List = %v, want integer", got)
+	}
+	if got := UnaryOp("-", typ.NewRecursive("N", func(self typ.Type) typ.Type { return typ.NewUnion(typ.Integer, self) })); !typ.TypeEquals(got, typ.Integer) {
+		t.Fatalf("-N = %v, want integer", got)
+	}
+}

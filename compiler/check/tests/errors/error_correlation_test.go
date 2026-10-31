@@ -73,6 +73,23 @@ db:release()
 	}
 }
 
+func TestAssertIsNilNarrowsThroughForwardingHelper(t *testing.T) {
+	dbType := typ.NewInterface("sql.DB", []typ.Method{{Name: "release", Type: typ.Func().Param("self", typ.Self).Build()}})
+	sqlManifest := io.NewManifest("sql")
+	sqlManifest.SetExport(typ.NewRecord().Field("get", typ.Func().Returns(dbType, typ.NewOptional(typ.LuaError)).Spec(contract.NewSpec().WithEffects(effect.ErrorReturn{ValueIndex: 0, ErrorIndex: 1})).Build()).Build())
+	assertManifest := io.NewManifest("assert2")
+	assertManifest.SetExport(typ.NewRecord().Field("is_nil", typ.Func().Param("val", typ.Any).WithRefinement(constraint.NewRefinement([]constraint.Constraint{constraint.IsNil{Path: constraint.Path{Root: "$0"}}}, nil, nil)).Build()).Build())
+	result := testutil.Check(`local sql = require("sql")
+local assert = require("assert2")
+local function helper() return sql.get() end
+local db, err = helper()
+assert.is_nil(err)
+db:release()`, testutil.WithStdlib(), testutil.WithManifest("sql", sqlManifest), testutil.WithManifest("assert2", assertManifest))
+	if result.HasError() {
+		t.Fatalf("forwarded error correlation lost: %v", testutil.ErrorMessages(result.Diagnostics))
+	}
+}
+
 func TestErrorTerminatesEliminatesNilReturn(t *testing.T) {
 	dbType := typ.NewInterface("sql.DB", []typ.Method{
 		{

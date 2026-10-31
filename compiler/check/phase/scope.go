@@ -132,20 +132,16 @@ func RunScope(input ScopeInput) ScopeOutput {
 			}
 			if i < len(synthSig.Params) && synthSig.Params[i].Type != nil {
 				if name == "self" && base.SelfType() == nil {
-					base = base.WithSelf(synthSig.Params[i].Type)
+					base = base.WithSelf(typ.PartialView(synthSig.Params[i].Type))
 				}
 			}
 		}
 	}
 
 	typeResolutionEngine := CreateTypeResolutionEngine(
-		input.Ctx,
-		input.Graph,
-		input.GlobalTypes,
+		input.PhaseEnv,
 		paramTypes,
 		base,
-		input.Types,
-		input.Manifests,
 	)
 
 	localTypeAnnotations := make(map[cfg.SymbolID]ast.TypeExpr)
@@ -189,7 +185,10 @@ func RunScope(input ScopeInput) ScopeOutput {
 	exprSynth := func(expr ast.Expr, p cfg.Point, sc *scope.State) typ.Type {
 		return typeResolutionEngine.SynthExprAt(expr, p, sc)
 	}
-	fnSignatureResolver := buildFnSignatureResolver(input.FunctionLiteralSignatures, input.ParamHintSignatures, typeResolutionEngine)
+	annotationResolver := buildFnSignatureResolver(input.FunctionLiteralSignatures, typeResolutionEngine)
+	fnSignatureResolver := FunctionSignatureResolverFunc(func(fn *ast.FunctionExpr, sc *scope.State) *typ.Function {
+		return returns.WithOwnerRelations(annotationResolver.ResolveFunctionSignature(fn, sc), input.Callables[fn].Func)
+	})
 
 	callMutator := buildCallMutator(input.Types, input.Ctx, exprSynth)
 	services := ScopeServicesFuncs{
@@ -211,7 +210,7 @@ func RunScope(input ScopeInput) ScopeOutput {
 		fnSignatureResolver,
 		typeResolutionEngine,
 		input.SiblingTypes,
-		input.ReturnSummaries,
+		input.Callables,
 	)
 	declaredTypes = applyModuleAliasExports(declaredTypes, input.ModuleAliases, input.Manifests)
 
@@ -227,34 +226,20 @@ func RunScope(input ScopeInput) ScopeOutput {
 	}
 }
 
-// buildFnSignatureResolver creates a function signature resolver that combines
-// pre-computed literal signatures, parameter hints, and annotation-based resolution.
+// buildFnSignatureResolver resolves the callable type of a function literal:
+// its pre-computed literal signature or its annotations. Parameter hints type
+// the body only and never become part of the callable type.
 func buildFnSignatureResolver(
 	literalSigs LiteralSigsProvider,
-	paramHints map[*ast.FunctionExpr][]typ.Type,
 	engine *synth.Engine,
 ) FunctionSignatureResolver {
 	return FunctionSignatureResolverFunc(func(fn *ast.FunctionExpr, sc *scope.State) *typ.Function {
-		var sig *typ.Function
 		if literalSigs != nil {
 			if s := literalSigs.Lookup(fn); s != nil {
-				sig = s
+				return s
 			}
 		}
-		if sig == nil {
-			sig = engine.ResolveFunctionSignature(fn, sc)
-		}
-		if sig == nil {
-			return nil
-		}
-		if paramHints == nil {
-			return sig
-		}
-		hints := paramHints[fn]
-		if len(hints) == 0 {
-			return sig
-		}
-		return paramhints.MergeIntoSignature(fn, hints, sig)
+		return engine.ResolveFunctionSignature(fn, sc)
 	})
 }
 
@@ -282,10 +267,12 @@ func ExtractParamTypes(
 		}
 
 		// Binder/CFG-injected implicit self parameter has no source annotation.
+		// The receiver is any table that uses the method table, so the method
+		// table's fields describe it partially.
 		srcIdx, hasSource := slot.SourceParamIndex()
 		if !hasSource {
 			if base != nil && base.SelfType() != nil {
-				types[slot.Symbol] = base.SelfType()
+				types[slot.Symbol] = typ.PartialView(base.SelfType())
 			} else {
 				types[slot.Symbol] = typ.Unknown
 			}
@@ -308,7 +295,7 @@ func ExtractParamTypes(
 			}
 			if typ.IsRefinableAnnotation(paramType) {
 				if hint != nil {
-					paramType = hint
+					paramType = paramhints.RefineAnnotation(paramType, hint)
 				} else if synthSig != nil && i < len(synthSig.Params) && synthSig.Params[i].Type != nil {
 					paramType = synthSig.Params[i].Type
 				}
@@ -317,8 +304,11 @@ func ExtractParamTypes(
 				hasExplicitAnnotation = true
 			}
 		} else if hint != nil {
-			paramType = hint
-		} else if synthSig != nil && i < len(synthSig.Params) && synthSig.Params[i].Type != nil {
+			paramType = paramhints.BodyParamType(hint)
+		} else if synthSig != nil && i < len(synthSig.Params) && synthSig.Params[i].Type != nil && !typ.IsUnknown(synthSig.Params[i].Type) {
+			// A synthesized signature leaves an unannotated parameter it has
+			// no evidence for unresolved; such a parameter is the gradual any
+			// below, not an annotation.
 			paramType = synthSig.Params[i].Type
 			isAnnotated = true
 		} else if slot.Name == "self" && base != nil && base.SelfType() != nil {
@@ -358,7 +348,7 @@ func buildDeclaredTypes(
 	fnSigResolver FunctionSignatureResolver,
 	synthAPI api.SynthAPI,
 	siblingTypes map[cfg.SymbolID]typ.Type,
-	returnSummaries map[cfg.SymbolID][]typ.Type,
+	callables api.Callables,
 ) (flow.DeclaredTypes, map[cfg.SymbolID]bool) {
 	if graph == nil {
 		return nil, nil
@@ -367,11 +357,12 @@ func buildDeclaredTypes(
 	out := make(flow.DeclaredTypes)
 	annotated := make(map[cfg.SymbolID]bool)
 	bindings := graph.Bindings()
+	definitions := returns.DefinitionView(graph, callables)
 	alignWithSummary := func(sym cfg.SymbolID, fn *typ.Function) *typ.Function {
-		if fn == nil || len(returnSummaries) == 0 || sym == 0 {
+		if fn == nil || sym == 0 {
 			return fn
 		}
-		if summary := returnSummaries[sym]; len(summary) > 0 {
+		if summary := definitions[sym].Summary; len(summary) > 0 {
 			return returns.WithSummaryOrUnknown(fn, summary)
 		}
 		return fn
@@ -695,10 +686,7 @@ func applyTypeDef(graph ScopeGraph, p cfg.Point, current *scope.State, services 
 	if resolved == nil {
 		resolved = typ.Unknown
 	}
-	if _, isGeneric := resolved.(*typ.Generic); isGeneric {
-		return current.WithType(info.Name, resolved)
-	}
-	return current.WithType(info.Name, typ.NewAlias(info.Name, resolved))
+	return current.DeclareType(info.Name, resolved)
 }
 
 // BuildFunctionScope creates the initial base scope for a function.

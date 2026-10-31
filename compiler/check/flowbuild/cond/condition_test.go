@@ -333,3 +333,37 @@ func TestConditionFromEquality_PathTrueLiteralUsesPortableConstraints(t *testing
 		t.Fatalf("expected Truthy+HasType(boolean), got %v", items)
 	}
 }
+
+func TestConstraintsFromConditionExpr_LiteralTruthiness(t *testing.T) {
+	ce := &ConditionExtractor{}
+	truthy := []ast.Expr{
+		&ast.StringExpr{Value: "?"},
+		&ast.NumberExpr{Value: "0"},
+		&ast.TableExpr{},
+		&ast.FunctionExpr{},
+	}
+	for _, expr := range truthy {
+		bc := ce.ConstraintsFromConditionExpr(expr)
+		if !bc.OnTrue.IsTrue() || !bc.OnFalse.IsFalse() {
+			t.Errorf("%T: got OnTrue=%v OnFalse=%v, want true/false", expr, bc.OnTrue, bc.OnFalse)
+		}
+	}
+	bc := ce.ConstraintsFromConditionExpr(&ast.NilExpr{})
+	if !bc.OnTrue.IsFalse() || !bc.OnFalse.IsTrue() {
+		t.Errorf("nil: got OnTrue=%v OnFalse=%v, want false/true", bc.OnTrue, bc.OnFalse)
+	}
+}
+
+func TestConstraintsFromConditionExpr_AndWithTruthyLiteralFalsyBranch(t *testing.T) {
+	ce := &ConditionExtractor{}
+	x := &ast.IdentExpr{Value: "x"}
+	guard := ce.ConstraintsFromConditionExpr(x)
+	bc := ce.ConstraintsFromConditionExpr(&ast.LogicalOpExpr{
+		Lhs:      x,
+		Operator: "and",
+		Rhs:      &ast.StringExpr{Value: "?"},
+	})
+	if !bc.OnFalse.Equals(guard.OnFalse) {
+		t.Fatalf("falsy(x and \"?\") = %v, want falsy(x) = %v", bc.OnFalse, guard.OnFalse)
+	}
+}

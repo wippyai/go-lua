@@ -1,0 +1,1 @@
+{"description":"Channel witness appends in a called stub remain visible to the test","files":["test_state.lua","thread_bridge_stub.lua","main.lua"],"check":{"errors":0}}

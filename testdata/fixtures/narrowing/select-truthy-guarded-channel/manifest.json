@@ -1,0 +1,4 @@
+{
+  "description": "a truthiness guard on a typed channel keeps its payload type, so select over it yields the payload",
+  "packages": ["channel", "time"]
+}

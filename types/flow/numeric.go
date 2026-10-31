@@ -224,11 +224,13 @@ func (s *Solution) computeNumericStateAt(c cfg.Graph, p cfg.Point, state map[cfg
 	}
 
 	var predStates []*numeric.State
+	missingExact := false
 	for _, pred := range preds {
 		predState := state[pred]
 		edgeConstraints := s.edgeNumericConstraints[edgeKey{from: pred, to: p}]
 
 		if predState == nil && len(edgeConstraints) == 0 {
+			missingExact = true
 			continue
 		}
 
@@ -249,6 +251,7 @@ func (s *Solution) computeNumericStateAt(c cfg.Graph, p cfg.Point, state map[cfg
 		edgeState = s.rekeyForPhis(edgeState, pred, p)
 
 		if edgeState.IsTop() {
+			missingExact = true
 			continue
 		}
 		predStates = append(predStates, edgeState)
@@ -258,12 +261,18 @@ func (s *Solution) computeNumericStateAt(c cfg.Graph, p cfg.Point, state map[cfg
 		return nil
 	}
 	if len(predStates) == 1 {
+		if missingExact {
+			predStates[0].ClearExactLengths()
+		}
 		return predStates[0]
 	}
 
 	result := predStates[0]
 	for i := 1; i < len(predStates); i++ {
 		result = numeric.Join(result, predStates[i])
+	}
+	if missingExact {
+		result.ClearExactLengths()
 	}
 	return result
 }

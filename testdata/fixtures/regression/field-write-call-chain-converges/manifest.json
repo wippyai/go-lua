@@ -1,0 +1,1 @@
+{"description": "a field write reaches its caller through a twelve-hop local call chain: the round budget covers the call-chain depth."}

@@ -13,11 +13,6 @@ func NewGuard() internal.RecursionGuard {
 	return internal.NewRecursionGuard(DefaultRecursionDepth)
 }
 
-// NewDeepGuard returns a recursion guard using the canonical deep depth.
-func NewDeepGuard() internal.RecursionGuard {
-	return internal.NewRecursionGuard(DeepRecursionDepth)
-}
-
 // GuardForDepth returns a recursion guard for a specific depth.
 // If maxDepth is non-positive, the default depth is used.
 func GuardForDepth(maxDepth int) internal.RecursionGuard {

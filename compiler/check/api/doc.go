@@ -30,13 +30,13 @@
 // The [Facts] type bundles interprocedural analysis results for a single
 // function graph:
 //
-//   - [FunctionFacts]: Canonical per-function return/signature facts
+//   - [Callables]: Canonical per-literal return/signature facts
 //   - [ReturnSummaries]: Inferred return types by function symbol
 //   - [NarrowReturnSummaries]: Post-narrowing return types
 //   - [ParamHints]: Parameter types inferred from call sites
 //   - [FuncTypes]: Canonical types for local function symbols
-//   - [LiteralSigs]: Signatures for anonymous function literals
-//   - [CapturedFieldAssigns]: Field assignments to captured variables
+//   - [Callables]: Facts for function literals
+//   - [FieldWrites]: Field writes through captured variables and parameters
 //
 // Facts are computed incrementally and stored per (graph, parent-scope) pair.
 // The [GraphKey] type provides the canonical key for this lookup.

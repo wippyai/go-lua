@@ -1,0 +1,1 @@
+{"description": "app:pim_schema_api_test asserted requirement length and constant indexed read against full schema source", "files": ["json.lua", "sql.lua", "config.lua", "attribute_config.lua", "uuid.lua", "pim.lua", "funcs.lua", "security.lua", "ctx.lua", "time.lua", "schema.lua", "test.lua", "main.lua"], "check": {"errors": 0}}

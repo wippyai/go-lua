@@ -222,15 +222,15 @@ func TestExtractAssignments_EmptyGraph(t *testing.T) {
 	fn := &ast.FunctionExpr{ParList: &ast.ParList{}}
 	graph := cfg.Build(fn)
 	inputs := &flow.Inputs{
-		DeclaredTypes:      make(map[cfg.SymbolID]typ.Type),
-		ConstValues:        make(map[cfg.SymbolID]map[cfg.Point]*flow.ConstValue),
-		TypeKeys:           make(map[uint64]typ.Type),
-		ReturnKinds:        make(map[cfg.Point]flow.ReturnKind),
-		ReturnConstraints:  make(map[cfg.Point]flow.ReturnExprConstraints),
-		PredicateLinks:     make(map[string]flow.PredicateLink),
-		SiblingAssignments: make(map[flow.SiblingKey]*flow.SiblingAssignment),
-		ModuleAliases:      make(map[cfg.SymbolID]string),
-		Assignments:        []flow.UnifiedAssignment{},
+		DeclaredTypes:     make(map[cfg.SymbolID]typ.Type),
+		ConstValues:       make(map[cfg.SymbolID]map[cfg.Point]*flow.ConstValue),
+		TypeKeys:          make(map[uint64]typ.Type),
+		ReturnKinds:       make(map[cfg.Point]flow.ReturnKind),
+		ReturnConstraints: make(map[cfg.Point]flow.ReturnExprConstraints),
+		PredicateLinks:    make(map[string]flow.PredicateLink),
+		Facts:             make(map[cfg.Point]constraint.Condition),
+		ModuleAliases:     make(map[cfg.SymbolID]string),
+		Assignments:       []flow.UnifiedAssignment{},
 	}
 	scopes := map[cfg.Point]*scope.State{}
 	symResolver := func(p cfg.Point, sym cfg.SymbolID) (typ.Type, bool) {

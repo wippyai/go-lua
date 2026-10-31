@@ -1,0 +1,11 @@
+{
+  "description": "chestor/journal ReadJournal tool with its type casts removed: an unannotated `value` is reassigned to a record wrapping itself across sixteen views, and its imports are the journal read, graph and support modules reduced to their declared signatures.",
+  "files": [
+    "support.lua",
+    "queries.lua",
+    "context.lua",
+    "recall.lua",
+    "graph.lua",
+    "main.lua"
+  ]
+}

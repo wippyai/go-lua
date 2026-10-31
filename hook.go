@@ -2,10 +2,10 @@ package lua
 
 // Debug hook masks, matching the C API constants (lua.h LUA_MASKxxx).
 const (
-	HookMaskCall  uint8 = 1 << iota // "c"
-	HookMaskReturn                  // "r"
-	HookMaskLine                    // "l"
-	HookMaskCount                   // set when a count > 0 is given
+	HookMaskCall   uint8 = 1 << iota // "c"
+	HookMaskReturn                   // "r"
+	HookMaskLine                     // "l"
+	HookMaskCount                    // set when a count > 0 is given
 )
 
 // callHook is invoked from the interpreter dispatch loop before each
@@ -31,8 +31,13 @@ func (ls *LState) callHook(cf *callFrame) {
 		pc := int(cf.Pc - 1)
 		if pc >= 0 && pc < len(positions) {
 			line := int32(positions[pc])
-			if line != ls.hookLastLine {
-				ls.hookLastLine = line
+			// A source line alone cannot identify a dispatch location: two
+			// chunks can use the same line number, and loops revisit a line.
+			fire := cf.Fn.Proto != ls.hookLastProto || pc <= ls.hookLastPC || line != ls.hookLastLine
+			ls.hookLastProto = cf.Fn.Proto
+			ls.hookLastPC = pc
+			ls.hookLastLine = line
+			if fire {
 				ls.fireHook("line", line)
 			}
 		}
@@ -97,24 +102,29 @@ func hookMaskString(mask uint8) string {
 	return s
 }
 
+// clearHook releases callbacks and dispatch history before disabling or pooling a state.
+func (ls *LState) clearHook() {
+	ls.hook = nil
+	ls.hookMask = 0
+	ls.hookCount = 0
+	ls.hookCounter = 0
+	ls.hookLastLine = 0
+	ls.hookLastProto = nil
+	ls.hookLastPC = 0
+}
+
 // debugSetHook implements debug.sethook([hook, mask [, count]]).
 // Only "line" and "count" events are emitted; requesting "call"/"return"
 // hooks is rejected rather than silently ignored.
 func debugSetHook(L *LState) int {
 	if L.GetTop() == 0 {
-		L.hook = LNil
-		L.hookMask = 0
-		L.hookCount = 0
-		L.hookCounter = 0
+		L.clearHook()
 		return 0
 	}
 
 	hook := L.Get(1)
 	if hook == LNil {
-		L.hook = LNil
-		L.hookMask = 0
-		L.hookCount = 0
-		L.hookCounter = 0
+		L.clearHook()
 		return 0
 	}
 	if _, ok := hook.(*LFunction); !ok {

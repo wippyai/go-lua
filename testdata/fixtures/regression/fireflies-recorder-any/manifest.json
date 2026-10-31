@@ -1,0 +1,4 @@
+{
+  "description": "A local annotated any keeps its any type for reads through a returned any, so a field of it passes as an optional string argument",
+  "files": ["types.lua", "http_client.lua", "json.lua", "api.lua", "ctx.lua", "transport.lua", "writer.lua", "test.lua", "main.lua"]
+}

@@ -59,6 +59,13 @@ type subtypeKey struct {
 	super typ.Type
 }
 
+// assignKey identifies a use-site assignability check under a relation mode.
+type assignKey struct {
+	sub   typ.Type
+	super typ.Type
+	mode  subtype.Assignability
+}
+
 // fieldResult captures the outcome of a field/method/index lookup.
 // The ok field indicates whether the lookup succeeded; t holds the resolved type.
 type fieldResult struct {
@@ -132,6 +139,7 @@ type Engine struct {
 
 	// Subtype and transformation queries
 	subtypeQ    *db.Query[subtypeKey, bool]    // sub <: super check
+	assignQ     *db.Query[assignKey, bool]     // use-site assignability
 	expandQ     *db.Query[unwrapKey, typ.Type] // expand Instantiated types
 	widenQ      *db.Query[unwrapKey, typ.Type] // literal -> base type
 	widenInferQ *db.Query[unwrapKey, typ.Type] // deep widening for inference
@@ -194,6 +202,10 @@ func NewEngine() *Engine {
 
 	e.subtypeQ = db.NewQuery("IsSubtype", func(_ *db.QueryContext, key subtypeKey) bool {
 		return subtype.IsSubtype(key.sub, key.super)
+	}, boolEqual)
+
+	e.assignQ = db.NewQuery("IsAssignable", func(_ *db.QueryContext, key assignKey) bool {
+		return key.mode.Assignable(key.sub, key.super)
 	}, boolEqual)
 
 	e.expandQ = db.NewQueryWithWiden("ExpandInstantiated", func(_ *db.QueryContext, key unwrapKey) typ.Type {
@@ -441,6 +453,21 @@ func (e *Engine) IsSubtype(ctx *db.QueryContext, sub, super typ.Type) bool {
 	super = internType(ctx, super)
 
 	return e.subtypeQ.Get(ctx, subtypeKey{sub: sub, super: super})
+}
+
+// IsAssignable reports with memoization whether a value of type sub may be
+// used where super is expected, under the assignability mode attached to ctx
+// (AssignabilityOf).
+func (e *Engine) IsAssignable(ctx *db.QueryContext, sub, super typ.Type) bool {
+	mode := AssignabilityOf(ctx)
+	if e == nil || e.assignQ == nil {
+		return mode.Assignable(sub, super)
+	}
+
+	sub = internType(ctx, sub)
+	super = internType(ctx, super)
+
+	return e.assignQ.Get(ctx, assignKey{sub: sub, super: super, mode: mode})
 }
 
 // ExpandInstantiated expands generic instantiations with memoization.

@@ -1,0 +1,5 @@
+{
+  "description": "A closure sees the fields of a captured table filled at constant keys: a table shape written under keys an earlier iteration could not type yields to the resolved fields.",
+  "files": ["main.lua"],
+  "check": {"errors": 0}
+}

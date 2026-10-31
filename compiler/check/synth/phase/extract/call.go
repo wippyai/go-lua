@@ -10,9 +10,11 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/synth/ops"
 	"github.com/wippyai/go-lua/compiler/check/synth/transform"
 	"github.com/wippyai/go-lua/types/cfg"
+	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/contract"
 	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/effect"
+	"github.com/wippyai/go-lua/types/narrow"
 	"github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/subtype"
 	"github.com/wippyai/go-lua/types/typ"
@@ -80,6 +82,13 @@ func (q CallQuery) IsSubtype(ctx *db.QueryContext, sub, super typ.Type) bool {
 	return q.s.deps.Types.IsSubtype(ctx, sub, super)
 }
 
+func (q CallQuery) IsAssignable(ctx *db.QueryContext, sub, super typ.Type) bool {
+	if q.s == nil || q.s.deps.Types == nil {
+		return core.AssignabilityOf(ctx).Assignable(sub, super)
+	}
+	return q.s.deps.Types.IsAssignable(ctx, sub, super)
+}
+
 func (q CallQuery) ExpandInstantiated(ctx *db.QueryContext, t typ.Type) typ.Type {
 	if q.s == nil || q.s.deps.Types == nil {
 		return subst.ExpandInstantiated(t)
@@ -114,7 +123,7 @@ func (s *Synthesizer) GetCallQuery() core.TypeOps {
 // 3. Call pipeline: Infer type args, re-synthesize callbacks, finish call
 // 4. Post-call transforms: Apply spec-based return type overrides and effects
 //
-// For method calls (obj:method()), dispatches to synthMethodCallCoreWithExpected.
+// For method calls (obj:method()), dispatches to synthMethodCall.
 func (s *Synthesizer) SynthCallCore(ex *ast.FuncCallExpr, p cfg.Point, sc *scope.State, narrower api.FlowOps, recurse ExprSynth) []typ.Type {
 	return s.synthCallCoreWithCaptureTypes(ex, p, sc, narrower, recurse, nil, nil)
 }
@@ -134,7 +143,7 @@ func (s *Synthesizer) synthCallCoreWithCaptureTypes(
 	captureTypes map[cfg.SymbolID]typ.Type,
 ) []typ.Type {
 	if callsite.IsMethodLikeExpr(ex) {
-		return s.synthMethodCallCoreWithExpected(ex, p, sc, recurse, expected)
+		return s.synthMethodCall(ex, p, sc, func() typ.Type { return recurse(ex.Receiver) }, recurse, expected, captureTypes)
 	}
 
 	env := intercept.CallEnv{
@@ -152,19 +161,21 @@ func (s *Synthesizer) synthCallCoreWithCaptureTypes(
 	if specialized := s.specializedLocalFunctionCalleeType(ex, p, sc, calleeType, captureTypes); specialized != nil {
 		calleeType = specialized
 	}
-	args := synthArgs(ex.Args, recurse)
+	args := synthArgs(ex.Args, recurse, func(arg ast.Expr) []typ.Type { return s.SynthMulti(arg, p, narrower) })
 	typeArgs := s.resolveTypeArgs(ex.TypeArgs, sc)
 
 	def := ops.CallDef{
 		Callee:         calleeType,
-		Args:           args,
+		Args:           args.Types,
+		OpenTail:       args.OpenTail,
+		Written:        args.Written,
 		TypeArgs:       typeArgs,
 		Query:          s.GetCallQuery(),
 		ExpectedReturn: expected,
 	}
 
 	pipeline := NewCallPipeline(s.deps.Ctx, def, ex.Args).
-		WithReSynth(s.callbackAwareReSynth(calleeType, sc))
+		WithReSynth(s.callbackAwareReSynth(calleeType, sc, captureTypes))
 
 	if expected != nil {
 		pipeline = pipeline.WithExpected(expected)
@@ -173,9 +184,9 @@ func (s *Synthesizer) synthCallCoreWithCaptureTypes(
 	result := pipeline.Run()
 
 	returns := unwrapCallResult(result)
-	returns = s.applyPostCallTransforms(calleeType, args, returns)
+	returns = s.applyPostCallTransforms(calleeType, args.Types, returns)
 
-	specOverride := s.specReturnOverride(calleeType, ex.Args, args)
+	specOverride := s.specReturnOverride(calleeType, ex.Args, args.Types)
 	return intercept.ApplyOverride(returns, specOverride)
 }
 
@@ -225,81 +236,45 @@ func (s *Synthesizer) SynthCallCoreWithExpected(ex *ast.FuncCallExpr, p cfg.Poin
 	return s.synthCallCoreWithNarrower(ex, p, sc, nil, recurse, expected)
 }
 
-// synthMethodCallCoreWithExpected synthesizes method call with optional expected return type.
-func (s *Synthesizer) synthMethodCallCoreWithExpected(ex *ast.FuncCallExpr, p cfg.Point, sc *scope.State, recurse ExprSynth, expected typ.Type) []typ.Type {
+// SynthCallWithReceiverType synthesizes method call with an explicit receiver type.
+func (s *Synthesizer) SynthCallWithReceiverType(ex *ast.FuncCallExpr, p cfg.Point, sc *scope.State, recvType typ.Type, recurse ExprSynth) []typ.Type {
+	return s.synthMethodCall(ex, p, sc, func() typ.Type { return recvType }, recurse, nil, nil)
+}
+
+func (s *Synthesizer) synthMethodCall(ex *ast.FuncCallExpr, p cfg.Point, sc *scope.State, receiver func() typ.Type, recurse ExprSynth, expected typ.Type, captureTypes map[cfg.SymbolID]typ.Type) []typ.Type {
 	env := intercept.CallEnv{
 		Scope:      sc,
 		Recurse:    intercept.ExprSynth(recurse),
 		TypeLookup: s.declaredTypeLookup(sc),
 	}
-
 	chain := s.buildInterceptChain(sc)
 	if result := chain.InterceptMethodCall(ex, env); result.Skip {
 		return result.Types
 	}
 
-	recvType := recurse(ex.Receiver)
-	args := synthArgs(ex.Args, recurse)
+	recvType := receiver()
+	args := synthArgs(ex.Args, recurse, func(arg ast.Expr) []typ.Type { return s.SynthMulti(arg, p, nil) })
 	calleeType := s.resolveMethodCallee(recvType, ex.Method)
-
 	def := ops.CallDef{
 		IsMethod:            true,
 		Receiver:            recvType,
 		MethodName:          ex.Method,
-		Args:                args,
+		Args:                args.Types,
+		OpenTail:            args.OpenTail,
+		Written:             args.Written,
 		Query:               s.GetCallQuery(),
 		ExpectedReturn:      expected,
 		ForceMethodReceiver: s.forceMethodReceiverAtPoint(p, ex),
 	}
-
 	pipeline := NewCallPipeline(s.deps.Ctx, def, ex.Args).
-		WithReSynth(s.callbackAwareReSynth(calleeType, sc))
-
+		WithReSynth(s.callbackAwareReSynth(calleeType, sc, captureTypes))
 	if expected != nil {
 		pipeline = pipeline.WithExpected(expected)
 	}
-
 	result := pipeline.Run()
 	returns := unwrapCallResult(result)
-	returns = s.applyPostCallTransforms(calleeType, args, returns)
-
-	specOverride := s.specReturnOverride(calleeType, ex.Args, args)
-	return intercept.ApplyOverride(returns, specOverride)
-}
-
-// SynthCallWithReceiverType synthesizes method call with an explicit receiver type.
-func (s *Synthesizer) SynthCallWithReceiverType(ex *ast.FuncCallExpr, p cfg.Point, sc *scope.State, recvType typ.Type, recurse ExprSynth) []typ.Type {
-	env := intercept.CallEnv{
-		Scope:      sc,
-		Recurse:    intercept.ExprSynth(recurse),
-		TypeLookup: s.declaredTypeLookup(sc),
-	}
-
-	chain := s.buildInterceptChain(sc)
-	if result := chain.InterceptMethodCall(ex, env); result.Skip {
-		return result.Types
-	}
-
-	args := synthArgs(ex.Args, recurse)
-	calleeType := s.resolveMethodCallee(recvType, ex.Method)
-
-	def := ops.CallDef{
-		IsMethod:            true,
-		Receiver:            recvType,
-		MethodName:          ex.Method,
-		Args:                args,
-		Query:               s.GetCallQuery(),
-		ForceMethodReceiver: s.forceMethodReceiverAtPoint(p, ex),
-	}
-
-	pipeline := NewCallPipeline(s.deps.Ctx, def, ex.Args).
-		WithReSynth(s.callbackAwareReSynth(calleeType, sc))
-
-	result := pipeline.Run()
-	returns := unwrapCallResult(result)
-	returns = s.applyPostCallTransforms(calleeType, args, returns)
-
-	specOverride := s.specReturnOverride(calleeType, ex.Args, args)
+	returns = s.applyPostCallTransforms(calleeType, args.Types, returns)
+	specOverride := s.specReturnOverride(calleeType, ex.Args, args.Types)
 	return intercept.ApplyOverride(returns, specOverride)
 }
 
@@ -345,12 +320,8 @@ func (s *Synthesizer) buildInterceptChain(sc *scope.State) *intercept.Chain {
 }
 
 // synthArgs synthesizes types for argument expressions.
-func synthArgs(exprs []ast.Expr, recurse ExprSynth) []typ.Type {
-	args := make([]typ.Type, len(exprs))
-	for i, arg := range exprs {
-		args[i] = recurse(arg)
-	}
-	return args
+func synthArgs(exprs []ast.Expr, recurse ExprSynth, multi func(ast.Expr) []typ.Type) callsite.Arguments {
+	return callsite.ArgumentTypes(exprs, func(arg ast.Expr) typ.Type { return recurse(arg) }, multi)
 }
 
 // resolveTypeArgs resolves explicit type arguments.
@@ -478,7 +449,8 @@ func (s *Synthesizer) applyPostCallTransforms(calleeType typ.Type, args []typ.Ty
 
 	var result []typ.Type
 	for i := range returns {
-		transformed := transform.ApplyEffectTransform(fn, args, i, returns[i])
+		transformed := transform.ApplyEffectTransform(fn, args, i, returns)
+		transformed = applyTruthyIdentityReturn(fn, args, i, transformed)
 		if transformed == nil || transformed == returns[i] {
 			continue
 		}
@@ -495,10 +467,53 @@ func (s *Synthesizer) applyPostCallTransforms(calleeType typ.Type, args []typ.Ty
 	return returns
 }
 
+// applyTruthyIdentityReturn narrows a return value only when the function's
+// contract proves both parts of the identity:
+//
+//   - the return slot is SameAs a parameter; and
+//   - normal return requires that parameter to be truthy.
+//
+// This keeps assertion-style builtins precise without treating an arbitrary
+// function returning T as a truthy T. In particular, Any and Unknown remain
+// gradual, while optional concrete values lose nil/false on the normal path.
+func applyTruthyIdentityReturn(fn *typ.Function, args []typ.Type, returnIdx int, result typ.Type) typ.Type {
+	if fn == nil || result == nil || fn.Spec == nil || fn.Refinement == nil {
+		return result
+	}
+	spec, ok := fn.Spec.(*contract.Spec)
+	if !ok || spec == nil {
+		return result
+	}
+	ret := spec.Effects.GetReturn(returnIdx)
+	if ret == nil {
+		return result
+	}
+	same, ok := ret.Transform.(effect.SameAs)
+	if !ok {
+		return result
+	}
+	paramIdx, ok := effect.ResolveParamIndex(same.Source, len(args))
+	if !ok || paramIdx < 0 || paramIdx >= len(args) {
+		return result
+	}
+	refinement, ok := fn.Refinement.(*constraint.FunctionRefinement)
+	if !ok || refinement == nil {
+		return result
+	}
+	paramPath := constraint.ParamPath(paramIdx)
+	for _, c := range refinement.OnReturn.MustConstraints() {
+		truthy, ok := c.(constraint.Truthy)
+		if ok && truthy.Path.Equal(paramPath) {
+			return narrow.ToTruthy(result)
+		}
+	}
+	return result
+}
+
 // callbackAwareReSynth creates an ArgReSynth that applies EnvOverlay from callback specs.
 // For callback parameters with an EnvOverlay, the overlay globals are merged into the
 // synthesizer's context so they are visible inside the callback body only.
-func (s *Synthesizer) callbackAwareReSynth(calleeType typ.Type, sc *scope.State) ArgReSynth {
+func (s *Synthesizer) callbackAwareReSynth(calleeType typ.Type, sc *scope.State, captureTypes map[cfg.SymbolID]typ.Type) ArgReSynth {
 	return func(idx int, arg ast.Expr, expected typ.Type) typ.Type {
 		expectedFn, ok := unwrap.Alias(expected).(*typ.Function)
 		if !ok {
@@ -517,11 +532,11 @@ func (s *Synthesizer) callbackAwareReSynth(calleeType typ.Type, sc *scope.State)
 			}
 		}
 
-		synthFn := s.SynthFunctionTypeWithExpected
+		engine := s
 		if overlay := callbackEnvOverlay(calleeType, idx); len(overlay) > 0 {
-			synthFn = s.withEnvOverlay(overlay).SynthFunctionTypeWithExpected
+			engine = s.withEnvOverlay(overlay)
 		}
-		ft := synthFn(fnExpr, sc, expectedFn)
+		ft := engine.synthFunctionTypeWithCapturePoint(fnExpr, sc, expectedFn, 0, captureTypes)
 		if ft == nil {
 			return nil
 		}
@@ -561,6 +576,7 @@ func (s *Synthesizer) withEnvOverlay(overlay map[string]typ.Type) *Synthesizer {
 		Graphs:                 s.deps.Graphs,
 		Flow:                   s.deps.Flow,
 		Paths:                  s.deps.Paths,
+		Conditions:             s.deps.Conditions,
 		PreCache:               make(api.Cache),
 		NarrowCache:            make(api.Cache),
 		FunctionTypeInProgress: s.deps.FunctionTypeInProgress,

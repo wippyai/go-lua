@@ -160,7 +160,7 @@ func TestWidenArrayElementType_EmptyRecord(t *testing.T) {
 }
 
 func TestWidenWithIndexer_NilBase(t *testing.T) {
-	result := widenWithIndexer(nil, typ.String, typ.Integer)
+	result := widenWithIndexer(nil, typ.String, typ.Integer, false)
 	m, ok := result.(*typ.Map)
 	if !ok {
 		t.Fatalf("widenWithIndexer(nil, string, int) = %T, want *typ.Map", result)
@@ -175,7 +175,7 @@ func TestWidenWithIndexer_NilBase(t *testing.T) {
 
 func TestWidenWithIndexer_EmptyRecord(t *testing.T) {
 	emptyRecord := typ.NewRecord().Build()
-	result := widenWithIndexer(emptyRecord, typ.String, typ.Number)
+	result := widenWithIndexer(emptyRecord, typ.String, typ.Number, false)
 	m, ok := result.(*typ.Map)
 	if !ok {
 		t.Fatalf("widenWithIndexer({}, string, number) = %T, want *typ.Map", result)
@@ -190,7 +190,7 @@ func TestWidenWithIndexer_EmptyRecord(t *testing.T) {
 
 func TestWidenWithIndexer_ExistingMap(t *testing.T) {
 	existingMap := typ.NewMap(typ.String, typ.Integer)
-	result := widenWithIndexer(existingMap, typ.Number, typ.Boolean)
+	result := widenWithIndexer(existingMap, typ.Number, typ.Boolean, false)
 	m, ok := result.(*typ.Map)
 	if !ok {
 		t.Fatalf("widenWithIndexer(map, number, bool) = %T, want *typ.Map", result)
@@ -202,6 +202,58 @@ func TestWidenWithIndexer_ExistingMap(t *testing.T) {
 	}
 	if len(keyUnion.Members) != 2 {
 		t.Errorf("key union members = %d, want 2", len(keyUnion.Members))
+	}
+}
+
+func TestMergeMapValueDomain_PreservesAcceptedRefinement(t *testing.T) {
+	domain := typ.NewRecord().
+		Field("id", typ.String).
+		Field("updated_at", typ.NewOptional(typ.Number)).
+		Build()
+	refined := typ.NewRecord().
+		Field("id", typ.String).
+		Field("updated_at", typ.Number).
+		Build()
+
+	for _, tt := range []struct {
+		name   string
+		domain typ.Type
+	}{
+		{name: "record", domain: domain},
+		{name: "alias", domain: typ.NewAlias("Order", domain)},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := mergeMapValueDomain(tt.domain, refined); !typ.TypeEquals(got, tt.domain) {
+				t.Fatalf("mergeMapValueDomain = %v, want original domain %v", got, tt.domain)
+			}
+			// Both map representations must use the same domain-preserving merge.
+			for _, container := range []typ.Type{
+				typ.NewMap(typ.String, tt.domain),
+				typ.NewRecord().Field("name", typ.String).MapComponent(typ.String, tt.domain).Build(),
+			} {
+				if got := widenWithIndexer(container, typ.String, refined, false); !typ.TypeEquals(got, container) {
+					t.Errorf("widenWithIndexer = %v, want original container %v", got, container)
+				}
+			}
+		})
+	}
+}
+
+func TestMergeMapValueDomain_WidensUnrelatedValuesAndReplacesPlaceholders(t *testing.T) {
+	for _, tt := range []struct {
+		name               string
+		existing, incoming typ.Type
+		want               typ.Type
+	}{
+		{"unrelated", typ.String, typ.Number, typ.NewUnion(typ.String, typ.Number)},
+		{"unknown", typ.Unknown, typ.String, typ.String},
+		{"any", typ.Any, typ.String, typ.Any},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := mergeMapValueDomain(tt.existing, tt.incoming); !typ.TypeEquals(got, tt.want) {
+				t.Fatalf("mergeMapValueDomain = %v, want %v", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -335,5 +387,111 @@ func TestProcessJoinReturnChangedKeys_WithPhi(t *testing.T) {
 	}
 	if len(union.Members) != 2 {
 		t.Errorf("union members = %d, want 2", len(union.Members))
+	}
+}
+
+func TestWidenFieldWrite_AddsAbsentFieldAsOptional(t *testing.T) {
+	rec := typ.NewRecord().Field("n", typ.Integer).Build()
+	got := applyFieldWrite(rec, "label", typ.String, false)
+	want := typ.NewRecord().Field("n", typ.Integer).AddField(typ.Field{Name: "label", Type: typ.String, Optional: true, InferredPresence: true}).Build()
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("applyFieldWrite = %s, want %s", got, want)
+	}
+}
+
+func TestWidenFieldWrite_JoinsPresentFieldKeepingOptionality(t *testing.T) {
+	rec := typ.NewRecord().Field("n", typ.Integer).OptField("label", typ.String).Build()
+	got := applyFieldWrite(rec, "n", typ.Number, false)
+	want := typ.NewRecord().Field("n", typ.Number).OptField("label", typ.String).Build()
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("applyFieldWrite = %s, want %s", got, want)
+	}
+	if same := applyFieldWrite(want, "n", typ.Integer, false); same != want {
+		t.Fatalf("a write already admitted by the field must keep the record, got %s", same)
+	}
+}
+
+func TestWidenFieldWrite_WidensRecordMembers(t *testing.T) {
+	rec := typ.NewRecord().Field("n", typ.Integer).Build()
+	got := applyFieldWrite(typ.NewOptional(rec), "label", typ.String, false)
+	want := typ.NewOptional(typ.NewRecord().Field("n", typ.Integer).AddField(typ.Field{Name: "label", Type: typ.String, Optional: true, InferredPresence: true}).Build())
+	if !typ.TypeEquals(got, want) {
+		t.Fatalf("applyFieldWrite = %s, want %s", got, want)
+	}
+	if s := applyFieldWrite(typ.String, "label", typ.String, false); s != typ.String {
+		t.Fatalf("non-table types stay unchanged, got %s", s)
+	}
+}
+
+func TestWidenFieldWrite_OpenRecordRecordsPossibleWrite(t *testing.T) {
+	rec := typ.NewRecord().Field("n", typ.Integer).SetOpen(true).Build()
+	got := applyFieldWrite(rec, "label", typ.String, false)
+	f := got.(*typ.Record).GetField("label")
+	if f == nil || !f.Optional || !f.InferredPresence || !typ.TypeEquals(f.Type, typ.String) {
+		t.Fatalf("an open record must retain the possible write's value and provenance, got %s", got)
+	}
+}
+
+func TestWidenFieldWrite_ExplicitNilKeepsCheckedOptionality(t *testing.T) {
+	rec := typ.NewRecord().SetOpen(true).Build()
+	written := applyFieldWrite(rec, "label", typ.String, false)
+	cleared := applyFieldWrite(written, "label", typ.Nil, false).(*typ.Record)
+	f := cleared.GetField("label")
+	if f == nil || !f.Optional || f.InferredPresence {
+		t.Fatalf("a possible nil write must not retain inferred presence, got %s", cleared)
+	}
+}
+
+func TestWidenFieldWrite_UnknownFieldAdmitsWrite(t *testing.T) {
+	rec := typ.NewRecord().Field("tx", typ.Unknown).Build()
+	if got := applyFieldWrite(rec, "tx", typ.NewOptional(typ.String), false); got != rec {
+		t.Fatalf("an unknown field admits the write already, got %s", got)
+	}
+}
+
+func TestWidenWithIndexerInferredMapPresence(t *testing.T) {
+	for _, value := range []typ.Type{typ.String, typ.NewOptional(typ.String)} {
+		got := widenWithIndexer(typ.Unknown, typ.String, value, false)
+		m, ok := got.(*typ.Map)
+		if !ok || !m.InferredPresence {
+			t.Fatalf("map inferred from unknown = %v, want inferred presence", got)
+		}
+		if want := !typ.TypeEquals(value, typ.String); m.ExplicitNilWrite != want {
+			t.Fatalf("explicit nil write = %v, want %v", m.ExplicitNilWrite, want)
+		}
+	}
+
+	declared := typ.NewMap(typ.String, typ.String)
+	got := widenWithIndexer(declared, typ.String, typ.String, false)
+	if !typ.TypeEquals(got, declared) {
+		t.Fatalf("write to declared map = %v, want %v", got, declared)
+	}
+}
+
+func TestDeclaredRecordEffectsPreserveOptionalSlotContracts(t *testing.T) {
+	for _, optionalField := range []bool{false, true} {
+		slot := typ.NewRecord().Field("fixed", typ.String)
+		if optionalField {
+			slot.OptField("note", typ.String)
+		} else {
+			slot.Field("note", typ.NewOptional(typ.String))
+		}
+		record := slot.SetDeclared(true).Build()
+		for _, definite := range []bool{false, true} {
+			for _, value := range []typ.Type{typ.String, typ.Nil, typ.NewOptional(typ.String)} {
+				written := applyFieldWrite(record, "note", value, definite)
+				if !subtype.IsSubtype(written, record) {
+					t.Fatalf("admitted effect %s changes the slot contract: %s", value, written)
+				}
+			}
+			written := applyFieldWrite(record, "note", typ.Integer, definite)
+			if subtype.IsSubtype(written, record) {
+				t.Fatalf("incompatible effect disappears from the record: %s", written)
+			}
+			written = applyFieldWrite(record, "note", typ.Any, definite)
+			if !typ.IsAny(written.(*typ.Record).GetField("note").Type) {
+				t.Fatalf("dynamic effect loses its value domain: %s", written)
+			}
+		}
 	}
 }

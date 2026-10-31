@@ -44,6 +44,7 @@ func NewUnion(members ...Type) Type {
 	hasNil := false
 	hasAny := false
 	hasUnknown := false
+	hasUnresolved := false
 
 	var addMember func(Type)
 	addMember = func(m Type) {
@@ -65,6 +66,9 @@ func NewUnion(members ...Type) Type {
 			return // Unknown doesn't contribute information to union
 		case kind.Any:
 			hasAny = true
+		case kind.Unresolved:
+			hasUnresolved = true
+			flat = append(flat, m)
 		case kind.Nil:
 			hasNil = true
 		case kind.Union:
@@ -83,8 +87,14 @@ func NewUnion(members ...Type) Type {
 		addMember(m)
 	}
 
-	if hasAny {
+	if hasAny && !hasUnresolved {
 		return Any
+	}
+	if hasAny {
+		flat = append(flat, Any)
+	}
+	if hasUnknown && hasUnresolved {
+		flat = append(flat, Unknown)
 	}
 
 	// Deduplicate by hash + structural equality (collision-safe).
@@ -111,6 +121,26 @@ func NewUnion(members ...Type) Type {
 		filtered := unique[:0]
 		for _, m := range unique {
 			if m.Kind() == kind.Integer {
+				continue
+			}
+			filtered = append(filtered, m)
+		}
+		unique = filtered
+	}
+
+	// Subsume the empty table: {} is the empty value of every array and map,
+	// so an array or map member absorbs it (`return rows or {}`).
+	hasContainer := false
+	for _, m := range unique {
+		switch UnwrapAnnotated(m).(type) {
+		case *Array, *Map:
+			hasContainer = true
+		}
+	}
+	if hasContainer {
+		filtered := unique[:0]
+		for _, m := range unique {
+			if isEmptyRecordNoMap(UnwrapAnnotated(m)) {
 				continue
 			}
 			filtered = append(filtered, m)

@@ -1,0 +1,1 @@
+{"description":"Real kickside.cron.persist:schedule_repo get with a declared external get_db alias. Optional return slots alone do not prove value/error correlation; guarded uses must be rejected.","files":["sql.lua","cron_types.lua","schedule_store.lua","main.lua"],"check":{"errors":2}}

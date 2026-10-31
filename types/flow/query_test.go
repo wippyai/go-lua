@@ -6,8 +6,28 @@ import (
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/narrow"
+	querycore "github.com/wippyai/go-lua/types/query/core"
 	"github.com/wippyai/go-lua/types/typ"
 )
+
+func TestFilterByChildNarrowings_MissingFieldCanBeNil(t *testing.T) {
+	success := typ.NewRecord().Field("result", typ.Any).Build()
+	failure := typ.NewRecord().Field("error", typ.Any).Build()
+	parent := constraint.NewPath(1, "entry")
+	child := parent.Field("result").Key()
+	solution := &Solution{resolver: querycore.Resolver()}
+	base := typ.NewUnion(success, failure)
+
+	got := solution.filterByChildNarrowings(base, parent, map[constraint.PathKey]typ.Type{child: typ.Nil})
+	if !typ.TypeEquals(got, base) {
+		t.Fatalf("nil result should retain both record shapes, got %v", got)
+	}
+
+	got = solution.filterByChildNarrowings(base, parent, map[constraint.PathKey]typ.Type{child: typ.String})
+	if !typ.TypeEquals(got, success) {
+		t.Fatalf("non-nil result should retain only the record with that field, got %v", got)
+	}
+}
 
 func TestTypeAt_EmptyPath(t *testing.T) {
 	c := cfg.New()
@@ -18,6 +38,49 @@ func TestTypeAt_EmptyPath(t *testing.T) {
 	result := s.TypeAt(c.Entry(), constraint.Path{})
 	if result != nil {
 		t.Errorf("TypeAt(empty path) = %v, want nil", result)
+	}
+}
+
+func TestNarrowingDistinguishesPendingAndMissingMembers(t *testing.T) {
+	c := cfg.New()
+	g := newMockSSAGraph(c)
+	sym := setupSymbol(g, "value", []cfg.Point{c.Entry()})
+	setVersion(g, c.Entry(), sym, cfg.Version{Root: "value", Symbol: sym, ID: 1})
+	root := constraint.Path{Root: "value", Symbol: sym}
+	child := root.Field("member")
+	for _, tc := range []struct {
+		name    string
+		base    typ.Type
+		path    constraint.Path
+		pending bool
+	}{
+		{"pending_root", nil, root, true},
+		{"pending_child", nil, child, true},
+		{"pending_intermediate", typ.NewRecord().Field("member", typ.Unresolved).Build(), child.Field("leaf"), true},
+		{"missing_member", typ.NewRecord().Field("known", typ.String).Build(), child, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			inputs := newInputs(g)
+			if tc.base != nil {
+				inputs.DeclaredTypes[sym] = tc.base
+			}
+			s := Solve(inputs, testResolver())
+			base := s.baseTypeAt(c.Entry(), tc.path)
+			if tc.pending && !typ.IsUnresolved(base) {
+				t.Fatalf("pending base = %v, want unresolved", base)
+			}
+			if !tc.pending && base != nil {
+				t.Fatalf("missing projection = %v, want nil", base)
+			}
+			guard := constraint.FromConstraints(constraint.HasType{Path: tc.path, Type: narrow.BuiltinTypeKey("string")})
+			got := s.narrowedTypeUnder(c.Entry(), tc.path, guard)
+			if tc.pending && !typ.IsUnresolved(got) {
+				t.Fatalf("pending guard invents evidence: %v", got)
+			}
+			if !tc.pending && !typ.TypeEquals(got, typ.String) {
+				t.Fatalf("missing member guard = %v, want string", got)
+			}
+		})
 	}
 }
 
@@ -134,6 +197,41 @@ func TestBaseTypeAt_NoSegments(t *testing.T) {
 	}
 }
 
+func TestNarrowAscribedTypeAssumingKeepsMemberDomain(t *testing.T) {
+	c := cfg.New()
+	branch := c.AddNode(cfg.NodeBranch, 0, "")
+	thenNode := c.AddNode(cfg.NodeAssign, 0, "")
+	c.AddEdge(c.Entry(), branch, true)
+	c.AddEdge(branch, thenNode, true)
+	c.AddEdge(thenNode, c.Exit(), true)
+	g := newMockSSAGraph(c)
+	points := []cfg.Point{c.Entry(), branch, thenNode}
+	sym := setupSymbol(g, "module", points)
+	for _, point := range points {
+		setVersion(g, point, sym, cfg.Version{Root: "module", Symbol: sym, ID: 1})
+	}
+	root := constraint.Path{Root: "module", Symbol: sym}
+	member := root.Field("invoke")
+	fn := typ.Func().Returns(typ.Boolean).Build()
+	inputs := newInputs(g)
+	inputs.DeclaredTypes[sym] = typ.NewOptional(typ.NewRecord().OptField("invoke", fn).SetDeclared(true).Build())
+	inputs.EdgeConditions = []EdgeCondition{{
+		From: branch, To: thenNode,
+		Condition: constraint.FromConstraints(constraint.Truthy{Path: root}),
+	}}
+	s := Solve(inputs, testResolver())
+	if got := s.NarrowedTypeAt(thenNode, member); !typ.TypeEquals(got, typ.NewOptional(fn)) {
+		t.Fatalf("solution member = %v, want optional function", got)
+	}
+	if got := s.NarrowAscribedTypeAssuming(thenNode, member, typ.Any, constraint.TrueCondition()); !typ.IsAny(got) {
+		t.Fatalf("supplied member = %v, want any", got)
+	}
+	guard := constraint.FromConstraints(constraint.NotNil{Path: member})
+	if got := s.NarrowAscribedTypeAssuming(thenNode, member, typ.NewOptional(fn), guard); !typ.TypeEquals(got, fn) {
+		t.Fatalf("guarded supplied member = %v, want function", got)
+	}
+}
+
 func TestBaseTypeAt_WithSegments_ExplicitPreferred(t *testing.T) {
 	c := cfg.New()
 	g := newMockSSAGraph(c)
@@ -174,6 +272,50 @@ func TestBaseTypeAt_WithSegments_ExplicitPreferred(t *testing.T) {
 	result := s.baseTypeAt(c.Entry(), path)
 	if result != errType {
 		t.Errorf("baseTypeAt(r.err) = %v, want Err (explicit assignment)", result)
+	}
+}
+
+func TestTypeAt_PlaceholderFieldFactKeepsConcreteSlot(t *testing.T) {
+	c := cfg.New()
+	g := newMockSSAGraph(c)
+
+	symR := setupSymbol(g, "r", []cfg.Point{c.Entry()})
+	ver := cfg.Version{Root: "r", Symbol: symR, ID: 1}
+	setVersion(g, c.Entry(), symR, ver)
+
+	recordType := typ.NewRecord().Field("count", typ.Number).Field("label", typ.String).Build()
+	countPath := constraint.Path{
+		Root:     "r",
+		Symbol:   symR,
+		Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "count"}},
+	}
+	labelPath := constraint.Path{
+		Root:     "r",
+		Symbol:   symR,
+		Segments: []constraint.Segment{{Kind: constraint.SegmentField, Name: "label"}},
+	}
+
+	inputs := newInputs(g)
+	inputs.DeclaredTypes[symR] = recordType
+	inputs.Assignments = []UnifiedAssignment{
+		{Point: c.Entry(), TargetPath: constraint.Path{Root: "r", Symbol: symR}, Type: recordType},
+		{Point: c.Entry(), TargetPath: countPath, Type: typ.Any},
+		{Point: c.Entry(), TargetPath: labelPath, Type: typ.LiteralString("x")},
+	}
+
+	s := Solve(inputs, testResolver())
+
+	root := s.TypeAt(c.Entry(), constraint.Path{Root: "r", Symbol: symR})
+	count, ok := testResolver().Field(root, "count")
+	if !ok || !typ.TypeEquals(count, typ.Number) {
+		t.Errorf("r.count in root = %v, want number", count)
+	}
+	label, ok := testResolver().Field(root, "label")
+	if !ok || !typ.TypeEquals(label, typ.LiteralString("x")) {
+		t.Errorf("r.label in root = %v, want \"x\"", label)
+	}
+	if got := s.NarrowedTypeAt(c.Entry(), countPath); !typ.TypeEquals(got, typ.Number) {
+		t.Errorf("NarrowedTypeAt(r.count) = %v, want number", got)
 	}
 }
 

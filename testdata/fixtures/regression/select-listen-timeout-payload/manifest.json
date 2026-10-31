@@ -1,0 +1,4 @@
+{
+  "description": "process.listen() payload selected with time.after(): after excluding the timer case, the value is the listener payload",
+  "packages": ["channel", "time", "process"]
+}

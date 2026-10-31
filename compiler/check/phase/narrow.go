@@ -9,10 +9,8 @@ import (
 	"github.com/wippyai/go-lua/compiler/check/scope"
 	"github.com/wippyai/go-lua/compiler/check/synth"
 	"github.com/wippyai/go-lua/types/constraint"
-	"github.com/wippyai/go-lua/types/db"
 	"github.com/wippyai/go-lua/types/flow"
-	"github.com/wippyai/go-lua/types/io"
-	"github.com/wippyai/go-lua/types/query/core"
+	"github.com/wippyai/go-lua/types/typ"
 )
 
 // RunNarrow executes the narrowing phase.
@@ -55,22 +53,13 @@ func RunNarrow(input NarrowInput) NarrowOutput {
 		WithSiblingTypes(input.SiblingTypes).
 		WithLiteralTypes(input.LiteralTypes).
 		WithSolution(input.Solve.Solution).
-		WithNarrowReturnSummaries(input.NarrowReturnSummaries).
+		WithCallables(input.Callables).
 		BuildNarrow()
 
-	engine := createNarrowedEngine(
-		input.Ctx,
-		input.Types,
-		input.Manifests,
-		input.Scope.Scopes,
-		input.Solve.Solution,
-		narrowingCtx,
-		input.ModuleBindings,
-		input.ModuleAliases,
-	)
+	engine := createNarrowedEngine(input.PhaseEnv, input.Scope.Scopes, input.Solve.Solution, narrowingCtx, input.Extract.Conditions)
 
 	fnEffect := InferRefinement(input.Graph, input.Solve.Solution, input.Extract.Params, input.Extract.ReturnType)
-	fnEffect = EnrichWithKeysCollector(fnEffect, input.Fn)
+	fnEffect = EnrichWithKeysCollector(fnEffect, input.Fn, input.ModuleBindings)
 
 	return NarrowOutput{
 		Facts:      narrowingCtx.Types(),
@@ -80,39 +69,31 @@ func RunNarrow(input NarrowInput) NarrowOutput {
 }
 
 func createNarrowedEngine(
-	ctx *db.QueryContext,
-	types core.TypeOps,
-	manifests io.ManifestQuerier,
+	env PhaseEnv,
 	scopes map[cfg.Point]*scope.State,
 	solution *flow.Solution,
 	checkCtx api.NarrowEnv,
-	moduleBindings *bind.BindingTable,
-	moduleAliases map[cfg.SymbolID]string,
+	conditions api.ConditionFromExprFunc,
 ) *synth.Engine {
 	var bindings *bind.BindingTable
 	if checkCtx != nil {
 		bindings = checkCtx.Bindings()
 	}
 	if bindings == nil {
-		bindings = moduleBindings
+		bindings = env.ModuleBindings
 	}
-	return synth.New(synth.Config{
-		Ctx:            ctx,
-		Types:          types,
-		Scopes:         scopes,
-		Flow:           solution,
-		Paths:          newPathFromExprFunc(solution, bindings),
-		Manifests:      manifests,
-		Env:            checkCtx,
-		Phase:          api.PhaseNarrowing,
-		ModuleBindings: moduleBindings,
-		ModuleAliases:  moduleAliases,
-	})
+	env.Scopes = scopes
+	env.Flow = solution
+	env.Paths = newPathFromExprFunc(solution, bindings)
+	env.Conditions = conditions
+	env.Env = checkCtx
+	env.Phase = api.PhaseNarrowing
+	return synth.New(env)
 }
 
 // newPathFromExprFunc returns a PathFromExprFunc using bindings-based path extraction.
 func newPathFromExprFunc(solution *flow.Solution, bindings *bind.BindingTable) api.PathFromExprFunc {
-	return func(p cfg.Point, expr ast.Expr, _ *scope.State) constraint.Path {
+	return func(p cfg.Point, expr ast.Expr, _ *scope.State, keyType func(ast.Expr) typ.Type) constraint.Path {
 		if solution == nil {
 			return constraint.Path{}
 		}
@@ -122,6 +103,6 @@ func newPathFromExprFunc(solution *flow.Solution, bindings *bind.BindingTable) a
 			}
 			return solution.ConstValueAt(p, name)
 		}
-		return path.FromExprWithBindings(expr, constResolver, bindings)
+		return path.FromExprWithKeyTypesThroughCasts(expr, constResolver, bindings, keyType)
 	}
 }

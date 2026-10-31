@@ -54,15 +54,7 @@ func ExtractContainerMutatorAssignments(fc *core.FlowContext, inputs *flow.Input
 		}
 		valueType = resolve.Ref(valueType, sc)
 
-		var valuePath constraint.Path
-		if ident, ok := valueExpr.(*ast.IdentExpr); ok && bindings != nil {
-			if sym, found := bindings.SymbolOf(ident); found && sym != 0 {
-				valuePath = constraint.Path{
-					Root:   resolve.RootNameFromBindings(bindings, sym, ident.Value),
-					Symbol: sym,
-				}
-			}
-		}
+		value := ValueSourceFromExpr(valueExpr, valueType, p, bindings, inputs)
 
 		constResolver := predicate.BuildConstResolver(inputs, p)
 		if path := flowpath.FromExprWithBindingsAt(targetExpr, constResolver, bindings, fc.Graph, p); !path.IsEmpty() && path.Symbol != 0 {
@@ -73,8 +65,7 @@ func ExtractContainerMutatorAssignments(fc *core.FlowContext, inputs *flow.Input
 					Symbol:   path.Symbol,
 					Segments: path.Segments,
 				},
-				ValuePath: valuePath,
-				ValueType: valueType,
+				ValueSource: value,
 			})
 		}
 	})

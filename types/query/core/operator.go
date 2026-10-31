@@ -31,11 +31,11 @@ func binaryOpCompute(left typ.Type, op string, right typ.Type) typ.Type {
 
 	// Handle unions - distribute operation over members
 	if u, ok := left.(*typ.Union); ok {
-		return binaryOpUnion(u, op, right)
+		return binaryOpUnion(u, op, right, true)
 	}
 
 	if u, ok := right.(*typ.Union); ok {
-		return binaryOpRightUnion(left, op, u)
+		return binaryOpUnion(u, op, left, false)
 	}
 
 	switch op {
@@ -104,9 +104,15 @@ func unaryOpCompute(op string, operand typ.Type) typ.Type {
 		return top
 	}
 
+	// A recursive type applies the operator to its body; references back to
+	// the type itself contribute nothing beyond the other members.
+	if rec, ok := operand.(*typ.Recursive); ok {
+		return unaryOpRecursive(op, rec)
+	}
+
 	// Handle unions
 	if u, ok := operand.(*typ.Union); ok {
-		return unaryOpUnion(op, u)
+		return unaryOpMembers(op, u.Members)
 	}
 
 	switch op {
@@ -439,12 +445,12 @@ func swapCompOp(op string) string {
 func binaryAnd(left, right typ.Type) typ.Type {
 	// and returns left if falsy, else right
 	// Type is: left if left is falsy type, else right
-	falsy := falsyPart(left)
+	falsy := truthinessPart(left, false)
 	if falsy == nil {
 		return right
 	}
 
-	truthy := truthyPart(left)
+	truthy := truthinessPart(left, true)
 	if truthy == nil {
 		return falsy
 	}
@@ -457,12 +463,12 @@ func binaryAnd(left, right typ.Type) typ.Type {
 // Type-wise: if left can be truthy, result is truthy_part(left) | right.
 func binaryOr(left, right typ.Type) typ.Type {
 	// or returns left if truthy, else right
-	truthy := truthyPart(left)
+	truthy := truthinessPart(left, true)
 	if truthy == nil {
 		return right
 	}
 
-	falsy := falsyPart(left)
+	falsy := truthinessPart(left, false)
 	if falsy == nil {
 		return left
 	}
@@ -591,6 +597,10 @@ func unaryOpAny(op string) typ.Type {
 
 // binaryOpTopTypes resolves any/unknown combinations before regular operator flow.
 func binaryOpTopTypes(left typ.Type, op string, right typ.Type) (typ.Type, bool) {
+	// An operand still pending inference leaves the result pending.
+	if typ.IsUnresolved(left) || typ.IsUnresolved(right) {
+		return typ.Unresolved, true
+	}
 	leftUnknown := typ.IsUnknown(left)
 	rightUnknown := typ.IsUnknown(right)
 
@@ -617,6 +627,10 @@ func binaryOpTopTypes(left typ.Type, op string, right typ.Type) (typ.Type, bool)
 
 // unaryOpTopType resolves any/unknown for unary operators.
 func unaryOpTopType(op string, operand typ.Type) (typ.Type, bool) {
+	// An operand still pending inference leaves the result pending.
+	if typ.IsUnresolved(operand) {
+		return typ.Unresolved, true
+	}
 	if typ.IsUnknown(operand) {
 		if op == "#" {
 			return typ.Integer, true
@@ -629,72 +643,63 @@ func unaryOpTopType(op string, operand typ.Type) (typ.Type, bool) {
 	return nil, false
 }
 
-// binaryOpUnion distributes a binary operator over left union members.
-// The result is the union of results for each member with the right operand.
-func binaryOpUnion(u *typ.Union, op string, right typ.Type) typ.Type {
+// binaryOpUnion distributes an operator over the selected union operand.
+func binaryOpUnion(u *typ.Union, op string, other typ.Type, unionOnLeft bool) typ.Type {
 	var results []typ.Type
-
 	seen := make(map[uint64]bool)
-
 	for _, m := range u.Members {
-		if r := binaryOpCompute(m, op, right); r != nil {
+		left, right := other, m
+		if unionOnLeft {
+			left, right = m, other
+		}
+		if r := binaryOpCompute(left, op, right); r != nil {
 			h := r.Hash()
 			if !seen[h] {
 				seen[h] = true
-
 				results = append(results, r)
 			}
 		}
 	}
-
 	if len(results) == 0 {
 		return nil
 	}
-
 	if len(results) == 1 {
 		return results[0]
 	}
-
 	return typ.NewUnion(results...)
 }
 
-// binaryOpRightUnion distributes a binary operator over right union members.
-// The result is the union of results for the left operand with each member.
-func binaryOpRightUnion(left typ.Type, op string, u *typ.Union) typ.Type {
-	var results []typ.Type
-
-	seen := make(map[uint64]bool)
-
-	for _, m := range u.Members {
-		if r := binaryOpCompute(left, op, m); r != nil {
-			h := r.Hash()
-			if !seen[h] {
-				seen[h] = true
-
-				results = append(results, r)
+// unaryOpRecursive applies a unary operator to a recursive type's body.
+func unaryOpRecursive(op string, rec *typ.Recursive) typ.Type {
+	if rec.Body == nil || rec.Body == rec {
+		return nil
+	}
+	if u, ok := rec.Body.(*typ.Union); ok {
+		members := make([]typ.Type, 0, len(u.Members))
+		for _, m := range u.Members {
+			if m != rec {
+				members = append(members, m)
 			}
 		}
+		if len(members) == 0 {
+			return nil
+		}
+		if len(members) == 1 {
+			return unaryOpCompute(op, members[0])
+		}
+		return unaryOpMembers(op, members)
 	}
-
-	if len(results) == 0 {
-		return nil
-	}
-
-	if len(results) == 1 {
-		return results[0]
-	}
-
-	return typ.NewUnion(results...)
+	return unaryOpCompute(op, rec.Body)
 }
 
-// unaryOpUnion distributes a unary operator over union members.
+// unaryOpMembers distributes a unary operator over union members.
 // The result is the union of results for each member.
-func unaryOpUnion(op string, u *typ.Union) typ.Type {
+func unaryOpMembers(op string, members []typ.Type) typ.Type {
 	var results []typ.Type
 
 	seen := make(map[uint64]bool)
 
-	for _, m := range u.Members {
+	for _, m := range members {
 		if r := unaryOpCompute(op, m); r != nil {
 			h := r.Hash()
 			if !seen[h] {
@@ -791,147 +796,79 @@ func isStrictString(t typ.Type) bool {
 	return false
 }
 
-// falsyPart extracts the falsy subset of a type.
-// In Lua, only nil and false are falsy. This function returns the part of a
-// type that could be falsy at runtime, used for "and" operator semantics.
-// Returns nil if the type cannot be falsy.
-func falsyPart(t typ.Type) typ.Type {
+// truthinessPart projects the subset matching a Lua truth value.
+func truthinessPart(t typ.Type, truthy bool) typ.Type {
 	if t == nil {
 		return nil
 	}
-
 	return typ.Visit(t, typ.Visitor[typ.Type]{
 		Optional: func(o *typ.Optional) typ.Type {
+			if truthy {
+				return o.Inner
+			}
 			return typ.Nil
 		},
 		Union: func(u *typ.Union) typ.Type {
 			var parts []typ.Type
-
 			for _, m := range u.Members {
-				if fp := falsyPart(m); fp != nil {
-					parts = append(parts, fp)
+				if part := truthinessPart(m, truthy); part != nil {
+					parts = append(parts, part)
 				}
 			}
-
 			if len(parts) == 0 {
 				return nil
 			}
-
 			return typ.NewUnion(parts...)
 		},
 		Intersection: func(in *typ.Intersection) typ.Type {
 			var parts []typ.Type
-
 			for _, m := range in.Members {
-				fp := falsyPart(m)
-				if fp == nil {
+				part := truthinessPart(m, truthy)
+				if part == nil {
 					return nil
 				}
-
-				parts = append(parts, fp)
+				parts = append(parts, part)
 			}
-
 			if len(parts) == 0 {
 				return nil
 			}
-
 			return typ.NewIntersection(parts...)
 		},
 		Alias: func(a *typ.Alias) typ.Type {
 			if a.Target == nil {
 				return nil
 			}
-
-			return falsyPart(a.Target)
+			return truthinessPart(a.Target, truthy)
 		},
 		Literal: func(lit *typ.Literal) typ.Type {
 			if b, ok := lit.Value.(bool); ok && !b {
+				if truthy {
+					return nil
+				}
 				return typ.False
 			}
-
+			if truthy {
+				return t
+			}
 			return nil
 		},
 		Default: func(t typ.Type) typ.Type {
 			switch t.Kind() {
 			case kind.Nil:
-				return typ.Nil
-			case kind.Boolean:
-				return typ.False
-			default:
-				return nil
-			}
-		},
-	})
-}
-
-// truthyPart extracts the truthy subset of a type.
-// In Lua, everything except nil and false is truthy. This function returns
-// the part of a type that could be truthy at runtime, used for "or" semantics.
-// Returns nil if the type cannot be truthy (only nil or false).
-func truthyPart(t typ.Type) typ.Type {
-	if t == nil {
-		return nil
-	}
-
-	return typ.Visit(t, typ.Visitor[typ.Type]{
-		Optional: func(o *typ.Optional) typ.Type {
-			return o.Inner
-		},
-		Union: func(u *typ.Union) typ.Type {
-			var parts []typ.Type
-
-			for _, m := range u.Members {
-				if tp := truthyPart(m); tp != nil {
-					parts = append(parts, tp)
-				}
-			}
-
-			if len(parts) == 0 {
-				return nil
-			}
-
-			return typ.NewUnion(parts...)
-		},
-		Intersection: func(in *typ.Intersection) typ.Type {
-			var parts []typ.Type
-
-			for _, m := range in.Members {
-				tp := truthyPart(m)
-				if tp == nil {
+				if truthy {
 					return nil
 				}
-
-				parts = append(parts, tp)
-			}
-
-			if len(parts) == 0 {
-				return nil
-			}
-
-			return typ.NewIntersection(parts...)
-		},
-		Alias: func(a *typ.Alias) typ.Type {
-			if a.Target == nil {
-				return nil
-			}
-
-			return truthyPart(a.Target)
-		},
-		Literal: func(lit *typ.Literal) typ.Type {
-			if b, ok := lit.Value.(bool); ok && !b {
-				return nil
-			}
-
-			return t
-		},
-		Default: func(t typ.Type) typ.Type {
-			switch t.Kind() {
-			case kind.Nil:
-				return nil
+				return typ.Nil
 			case kind.Boolean:
-				return typ.True
+				if truthy {
+					return typ.True
+				}
+				return typ.False
 			default:
-				return t
+				if truthy {
+					return t
+				}
+				return nil
 			}
 		},
 	})

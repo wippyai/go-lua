@@ -1,6 +1,7 @@
 package callsite
 
 import (
+	"github.com/wippyai/go-lua/compiler/ast"
 	"github.com/wippyai/go-lua/compiler/bind"
 	"github.com/wippyai/go-lua/compiler/cfg"
 )
@@ -13,7 +14,9 @@ import (
 //  3. symbol resolved from fallback bindings using call expression
 //  4. method symbol resolved from primary bindings (receiver + method)
 //  5. method symbol resolved from fallback bindings (receiver + method)
-//  6. binding symbols with matching callee name (primary, then fallback)
+//  6. binding symbols with matching callee name (primary, then fallback),
+//     for plain calls only: in mod.f() or obj:f() the name f belongs to the
+//     receiver, not to a binding named f
 func CalleeSymbolCandidates(info *cfg.CallInfo, primary, fallback *bind.BindingTable) []cfg.SymbolID {
 	if info == nil {
 		return nil
@@ -30,7 +33,7 @@ func CalleeSymbolCandidates(info *cfg.CallInfo, primary, fallback *bind.BindingT
 			set.Add(methodSym)
 		}
 	}
-	if info.CalleeName != "" {
+	if _, fieldCall := info.Callee.(*ast.AttrGetExpr); !fieldCall && info.Receiver == nil && info.CalleeName != "" {
 		if primary != nil {
 			for _, sym := range primary.SymbolsByNameReadOnly(info.CalleeName) {
 				set.Add(sym)

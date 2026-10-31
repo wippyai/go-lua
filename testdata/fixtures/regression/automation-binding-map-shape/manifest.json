@@ -1,0 +1,13 @@
+{
+  "description": "Exact kickside.automation:automation registry source with shared types and dependency stubs; row_to_binding string fields must survive Map returns.",
+  "files": [
+    "types.lua",
+    "execution_identity.lua",
+    "automation_ref.lua",
+    "automation.lua",
+    "main.lua"
+  ],
+  "check": {
+    "errors": 0
+  }
+}

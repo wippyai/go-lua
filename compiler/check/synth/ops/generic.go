@@ -2,6 +2,7 @@ package ops
 
 import (
 	"fmt"
+	"github.com/wippyai/go-lua/types/kind"
 
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/subtype"
@@ -12,19 +13,31 @@ import (
 
 // InferTypeArgsWithExpectedAndMode performs bidirectional inference with optional
 // forced receiver consumption for method calls.
+//
+// The expected return type is context: it settles type arguments together with
+// the arguments, and gives way when it contradicts them, so the call has the
+// type its arguments determine and the use site reports the mismatch.
 func InferTypeArgsWithExpectedAndMode(fn *typ.Function, args []typ.Type, isMethod bool, receiver typ.Type, expectedReturn typ.Type, forceMethodReceiver bool) ([]typ.Type, error) {
 	if fn == nil || len(fn.TypeParams) == 0 {
 		return nil, nil
 	}
+	if expectedReturn != nil {
+		if result, err := inferTypeArgs(fn, args, isMethod, receiver, expectedReturn, forceMethodReceiver); err == nil {
+			return result, nil
+		}
+	}
+	return inferTypeArgs(fn, args, isMethod, receiver, nil, forceMethodReceiver)
+}
 
-	typeVars := make(map[string]*typ.TypeVar)
-	for i, tp := range fn.TypeParams {
-		typeVars[tp.Name] = typ.NewTypeVar(i + 1)
+func inferTypeArgs(fn *typ.Function, args []typ.Type, isMethod bool, receiver typ.Type, expectedReturn typ.Type, forceMethodReceiver bool) ([]typ.Type, error) {
+	typeVars := make([]typ.Type, len(fn.TypeParams))
+	for i := range fn.TypeParams {
+		typeVars[i] = typ.NewTypeVar(i + 1)
 	}
 
 	paramTypes := make([]typ.Type, len(fn.Params))
 	for i, p := range fn.Params {
-		paramTypes[i] = SubstituteTypeVars(p.Type, typeVars)
+		paramTypes[i] = subst.Params(p.Type, fn.TypeParams, typeVars)
 	}
 
 	cs := constraint.NewInferSet()
@@ -45,13 +58,18 @@ func InferTypeArgsWithExpectedAndMode(fn *typ.Function, args []typ.Type, isMetho
 		if paramIdx < len(paramTypes) {
 			expected = paramTypes[paramIdx]
 		} else if fn.Variadic != nil {
-			expected = SubstituteTypeVars(fn.Variadic, typeVars)
+			expected = subst.Params(fn.Variadic, fn.TypeParams, typeVars)
 		} else {
 			break
 		}
 		// Expand Instantiated types for structural matching
 		expected = subst.ExpandInstantiated(expected)
 		arg = subst.ExpandInstantiated(arg)
+		// never is the empty type: an argument typed never contributes no
+		// values, so it places no lower bound on a type parameter.
+		if arg != nil && arg.Kind() == kind.Never {
+			continue
+		}
 		arg = normalizeArgForGenericInference(expected, arg)
 		constraint.MatchContra(expected, arg, cs)
 	}
@@ -63,7 +81,7 @@ func InferTypeArgsWithExpectedAndMode(fn *typ.Function, args []typ.Type, isMetho
 	if expectedReturn != nil && len(fn.Returns) > 0 {
 		expKind := expectedReturn.Kind()
 		if !expKind.IsPlaceholder() {
-			returnType := SubstituteTypeVars(fn.Returns[0], typeVars)
+			returnType := subst.Params(fn.Returns[0], fn.TypeParams, typeVars)
 			returnType = subst.ExpandInstantiated(returnType)
 
 			// Handle union expected types by matching against each member
@@ -90,8 +108,8 @@ func InferTypeArgsWithExpectedAndMode(fn *typ.Function, args []typ.Type, isMetho
 
 	result := make([]typ.Type, len(fn.TypeParams))
 
-	for i, tp := range fn.TypeParams {
-		tv := typeVars[tp.Name]
+	for i := range fn.TypeParams {
+		tv := typeVars[i].(*typ.TypeVar)
 		if solved, ok := solution[tv.ID]; ok && solved != nil {
 			result[i] = solved
 		} else {
@@ -99,9 +117,10 @@ func InferTypeArgsWithExpectedAndMode(fn *typ.Function, args []typ.Type, isMetho
 		}
 	}
 
-	// Validate that inferred type arguments satisfy their constraints
+	// Validate that inferred type arguments satisfy their constraints. A type
+	// argument with pending evidence is validated once its evidence is final.
 	for i, tp := range fn.TypeParams {
-		if tp.Constraint != nil && !typ.IsAbsentOrUnknown(result[i]) {
+		if tp.Constraint != nil && typ.IsFinal(result[i]) && !typ.IsUnknown(result[i]) && !typ.IsAny(result[i]) {
 			if !subtype.IsSubtype(result[i], tp.Constraint) {
 				return nil, fmt.Errorf("infer: type argument %s does not satisfy constraint %s", result[i], tp.Constraint)
 			}
@@ -117,21 +136,6 @@ func normalizeArgForGenericInference(expected, arg typ.Type) typ.Type {
 	}
 	if _, ok := unwrap.Alias(expected).(*typ.Array); !ok {
 		return arg
-	}
-
-	joinElems := func(elems []typ.Type) typ.Type {
-		var joined typ.Type
-		for _, elem := range elems {
-			if elem == nil {
-				continue
-			}
-			if joined == nil {
-				joined = elem
-			} else {
-				joined = typ.JoinPreferNonSoft(joined, elem)
-			}
-		}
-		return joined
 	}
 
 	var collectElems func(t typ.Type, out *[]typ.Type) bool
@@ -172,20 +176,7 @@ func normalizeArgForGenericInference(expected, arg typ.Type) typ.Type {
 	if !collectElems(arg, &elems) {
 		return arg
 	}
-	elemType := joinElems(elems)
-	if elemType == nil {
-		return arg
-	}
-	return typ.NewArray(elemType)
-}
-
-// SubstituteTypeVars replaces TypeParam with TypeVar in a type.
-func SubstituteTypeVars(t typ.Type, vars map[string]*typ.TypeVar) typ.Type {
-	subs := make(map[string]typ.Type, len(vars))
-	for name, tv := range vars {
-		subs[name] = tv
-	}
-	return subst.Substitute(t, subs)
+	return typ.NewArray(typ.JoinAllPreferNonSoft(elems))
 }
 
 // InstantiateFunction creates a concrete function type by substituting type arguments.
@@ -194,8 +185,8 @@ func SubstituteTypeVars(t typ.Type, vars map[string]*typ.TypeVar) typ.Type {
 // replaces all occurrences of type parameters with their corresponding
 // type arguments throughout parameter types, return types, and constraints.
 //
-// Returns the original function if it's not generic or if typeArgs length
-// doesn't match the number of type parameters.
+// The result has no type parameters. Returns the original function if it's
+// not generic or if typeArgs length doesn't match the number of type parameters.
 func InstantiateFunction(fn *typ.Function, typeArgs []typ.Type) *typ.Function {
 	if fn == nil || len(fn.TypeParams) == 0 {
 		return fn
@@ -207,7 +198,7 @@ func InstantiateFunction(fn *typ.Function, typeArgs []typ.Type) *typ.Function {
 
 	result := subst.Params(fn, fn.TypeParams, typeArgs)
 	if f, ok := result.(*typ.Function); ok {
-		return f
+		return f.Monomorphic()
 	}
 
 	return fn

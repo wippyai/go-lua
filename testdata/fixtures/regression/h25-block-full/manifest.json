@@ -1,0 +1,1 @@
+{"description": "Registry source of h25-block-full with its direct source dependency", "files": ["channel.lua", "crypto.lua", "merge_arm.lua", "process.lua", "schema.lua", "time.lua", "types.lua", "writer.lua", "schema_authority.lua", "main.lua"], "check": {"errors": 0}}

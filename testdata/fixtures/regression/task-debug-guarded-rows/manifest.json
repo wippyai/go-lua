@@ -1,0 +1,4 @@
+{
+  "description": "keeper 0.5.69 task debug tool over its nodes reader: rows from a guarded list call are indexed in a length-bounded loop.",
+  "files": ["nodes.lua", "main.lua"]
+}

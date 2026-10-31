@@ -17,6 +17,15 @@ var CallStack = typ.NewRecord().
 	Field("frames", typ.NewArray(StackFrame)).
 	Build()
 
+// ErrorSpec is the table form errors.new accepts: a required message and the
+// optional kind, retryable flag and details the error carries.
+var ErrorSpec = typ.NewRecord().
+	Field("message", typ.String).
+	OptField("kind", typ.String).
+	OptField("retryable", typ.Boolean).
+	OptField("details", typ.NewMap(typ.String, typ.Any)).
+	Build()
+
 var errorsMethods = typ.NewRecord().
 	Field("NOT_FOUND", typ.String).
 	Field("ALREADY_EXISTS", typ.String).
@@ -30,12 +39,12 @@ var errorsMethods = typ.NewRecord().
 	Field("RATE_LIMITED", typ.String).
 	Field("UNKNOWN", typ.String).
 	Field("new", typ.Func().
-		Param("msg", typ.Any).
+		Param("msg", typ.NewUnion(typ.String, ErrorSpec)).
 		Returns(typ.LuaError).
 		Build()).
 	Field("wrap", typ.Func().
-		Param("err", typ.Any).
-		OptParam("msg", typ.String).
+		Param("err", typ.NewUnion(typ.LuaError, typ.String)).
+		Param("msg", typ.NewUnion(typ.String, typ.LuaError)).
 		Returns(typ.LuaError).
 		Build()).
 	Field("call_stack", typ.Func().

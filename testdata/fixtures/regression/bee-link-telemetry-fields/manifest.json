@@ -1,0 +1,1 @@
+{"description": "A guarded link state narrows to the connected variant for a LinkFields return (Bee hive telemetry).", "files": ["main.lua"], "check": {"errors": 0, "modes": ["gradual", "strict"]}}

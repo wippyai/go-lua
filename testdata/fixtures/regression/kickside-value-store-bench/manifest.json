@@ -1,0 +1,1 @@
+{"description": "app:value_store_bench over wippy.test with the sql and fs packages and a typed json stand-in: facts crossing nested benchmark closures and call chains converge.", "packages": ["funcs", "time", "process", "sql", "fs"], "files": ["test.lua", "json.lua", "main.lua"], "check": {"expected_errors": [{"file": "main.lua", "line": 676, "contains": "cannot index type"}]}}

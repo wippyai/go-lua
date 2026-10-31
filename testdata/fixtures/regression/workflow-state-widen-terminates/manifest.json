@@ -1,0 +1,4 @@
+{
+  "description": "dataflow 0.6.1 runner/workflow_state as vendored by chestor/journal: return-summary widening over its record-returning methods converges in bounded time.",
+  "files": ["main.lua"]
+}

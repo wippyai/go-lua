@@ -21,7 +21,7 @@ func TestDetectConstructorPattern_NilGraph(t *testing.T) {
 }
 
 func TestFindSetmetatablePatternByName_NilGraph(t *testing.T) {
-	result := findSetmetatablePatternByName(nil, "Test")
+	result := findSetmetatablePattern(nil, 1)
 	if result != 0 {
 		t.Errorf("expected 0 for nil graph, got %d", result)
 	}

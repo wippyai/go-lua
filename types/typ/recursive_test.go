@@ -2,6 +2,7 @@ package typ
 
 import (
 	"testing"
+	"time"
 
 	"github.com/wippyai/go-lua/types/kind"
 )
@@ -64,6 +65,22 @@ func TestRecursiveEqualsEquivalent(t *testing.T) {
 	// They should be structurally equal
 	if !TypeEquals(rec1, rec2) {
 		t.Error("structurally equivalent recursive types should be equal")
+	}
+}
+
+func TestRecursiveSnapshotsCompareTheirBodies(t *testing.T) {
+	identity := NewRecursivePlaceholder("class")
+	first := BindRecursiveSnapshotWithFields(identity, NewRecord().Field("value", String).Field("self", Unknown).Build(), map[string]bool{"self": true})
+	second := BindRecursiveSnapshotWithFields(identity, NewRecord().Field("value", Number).Field("self", Unknown).Build(), map[string]bool{"self": true})
+	firstAgain := BindRecursiveSnapshotWithFields(identity, NewRecord().Field("value", String).Field("self", Unknown).Build(), map[string]bool{"self": true})
+	if TypeEquals(first, second) {
+		t.Fatal("snapshots with changed bodies compared equal by identity")
+	}
+	if !TypeEquals(first, firstAgain) {
+		t.Fatal("equivalent snapshots should compare equal")
+	}
+	if field := first.Body.(*Record).GetField("value"); field == nil || !TypeEquals(field.Type, String) {
+		t.Fatal("binding a later snapshot changed the first body")
 	}
 }
 
@@ -536,7 +553,7 @@ func TestRecursiveInUnionMultiple(t *testing.T) {
 	}
 }
 
-// TestRecursiveEqualsDifferentNames tests that name affects equality.
+// TestRecursiveEqualsDifferentNames tests that names are display-only.
 func TestRecursiveEqualsDifferentNames(t *testing.T) {
 	rec1 := NewRecursive("Node", func(self Type) Type {
 		return NewRecord().OptField("next", self).Build()
@@ -546,14 +563,12 @@ func TestRecursiveEqualsDifferentNames(t *testing.T) {
 		return NewRecord().OptField("next", self).Build()
 	})
 
-	// Different names means different types
-	if TypeEquals(rec1, rec2) {
-		t.Error("recursive types with different names should not be equal")
+	if !TypeEquals(rec1, rec2) {
+		t.Error("recursive types with the same structure should be equal")
 	}
 
-	// Hashes should differ
-	if rec1.Hash() == rec2.Hash() {
-		t.Error("recursive types with different names should have different hashes")
+	if rec1.Hash() != rec2.Hash() {
+		t.Error("equal recursive types should have equal hashes")
 	}
 }
 
@@ -723,5 +738,127 @@ func TestRecursiveHashIntersection(t *testing.T) {
 
 	if !TypeEquals(rec, rec) {
 		t.Error("recursive intersection should equal itself")
+	}
+}
+
+// A hash taken while a reachable placeholder has no body must not outlive
+// that placeholder receiving its body.
+func TestRecursiveHashReflectsBodiesSetAfterHashing(t *testing.T) {
+	recA := NewRecursivePlaceholder("X")
+	recB := NewRecursivePlaceholder("Y")
+	recA.SetBody(NewRecord().OptField("ref", recB).Build())
+	partial := recA.Hash()
+	recB.SetBody(NewRecord().OptField("ref", recA).Field("tag", String).Build())
+
+	fresh := NewRecursivePlaceholder("X")
+	freshB := NewRecursivePlaceholder("Y")
+	fresh.SetBody(NewRecord().OptField("ref", freshB).Build())
+	freshB.SetBody(NewRecord().OptField("ref", fresh).Field("tag", String).Build())
+
+	if recA.Hash() != fresh.Hash() {
+		t.Fatalf("hash after SetBody must match an equal type built complete: %d vs %d", recA.Hash(), fresh.Hash())
+	}
+	if recA.Hash() == partial {
+		t.Fatal("hash must reflect the body set after the first hash")
+	}
+}
+
+func TestRecursiveHashReflectsReplacedBody(t *testing.T) {
+	rec := NewRecursivePlaceholder("X")
+	rec.SetBody(NewRecord().OptField("next", rec).Build())
+	provisional := rec.Hash()
+	rec.SetBody(NewRecord().OptField("next", rec).Field("tag", String).Build())
+
+	if rec.Hash() == provisional {
+		t.Fatal("hash must reflect the replaced body")
+	}
+	first := rec.Hash()
+	if rec.Hash() != first {
+		t.Fatal("hash must be deterministic")
+	}
+}
+
+func TestFoldApproximationsReplacesGuardedOccurrences(t *testing.T) {
+	leaf := NewRecord().Field("leaf", String).Build()
+	approx := NewUnion(Nil, leaf)
+	owner := NewRecord().OptField("next", approx).Field("leaf", String).Build()
+
+	got := FoldApproximations("self", owner, func(n Type) bool { return n == approx })
+
+	want := NewRecursive("self", func(self Type) Type {
+		return NewRecord().OptField("next", self).Field("leaf", String).Build()
+	})
+	if !TypeEquals(got, want) {
+		t.Fatalf("fold = %v, want %v", got, want)
+	}
+}
+
+// A union member of the root is an unguarded position: replacing it would make
+// the body mu X. X | ..., which is not contractive.
+func TestFoldApproximationsKeepsRootUnionMembers(t *testing.T) {
+	leaf := NewRecord().Field("leaf", String).Build()
+	wrapped := NewRecord().OptField("inner", leaf).Build()
+	root := NewUnion(Nil, leaf, wrapped)
+
+	got := FoldApproximations("self", root, func(n Type) bool { return n == leaf })
+
+	want := NewRecursive("self", func(self Type) Type {
+		return NewUnion(Nil, leaf, NewRecord().OptField("inner", self).Build())
+	})
+	if !TypeEquals(got, want) {
+		t.Fatalf("fold = %v, want %v", got, want)
+	}
+}
+
+func TestFoldApproximationsReturnsInputWithoutApproximations(t *testing.T) {
+	root := NewUnion(Nil, NewRecord().Field("leaf", String).Build())
+
+	if got := FoldApproximations("self", root, func(Type) bool { return false }); got != root {
+		t.Fatalf("fold without approximations = %v, want the input unchanged", got)
+	}
+}
+
+// A recursive body that shares substructure hashes in time linear in its
+// distinct nodes, not in its paths.
+func TestRecursiveHash_SharedSubstructureHashesOnce(t *testing.T) {
+	rec := NewRecursive("Shared", func(self Type) Type {
+		node := NewUnion(Nil, self)
+		for i := 0; i < 64; i++ {
+			node = NewRecord().Field("left", node).Field("right", node).Build()
+		}
+		return node
+	})
+	done := make(chan uint64, 1)
+	go func() { done <- rec.Hash() }()
+	select {
+	case h := <-done:
+		if h == 0 {
+			t.Fatal("expected a non-zero hash")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("hashing a shared recursive body did not finish")
+	}
+}
+
+func TestJoinRecursiveSnapshots_JoinsRecordBodies(t *testing.T) {
+	identity := NewRecursivePlaceholder("Class")
+	a := BindRecursiveSnapshot(identity, NewRecord().Field("name", String).Field("next", identity).Build())
+	b := BindRecursiveSnapshot(identity, NewRecord().Field("id", Integer).Field("next", identity).Build())
+
+	got := JoinRecursiveSnapshots(a, b)
+	if got == nil || got.ID != identity.ID {
+		t.Fatalf("expected a snapshot of %s, got %v", identity.Name, got)
+	}
+	body, ok := got.Body.(*Record)
+	if !ok || body.GetField("name") == nil || body.GetField("id") == nil {
+		t.Fatalf("expected both fields, got %s", got.Body)
+	}
+	next := body.GetField("next")
+	if r, ok := next.Type.(*Recursive); !ok || r != got {
+		t.Fatalf("expected next to refer to the joined snapshot, got %s", next.Type)
+	}
+	other := NewRecursivePlaceholder("Other")
+	if JoinRecursiveSnapshots(a, BindRecursiveSnapshot(other, NewRecord().Build())) != nil {
+		t.Fatalf("snapshots of different identities must not join")
 	}
 }

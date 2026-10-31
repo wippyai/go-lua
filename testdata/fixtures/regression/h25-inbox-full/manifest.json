@@ -1,0 +1,1 @@
+{"description": "Full registry source of kickside.inbox.persist:inbox_writer and inbox_delivery from foundation", "files": ["json.lua", "hash.lua", "uuid.lua", "inbox_events.lua", "inbox_types.lua", "inbox_delivery.lua", "main.lua"], "check": {"errors": 0}}

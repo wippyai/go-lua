@@ -1,0 +1,5 @@
+{
+  "description": "A map slot filled under `if not t[k] then t[k] = {...} end` is present afterwards, so its counter fields read as integers",
+  "files": ["gov_consts.lua", "registry.lua", "json.lua", "logger.lua", "changelog_repo.lua", "notify.lua", "main.lua"],
+  "packages": ["time"]
+}

@@ -19,7 +19,9 @@ func newSymbolSet(capacity int) *symbolSet {
 	}
 
 	return &symbolSet{
-		order: make([]cfg.SymbolID, 0, capacity),
+		// Most proposed candidates are duplicates of one symbol. Grow only
+		// when additional distinct symbols are actually discovered.
+		order: make([]cfg.SymbolID, 0, min(capacity, 1)),
 	}
 }
 
