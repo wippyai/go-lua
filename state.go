@@ -1481,6 +1481,7 @@ func (ls *LState) NewThread() (*LState, context.CancelFunc) {
 }
 
 func (ls *LState) NewFunctionFromProto(proto *FunctionProto) *LFunction {
+	covRegisterProto(proto)
 	ls.injectProtoTypes(proto)
 	return newLFunctionL(proto, ls.Env, int(proto.NumUpvalues))
 }
