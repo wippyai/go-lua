@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -40,6 +41,9 @@ func TestYieldContinuationLifetime(t *testing.T) {
 		for _, growing := range []bool{false, true} {
 			for _, exit := range []string{"pcall", "xpcall", "error", "close", "close-unpooled", "cancel"} {
 				t.Run(fmt.Sprintf("%s/growing=%t/%s", tc.name, growing, exit), func(t *testing.T) {
+					// These tests run serially and own the pool. A fresh pool
+					// selects the requested stack even when race-mode Get drops entries.
+					statePool = sync.Pool{}
 					L := NewState(Options{MinimizeStackMemory: growing})
 					defer L.Close()
 					L.SetGlobal("go_yield", L.NewFunction(func(L *LState) int {
@@ -106,6 +110,9 @@ func TestYieldContinuationLifetime(t *testing.T) {
 					defer cancel()
 					co := L.NewThreadWithContext(ctx)
 					defer co.Close()
+					if _, isGrowing := co.stack.(*autoGrowingCallFrameStack); isGrowing != growing {
+						t.Fatalf("coroutine stack = %T, growing=%t", co.stack, growing)
+					}
 					name := "unprotected"
 					if exit == "pcall" || exit == "xpcall" {
 						name = "protected"
@@ -152,8 +159,7 @@ func TestYieldContinuationLifetime(t *testing.T) {
 						return
 					}
 					// Supply the closed state even when the race detector drops pool entries.
-					for statePool.Get() != nil {
-					}
+					statePool = sync.Pool{}
 					newState := statePool.New
 					statePool.New = func() any { return co }
 					reused := L.NewThreadWithContext(context.Background())
@@ -206,6 +212,7 @@ func TestYieldContinuationSurvivesInnerUnwind(t *testing.T) {
 }
 
 func TestYieldContinuationDeepUnwind(t *testing.T) {
+	statePool = sync.Pool{}
 	L := NewState(Options{MinimizeStackMemory: true})
 	defer L.Close()
 	L.SetGlobal("go_yield", L.NewFunction(func(L *LState) int { return L.Yield() }))
@@ -232,6 +239,9 @@ func TestYieldContinuationDeepUnwind(t *testing.T) {
 	}
 	co := L.NewThreadWithContext(context.Background())
 	defer co.Close()
+	if _, growing := co.stack.(*autoGrowingCallFrameStack); !growing {
+		t.Fatalf("deep unwind requires a growing stack, got %T", co.stack)
+	}
 	fn := L.GetGlobal("run").(*LFunction)
 	state, _, err := L.Resume(co, fn)
 	if state != ResumeYield || err != nil || int(co.yieldContIdx) < FramesPerSegment*2 {

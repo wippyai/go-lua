@@ -3,6 +3,7 @@ package lua
 import (
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -11,8 +12,7 @@ func TestFailedCoroutineTraceback(t *testing.T) {
 		for _, wrapped := range []bool{false, true} {
 			t.Run(fmt.Sprintf("growing=%t/wrapped=%t", growing, wrapped), func(t *testing.T) {
 				// Create both states with the selected stack implementation.
-				for statePool.Get() != nil {
-				}
+				statePool = sync.Pool{}
 				L := NewState(Options{MinimizeStackMemory: growing})
 				defer L.Close()
 				var child *LState
