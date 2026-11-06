@@ -206,11 +206,19 @@ func (ls *LState) clearFrameExt(cf *callFrame) {
 	}
 }
 
-// unwindCallFrames discards frames down to sp and removes their extension
-// metadata first. Extensions are keyed by frame index, so a plain SetSp would
-// let a later, unrelated Go call at a reused index inherit a stale continuation
-// or xpcall error handler.
+func (ls *LState) clearYieldContinuation() {
+	ls.yieldCont = yieldContNone
+	ls.yieldContRA = 0
+	ls.yieldContRB = 0
+	ls.yieldContIdx = 0
+}
+
+// unwindCallFrames discards frames down to sp and their pending work.
+// Frame indices and registers can be reused as soon as the stack shrinks.
 func (ls *LState) unwindCallFrames(sp int) {
+	if int(ls.yieldContIdx) >= sp {
+		ls.clearYieldContinuation()
+	}
 	for i := ls.stack.Sp() - 1; i >= sp; i-- {
 		ls.clearFrameExt(ls.stack.At(i))
 	}
@@ -696,6 +704,11 @@ func (ls *LState) isStarted() bool {
 }
 
 func (ls *LState) kill() {
+	ls.closeUpvalues(0)
+	// Dead coroutines retain their frames for debug inspection, but cannot resume.
+	ls.clearYieldContinuation()
+	ls.yieldState = yieldNone
+	ls.frameExt = nil
 	ls.Dead = true
 	if ls.ctxCancelFn != nil {
 		ls.ctxCancelFn()

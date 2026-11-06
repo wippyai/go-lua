@@ -2134,6 +2134,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 				switchToParentThread(L, int(n), false, true)
 				return
 			}
+			L.clearFrameExt(cf)
 			islast := baseframe == L.stack.Pop() || L.stack.IsEmpty()
 			// this section is inlined by go-inline
 			// source function is 'func copyReturnValues(L *LState, regv, start, n, b int) ' in '_vm.go'
@@ -2742,6 +2743,7 @@ func switchToParentThread(L *LState, nargs int, haserror bool, kill bool) {
 		}
 	}
 	L.XMoveTo(parent, nargs)
+	L.clearFrameExt(L.currentFrame)
 	L.stack.Pop()
 	offset := L.currentFrame.LocalBase - L.currentFrame.ReturnBase
 	L.currentFrame = L.stack.Last()
@@ -2790,6 +2792,7 @@ func returnFromTailcall(L *LState, baseframe *callFrame, cf *callFrame, RA int, 
 		return true
 	}
 
+	L.clearFrameExt(cf)
 	islast := baseframe == L.stack.Pop() || L.stack.IsEmpty()
 	regv := int(cf.ReturnBase)
 	if B == 1 {
@@ -2829,10 +2832,7 @@ func handleYieldContinuation(L *LState, cf *callFrame, inst uint32) {
 	reg := L.reg
 
 	// Clear continuation state before executing post-call logic.
-	L.yieldCont = yieldContNone
-	L.yieldContRA = 0
-	L.yieldContRB = 0
-	L.yieldContIdx = 0
+	L.clearYieldContinuation()
 
 	switch contType {
 	case yieldContGetField, yieldContArith, yieldContUnm, yieldContLen, yieldContConcat:
@@ -2964,6 +2964,7 @@ func callGFunction(L *LState, tailcall bool) bool {
 		}
 	}
 
+	L.clearFrameExt(L.currentFrame)
 	L.stack.Pop()
 	L.currentFrame = L.stack.Last()
 	return false
@@ -3031,6 +3032,7 @@ func threadRun(L *LState) {
 			if parent := L.Parent; parent != nil {
 				if L.wrapped {
 					L.Push(lv)
+					defer L.kill()
 					parent.Panic(L)
 				} else {
 					L.SetTop(0)
@@ -3074,17 +3076,7 @@ func handleProtectedError(L *LState, errValue LValue, _ interface{}) bool {
 				errFunc = ext.ErrFunc
 			}
 
-			// Clear frame extensions for all frames being popped (including protected frame)
-			for j := L.stack.Sp() - 1; j >= i; j-- {
-				if f := L.stack.At(j); f != nil {
-					L.clearFrameExt(f)
-				}
-			}
-			for L.stack.Sp() > i+1 {
-				L.stack.Pop()
-			}
-			L.stack.Pop()
-			L.currentFrame = L.stack.Last()
+			L.unwindCallFrames(i)
 
 			// Call error handler if present (xpcall)
 			if errFunc != nil {
