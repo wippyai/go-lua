@@ -43,6 +43,7 @@ func resetLState(ls *LState) {
 	ls.G = nil
 	ls.wrapped = false
 	ls.yieldState = yieldNone
+	ls.clearYieldContinuation()
 
 	// Debug callbacks and their dispatch history belong to the prior owner.
 	ls.clearHook()
@@ -64,9 +65,9 @@ func (ls *LState) Close() {
 
 	// Don't pool if registry has grown beyond initial size
 	shouldPool := ls.reg != nil && cap(ls.reg.array) <= ls.Options.RegistrySize+ls.Options.RegistryGrowStep
+	resetLState(ls)
 
 	if shouldPool {
-		resetLState(ls)
 		statePool.Put(ls)
 	} else {
 		ls.stack.FreeAll()
