@@ -327,6 +327,8 @@ func TestMayHaveLength(t *testing.T) {
 		{"integer or nil", typ.NewUnion(typ.Integer, typ.Nil), false},
 		{"unknown", typ.Unknown, true},
 		{"any", typ.Any, true},
+		{"recursive array", typ.NewRecursive("L", func(self typ.Type) typ.Type { return typ.NewArray(self) }), true},
+		{"recursive function", typ.NewRecursive("F", func(self typ.Type) typ.Type { return typ.Func().Returns(self).Build() }), false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

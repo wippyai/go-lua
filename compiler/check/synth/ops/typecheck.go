@@ -238,6 +238,7 @@ func HasLength(t typ.Type) bool {
 func MayHaveLength(t typ.Type) bool {
 	return (typePredicate{
 		optionalInner:       true,
+		recursiveBody:       true,
 		typeParamConstraint: true,
 		beforeGuard:         unwrap.IsBuiltinTableTop,
 		leaf:                lengthPredicateLeaf,
