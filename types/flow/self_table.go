@@ -1,6 +1,10 @@
 package flow
 
 import (
+	"slices"
+	"strconv"
+	"strings"
+
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
 	"github.com/wippyai/go-lua/types/typ"
@@ -9,57 +13,37 @@ import (
 // selfTableName names the recursive types of tables that store themselves.
 const selfTableName = "self"
 
-// foldSelfEmbedding returns the type of the table at target after a write of
-// value, whose computed type is updated, when the table had type old.
-//
 // A table that stores itself, directly (t[k] = t, table.insert(t, t)) or
 // through other tables (a[1] = b; b[1] = a), is read as the value of its own
-// write. Every solver iteration then embeds the table's previous type in the
-// next one, T_(n+1) = widen(T_n, T_n), and the chain never stabilizes. When
-// the written value can hold the table, the nested occurrences of old in
-// updated are approximations of the table itself; they fold into the
-// recursion variable of the table, giving mu X. updated[old := X], the limit
-// of that chain. Each table path keeps one recursion identity for the solve,
-// so the folds of successive iterations are snapshots of one recursive type
-// and an iteration that adds nothing new reproduces it.
+// write. Typing that read structurally embeds the table's previous type in
+// the next one, T_(n+1) = widen(T_n, T_n), and the chain never stabilizes.
 //
-// An empty table carries no structure for an approximation to stand for, so
-// a write into it waits for the next iteration, which sees the table's first
-// shape.
-func (s *Solution) foldSelfEmbedding(target constraint.Path, value ValueSource, old, updated typ.Type) typ.Type {
-	if updated == nil || old == nil || isEmptyRecordNoMapType(old) || !s.valueMayHoldTable(value, target.Symbol) {
-		return updated
-	}
-	identity := s.selfTableIdentity(target)
-	return typ.FoldApproximationsInto(identity, updated, func(node typ.Type) bool {
-		if rec, ok := node.(*typ.Recursive); ok && rec.ID == identity.ID {
-			return true
-		}
-		return typ.TypeEquals(node, old)
-	})
-}
+// Each such table instead has a recursion identity: one per table path and
+// allocation site, the root assignments that reach the write. A value that
+// reads the written table reads its recursion variable, and every written
+// type of the table is bound to its identity, so the references to the table
+// held anywhere in the type, also inside other tables' recursive types,
+// denote the table: t[k] = t gives t the type mu X. widen(T, X). A write that
+// adds nothing new reproduces the same snapshot and the solve converges.
 
-// writtenTable is the table a write stores into, as the written value sees it.
-// Lua evaluates the value before the store, but a value that reads the table
-// itself holds the same table, so its type is the table's type after the
-// write: t[k] = t gives t the type mu X. widen(T, X). The value reads the
-// table as its recursion variable, and the written type binds that variable.
+// writtenTable is the table a write stores into, as the written value sees
+// it. Lua evaluates the value before the store, but a value that reads the
+// table itself holds the same table, so its type is the table's type after
+// the write.
 type writtenTable struct {
 	path     constraint.Path
 	identity *typ.Recursive
-	read     bool
 }
 
-// writtenTableAt returns the written table at path.
-func (s *Solution) writtenTableAt(path constraint.Path) *writtenTable {
+// writtenTableAt returns the table at path written at p.
+func (s *Solution) writtenTableAt(p cfg.Point, path constraint.Path) *writtenTable {
 	if path.Symbol == 0 {
 		return nil
 	}
-	return &writtenTable{path: path, identity: s.selfTableIdentity(path)}
+	return &writtenTable{path: path, identity: s.tableIdentityAt(p, path)}
 }
 
-// readBy reports whether a read of path reads the written table, and records
-// the read.
+// readBy reports whether a read of path reads the written table.
 func (w *writtenTable) readBy(path constraint.Path) bool {
 	if w == nil || path.Symbol != w.path.Symbol || len(path.Segments) != len(w.path.Segments) {
 		return false
@@ -69,31 +53,112 @@ func (w *writtenTable) readBy(path constraint.Path) bool {
 			return false
 		}
 	}
-	w.read = true
 	return true
 }
 
-// bind closes the type of the written table over its recursion variable when
-// the written value read the table.
-func (w *writtenTable) bind(t typ.Type) typ.Type {
-	if w == nil || !w.read || t == nil {
-		return t
+// bindWrittenTable returns updated, the type of the table at target after a
+// write of value at p, bound to the table's recursion identity when the value
+// can hold the table.
+func (s *Solution) bindWrittenTable(p cfg.Point, target constraint.Path, value ValueSource, updated typ.Type) typ.Type {
+	if updated == nil || !s.valueMayHoldTable(value, target.Symbol) {
+		return updated
 	}
-	return typ.BindRecursiveSnapshot(w.identity, t)
+	identity := s.tableIdentityAt(p, target)
+	if snapshot, ok := updated.(*typ.Recursive); ok && snapshot.ID == identity.ID && snapshot.Body != nil {
+		updated = snapshot.Body
+	}
+	return typ.BindRecursiveSnapshotThrough(identity, typ.JoinSnapshotUnions(updated))
 }
 
-// selfTableIdentity returns the recursion identity of the table at path.
-func (s *Solution) selfTableIdentity(path constraint.Path) *typ.Recursive {
-	key := constraint.Path{Root: path.Root, Symbol: path.Symbol, Segments: path.Segments}.Key()
-	if identity := s.selfTables[key]; identity != nil {
+// tableIdentityAt returns the recursion identity of the table at path seen
+// at p.
+func (s *Solution) tableIdentityAt(p cfg.Point, path constraint.Path) *typ.Recursive {
+	var key strings.Builder
+	key.WriteString(string(constraint.Path{Symbol: path.Symbol, Segments: path.Segments}.Key()))
+	for _, site := range s.allocationSitesAt(p, path.Symbol) {
+		key.WriteByte('#')
+		key.WriteString(strconv.Itoa(int(site)))
+	}
+	if identity := s.selfTables[key.String()]; identity != nil {
 		return identity
 	}
 	if s.selfTables == nil {
-		s.selfTables = make(map[constraint.PathKey]*typ.Recursive)
+		s.selfTables = make(map[string]*typ.Recursive)
 	}
 	identity := typ.NewRecursivePlaceholder(selfTableName)
-	s.selfTables[key] = identity
+	s.selfTables[key.String()] = identity
 	return identity
+}
+
+// allocationSitesAt returns the root assignments of sym that reach p, in
+// point order. A symbol without root assignments in the graph, such as a
+// parameter or a captured variable, has none.
+func (s *Solution) allocationSitesAt(p cfg.Point, sym cfg.SymbolID) []cfg.Point {
+	reach, ok := s.allocationReach[sym]
+	if !ok {
+		reach = s.computeAllocationReach(sym)
+		if s.allocationReach == nil {
+			s.allocationReach = make(map[cfg.SymbolID]map[cfg.Point][]cfg.Point)
+		}
+		s.allocationReach[sym] = reach
+	}
+	return reach[p]
+}
+
+// computeAllocationReach maps each point to the root assignments of sym
+// that reach it without another root assignment of sym between.
+func (s *Solution) computeAllocationReach(sym cfg.SymbolID) map[cfg.Point][]cfg.Point {
+	defs := make(map[cfg.Point]bool)
+	for _, assign := range s.inputs.Assignments {
+		if assign.TargetPath.Symbol == sym && len(assign.TargetPath.Segments) == 0 {
+			defs[assign.Point] = true
+		}
+	}
+	reach := make(map[cfg.Point][]cfg.Point)
+	graph := s.inputs.Graph
+	if graph == nil {
+		return reach
+	}
+	sites := make([]cfg.Point, 0, len(defs))
+	for def := range defs {
+		sites = append(sites, def)
+	}
+	slices.Sort(sites)
+	for _, def := range sites {
+		seen := make(map[cfg.Point]bool)
+		stack := append([]cfg.Point(nil), graph.Successors(def)...)
+		for len(stack) > 0 {
+			point := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			if seen[point] {
+				continue
+			}
+			seen[point] = true
+			reach[point] = append(reach[point], def)
+			if defs[point] {
+				continue
+			}
+			stack = append(stack, graph.Successors(point)...)
+		}
+	}
+	return reach
+}
+
+// writtenSelfAncestor returns the path of the table a write into the table at
+// path stores into. A path whose current type is a reference to the table of
+// one of its ancestor paths, as t[1] in t[1] = t, names that same table.
+func (s *Solution) writtenSelfAncestor(p cfg.Point, path constraint.Path, current typ.Type) constraint.Path {
+	rec, ok := current.(*typ.Recursive)
+	if !ok {
+		return path
+	}
+	for cut := 0; cut < len(path.Segments); cut++ {
+		ancestor := constraint.Path{Root: path.Root, Symbol: path.Symbol, Segments: path.Segments[:cut]}
+		if s.tableIdentityAt(p, ancestor).ID == rec.ID {
+			return ancestor
+		}
+	}
+	return path
 }
 
 // valueMayHoldTable reports whether a value read from value can hold the

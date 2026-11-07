@@ -818,30 +818,6 @@ func TestFoldApproximationsReturnsInputWithoutApproximations(t *testing.T) {
 	}
 }
 
-// Successive folds into one identity are snapshots of one recursive type: a
-// snapshot folded again with nothing new to fold reproduces itself, and its
-// self references keep the identity.
-func TestFoldApproximationsIntoKeepsIdentity(t *testing.T) {
-	identity := NewRecursivePlaceholder("self")
-	first := NewArray(NewRecord().Field("leaf", String).Build())
-	next := NewArray(first)
-
-	folded := FoldApproximationsInto(identity, next, func(n Type) bool { return TypeEquals(n, first) })
-	rec, ok := folded.(*Recursive)
-	if !ok || rec.ID != identity.ID {
-		t.Fatalf("fold = %v, want a snapshot of identity %d", folded, identity.ID)
-	}
-	array, ok := rec.Body.(*Array)
-	if !ok || !IsRecursiveRef(array.Element, identity) {
-		t.Fatalf("fold body = %v, want an array of the recursion variable", rec.Body)
-	}
-
-	again := FoldApproximationsInto(identity, rec, func(n Type) bool { return IsRecursiveRef(n, identity) })
-	if !TypeEquals(again, rec) {
-		t.Fatalf("refold = %v, want %v", again, rec)
-	}
-}
-
 // A recursive body that shares substructure hashes in time linear in its
 // distinct nodes, not in its paths.
 func TestRecursiveHash_SharedSubstructureHashesOnce(t *testing.T) {
@@ -884,5 +860,55 @@ func TestJoinRecursiveSnapshots_JoinsRecordBodies(t *testing.T) {
 	other := NewRecursivePlaceholder("Other")
 	if JoinRecursiveSnapshots(a, BindRecursiveSnapshot(other, NewRecord().Build())) != nil {
 		t.Fatalf("snapshots of different identities must not join")
+	}
+}
+
+// A reference to the bound identity nested inside another recursive type
+// denotes the new snapshot too.
+func TestBindRecursiveSnapshotThroughBindsNestedReferences(t *testing.T) {
+	a := NewRecursivePlaceholder("a")
+	staleA := BindRecursiveSnapshot(a, NewArray(NewRecord().Build()))
+	snapshotB := NewRecursive("b", func(self Type) Type {
+		return NewRecord().Field("self", self).Field("a", staleA).Build()
+	})
+
+	bound := BindRecursiveSnapshotThrough(a, NewArray(snapshotB))
+
+	nestedB, ok := bound.Body.(*Array).Element.(*Recursive)
+	if !ok || nestedB.ID != snapshotB.ID {
+		t.Fatalf("bound = %v, want an array of a snapshot of b", bound.Body)
+	}
+	fields := nestedB.Body.(*Record)
+	refersToB := fields.GetField("self").Type == nestedB
+	refersToA := fields.GetField("a").Type == bound
+	if !refersToB || !refersToA {
+		t.Fatalf("nested b = %v, want its own self reference and a reference to the new a snapshot", nestedB.Body)
+	}
+}
+
+// Snapshots of one identity in a union join into one snapshot.
+func TestJoinSnapshotUnionsJoinsSnapshotsOfOneIdentity(t *testing.T) {
+	a := NewRecursivePlaceholder("a")
+	first := BindRecursiveSnapshot(a, NewRecord().Field("x", Integer).Build())
+	second := BindRecursiveSnapshot(a, NewRecord().Field("x", Integer).OptField("next", a).Build())
+	other := NewRecursive("b", func(self Type) Type { return NewArray(self) })
+
+	joined := JoinSnapshotUnions(NewArray(NewUnion(first, other, second)))
+
+	members := joined.(*Array).Element.(*Union).Members
+	if len(members) != 2 {
+		t.Fatalf("joined = %v, want one snapshot of a and the snapshot of b", joined)
+	}
+	var snapshotA *Recursive
+	for _, m := range members {
+		if rec, ok := m.(*Recursive); ok && rec.ID == a.ID {
+			snapshotA = rec
+		}
+	}
+	if snapshotA == nil {
+		t.Fatalf("joined = %v, want a snapshot of a", joined)
+	}
+	if !TypeEquals(snapshotA, JoinRecursiveSnapshots(first, second)) {
+		t.Fatalf("snapshot of a = %v, want the join of both snapshots", snapshotA)
 	}
 }

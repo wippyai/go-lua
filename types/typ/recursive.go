@@ -129,6 +129,131 @@ func JoinRecursiveSnapshots(a, b *Recursive) *Recursive {
 	return BindRecursiveSnapshot(variable, joined)
 }
 
+// BindRecursiveSnapshotThrough is BindRecursiveSnapshot that also binds the
+// references to identity nested inside other recursive types: a snapshot of
+// another identity that refers to identity is rebuilt as a snapshot of its own
+// identity over the new self. A reference to identity anywhere in body, at any
+// depth, then denotes the new snapshot.
+func BindRecursiveSnapshotThrough(identity *Recursive, body Type) *Recursive {
+	if identity == nil || body == nil {
+		return nil
+	}
+	if old, ok := body.(*Recursive); ok && old.ID == identity.ID {
+		body = old.Body
+	}
+	self := &Recursive{ID: identity.ID, Name: identity.Name}
+	self.SetBody(bindRecursiveRefs(body, map[uint64]*Recursive{identity.ID: self}, identity.ID))
+	return self
+}
+
+// JoinSnapshotUnions rewrites each union in t that holds several snapshots of
+// one recursion identity into a union with one snapshot of that identity,
+// whose body joins theirs. Snapshots of one identity describe one value, so
+// their alternatives are alternatives of that value. The bodies of recursive
+// types in t are left as they are.
+func JoinSnapshotUnions(t Type) Type {
+	return Rewrite(t, func(node Type) (Type, bool) {
+		if _, ok := node.(*Recursive); ok {
+			return node, true
+		}
+		u, ok := node.(*Union)
+		if !ok {
+			return nil, false
+		}
+		members := make([]Type, 0, len(u.Members))
+		first := make(map[uint64]int)
+		changed := false
+		for _, m := range u.Members {
+			joined := JoinSnapshotUnions(m)
+			if joined != m {
+				changed = true
+			}
+			rec, ok := joined.(*Recursive)
+			if !ok || rec.Body == nil {
+				members = append(members, joined)
+				continue
+			}
+			if i, seen := first[rec.ID]; seen {
+				members[i] = joinSnapshots(members[i].(*Recursive), rec)
+				changed = true
+				continue
+			}
+			first[rec.ID] = len(members)
+			members = append(members, joined)
+		}
+		if !changed {
+			return node, true
+		}
+		return NewUnion(members...), true
+	})
+}
+
+// joinSnapshots returns the snapshot of the identity a and b share whose body
+// joins their bodies, both read over one recursion variable: compatible record
+// bodies join field by field, other bodies join as alternatives.
+func joinSnapshots(a, b *Recursive) *Recursive {
+	if joined := JoinRecursiveSnapshots(a, b); joined != nil {
+		return joined
+	}
+	variable := &Recursive{ID: a.ID, Name: a.Name}
+	open := func(body Type) Type {
+		return Rewrite(body, func(node Type) (Type, bool) {
+			if r, ok := node.(*Recursive); ok && r.ID == variable.ID {
+				return variable, true
+			}
+			return nil, false
+		})
+	}
+	return BindRecursiveSnapshot(variable, JoinPreferNonSoft(open(a.Body), open(b.Body)))
+}
+
+// bindRecursiveRefs replaces every recursive type in t whose identity subst
+// binds with its binding. A nested recursive type that refers to target is
+// rebuilt with its own self references bound to the rebuilt snapshot.
+func bindRecursiveRefs(t Type, subst map[uint64]*Recursive, target uint64) Type {
+	return Rewrite(t, func(node Type) (Type, bool) {
+		rec, ok := node.(*Recursive)
+		if !ok {
+			return nil, false
+		}
+		if bound := subst[rec.ID]; bound != nil {
+			return bound, true
+		}
+		if rec.Body == nil || !refersToRecursive(rec.Body, target, map[uint64]bool{rec.ID: true}) {
+			return rec, true
+		}
+		inner := &Recursive{ID: rec.ID, Name: rec.Name}
+		subst[rec.ID] = inner
+		inner.SetBody(bindRecursiveRefs(rec.Body, subst, target))
+		delete(subst, rec.ID)
+		return inner, true
+	})
+}
+
+// refersToRecursive reports whether t refers to the recursive type with
+// identity id, looking through the bodies of the other recursive types it
+// holds.
+func refersToRecursive(t Type, id uint64, seen map[uint64]bool) bool {
+	found := false
+	Rewrite(t, func(node Type) (Type, bool) {
+		if found {
+			return node, true
+		}
+		rec, ok := node.(*Recursive)
+		if !ok {
+			return nil, false
+		}
+		if rec.ID == id {
+			found = true
+		} else if !seen[rec.ID] && rec.Body != nil {
+			seen[rec.ID] = true
+			found = refersToRecursive(rec.Body, id, seen)
+		}
+		return node, true
+	})
+	return found
+}
+
 // SetBody assigns the body to a placeholder recursive type.
 func (r *Recursive) SetBody(body Type) {
 	r.Body = body
@@ -388,26 +513,16 @@ func IsRecursiveRef(t Type, rec *Recursive) bool {
 // union or optional, are the unguarded top level of the body: replacing one of
 // them would produce mu X. X | ..., which is not contractive.
 func FoldApproximations(name string, t Type, isApprox func(Type) bool) Type {
-	return FoldApproximationsInto(NewRecursivePlaceholder(name), t, isApprox)
-}
-
-// FoldApproximationsInto is FoldApproximations over the recursion identity
-// the caller owns, so that the folds of one evolving type across fixpoint
-// iterations are snapshots of a single recursive type. A t that is itself a
-// snapshot of identity is folded through its body.
-func FoldApproximationsInto(identity *Recursive, t Type, isApprox func(Type) bool) Type {
-	if t == nil || identity == nil {
+	if t == nil {
 		return t
 	}
-	open := t
-	if rec, ok := t.(*Recursive); ok && rec.ID == identity.ID && rec.Body != nil {
-		open = rec.Body
-	}
-	body := foldGuarded(open, identity, isApprox)
-	if body == open {
+	self := NewRecursivePlaceholder(name)
+	body := foldGuarded(t, self, isApprox)
+	if body == t {
 		return t
 	}
-	return BindRecursiveSnapshot(identity, body)
+	self.SetBody(body)
+	return self
 }
 
 // foldGuarded rewrites the guarded positions of top: it descends through the
