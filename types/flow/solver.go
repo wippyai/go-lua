@@ -57,6 +57,8 @@ type Solution struct {
 	narrowedTypeCache      map[narrowedTypeCacheKey]narrowedTypeCacheValue
 	rebinds                map[cfg.Point]map[cfg.SymbolID]bool
 	queryCacheEnabled      bool
+	selfTables             map[constraint.PathKey]*typ.Recursive // recursion identity of each table path that stores itself
+	tableHolds             map[cfg.SymbolID][]cfg.SymbolID       // table symbol -> symbols whose values its writes store
 
 	// Worklist/dependency scratch to reduce per-iteration allocations.
 	scratchChangedKeys  []string

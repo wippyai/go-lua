@@ -830,8 +830,12 @@ func (s *Solution) mapElementTypeAt(p cfg.Point, src *MapElementSource) typ.Type
 
 // valueTypeAt resolves every read at the write point. Pending flow evidence
 // defers publication; extracted positions without flow evidence are finalized.
-func (s *Solution) valueTypeAt(p cfg.Point, v ValueSource) typ.Type {
+// A read of the table that self describes is that table's recursion variable.
+func (s *Solution) valueTypeAt(p cfg.Point, v ValueSource, self *writtenTable) typ.Type {
 	valueType := v.ValueType
+	if self.readBy(v.ValuePath) {
+		return self.identity
+	}
 	var evidence typ.Type
 	if v.ValuePath.HasSymbol() {
 		evidence = s.NarrowedTypeAt(p, v.ValuePath)
@@ -846,7 +850,7 @@ func (s *Solution) valueTypeAt(p cfg.Point, v ValueSource) typ.Type {
 	}
 	if record, ok := unwrap.Alias(valueType).(*typ.Record); ok {
 		for _, field := range v.ValueFields {
-			resolved := s.valueTypeAt(p, field.ValueSource)
+			resolved := s.valueTypeAt(p, field.ValueSource, self)
 			if resolved == nil {
 				return nil
 			}
@@ -861,7 +865,7 @@ func (s *Solution) valueTypeAt(p cfg.Point, v ValueSource) typ.Type {
 	if len(v.ValueElements) > 0 {
 		elements := make([]typ.Type, 0, len(v.ValueElements))
 		for _, element := range v.ValueElements {
-			resolved := s.valueTypeAt(p, element)
+			resolved := s.valueTypeAt(p, element, self)
 			if resolved == nil {
 				return nil
 			}
@@ -932,7 +936,9 @@ func (s *Solution) processIndexerAssignmentReturnKey(p cfg.Point, ia IndexerAssi
 	}
 	keyType = normalizeDynamicKeyType(keyType)
 
-	valueType := s.valueTypeAt(p, ia.ValueSource)
+	iaPath := constraint.Path{Root: ia.Root, Symbol: ia.Symbol, Segments: ia.Segments}
+	self := s.writtenTableAt(iaPath)
+	valueType := s.valueTypeAt(p, ia.ValueSource, self)
 	if valueType == nil {
 		return ""
 	}
@@ -943,8 +949,6 @@ func (s *Solution) processIndexerAssignmentReturnKey(p cfg.Point, ia IndexerAssi
 		valueType = subtype.Widen(valueType)
 	}
 
-	// Get canonical key for the root variable
-	iaPath := constraint.Path{Root: ia.Root, Symbol: ia.Symbol, Segments: ia.Segments}
 	pathKey := s.pkResolver.KeyAt(p, iaPath)
 	if pathKey == "" {
 		return ""
@@ -978,6 +982,7 @@ func (s *Solution) processIndexerAssignmentReturnKey(p cfg.Point, ia IndexerAssi
 	if newType == nil {
 		return ""
 	}
+	newType = s.foldSelfEmbedding(iaPath, ia.ValueSource, currentType, self.bind(newType))
 	// A refinable annotation such as {any} lets writes refine the table within
 	// it; a write that would take it outside, as a non-integer key would turn
 	// an array into a map, leaves the annotation standing.
@@ -1015,6 +1020,7 @@ func (s *Solution) refreshIndexedValueAliases(p cfg.Point, mutated IndexerAssign
 		updated := typ.WriteInto(current, func(t typ.Type) typ.Type {
 			return widenWithIndexer(t, keyType, valueType, s.inferredIndexedOrigin(target))
 		})
+		updated = s.foldSelfEmbedding(target, alias.ValueSource, current, updated)
 		if changedKey := s.storeWrittenTableType(key, updated); changedKey != "" {
 			changed = append(changed, changedKey)
 		}
@@ -1168,7 +1174,8 @@ func (s *Solution) processTableMutatorAssignmentReturnKey(p cfg.Point, tm TableM
 		return ""
 	}
 
-	valueType := s.valueTypeAt(p, tm.ValueSource)
+	self := s.writtenTableAt(tm.Target)
+	valueType := s.valueTypeAt(p, tm.ValueSource, self)
 	if valueType == nil {
 		return ""
 	}
@@ -1199,6 +1206,7 @@ func (s *Solution) processTableMutatorAssignmentReturnKey(p cfg.Point, tm TableM
 	} else {
 		newType = WidenArrayElementType(currentType, valueType, joinInsertedArrayElement)
 	}
+	newType = s.foldSelfEmbedding(tm.Target, tm.ValueSource, currentType, self.bind(newType))
 	return s.storeWrittenTableType(pathKey, newType)
 }
 
@@ -1238,7 +1246,7 @@ func (s *Solution) processContainerMutatorAssignmentReturnKey(p cfg.Point, cm Co
 		return ""
 	}
 
-	valueType := s.valueTypeAt(p, cm.ValueSource)
+	valueType := s.valueTypeAt(p, cm.ValueSource, nil)
 	if valueType == nil {
 		return ""
 	}
@@ -1553,6 +1561,11 @@ func WidenArrayElementType(arrayType typ.Type, elementType typ.Type, joinFn func
 			}
 			return typ.NewAlias(a.Name, widened)
 		},
+		Recursive: func(r *typ.Recursive) typ.Type {
+			return widenRecursiveBody(r, func(body typ.Type) typ.Type {
+				return WidenArrayElementType(body, elementType, joinFn)
+			})
+		},
 		Array: func(arr *typ.Array) typ.Type {
 			return arr.WithElement(joinFn(arr.Element, elementType))
 		},
@@ -1612,6 +1625,11 @@ func WidenMapValueArray(mapType typ.Type, keyType, elementType typ.Type) typ.Typ
 				return mapType
 			}
 			return typ.NewAlias(a.Name, widened)
+		},
+		Recursive: func(r *typ.Recursive) typ.Type {
+			return widenRecursiveBody(r, func(body typ.Type) typ.Type {
+				return WidenMapValueArray(body, keyType, elementType)
+			})
 		},
 		Map: func(m *typ.Map) typ.Type {
 			newKey := mergeMapKeyDomain(m.Key, keyType)
@@ -1856,6 +1874,20 @@ func preferDeclaredTemplateForWiden(current, declared typ.Type) typ.Type {
 	return current
 }
 
+// widenRecursiveBody widens a recursive table type through its body. The
+// self references in the body denote the same table, so the widened body is
+// bound to the same recursion identity.
+func widenRecursiveBody(r *typ.Recursive, widen func(typ.Type) typ.Type) typ.Type {
+	if r.Body == nil {
+		return r
+	}
+	widened := widen(r.Body)
+	if widened == nil || typ.TypeEquals(widened, r.Body) {
+		return r
+	}
+	return typ.BindRecursiveSnapshot(r, widened)
+}
+
 func isEmptyRecordNoMapType(t typ.Type) bool {
 	switch v := t.(type) {
 	case *typ.Alias:
@@ -1940,6 +1972,11 @@ func widenWithIndexer(t typ.Type, keyType, valType typ.Type, fresh bool) typ.Typ
 				return t
 			}
 			return typ.NewAlias(a.Name, widened)
+		},
+		Recursive: func(r *typ.Recursive) typ.Type {
+			return widenRecursiveBody(r, func(body typ.Type) typ.Type {
+				return widenWithIndexer(body, keyType, valType, fresh)
+			})
 		},
 		Tuple: func(tp *typ.Tuple) typ.Type {
 			elemType := valType

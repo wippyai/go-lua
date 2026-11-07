@@ -818,6 +818,30 @@ func TestFoldApproximationsReturnsInputWithoutApproximations(t *testing.T) {
 	}
 }
 
+// Successive folds into one identity are snapshots of one recursive type: a
+// snapshot folded again with nothing new to fold reproduces itself, and its
+// self references keep the identity.
+func TestFoldApproximationsIntoKeepsIdentity(t *testing.T) {
+	identity := NewRecursivePlaceholder("self")
+	first := NewArray(NewRecord().Field("leaf", String).Build())
+	next := NewArray(first)
+
+	folded := FoldApproximationsInto(identity, next, func(n Type) bool { return TypeEquals(n, first) })
+	rec, ok := folded.(*Recursive)
+	if !ok || rec.ID != identity.ID {
+		t.Fatalf("fold = %v, want a snapshot of identity %d", folded, identity.ID)
+	}
+	array, ok := rec.Body.(*Array)
+	if !ok || !IsRecursiveRef(array.Element, identity) {
+		t.Fatalf("fold body = %v, want an array of the recursion variable", rec.Body)
+	}
+
+	again := FoldApproximationsInto(identity, rec, func(n Type) bool { return IsRecursiveRef(n, identity) })
+	if !TypeEquals(again, rec) {
+		t.Fatalf("refold = %v, want %v", again, rec)
+	}
+}
+
 // A recursive body that shares substructure hashes in time linear in its
 // distinct nodes, not in its paths.
 func TestRecursiveHash_SharedSubstructureHashesOnce(t *testing.T) {

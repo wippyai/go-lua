@@ -731,6 +731,7 @@ func collectInferredTypes(
 				if typ.IsAbsentOrUnknown(valueType) {
 					continue
 				}
+				valueRefersSCC := exprsReferToSCC([]ast.Expr{valueExpr}, bindings, sccSet)
 
 				// A statically located target (t, t.k) appends to the list at
 				// that path, as the flow extractor records it.
@@ -747,6 +748,7 @@ func collectInferredTypes(
 							return flow.WidenArrayElementType(list, valueType, typ.JoinPreferNonSoft)
 						}, overlaymut.MergePathEdit)
 					}
+					newType = foldInferredSelfWrite(old, newType, selfPrev(valueRefersSCC, targetPath.Symbol, overlay))
 					if newType != nil && !typ.TypeEquals(old, newType) {
 						inferred[targetPath.Symbol] = newType
 						changed = true
@@ -767,6 +769,7 @@ func collectInferredTypes(
 						}
 						old := inferred[baseSym]
 						newType := flow.WidenMapValueArray(old, keyType, valueType)
+						newType = foldInferredSelfWrite(old, newType, selfPrev(valueRefersSCC, baseSym, overlay))
 						if newType != nil && !typ.TypeEquals(old, newType) {
 							inferred[baseSym] = newType
 							changed = true
@@ -1054,6 +1057,25 @@ func joinInferredType(old, next, selfPrev typ.Type) typ.Type {
 		body = rec.Body
 	}
 	return typ.FoldApproximations(inferredSelfName, typ.JoinPreferNonSoft(body, next), isSelf)
+}
+
+// foldInferredSelfWrite folds the approximations of the symbol's own type
+// that a write into its table stored there. next is the table's type after
+// the write and old its type so far in this SCC round; prev is set when the
+// written value refers to the symbol's SCC, as for joinInferredType. A table
+// mutated with itself, table.insert(t, t), widens T_(n+1) = T_n | T_n[] every
+// round; folding gives the limit mu X. next[T' := X].
+func foldInferredSelfWrite(old, next, prev typ.Type) typ.Type {
+	if next == nil || prev == nil {
+		return next
+	}
+	isSelf := func(node typ.Type) bool {
+		return isSelfApproximation(node, old, prev)
+	}
+	if !typeContainsMatch(next, isSelf) {
+		return next
+	}
+	return typ.FoldApproximations(inferredSelfName, next, isSelf)
 }
 
 // isSelfApproximation reports whether node approximates the symbol whose type

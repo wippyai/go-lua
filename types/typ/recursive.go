@@ -388,16 +388,26 @@ func IsRecursiveRef(t Type, rec *Recursive) bool {
 // union or optional, are the unguarded top level of the body: replacing one of
 // them would produce mu X. X | ..., which is not contractive.
 func FoldApproximations(name string, t Type, isApprox func(Type) bool) Type {
-	if t == nil {
+	return FoldApproximationsInto(NewRecursivePlaceholder(name), t, isApprox)
+}
+
+// FoldApproximationsInto is FoldApproximations over the recursion identity
+// the caller owns, so that the folds of one evolving type across fixpoint
+// iterations are snapshots of a single recursive type. A t that is itself a
+// snapshot of identity is folded through its body.
+func FoldApproximationsInto(identity *Recursive, t Type, isApprox func(Type) bool) Type {
+	if t == nil || identity == nil {
 		return t
 	}
-	self := NewRecursivePlaceholder(name)
-	body := foldGuarded(t, self, isApprox)
-	if body == t {
+	open := t
+	if rec, ok := t.(*Recursive); ok && rec.ID == identity.ID && rec.Body != nil {
+		open = rec.Body
+	}
+	body := foldGuarded(open, identity, isApprox)
+	if body == open {
 		return t
 	}
-	self.SetBody(body)
-	return self
+	return BindRecursiveSnapshot(identity, body)
 }
 
 // foldGuarded rewrites the guarded positions of top: it descends through the
