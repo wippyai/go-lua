@@ -2769,6 +2769,54 @@ func TestSolver_ExcludesTypeAt(t *testing.T) {
 	}
 }
 
+// TestSolver_ExcludesTypeAt_FieldPathIdentity verifies that a NotHasType
+// constraint applies only to the exact path it names: an exclusion on c
+// holds for c alone, and an exclusion on c.name holds for c.name alone.
+func TestSolver_ExcludesTypeAt_FieldPathIdentity(t *testing.T) {
+	c, branch, thenNode := buildBranchCFG()
+	g := newMockSSAGraph(c)
+
+	allPoints := []cfg.Point{c.Entry(), branch, thenNode, c.Exit()}
+	symC := setupSymbol(g, "c", allPoints)
+	verC := cfg.Version{Root: "c", Symbol: symC, ID: 1}
+	for _, p := range allPoints {
+		setVersion(g, p, symC, verC)
+	}
+
+	inputs := newInputs(g)
+	inputs.DeclaredTypes[symC] = typ.Any
+
+	root := constraint.Path{Root: "c", Symbol: symC}
+	name := root.Field("name")
+	size := root.Field("size")
+
+	inputs.EdgeConditions = []EdgeCondition{
+		{
+			From: branch,
+			To:   thenNode,
+			Condition: constraint.FromConstraints(
+				constraint.NotHasType{Path: root, Type: narrow.BuiltinTypeKey("string")},
+				constraint.NotHasType{Path: size, Type: narrow.BuiltinTypeKey("string")},
+			),
+		},
+	}
+
+	s := Solve(inputs, testResolver())
+
+	if !s.ExcludesTypeAt(thenNode, root, typ.String) {
+		t.Errorf("ExcludesTypeAt(thenNode, c, string) = false, want true")
+	}
+	if s.ExcludesTypeAt(thenNode, name, typ.String) {
+		t.Errorf("ExcludesTypeAt(thenNode, c.name, string) = true, want false")
+	}
+	if !s.ExcludesTypeAt(thenNode, size, typ.String) {
+		t.Errorf("ExcludesTypeAt(thenNode, c.size, string) = false, want true")
+	}
+	if s.ExcludesTypeAt(thenNode, size.Field("inner"), typ.String) {
+		t.Errorf("ExcludesTypeAt(thenNode, c.size.inner, string) = true, want false")
+	}
+}
+
 // TestSolver_ExcludesTypeAt_AnyNotNarrowed verifies that ExcludeType(any, T)
 // returns any unchanged, and ExcludesTypeAt reports the negative constraint.
 func TestSolver_ExcludesTypeAt_AnyNotNarrowed(t *testing.T) {

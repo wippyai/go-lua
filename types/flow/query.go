@@ -242,28 +242,29 @@ func (s *Solution) hasPresenceFactAt(p cfg.Point, path constraint.Path, truthyOn
 	return true
 }
 
-// ExcludesTypeAt checks if a NotHasType constraint applies to the path at point p.
+// ExcludesTypeAt checks if a NotHasType constraint on exactly path applies at point p.
 func (s *Solution) ExcludesTypeAt(p cfg.Point, path constraint.Path, t typ.Type) bool {
-	if s == nil || s.inputs == nil || t == nil {
+	if s == nil || s.inputs == nil || s.pkResolver == nil || t == nil {
+		return false
+	}
+	key := s.pkResolver.KeyAt(p, path)
+	if key == "" {
 		return false
 	}
 	cond := s.ConditionAt(p)
-	return s.conditionExcludesType(cond, path, t)
-}
-
-func (s *Solution) conditionExcludesType(cond constraint.Condition, path constraint.Path, t typ.Type) bool {
 	if cond.IsFalse() || !cond.HasConstraints() {
 		return false
 	}
 	for i := 0; i < cond.NumDisjuncts(); i++ {
-		disjunct := cond.DisjunctConstraints(i)
 		found := false
-		for _, c := range disjunct {
-			if nht, ok := c.(constraint.NotHasType); ok {
-				if s.pathMatches(nht.Path, path) && typeMatches(s.resolveTypeKey(nht.Type), t) {
-					found = true
-					break
-				}
+		for _, c := range cond.DisjunctConstraints(i) {
+			nht, ok := c.(constraint.NotHasType)
+			if !ok {
+				continue
+			}
+			if s.pkResolver.KeyAt(p, nht.Path) == key && typeMatches(s.resolveTypeKey(nht.Type), t) {
+				found = true
+				break
 			}
 		}
 		if !found {
@@ -271,19 +272,6 @@ func (s *Solution) conditionExcludesType(cond constraint.Condition, path constra
 		}
 	}
 	return true
-}
-
-func (s *Solution) pathMatches(cpath constraint.Path, qpath constraint.Path) bool {
-	if cpath.Symbol != 0 && qpath.Symbol != 0 {
-		return cpath.Symbol == qpath.Symbol
-	}
-	if cpath.Symbol != 0 || qpath.Symbol != 0 {
-		return false
-	}
-	if cpath.IsPlaceholder() {
-		return cpath.Root == qpath.Root
-	}
-	return false
 }
 
 func typeMatches(a, b typ.Type) bool {
