@@ -2383,29 +2383,32 @@ func (ls *LState) RemoveContext() context.Context {
 	return oldctx
 }
 
-// removeCallerFrame removes the stack frame above the current stack frame.
-// Used in tail calls. Returns the new current frame.
-func (ls *LState) removeCallerFrame() *callFrame {
+// removeFrame removes the frame at index i and moves the frames above it down
+// one slot, together with their extensions, which are keyed by frame index.
+// Tail calls use it to release the caller's slot. It returns the frame that
+// now occupies index i.
+func (ls *LState) removeFrame(i int) *callFrame {
 	cs := ls.stack
 	sp := cs.Sp()
-	parentFrame := cs.At(sp - 2)
-	currentFrame := cs.At(sp - 1)
-	parentIdx := parentFrame.Idx
-	currentIdx := currentFrame.Idx
-	*parentFrame = *currentFrame
-	parentFrame.Idx = parentIdx
-	if ls.frameExt != nil {
-		// Tail calls replace the caller frame with the callee frame. Move the
-		// callee's lazily stored continuation/error-handler metadata with it;
-		// leaving it keyed by the popped index loses yielding CallK state.
-		delete(ls.frameExt, parentIdx)
-		if ext := ls.frameExt[currentIdx]; ext != nil {
-			ls.frameExt[parentIdx] = ext
+	ls.clearFrameExt(cs.At(i))
+	for j := i; j < sp-1; j++ {
+		dst := cs.At(j)
+		src := cs.At(j + 1)
+		idx := dst.Idx
+		var ext *callFrameExt
+		if src.Flags&frameHasExt != 0 {
+			ext = ls.frameExt[src.Idx]
+			delete(ls.frameExt, src.Idx)
 		}
-		delete(ls.frameExt, currentIdx)
+		*dst = *src
+		dst.Idx = idx
+		if ext != nil {
+			ls.frameExt[idx] = ext
+		}
 	}
 	cs.Pop()
-	return parentFrame
+	ls.currentFrame = cs.Last()
+	return cs.At(i)
 }
 
 /* }}} */

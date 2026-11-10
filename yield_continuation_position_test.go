@@ -20,7 +20,7 @@ local V = {}
 V.__add = function(a, b) return setmetatable({}, 0) end
 local acc = setmetatable({}, V)
 local x = 1
-return acc + acc`, ":6: bad argument #2 to (anonymous)"},
+return acc + acc`, "<string>:3: bad argument #2 to setmetatable (nil or table expected, got number)"},
 	}
 	for _, tc := range cases {
 		for _, budget := range []int64{-1, 1, 2, 3} {

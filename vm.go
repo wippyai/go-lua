@@ -26,7 +26,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 
 	L.currentFrame = L.stack.Last()
 	if L.currentFrame.GoFunc != nil || (L.currentFrame.Fn != nil && L.currentFrame.Fn.IsG) {
-		if callGFunction(L) {
+		if callGFunction(L, false) {
 			return
 		}
 		if baseframe != nil {
@@ -1749,7 +1749,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 				}
 				ls.currentFrame = newcf
 			}
-			if (goFunc != nil || (callable != nil && callable.IsG)) && callGFunction(L) {
+			if (goFunc != nil || (callable != nil && callable.IsG)) && callGFunction(L, false) {
 				return
 			}
 
@@ -1825,10 +1825,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 					NRet:       cf.NRet,
 					TailCall:   0,
 				}, lv, meta)
-				// The Go frame takes over the caller's slot before it runs, so
-				// frames it pushes (and keeps across a yield) sit above it.
-				L.currentFrame = L.removeCallerFrame()
-				if callGFunction(L) {
+				if callGFunction(L, true) {
 					return
 				}
 				if luaframe == baseframe || (!returnsToLua(L) && resumeGoFrames(L)) {
@@ -2777,7 +2774,7 @@ func resumeGoFrames(L *LState) bool {
 		if ext := L.getFrameExt(cf); ext == nil || ext.Continuation == nil {
 			return true
 		}
-		if callGFunction(L) {
+		if callGFunction(L, false) {
 			return true
 		}
 	}
@@ -2880,9 +2877,17 @@ func handleYieldContinuation(L *LState, cf *callFrame, inst uint32) bool {
 	return false
 }
 
-func callGFunction(L *LState) bool {
+// callGFunction runs the current Go frame, or its continuation, and completes
+// the call unless it suspends. A tail-called Go frame runs above its caller,
+// so errors and debug information name the call site; once the function
+// returns or suspends, the caller's slot is released and the Go frame, with
+// any frames it keeps across the suspension, takes it over.
+func callGFunction(L *LState, tailcall bool) bool {
 	frame := L.currentFrame
 	gfnret := invokeGoFrame(L, frame)
+	if tailcall {
+		frame = L.removeFrame(int(frame.Idx) - 1)
+	}
 
 	if gfnret < 0 {
 		// Only call switchToParentThread for the first yield in the chain.
