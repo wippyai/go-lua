@@ -28,6 +28,8 @@ func TestFloatZeroKeepsSign(t *testing.T) {
 		{"table value", "(function() local t = {} t[1] = -0.0 return t[1] end)()", true},
 		{"field value", "(function() local t = {} t.x = -0.0 return t.x end)()", true},
 		{"constant", "(function() local a = -0.0 return a end)()", true},
+		{"negative constant after zero", "(function() local a, b = 0.0, -0.0 return b end)()", true},
+		{"zero constant after negative", "(function() local a, b = -0.0, 0.0 return b end)()", false},
 		{"tonumber", "tonumber('-0.0')", true},
 	}
 	for _, tc := range cases {
