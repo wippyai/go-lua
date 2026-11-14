@@ -58,7 +58,7 @@ type Solution struct {
 	rebinds                map[cfg.Point]map[cfg.SymbolID]bool
 	queryCacheEnabled      bool
 	selfTables             map[string]*typ.Recursive                  // table path and allocation sites -> recursion identity
-	tableHolds             map[cfg.SymbolID][]cfg.SymbolID            // table symbol -> symbols whose values its writes store
+	tableHolds             map[cfg.SymbolID][]tableHold               // root symbol -> table paths and their stored value paths
 	allocationReach        map[cfg.SymbolID]map[cfg.Point][]cfg.Point // symbol -> point -> root assignments reaching it
 
 	// Worklist/dependency scratch to reduce per-iteration allocations.

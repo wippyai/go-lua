@@ -7,6 +7,7 @@ import (
 
 	"github.com/wippyai/go-lua/types/cfg"
 	"github.com/wippyai/go-lua/types/constraint"
+	"github.com/wippyai/go-lua/types/flow/pathkey"
 	"github.com/wippyai/go-lua/types/typ"
 )
 
@@ -60,7 +61,7 @@ func (w *writtenTable) readBy(path constraint.Path) bool {
 // write of value at p, bound to the table's recursion identity when the value
 // can hold the table.
 func (s *Solution) bindWrittenTable(p cfg.Point, target constraint.Path, value ValueSource, updated typ.Type) typ.Type {
-	if updated == nil || !s.valueMayHoldTable(value, target.Symbol) {
+	if updated == nil || !s.valueMayHoldTable(value, target) {
 		return updated
 	}
 	identity := s.tableIdentityAt(p, target)
@@ -161,65 +162,85 @@ func (s *Solution) writtenSelfAncestor(p cfg.Point, path constraint.Path, curren
 	return path
 }
 
-// valueMayHoldTable reports whether a value read from value can hold the
-// table of symbol table: the value reads that table, or a table into which
-// writes store values that reach it.
-func (s *Solution) valueMayHoldTable(value ValueSource, table cfg.SymbolID) bool {
-	if table == 0 {
+// tableHold records the paths whose values writes store into a table path.
+// Paths distinguish nested tables from sibling fields of the same root.
+type tableHold struct {
+	path   constraint.Path
+	values []constraint.Path
+}
+
+// valueMayHoldTable reports whether value can hold the table at target,
+// directly or through tables containing it. Reading an ancestor of target
+// can hold target; reading a sibling field cannot establish that identity.
+func (s *Solution) valueMayHoldTable(value ValueSource, target constraint.Path) bool {
+	if target.Symbol == 0 {
+		return false
+	}
+	pending := valueSourcePaths(value, nil)
+	if len(pending) == 0 {
 		return false
 	}
 	holds := s.tableHoldGraph()
-	seen := make(map[cfg.SymbolID]bool)
-	pending := valueSourceSymbols(value, nil)
+	seen := make(map[constraint.PathKey]bool)
 	for len(pending) > 0 {
-		sym := pending[len(pending)-1]
+		path := pending[len(pending)-1]
 		pending = pending[:len(pending)-1]
-		if sym == table {
+		if path.Symbol == target.Symbol && len(path.Segments) <= len(target.Segments) && pathkey.PathRelated(path, target) {
 			return true
 		}
-		if seen[sym] {
+		key := constraint.Path{Symbol: path.Symbol, Segments: path.Segments}.Key()
+		if seen[key] {
 			continue
 		}
-		seen[sym] = true
-		pending = append(pending, holds[sym]...)
+		seen[key] = true
+		for _, hold := range holds[path.Symbol] {
+			// An indexed read can reach values stored into its containing
+			// table, and a parent read can retain any of its nested tables.
+			if pathkey.PathRelated(path, hold.path) {
+				pending = append(pending, hold.values...)
+			}
+		}
 	}
 	return false
 }
 
-// tableHoldGraph maps each table symbol to the symbols whose values the
-// indexer and mutator writes of the solve store into it.
-func (s *Solution) tableHoldGraph() map[cfg.SymbolID][]cfg.SymbolID {
+// tableHoldGraph indexes writes by root symbol while retaining each exact
+// container path. A write to holder.entries does not make holder.clock a
+// reference to that table.
+func (s *Solution) tableHoldGraph() map[cfg.SymbolID][]tableHold {
 	if s.tableHolds != nil {
 		return s.tableHolds
 	}
-	holds := make(map[cfg.SymbolID][]cfg.SymbolID)
+	holds := make(map[cfg.SymbolID][]tableHold)
 	for _, ia := range s.inputs.IndexerAssignments {
 		if ia.Symbol != 0 {
-			holds[ia.Symbol] = valueSourceSymbols(ia.ValueSource, holds[ia.Symbol])
+			path := constraint.Path{Root: ia.Root, Symbol: ia.Symbol, Segments: ia.Segments}
+			holds[ia.Symbol] = append(holds[ia.Symbol], tableHold{path: path, values: valueSourcePaths(ia.ValueSource, nil)})
 		}
 	}
 	for _, tm := range s.inputs.TableMutatorAssignments {
 		if tm.Target.Symbol != 0 {
-			holds[tm.Target.Symbol] = valueSourceSymbols(tm.ValueSource, holds[tm.Target.Symbol])
+			holds[tm.Target.Symbol] = append(holds[tm.Target.Symbol], tableHold{path: tm.Target, values: valueSourcePaths(tm.ValueSource, nil)})
 		}
 	}
 	s.tableHolds = holds
 	return holds
 }
 
-// valueSourceSymbols appends to out the symbols whose values value reads.
-func valueSourceSymbols(value ValueSource, out []cfg.SymbolID) []cfg.SymbolID {
+// valueSourcePaths appends the paths whose values value reads. A dynamic
+// element read may retain values held by its containing map.
+func valueSourcePaths(value ValueSource, out []constraint.Path) []constraint.Path {
 	if value.ValuePath.Symbol != 0 {
-		out = append(out, value.ValuePath.Symbol)
+		out = append(out, value.ValuePath)
 	}
 	if value.MapElementSource != nil && value.MapElementSource.MapPath.Symbol != 0 {
-		out = append(out, value.MapElementSource.MapPath.Symbol)
+		out = append(out, value.MapElementSource.MapPath)
 	}
 	for _, field := range value.ValueFields {
-		out = valueSourceSymbols(field.ValueSource, out)
+		out = valueSourcePaths(field.ValueSource, out)
 	}
 	for _, element := range value.ValueElements {
-		out = valueSourceSymbols(element, out)
+		out = valueSourcePaths(element, out)
 	}
 	return out
 }
