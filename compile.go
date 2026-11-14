@@ -614,9 +614,8 @@ func (fc *funcContext) GetLabelPc(label int) int {
 }
 
 func (fc *funcContext) ConstIndex(value LValue) int {
-	ctype := value.Type()
 	for i, lv := range fc.Proto.Constants {
-		if lv.Type() == ctype && lv == value {
+		if sameConstant(lv, value) {
 			return i
 		}
 	}
@@ -627,6 +626,17 @@ func (fc *funcContext) ConstIndex(value LValue) int {
 	}
 	return v
 }
+
+// sameConstant reports whether two constants are interchangeable. Floats are
+// compared bit for bit: -0.0 equals 0.0 numerically but is a distinct value.
+func sameConstant(a, b LValue) bool {
+	if x, ok := a.(LNumber); ok {
+		y, ok := b.(LNumber)
+		return ok && math.Float64bits(float64(x)) == math.Float64bits(float64(y))
+	}
+	return a.Type() == b.Type() && a == b
+}
+
 func (fc *funcContext) BlockLocalVarsCount() int {
 	count := 0
 	for block := fc.Block; block != nil; block = block.Parent {

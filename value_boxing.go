@@ -1,5 +1,7 @@
 package lua
 
+import "math"
+
 const preloadLimit = 256
 const intPreloadLimit = 65536 // Common loop bounds
 
@@ -15,9 +17,11 @@ func init() {
 	}
 }
 
+// lnumberToValue boxes v, sharing a preallocated value when v is bit-for-bit
+// one of the cached floats; -0.0 equals 0.0 numerically but keeps its sign.
 func lnumberToValue(v LNumber) LValue {
 	iv := int(v)
-	if iv >= 0 && iv < preloadLimit && LNumber(iv) == v {
+	if iv >= 0 && iv < preloadLimit && math.Float64bits(float64(v)) == math.Float64bits(float64(iv)) {
 		return preloadedNumbers[iv]
 	}
 	return v
