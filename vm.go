@@ -47,10 +47,16 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 		ctxDone = L.ctx.Done()
 	}
 
-	// checkCtx is inlined at strategic points: backward jumps, loops, and calls.
-	// This reduces overhead vs checking every opcode while still catching
-	// infinite loops and long-running code.
-	checkCtx := func() bool {
+	g := L.G
+
+	// safepoint runs at backward jumps, loop iterations and calls; each costs
+	// one tick. It raises on context cancellation and suspends the thread once
+	// the tick budget is exhausted. rewind re-executes the current instruction
+	// on resume; it is false only where the instruction already completed.
+	// A rewound instruction reaches its safepoint again before any other
+	// effect, so its hook dispatch happens once per execution.
+	safepoint := func(cf *callFrame, rewind bool) bool {
+		cf.Flags &^= frameRewound
 		if ctxDone != nil {
 			select {
 			case <-ctxDone:
@@ -59,23 +65,46 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			default:
 			}
 		}
-		return false
+		budget := g.tickBudget
+		if budget < 0 {
+			return false
+		}
+		if budget > 0 {
+			g.tickBudget = budget - 1
+			return false
+		}
+		if L.Parent == nil || g.nonYieldable != 0 {
+			return false
+		}
+		if rewind {
+			cf.Pc--
+			if L.hookMask != 0 || covOn {
+				cf.Flags |= frameRewound
+			}
+		}
+		L.preempt()
+		return true
 	}
 
 	for {
 		cf = L.currentFrame
-		inst = cf.Fn.Proto.Code[cf.Pc]
-		cf.Pc++
 
 		// Handle yield continuation: when an opcode's inner call yielded and has
-		// now completed, finish the originating opcode's post-call work. Only fires
-		// when the current frame is the one that owns the continuation.
-		if L.yieldCont != 0 && cf.Idx == L.yieldContIdx {
-			handleYieldContinuation(L, cf, inst)
+		// now completed, finish the originating opcode's post-call work. The
+		// frame's Pc already follows that opcode. Each frame owns its
+		// continuation, so nested metamethod yields resolve innermost-first as
+		// their frames resume.
+		if cf.Flags&frameYieldCont != 0 {
+			if handleYieldContinuation(L, cf, cf.Fn.Proto.Code[cf.Pc-1]) {
+				return
+			}
 			continue
 		}
 
-		if L.hookMask != 0 || covOn {
+		inst = cf.Fn.Proto.Code[cf.Pc]
+		cf.Pc++
+
+		if (L.hookMask != 0 || covOn) && cf.Flags&frameRewound == 0 {
 			L.callHook(cf)
 			cf = L.currentFrame
 		}
@@ -317,10 +346,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			//reg.Set(RA, L.getField(cf.Fn.Env, cf.Fn.Proto.Constants[Bx]))
 			v := L.getFieldString(cf.Fn.Env, cf.Fn.Proto.stringConstants[Bx])
 			if L.yieldState != yieldNone {
-				L.yieldCont = yieldContGetField
-				L.yieldContRA = int32(RA)
-				L.yieldContIdx = cf.Idx
-				cf.Pc--
+				L.setYieldCont(cf, yieldContGetField, RA)
 				return
 			}
 			// this section is inlined by go-inline
@@ -385,10 +411,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			C := int(inst>>9) & 0x1ff //GETC
 			v := L.getField(reg.Get(int(lbase)+B), L.rkValue(C))
 			if L.yieldState != yieldNone {
-				L.yieldCont = yieldContGetField
-				L.yieldContRA = int32(RA)
-				L.yieldContIdx = cf.Idx
-				cf.Pc--
+				L.setYieldCont(cf, yieldContGetField, RA)
 				return
 			}
 			// this section is inlined by go-inline
@@ -421,10 +444,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			C := int(inst>>9) & 0x1ff //GETC
 			v := L.getFieldString(reg.Get(int(lbase)+B), L.rkString(C))
 			if L.yieldState != yieldNone {
-				L.yieldCont = yieldContGetField
-				L.yieldContRA = int32(RA)
-				L.yieldContIdx = cf.Idx
-				cf.Pc--
+				L.setYieldCont(cf, yieldContGetField, RA)
 				return
 			}
 			// this section is inlined by go-inline
@@ -457,9 +477,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			value := reg.Get(RA)
 			L.setFieldString(cf.Fn.Env, cf.Fn.Proto.stringConstants[Bx], value)
 			if L.yieldState != yieldNone {
-				L.yieldCont = yieldContSetField
-				L.yieldContIdx = cf.Idx
-				cf.Pc--
+				L.setYieldCont(cf, yieldContSetField, 0)
 				return
 			}
 
@@ -481,9 +499,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			C := int(inst>>9) & 0x1ff //GETC
 			L.setField(reg.Get(RA), L.rkValue(B), L.rkValue(C))
 			if L.yieldState != yieldNone {
-				L.yieldCont = yieldContSetField
-				L.yieldContIdx = cf.Idx
-				cf.Pc--
+				L.setYieldCont(cf, yieldContSetField, 0)
 				return
 			}
 
@@ -496,9 +512,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			C := int(inst>>9) & 0x1ff //GETC
 			L.setFieldString(reg.Get(RA), L.rkString(B), L.rkValue(C))
 			if L.yieldState != yieldNone {
-				L.yieldCont = yieldContSetField
-				L.yieldContIdx = cf.Idx
-				cf.Pc--
+				L.setYieldCont(cf, yieldContSetField, 0)
 				return
 			}
 
@@ -541,10 +555,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			selfobj := reg.Get(int(lbase) + B)
 			v := L.getFieldString(selfobj, L.rkString(C))
 			if L.yieldState != yieldNone {
-				L.yieldCont = yieldContSelf
-				L.yieldContRA = int32(RA)
-				L.yieldContIdx = cf.Idx
-				cf.Pc--
+				L.setYieldCont(cf, yieldContSelf, RA)
 				return
 			}
 			// this section is inlined by go-inline
@@ -655,10 +666,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			} else {
 				v := objectArith(L, OP_ADD, lhs, rhs)
 				if L.yieldState != yieldNone {
-					L.yieldCont = yieldContArith
-					L.yieldContRA = int32(RA)
-					L.yieldContIdx = cf.Idx
-					cf.Pc--
+					L.setYieldCont(cf, yieldContArith, RA)
 					return
 				}
 				newSize := RA + 1
@@ -738,10 +746,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			} else {
 				v := objectArith(L, OP_SUB, lhs, rhs)
 				if L.yieldState != yieldNone {
-					L.yieldCont = yieldContArith
-					L.yieldContRA = int32(RA)
-					L.yieldContIdx = cf.Idx
-					cf.Pc--
+					L.setYieldCont(cf, yieldContArith, RA)
 					return
 				}
 				newSize := RA + 1
@@ -821,10 +826,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			} else {
 				v := objectArith(L, OP_MUL, lhs, rhs)
 				if L.yieldState != yieldNone {
-					L.yieldCont = yieldContArith
-					L.yieldContRA = int32(RA)
-					L.yieldContIdx = cf.Idx
-					cf.Pc--
+					L.setYieldCont(cf, yieldContArith, RA)
 					return
 				}
 				newSize := RA + 1
@@ -873,10 +875,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			} else {
 				v := objectArith(L, OP_DIV, lhs, rhs)
 				if L.yieldState != yieldNone {
-					L.yieldCont = yieldContArith
-					L.yieldContRA = int32(RA)
-					L.yieldContIdx = cf.Idx
-					cf.Pc--
+					L.setYieldCont(cf, yieldContArith, RA)
 					return
 				}
 				// this section is inlined by go-inline
@@ -947,10 +946,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			} else {
 				v := objectArith(L, OP_MOD, lhs, rhs)
 				if L.yieldState != yieldNone {
-					L.yieldCont = yieldContArith
-					L.yieldContRA = int32(RA)
-					L.yieldContIdx = cf.Idx
-					cf.Pc--
+					L.setYieldCont(cf, yieldContArith, RA)
 					return
 				}
 				// this section is inlined by go-inline
@@ -1011,10 +1007,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			} else {
 				v := objectArith(L, OP_POW, lhs, rhs)
 				if L.yieldState != yieldNone {
-					L.yieldCont = yieldContArith
-					L.yieldContRA = int32(RA)
-					L.yieldContIdx = cf.Idx
-					cf.Pc--
+					L.setYieldCont(cf, yieldContArith, RA)
 					return
 				}
 				// this section is inlined by go-inline
@@ -1218,12 +1211,9 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 				if op.Type() == LTFunction {
 					reg.Push(op)
 					reg.Push(unaryv)
-					L.Call(1, 1)
+					L.callR(1, 1, -1)
 					if L.yieldState != yieldNone {
-						L.yieldCont = yieldContUnm
-						L.yieldContRA = int32(RA)
-						L.yieldContIdx = cf.Idx
-						cf.Pc--
+						L.setYieldCont(cf, yieldContUnm, RA)
 						return
 					}
 					// this section is inlined by go-inline
@@ -1381,12 +1371,9 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 				if op.Type() == LTFunction {
 					reg.Push(op)
 					reg.Push(lv)
-					L.Call(1, 1)
+					L.callR(1, 1, -1)
 					if L.yieldState != yieldNone {
-						L.yieldCont = yieldContLen
-						L.yieldContRA = int32(RA)
-						L.yieldContIdx = cf.Idx
-						cf.Pc--
+						L.setYieldCont(cf, yieldContLen, RA)
 						return
 					}
 					ret := reg.Pop()
@@ -1469,12 +1456,10 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			C := int(inst>>9) & 0x1ff //GETC
 			RC := int(lbase) + C
 			RB := int(lbase) + B
-			v := stringConcat(L, RC-RB+1, RC)
+			v, pos := stringConcat(L, RC-RB+1, RC)
 			if L.yieldState != yieldNone {
-				L.yieldCont = yieldContConcat
-				L.yieldContRA = int32(RA)
-				L.yieldContIdx = cf.Idx
-				cf.Pc--
+				L.setYieldCont(cf, yieldContConcat, RA)
+				L.getFrameExt(cf).YieldContAux = int32(pos)
 				return
 			}
 			// this section is inlined by go-inline
@@ -1501,7 +1486,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 		case OP_JMP:
 			Sbx := int(inst&0x3ffff) - opMaxArgSbx //GETSBX
 			cf.Pc += int32(Sbx)
-			if Sbx < 0 && checkCtx() {
+			if Sbx < 0 && safepoint(cf, false) {
 				return
 			}
 
@@ -1511,10 +1496,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			C := int(inst>>9) & 0x1ff //GETC
 			ret := equals(L, L.rkValue(B), L.rkValue(C), false)
 			if L.yieldState != yieldNone {
-				L.yieldCont = yieldContCompare
-				L.yieldContRA = int32(A)
-				L.yieldContIdx = cf.Idx
-				cf.Pc--
+				L.setYieldCont(cf, yieldContCompare, A)
 				return
 			}
 			v := 1
@@ -1531,10 +1513,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			C := int(inst>>9) & 0x1ff //GETC
 			ret := lessThan(L, L.rkValue(B), L.rkValue(C))
 			if L.yieldState != yieldNone {
-				L.yieldCont = yieldContCompare
-				L.yieldContRA = int32(A)
-				L.yieldContIdx = cf.Idx
-				cf.Pc--
+				L.setYieldCont(cf, yieldContCompare, A)
 				return
 			}
 			v := 1
@@ -1575,18 +1554,12 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 					case 0:
 						ret = false
 					case -2:
-						L.yieldCont = yieldContCompare
-						L.yieldContRA = int32(A)
-						L.yieldContIdx = cf.Idx
-						cf.Pc--
+						L.setYieldCont(cf, yieldContCompare, A)
 						return
 					default:
 						ret = !objectRationalWithError(L, rhs, lhs, "__lt")
 						if L.yieldState != yieldNone {
-							L.yieldCont = yieldContCompare
-							L.yieldContRA = int32(A)
-							L.yieldContIdx = cf.Idx
-							cf.Pc--
+							L.setYieldCont(cf, yieldContCompareNot, A)
 							return
 						}
 					}
@@ -1644,7 +1617,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			}
 
 		case OP_CALL:
-			if checkCtx() {
+			if safepoint(cf, true) {
 				return
 			}
 			reg := L.reg
@@ -1781,7 +1754,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			}
 
 		case OP_TAILCALL:
-			if checkCtx() {
+			if safepoint(cf, true) {
 				return
 			}
 			reg := L.reg
@@ -1855,19 +1828,8 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 				if callGFunction(L, true) {
 					return
 				}
-				if L.currentFrame == nil || luaframe == baseframe {
+				if luaframe == baseframe || (!returnsToLua(L) && resumeGoFrames(L)) {
 					return
-				}
-				// If tail call returned to a Go frame, check for continuation (e.g. pcall)
-				if L.currentFrame.GoFunc != nil || (L.currentFrame.Fn != nil && L.currentFrame.Fn.IsG) {
-					ext := L.getFrameExt(L.currentFrame)
-					if ext != nil && ext.Continuation != nil {
-						if callGFunction(L, false) {
-							return
-						}
-					} else {
-						return
-					}
 				}
 			} else {
 				base := cf.Base
@@ -2235,80 +2197,42 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 				}
 			}
 			L.currentFrame = L.stack.Last()
-			if islast || L.currentFrame == nil {
+			if islast || (!returnsToLua(L) && resumeGoFrames(L)) {
 				return
-			}
-			// Check if returning to a Go function
-			if L.currentFrame.GoFunc != nil || (L.currentFrame.Fn != nil && L.currentFrame.Fn.IsG) {
-				// If it has a continuation, call it to handle the return
-				ext := L.getFrameExt(L.currentFrame)
-				if ext != nil && ext.Continuation != nil {
-					if callGFunction(L, false) {
-						return
-					}
-				} else {
-					return
-				}
 			}
 
 		case OP_FORLOOP:
-			if checkCtx() {
+			if safepoint(cf, true) {
 				return
 			}
 			reg := L.reg
 			lbase := cf.LocalBase
 			A := int(inst>>18) & 0xff //GETA
 			RA := int(lbase) + A
-			// Fast path: check if all values are integers
 			initVal := reg.Get(RA)
 			limitVal := reg.Get(RA + 1)
 			stepVal := reg.Get(RA + 2)
-			if initI, ok1 := initVal.(LInteger); ok1 {
-				if limitI, ok2 := limitVal.(LInteger); ok2 {
-					if stepI, ok3 := stepVal.(LInteger); ok3 {
-						init := int64(initI) + int64(stepI)
-						limit := int64(limitI)
-						step := int64(stepI)
-						v := lintegerToValue(LInteger(init))
-						newSize := RA + 1
-						if newSize > cap(reg.array) {
-							reg.resize(newSize)
-						}
-						reg.array[RA] = v
-						if RA >= reg.top {
-							reg.top = RA + 1
-						}
-						if (step > 0 && init <= limit) || (step <= 0 && init >= limit) {
-							Sbx := int(inst&0x3ffff) - opMaxArgSbx
-							cf.Pc += int32(Sbx)
-							newSize := RA + 4
-							if newSize > cap(reg.array) {
-								reg.resize(newSize)
-							}
-							reg.array[RA+3] = v
-							if RA+3 >= reg.top {
-								reg.top = RA + 4
-							}
-						} else {
-							topi := RA + 1
-							if topi > cap(reg.array) {
-								reg.resize(topi)
-							}
-							oldtopi := reg.top
-							reg.top = topi
-							for i := oldtopi; i < reg.top; i++ {
-								reg.array[i] = LNil
-							}
-							if reg.top < oldtopi {
-								nilRange := reg.array[reg.top:oldtopi]
-								for i := range nilRange {
-									nilRange[i] = nil
-								}
-							}
-						}
-						continue
+			if init, ok := initVal.(LInteger); ok {
+				limit := limitVal.(LInteger)
+				step := stepVal.(LInteger)
+				// Debugger writes can move the limit past the current index.
+				if (step > 0 && init <= limit && uint64(limit)-uint64(init) >= uint64(step)) ||
+					(step < 0 && init >= limit && uint64(init)-uint64(limit) >= 0-uint64(step)) {
+					v := lintegerToValue(init + step)
+					if RA+4 > cap(reg.array) {
+						reg.resize(RA + 4)
 					}
+					reg.array[RA] = v
+					reg.array[RA+3] = v
+					if RA+3 >= reg.top {
+						reg.top = RA + 4
+					}
+					Sbx := int(inst&0x3ffff) - opMaxArgSbx
+					cf.Pc += int32(Sbx)
+				} else {
+					reg.SetTop(RA + 1)
 				}
+				continue
 			}
 			// Slow path: use LNumber
 			if init, ok1 := toNumber(initVal); ok1 {
@@ -2401,20 +2325,26 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			Sbx := int(inst&0x3ffff) - opMaxArgSbx //GETSBX
 			initVal := reg.Get(RA)
 			stepVal := reg.Get(RA + 2)
-			// Fast path: integer-only for loops
-			if initI, ok1 := initVal.(LInteger); ok1 {
-				if stepI, ok2 := stepVal.(LInteger); ok2 {
-					result := int64(initI) - int64(stepI)
-					v := lintegerToValue(LInteger(result))
-					newSize := RA + 1
-					if newSize > cap(reg.array) {
-						reg.resize(newSize)
+			if init, ok := initVal.(LInteger); ok {
+				if step, ok := stepVal.(LInteger); ok {
+					// Integer preparation consumes the first loop tick before entering the body.
+					if safepoint(cf, true) {
+						return
 					}
-					reg.array[RA] = v
-					if RA >= reg.top {
-						reg.top = RA + 1
+					if step == 0 {
+						L.RaiseError("'for' step is zero")
 					}
-					cf.Pc += int32(Sbx)
+					limitVal := reg.Get(RA + 1)
+					limit, skip := integerForLimit(L, limitVal, step)
+					if skip || (step > 0 && init > limit) || (step < 0 && init < limit) {
+						cf.Pc += int32(Sbx + 1)
+						reg.SetTop(RA + 1)
+						continue
+					}
+					if _, ok := limitVal.(LInteger); !ok {
+						reg.Set(RA+1, lintegerToValue(limit))
+					}
+					reg.Set(RA+3, initVal)
 					continue
 				}
 			}
@@ -2443,7 +2373,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			cf.Pc += int32(Sbx)
 
 		case OP_TFORLOOP:
-			if checkCtx() {
+			if safepoint(cf, true) {
 				return
 			}
 			reg := L.reg
@@ -2544,10 +2474,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			}
 			L.callR(2, nret, RA+3)
 			if L.yieldState != yieldNone {
-				L.yieldCont = yieldContTForLoop
-				L.yieldContRA = int32(RA)
-				L.yieldContIdx = cf.Idx
-				cf.Pc--
+				L.setYieldCont(cf, yieldContTForLoop, RA)
 				return
 			}
 			if value := reg.Get(RA + 3); value != LNil {
@@ -2728,11 +2655,18 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 	}
 }
 
-func switchToParentThread(L *LState, nargs int, haserror bool, kill bool) {
+// preempt suspends L at a safepoint after the tick budget is exhausted. Its
+// frames stay in place: the resumer sees ResumePreempted and continues L by
+// resuming it with no values.
+func (ls *LState) preempt() {
+	transferToParent(ls, 0, false)
+	ls.yieldState = yieldPreempt
+}
+
+// transferToParent hands the top nargs values of L to its resumer, preceded by
+// the status flag for non-wrapped threads, and makes the resumer current.
+func transferToParent(L *LState, nargs int, haserror bool) {
 	parent := L.Parent
-	if parent == nil {
-		L.RaiseError("can not yield from outside of a coroutine")
-	}
 	L.G.CurrentThread = parent
 	L.Parent = nil
 	if !L.wrapped {
@@ -2743,6 +2677,13 @@ func switchToParentThread(L *LState, nargs int, haserror bool, kill bool) {
 		}
 	}
 	L.XMoveTo(parent, nargs)
+}
+
+func switchToParentThread(L *LState, nargs int, haserror bool, kill bool) {
+	if L.Parent == nil {
+		L.RaiseError("can not yield from outside of a coroutine")
+	}
+	transferToParent(L, nargs, haserror)
 	L.clearFrameExt(L.currentFrame)
 	L.stack.Pop()
 	offset := L.currentFrame.LocalBase - L.currentFrame.ReturnBase
@@ -2805,37 +2746,91 @@ func returnFromTailcall(L *LState, baseframe *callFrame, cf *callFrame, RA int, 
 	}
 
 	L.currentFrame = L.stack.Last()
-	if islast || L.currentFrame == nil {
-		return true
-	}
-	if L.currentFrame.GoFunc != nil || (L.currentFrame.Fn != nil && L.currentFrame.Fn.IsG) {
-		ext := L.getFrameExt(L.currentFrame)
-		if ext != nil && ext.Continuation != nil {
-			if callGFunction(L, false) {
-				return true
-			}
-		} else {
+	return islast || (!returnsToLua(L) && resumeGoFrames(L))
+}
+
+// returnsToLua reports whether the current frame is a Lua frame, the common
+// case after a return; resumeGoFrames handles the rest.
+func returnsToLua(L *LState) bool {
+	cf := L.currentFrame
+	return cf != nil && cf.Fn != nil && !cf.Fn.IsG
+}
+
+// resumeGoFrames completes the Go frames a returning Lua frame uncovered.
+// A Go frame with a continuation (pcall, coroutine.resume after a yield) is
+// finished here, and frames below it may be Go continuation frames in turn.
+// It reports true when the main loop must return: the stack is exhausted, a
+// continuation yielded, or a Go frame without a continuation is waiting in
+// Call for the results.
+func resumeGoFrames(L *LState) bool {
+	for {
+		cf := L.currentFrame
+		if cf == nil {
+			return true
+		}
+		if cf.GoFunc == nil && (cf.Fn == nil || !cf.Fn.IsG) {
+			return false
+		}
+		if ext := L.getFrameExt(cf); ext == nil || ext.Continuation == nil {
+			return true
+		}
+		if callGFunction(L, false) {
 			return true
 		}
 	}
+}
 
-	return false
+// setYieldCont records that the opcode at cf's current instruction awaits the
+// result of an inner call that yielded. The opcode's post-call work runs in
+// handleYieldContinuation when cf resumes.
+func (ls *LState) setYieldCont(cf *callFrame, kind uint8, ra int) {
+	ext := ls.setFrameExt(cf)
+	ext.YieldCont = kind
+	ext.YieldContRA = int32(ra)
+	ext.YieldContRB = ls.yieldCallRB
+	ext.YieldContAux = 0
+	cf.Flags |= frameYieldCont
 }
 
 // handleYieldContinuation finishes an opcode whose inner call yielded.
-// The called function has completed and OP_RETURN placed the result at
-// yieldContRB. We execute only the post-call logic of the originating opcode.
-func handleYieldContinuation(L *LState, cf *callFrame, inst uint32) {
-	contType := L.yieldCont
-	ra := int(L.yieldContRA)
-	rb := int(L.yieldContRB)
+// The called function has completed and OP_RETURN placed the result at the
+// recorded return base. We execute only the post-call logic of the originating opcode.
+//
+// It reports true when the continuation suspended the thread again and the
+// main loop must return.
+func handleYieldContinuation(L *LState, cf *callFrame, inst uint32) bool {
+	ext := L.getFrameExt(cf)
+	contType := ext.YieldCont
+	ra := int(ext.YieldContRA)
+	rb := int(ext.YieldContRB)
+	aux := int(ext.YieldContAux)
 	reg := L.reg
 
-	// Clear continuation state before executing post-call logic.
-	L.clearYieldContinuation()
+	// A Lua frame's extension carries only the continuation; release it before
+	// executing post-call logic, which may record a new one.
+	L.clearFrameExt(cf)
+	cf.Flags &^= frameYieldCont
 
 	switch contType {
-	case yieldContGetField, yieldContArith, yieldContUnm, yieldContLen, yieldContConcat:
+	case yieldContConcat:
+		// The result replaces the operand pair it reduced and the remaining
+		// operands, from B up to that position, are concatenated on.
+		first := int(cf.LocalBase) + int(inst&0x1ff) //GETB
+		v := reg.Get(rb)
+		reg.Set(aux, v)
+		if aux > first {
+			v, pos := stringConcat(L, aux-first+1, aux)
+			if L.yieldState != yieldNone {
+				L.setYieldCont(cf, yieldContConcat, ra)
+				L.getFrameExt(cf).YieldContAux = int32(pos)
+				return true
+			}
+			reg.Set(ra, v)
+			break
+		}
+		reg.Set(ra, v)
+
+	case yieldContGetField, yieldContArith, yieldContUnm, yieldContLen:
 		// All these place a single return value at RA.
 		v := reg.Get(rb)
 		reg.Set(ra, v)
@@ -2853,12 +2848,15 @@ func handleYieldContinuation(L *LState, cf *callFrame, inst uint32) {
 		selfobj := reg.Get(int(lbase) + B)
 		reg.Set(ra+1, selfobj)
 
-	case yieldContCompare:
+	case yieldContCompare, yieldContCompareNot:
 		// RA holds the A operand from the comparison instruction (not a register index).
 		// The metamethod result is at rb. Evaluate as bool and apply the skip logic.
-		v := reg.Get(rb)
+		holds := LVAsBool(reg.Get(rb))
+		if contType == yieldContCompareNot {
+			holds = !holds
+		}
 		result := 1
-		if LVAsBool(v) {
+		if holds {
 			result = 0
 		}
 		if result == int(ra) {
@@ -2876,27 +2874,19 @@ func handleYieldContinuation(L *LState, cf *callFrame, inst uint32) {
 		}
 		cf.Pc++
 	}
+	return false
 }
 
+// callGFunction runs the current Go frame, or its continuation, and completes
+// the call unless it suspends. A tail-called Go frame runs above its caller,
+// so errors and debug information name the call site; once the function
+// returns or suspends, the caller's slot is released and the Go frame, with
+// any frames it keeps across the suspension, takes it over.
 func callGFunction(L *LState, tailcall bool) bool {
 	frame := L.currentFrame
-	var gfnret int
-
-	// Check if this is a resume with continuation (after yield)
-	ext := L.getFrameExt(frame)
-	if ext != nil && ext.Continuation != nil {
-		cont := ext.Continuation
-		ctx := ext.ContinuationCtx
-		ext.Continuation = nil
-		ext.ContinuationCtx = nil
-		gfnret = cont(L, ctx, ResumeYield)
-	} else if frame.GoFunc != nil {
-		gfnret = frame.GoFunc(L)
-	} else {
-		gfnret = frame.Fn.GFunction(L)
-	}
+	gfnret := invokeGoFrame(L, frame)
 	if tailcall {
-		L.currentFrame = L.removeCallerFrame()
+		frame = L.removeFrame(int(frame.Idx) - 1)
 	}
 
 	if gfnret < 0 {
@@ -2904,6 +2894,9 @@ func callGFunction(L *LState, tailcall bool) bool {
 		// Subsequent Go functions returning -1 (pcall, xpcall, coResume) detect
 		// the yield via yieldState and propagate it without a second thread switch.
 		if L.yieldState == yieldNone {
+			if L.goCalls != 0 {
+				L.RaiseError("attempt to yield across a C-call boundary")
+			}
 			if L.Parent != nil && L.stack.Sp() == 1 {
 				preserveSoleGoYield(L)
 			} else {
@@ -2922,10 +2915,9 @@ func callGFunction(L *LState, tailcall bool) bool {
 		wantret = int16(gfnret)
 	}
 
-	// A sole Go frame is the coroutine entry frame. This is also how a
-	// tail-called Go function looks after yielding: the initial tail call
-	// collapsed its Lua caller, and resume invokes the continuation with
-	// tailcall=false. Either path must transfer final results to the resumer.
+	// A sole Go frame is the coroutine entry frame, or a Go function tail-called
+	// from it that took over its slot. Either way its results are the
+	// coroutine's final results and transfer to the resumer.
 	if L.Parent != nil && L.stack.Sp() == 1 {
 		switchToParentThread(L, int(wantret), false, true)
 		return true
@@ -2970,22 +2962,51 @@ func callGFunction(L *LState, tailcall bool) bool {
 	return false
 }
 
+// invokeGoFrame runs frame's Go function, or its continuation when resuming
+// after a yield. Lua code the function calls runs under this Go frame and is
+// not preemptible, except where the function hands suspension back to the VM
+// through CallK or coroutine resumption.
+//
+// The Go frame is counted in nonYieldable only while preemption is enabled.
+// The budget changes only between resumes, so a frame entered with preemption
+// disabled cannot observe preemption before it returns and needs no count.
+func invokeGoFrame(L *LState, frame *callFrame) int {
+	if L.G.tickBudget < 0 {
+		return runGoFrame(L, frame)
+	}
+	return runCountedGoFrame(L, frame)
+}
+
+func runCountedGoFrame(L *LState, frame *callFrame) int {
+	g := L.G
+	g.nonYieldable++
+	defer func() { g.nonYieldable-- }()
+	return runGoFrame(L, frame)
+}
+
+func runGoFrame(L *LState, frame *callFrame) int {
+	if ext := L.getFrameExt(frame); ext != nil && ext.Continuation != nil {
+		cont := ext.Continuation
+		ctx := ext.ContinuationCtx
+		ext.Continuation = nil
+		ext.ContinuationCtx = nil
+		return cont(L, ctx, ResumeYield)
+	}
+	if frame.GoFunc != nil {
+		return frame.GoFunc(L)
+	}
+	return frame.Fn.GFunction(L)
+}
+
 // preserveSoleGoYield transfers a root or tail-called Go function's yield
 // values without discarding its only frame. The continuation turns the next
 // Resume arguments into the function's final results, matching how a surviving
 // Lua caller receives resume values after a non-root Go function yields.
 func preserveSoleGoYield(L *LState) {
-	parent := L.Parent
-	if parent == nil {
+	if L.Parent == nil {
 		L.RaiseError("can not yield from outside of a coroutine")
 	}
-
-	if !L.wrapped {
-		parent.Push(LTrue)
-	}
-	L.XMoveTo(parent, L.GetTop())
-	L.G.CurrentThread = parent
-	L.Parent = nil
+	transferToParent(L, L.GetTop(), false)
 	L.yieldState = yieldSystem
 
 	ext := L.setFrameExt(L.currentFrame)
@@ -3001,6 +3022,10 @@ func threadRun(L *LState) {
 	if L.stack.IsEmpty() {
 		return
 	}
+
+	g := L.G
+	g.executing++
+	defer func() { g.executing-- }()
 
 	defer func() {
 		if rcv := recover(); rcv != nil {
@@ -3032,6 +3057,7 @@ func threadRun(L *LState) {
 			if parent := L.Parent; parent != nil {
 				if L.wrapped {
 					L.Push(lv)
+					L.G.CurrentThread = parent
 					defer L.kill()
 					parent.Panic(L)
 				} else {
@@ -3067,37 +3093,52 @@ func handleProtectedError(L *LState, errValue LValue, _ interface{}) bool {
 		if frame == nil {
 			break
 		}
-		if frame.Protected {
+		if frame.Flags&frameProtected != 0 {
 			// Capture frame values before popping (frame memory may be reused after pop)
-			returnBase := frame.ReturnBase
+			returnBase := int(frame.ReturnBase)
+			nret := int(frame.NRet)
 			L.closeUpvalues(int(frame.LocalBase))
 			var errFunc *LFunction
 			if ext := L.getFrameExt(frame); ext != nil {
 				errFunc = ext.ErrFunc
 			}
 
-			L.unwindCallFrames(i)
-
-			// Call error handler if present (xpcall)
+			// Call the xpcall error handler while the throw-site frames are still on the
+			// stack, so a root protected frame is never left as the handler's sole frame
 			if errFunc != nil {
-				L.Push(errFunc)
-				L.Push(errValue)
-				err := L.PCall(1, 1, nil)
-				if err == nil {
-					errValue = L.Get(-1)
-					L.Pop(1)
-				}
+				errValue = invokeErrorHandler(L, errFunc, errValue)
 			}
+
+			L.unwindCallFrames(i)
 
 			// If errValue is an *Error, ensure it has its metatable set
 			if e, ok := errValue.(*Error); ok {
 				SetErrorMetatable(L, e)
 			}
 
-			// Set up return values: false, error_message
-			L.reg.Set(int(returnBase), LFalse)
-			L.reg.Set(int(returnBase)+1, errValue)
+			// The call returns false and the error value, adjusted to the
+			// caller's expected result count; frames above it are discarded.
+			if nret == MultRet {
+				nret = 2
+			}
+			L.reg.SetTop(returnBase + nret)
+			for i := 0; i < nret; i++ {
+				switch i {
+				case 0:
+					L.reg.Set(returnBase, LFalse)
+				case 1:
+					L.reg.Set(returnBase+1, errValue)
+				default:
+					L.reg.Set(returnBase+i, LNil)
+				}
+			}
 
+			// A protected frame that was the thread's root returns to the
+			// resumer like a sole frame finishing.
+			if L.stack.IsEmpty() && L.Parent != nil {
+				transferToParent(L, nret, false)
+				L.kill()
+			}
 			return true
 		}
 	}
@@ -3135,6 +3176,32 @@ func numberArith(_ *LState, opcode int, lhs, rhs LNumber) LNumber {
 	}
 }
 
+// integerForLimit rounds float limits in the direction of the loop and clamps
+// limits outside the integer range, skipping loops that cannot reach the limit.
+func integerForLimit(L *LState, value LValue, step LInteger) (LInteger, bool) {
+	if limit, ok := value.(LInteger); ok {
+		return limit, false
+	}
+	limit, ok := toNumber(value)
+	if !ok {
+		L.RaiseError("for statement limit must be a number")
+	}
+	f := float64(limit)
+	if step > 0 {
+		f = math.Floor(f)
+	} else {
+		f = math.Ceil(f)
+	}
+	// The upper bound is exclusive because float64(MaxInt64) rounds to 2^63.
+	if f >= math.MinInt64 && f < -float64(math.MinInt64) {
+		return LInteger(f), false
+	}
+	if f > 0 {
+		return LInteger(math.MaxInt64), step < 0
+	}
+	return LInteger(math.MinInt64), step > 0
+}
+
 // toNumber extracts numeric value from LNumber or LInteger
 func toNumber(v LValue) (LNumber, bool) {
 	switch n := v.(type) {
@@ -3169,7 +3236,7 @@ func objectArith(L *LState, opcode int, lhs, rhs LValue) LValue {
 		L.reg.Push(lhs)
 		L.reg.Push(rhs)
 
-		L.Call(2, 1)
+		L.callR(2, 1, -1)
 		if L.yieldState != yieldNone {
 			return LNil
 		}
@@ -3210,7 +3277,10 @@ var stringPartsPool = sync.Pool{
 	},
 }
 
-func stringConcat(L *LState, total, last int) LValue {
+// stringConcat concatenates the total values ending at register last. When a
+// __concat metamethod suspends the thread it returns the register that
+// receives the metamethod result; the values up to it remain to be reduced.
+func stringConcat(L *LState, total, last int) (LValue, int) {
 	rhs := L.reg.Get(last)
 	total--
 	for i := last - 1; total > 0; {
@@ -3221,16 +3291,16 @@ func stringConcat(L *LState, total, last int) LValue {
 				L.reg.Push(op)
 				L.reg.Push(lhs)
 				L.reg.Push(rhs)
-				L.Call(2, 1)
+				L.callR(2, 1, -1)
 				if L.yieldState != yieldNone {
-					return LNil
+					return LNil, i
 				}
 				rhs = L.reg.Pop()
 				total--
 				i--
 			} else {
 				L.RaiseError("cannot perform concat operation between %v and %v", lhs.Type().String(), rhs.Type().String())
-				return LNil
+				return LNil, i
 			}
 		} else {
 			// Get builder from pool
@@ -3268,15 +3338,17 @@ func stringConcat(L *LState, total, last int) LValue {
 
 			result := LString(builder.String())
 
-			// Return slices to pool
-			*partsPtr = parts
+			// Return slices to pool without the strings they referenced
+			clear(parts)
+			*partsPtr = parts[:0]
 			stringPartsPool.Put(partsPtr)
+			builder.Reset()
 			stringBuilderPool.Put(builder)
 
 			rhs = result
 		}
 	}
-	return rhs
+	return rhs, 0
 }
 
 func lessThan(L *LState, lhs, rhs LValue) bool {
@@ -3383,7 +3455,7 @@ func objectRational(L *LState, lhs, rhs LValue, event string) int {
 		L.reg.Push(m1)
 		L.reg.Push(lhs)
 		L.reg.Push(rhs)
-		L.Call(2, 1)
+		L.callR(2, 1, -1)
 		if L.yieldState != yieldNone {
 			return -2
 		}
