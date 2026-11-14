@@ -17,20 +17,20 @@ func TestValueSourceFallbackPublication(t *testing.T) {
 	inputs.DeclaredTypes[sym] = typ.Unknown
 	s := Solve(inputs, testResolver())
 	t.Run("flow unknown replaces extracted concrete", func(t *testing.T) {
-		got := s.valueTypeAt(c.Entry(), ValueSource{ValuePath: constraint.Path{Root: "value", Symbol: sym}, ValueType: typ.Integer})
+		got := s.valueTypeAt(c.Entry(), ValueSource{ValuePath: constraint.Path{Root: "value", Symbol: sym}, ValueType: typ.Integer}, nil)
 		if !typ.IsUnknown(got) {
 			t.Fatalf("got %v, want flow unknown", got)
 		}
 	})
 	t.Run("no flow evidence uses fallback", func(t *testing.T) {
-		got := s.valueTypeAt(c.Entry(), ValueSource{ValueType: typ.String})
+		got := s.valueTypeAt(c.Entry(), ValueSource{ValueType: typ.String}, nil)
 		if !typ.TypeEquals(got, typ.String) {
 			t.Fatalf("got %v, want string", got)
 		}
 	})
 	t.Run("fallback cannot publish nested inference holes", func(t *testing.T) {
 		fallback := typ.NewRecord().Field("a", typ.NewArray(typ.NewUnion(typ.Integer, typ.Unresolved))).Build()
-		got := s.valueTypeAt(c.Entry(), ValueSource{ValueType: fallback})
+		got := s.valueTypeAt(c.Entry(), ValueSource{ValueType: fallback}, nil)
 		if !typ.IsFinal(got) {
 			t.Fatalf("published pending type %v", got)
 		}
@@ -47,7 +47,7 @@ func TestValueSourceOptionalMapElement(t *testing.T) {
 	row := typ.NewMap(typ.String, typ.Any)
 	inputs.DeclaredTypes[sym] = typ.NewOptional(typ.NewArray(row))
 	s := Solve(inputs, testResolver())
-	got := s.valueTypeAt(c.Entry(), ValueSource{MapElementSource: &MapElementSource{MapPath: constraint.Path{Root: "messages", Symbol: sym}}})
+	got := s.valueTypeAt(c.Entry(), ValueSource{MapElementSource: &MapElementSource{MapPath: constraint.Path{Root: "messages", Symbol: sym}}}, nil)
 	if !typ.TypeEquals(got, row) {
 		t.Fatalf("got %v, want %v", got, row)
 	}
@@ -60,7 +60,7 @@ func TestValueSourcePreservesSequenceMetadata(t *testing.T) {
 		typ.NewInferredArray(typ.Unresolved).WithExplicitNilWrite(),
 		typ.NewInferredMap(typ.String, typ.Unresolved).WithExplicitNilWrite(),
 	} {
-		got := s.valueTypeAt(c.Entry(), ValueSource{ValueType: fallback, ValueElements: []ValueSource{{ValueType: typ.String}}})
+		got := s.valueTypeAt(c.Entry(), ValueSource{ValueType: fallback, ValueElements: []ValueSource{{ValueType: typ.String}}}, nil)
 		switch shape := got.(type) {
 		case *typ.Array:
 			if !shape.InferredPresence || !shape.ExplicitNilWrite {
@@ -114,11 +114,11 @@ func TestValueSourcePendingEvidenceDefersPublication(t *testing.T) {
 	key := string(s.pkResolver.KeyAt(c.Entry(), path))
 	source := ValueSource{ValuePath: path, ValueType: typ.Integer}
 	s.setValue(key, typ.Unresolved)
-	if got := s.valueTypeAt(c.Entry(), source); got != nil {
+	if got := s.valueTypeAt(c.Entry(), source, nil); got != nil {
 		t.Fatalf("published %v before evidence is ready", got)
 	}
 	s.setValue(key, typ.String)
-	if got := s.valueTypeAt(c.Entry(), source); !typ.TypeEquals(got, typ.String) {
+	if got := s.valueTypeAt(c.Entry(), source, nil); !typ.TypeEquals(got, typ.String) {
 		t.Fatalf("got %v after evidence settles, want string", got)
 	}
 }
@@ -140,11 +140,11 @@ func TestValueSourceWaitsForDynamicKeyEvidence(t *testing.T) {
 	key := string(s.pkResolver.KeyAt(c.Entry(), keyPath))
 	source := ValueSource{MapElementSource: &MapElementSource{MapPath: constraint.Path{Root: "input", Symbol: tableSym}, KeySymbol: keySym, KeyVar: "key"}, ValueType: typ.Any}
 	s.setValue(key, typ.Unresolved)
-	if got := s.valueTypeAt(c.Entry(), source); got != nil {
+	if got := s.valueTypeAt(c.Entry(), source, nil); got != nil {
 		t.Fatalf("published %v before the key settles", got)
 	}
 	s.setValue(key, typ.LiteralString("count"))
-	if got := s.valueTypeAt(c.Entry(), source); !typ.TypeEquals(got, typ.Integer) {
+	if got := s.valueTypeAt(c.Entry(), source, nil); !typ.TypeEquals(got, typ.Integer) {
 		t.Fatalf("got %v, want integer field", got)
 	}
 }
@@ -162,11 +162,11 @@ func TestValueSourceWaitsForDynamicMapEvidence(t *testing.T) {
 	key := string(s.pkResolver.KeyAt(c.Entry(), path))
 	source := ValueSource{MapElementSource: &MapElementSource{MapPath: path}, ValueType: typ.Any}
 	s.setValue(key, typ.Unresolved)
-	if got := s.valueTypeAt(c.Entry(), source); got != nil {
+	if got := s.valueTypeAt(c.Entry(), source, nil); got != nil {
 		t.Fatalf("published %v before the map settles", got)
 	}
 	s.setValue(key, typ.NewArray(typ.String))
-	if got := s.valueTypeAt(c.Entry(), source); !typ.TypeEquals(got, typ.String) {
+	if got := s.valueTypeAt(c.Entry(), source, nil); !typ.TypeEquals(got, typ.String) {
 		t.Fatalf("got %v, want string element", got)
 	}
 }
