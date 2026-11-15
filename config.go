@@ -9,6 +9,11 @@ var RegistrySize = 256
 var RegistryGrowStep = 32
 var RegistryMaxSize = 256 * 256
 var CallStackSize = 128
+
+// MaxCallStackSize is the largest call stack a state may have: a frame's
+// index identifies it within the stack and fits in an int16.
+const MaxCallStackSize = 1 << 15
+
 var MaxTableGetLoop = 100
 var MaxArrayIndex = 67108864
 

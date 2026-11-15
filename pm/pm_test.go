@@ -1,6 +1,7 @@
 package pm
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -11,6 +12,28 @@ func TestFind_Literal(t *testing.T) {
 	}
 	if len(matches) != 1 {
 		t.Fatalf("expected 1 match, got %d", len(matches))
+	}
+}
+
+func TestProgramFindStringOne(t *testing.T) {
+	program, err := Compile("a+")
+	if err != nil {
+		t.Fatalf("Compile failed: %v", err)
+	}
+
+	md, err := program.FindStringOne("xxaaay", 0)
+	if err != nil {
+		t.Fatalf("FindStringOne failed: %v", err)
+	}
+	defer ReleaseMatch(md)
+	if md == nil {
+		t.Fatal("FindStringOne returned nil match")
+	}
+	if got, want := md.Capture(0), 2; got != want {
+		t.Fatalf("match start = %d, want %d", got, want)
+	}
+	if got, want := md.Capture(1), 5; got != want {
+		t.Fatalf("match end = %d, want %d", got, want)
 	}
 }
 
@@ -154,6 +177,24 @@ func TestFind_CharacterClasses(t *testing.T) {
 	}
 }
 
+func TestFind_HeadAnchorRespectsOffset(t *testing.T) {
+	matches, err := Find("^%s*(.-)%s*$", []byte(" shared text "), 1, -1)
+	if err != nil {
+		t.Fatalf("Find anchored with offset: %v", err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("anchored pattern with non-zero offset returned %d matches, want 0", len(matches))
+	}
+	md, err := FindStringOne("^%s*(.-)%s*$", " shared text ", len(" shared text "))
+	if err != nil {
+		t.Fatalf("FindStringOne anchored with offset: %v", err)
+	}
+	if md != nil {
+		ReleaseMatch(md)
+		t.Fatal("anchored FindStringOne with non-zero offset returned a match")
+	}
+}
+
 func TestFind_Set(t *testing.T) {
 	matches, err := Find("[aeiou]+", []byte("hello world"), 0, -1)
 	if err != nil {
@@ -199,6 +240,15 @@ func TestFind_Backreference(t *testing.T) {
 	}
 	if len(matches) != 0 {
 		t.Fatalf("expected 0 matches, got %d", len(matches))
+	}
+}
+
+func TestCompileRejectsBackreferenceToOpenCapture(t *testing.T) {
+	if _, err := Compile("(%1)"); err == nil {
+		t.Fatal("Compile accepted backreference to an open capture")
+	}
+	if _, err := Compile("(%a)%1"); err != nil {
+		t.Fatalf("Compile rejected backreference to a closed capture: %v", err)
 	}
 }
 
@@ -260,11 +310,60 @@ func TestFind_InvalidCaptureIndex(t *testing.T) {
 	}
 }
 
+func TestFind_DanglingEscape(t *testing.T) {
+	_, err := Find("%", []byte("test"), 0, -1)
+	if err == nil || !strings.Contains(err.Error(), "unexpected EOS") {
+		t.Fatalf("Find error = %v, want dangling escape error", err)
+	}
+}
+
+func TestFind_IncompleteBalancedEscape(t *testing.T) {
+	for _, pattern := range []string{"%b", "%b("} {
+		_, err := Find(pattern, []byte("test"), 0, -1)
+		if err == nil || !strings.Contains(err.Error(), "unfinished balanced pattern") {
+			t.Fatalf("Find(%q) error = %v, want balanced pattern error", pattern, err)
+		}
+	}
+}
+
 func TestFind_UnmatchedParen(t *testing.T) {
 	_, err := Find("test)", []byte("test"), 0, -1)
 	if err == nil {
 		t.Fatal("expected error for unmatched paren")
 	}
+}
+
+func TestFind_BalancedMatchChargesByteScanBudget(t *testing.T) {
+	program, err := Compile("%b()")
+	if err != nil {
+		t.Fatalf("compile pattern: %v", err)
+	}
+	err = runPatternWithUsedByteBudget(program, []byte("(x"), MaxVMByteScans)
+	if err == nil || !strings.Contains(err.Error(), "byte scan limit") {
+		t.Fatalf("run error = %v, want byte scan limit", err)
+	}
+}
+
+func TestFind_BackrefChargesByteScanBudget(t *testing.T) {
+	program, err := Compile("(a)%1")
+	if err != nil {
+		t.Fatalf("compile pattern: %v", err)
+	}
+	err = runPatternWithUsedByteBudget(program, []byte("ab"), MaxVMByteScans)
+	if err == nil || !strings.Contains(err.Error(), "byte scan limit") {
+		t.Fatalf("run error = %v, want byte scan limit", err)
+	}
+}
+
+func runPatternWithUsedByteBudget(program Program, src []byte, used int) error {
+	v := newVM(src, program.insts, nil)
+	defer v.release()
+	v.byteScans = used
+	md := newMatchData(program.capSize)
+	defer md.release()
+	v.matchData = md
+	_, _, err := v.run(0, 0)
+	return err
 }
 
 func TestError_String(t *testing.T) {
@@ -314,17 +413,17 @@ func TestPatternCache_LRU(t *testing.T) {
 			t.Fatalf("parse error: %v", err)
 		}
 		insts := compilePattern(pat, nil)
-		cache.put(p, insts, pat)
+		cache.put(p, insts, pat, calcMaxCaptureSlot(insts))
 	}
 
 	// "a" should have been evicted (LRU)
-	if _, _, ok := cache.get("a"); ok {
+	if _, _, _, ok := cache.get("a"); ok {
 		t.Error("expected 'a' to be evicted")
 	}
 
 	// "b", "c", "d" should still be present
 	for _, p := range []string{"b", "c", "d"} {
-		if _, _, ok := cache.get(p); !ok {
+		if _, _, _, ok := cache.get(p); !ok {
 			t.Errorf("expected %q to be in cache", p)
 		}
 	}
@@ -371,8 +470,8 @@ func TestFind_EdgeCases(t *testing.T) {
 		{"empty pattern", "", "test", 5, false},
 		{"empty input", "a", "", 0, false},
 		{"both empty", "", "", 1, false},
-		{"trailing percent", "%", "test", 0, false},
-		{"trailing backslash b", "%b", "test", 0, false},
+		{"trailing percent", "%", "test", 0, true},
+		{"trailing backslash b", "%b", "test", 0, true},
 		{"unclosed bracket", "[abc", "test", 0, true},
 		{"deeply nested", "((((a))))", "a", 1, false},
 		{"pattern too complex", string(make([]byte, 300)), "test", 0, true},
@@ -417,11 +516,216 @@ func TestFind_MaxBacktracks(t *testing.T) {
 	input := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" // 31 a's, no b
 
 	matches, err := Find(pattern, []byte(input), 0, -1)
-	if err != nil {
-		t.Errorf("unexpected error: %v", err)
+	if err == nil {
+		t.Fatal("expected backtrack limit error")
 	}
 	if len(matches) != 0 {
 		t.Errorf("expected 0 matches, got %d", len(matches))
+	}
+}
+
+func TestPUCBigStringAnchoredRepeats(t *testing.T) {
+	input := strings.Repeat("a", 300000)
+
+	md, err := FindStringOne("^a*.?$", input, 0)
+	if err != nil {
+		t.Fatalf("FindStringOne(^a*.?$) error = %v", err)
+	}
+	if md == nil {
+		t.Fatal("FindStringOne(^a*.?$) returned no match")
+	}
+	ReleaseMatch(md)
+
+	md, err = FindStringOne("^a*.?b$", input, 0)
+	if err != nil {
+		t.Fatalf("FindStringOne(^a*.?b$) error = %v", err)
+	}
+	if md != nil {
+		ReleaseMatch(md)
+		t.Fatal("FindStringOne(^a*.?b$) returned a match")
+	}
+
+	md, err = FindStringOne("^a-.?$", input, 0)
+	if err != nil {
+		t.Fatalf("FindStringOne(^a-.?$) error = %v", err)
+	}
+	if md == nil {
+		t.Fatal("FindStringOne(^a-.?$) returned no match")
+	}
+	ReleaseMatch(md)
+}
+
+func TestFind_RejectsPatternByteLimit(t *testing.T) {
+	_, err := Find(strings.Repeat("a", MaxPatternBytes+1), []byte("a"), 0, 1)
+	if err == nil {
+		t.Fatal("expected pattern byte limit error")
+	}
+	if !strings.Contains(err.Error(), "pattern too large") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestFind_RejectsCaptureSlotLimit(t *testing.T) {
+	_, err := Find(strings.Repeat("()", MaxCaptureSlots/2), []byte(""), 0, 1)
+	if err == nil {
+		t.Fatal("expected capture slot limit error")
+	}
+	if !strings.Contains(err.Error(), "too many captures") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestFind_SearchPositionLimit(t *testing.T) {
+	input := make([]byte, MaxSearchPositions+1)
+	for i := range input {
+		input[i] = 'a'
+	}
+
+	matches, err := Find("b", input, 0, 1)
+	if err == nil {
+		t.Fatal("expected search position limit error")
+	}
+	if !strings.Contains(err.Error(), "pattern search position limit exceeded") {
+		t.Fatalf("error = %v", err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("matches = %d, want 0 on limit error", len(matches))
+	}
+}
+
+func TestFind_LimitStopsBeforeSearchPositionLimit(t *testing.T) {
+	input := make([]byte, MaxSearchPositions+1)
+	for i := range input {
+		input[i] = 'a'
+	}
+
+	matches, err := Find(".", input, 0, 1)
+	if err != nil {
+		t.Fatalf("limit=1 should stop after first match: %v", err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("matches = %d, want 1", len(matches))
+	}
+}
+
+func TestFind_AnchoredPatternSkipsSearchPositionLimit(t *testing.T) {
+	input := make([]byte, MaxSearchPositions+1)
+	for i := range input {
+		input[i] = 'a'
+	}
+
+	matches, err := Find("^b", input, 0, -1)
+	if err != nil {
+		t.Fatalf("anchored miss should not scan every offset: %v", err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("matches = %d, want 0", len(matches))
+	}
+}
+
+func TestFind_NegativeOffsetClampsToStart(t *testing.T) {
+	matches, err := Find("a", []byte("abc"), -100, 1)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("matches = %d, want 1", len(matches))
+	}
+}
+
+func TestFind_UnboundedMatchCountLimit(t *testing.T) {
+	input := make([]byte, MaxMatches+1)
+	for i := range input {
+		input[i] = 'a'
+	}
+	matches, err := Find(".", input, 0, -1)
+	if err == nil {
+		t.Fatal("expected match count limit error")
+	}
+	if len(matches) != 0 {
+		t.Fatalf("matches = %d, want 0 on limit error", len(matches))
+	}
+}
+
+func TestFind_LargePositiveLimitUsesBoundedCapacity(t *testing.T) {
+	if got := boundedMatchCap(MaxMatches + 1); got != MaxMatches {
+		t.Fatalf("boundedMatchCap(MaxMatches+1) = %d, want %d", got, MaxMatches)
+	}
+	if got := boundedMatchCap(3); got != 3 {
+		t.Fatalf("boundedMatchCap(3) = %d, want 3", got)
+	}
+	if got := boundedMatchCap(-1); got != 0 {
+		t.Fatalf("boundedMatchCap(-1) = %d, want 0", got)
+	}
+
+	matches, err := Find(".", []byte("abc"), 0, MaxMatches*100)
+	if err != nil {
+		t.Fatalf("Find with large positive limit failed: %v", err)
+	}
+	if len(matches) != 3 {
+		t.Fatalf("matches = %d, want 3", len(matches))
+	}
+	ReleaseMatches(matches)
+}
+
+func TestFind_EmptyPatternUnboundedMatchCountLimit(t *testing.T) {
+	input := make([]byte, MaxMatches)
+	for i := range input {
+		input[i] = 'a'
+	}
+	matches, err := Find("", input, 0, -1)
+	if err == nil {
+		t.Fatal("expected match count limit error for zero-width matches")
+	}
+	if !strings.Contains(err.Error(), "pattern match count limit exceeded") {
+		t.Fatalf("error = %v", err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("matches = %d, want 0 on limit error", len(matches))
+	}
+}
+
+func TestFind_OffsetPastEndSkipsExplosiveMatcher(t *testing.T) {
+	input := make([]byte, MaxBacktrackStack+1)
+	for i := range input {
+		input[i] = 'a'
+	}
+
+	matches, err := Find(".*b", input, len(input)+1, -1)
+	if err != nil {
+		t.Fatalf("offset past end should skip explosive matcher: %v", err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("matches = %d, want 0", len(matches))
+	}
+}
+
+func TestFind_LimitZeroSkipsSearchWork(t *testing.T) {
+	input := make([]byte, MaxBacktrackStack+1)
+	for i := range input {
+		input[i] = 'a'
+	}
+
+	matches, err := Find(".*b", input, 0, 0)
+	if err != nil {
+		t.Fatalf("limit=0 should not execute explosive matcher: %v", err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("matches = %d, want 0", len(matches))
+	}
+}
+
+func TestFind_BacktrackStackLimit(t *testing.T) {
+	input := make([]byte, MaxBacktrackStack+1)
+	for i := range input {
+		input[i] = 'a'
+	}
+	matches, err := Find(".*b", input, 0, 1)
+	if err == nil {
+		t.Fatal("expected backtrack stack limit error")
+	}
+	if len(matches) != 0 {
+		t.Fatalf("matches = %d, want 0 on limit error", len(matches))
 	}
 }
 
@@ -466,4 +770,147 @@ func TestMatchData_Bounds(t *testing.T) {
 	if md.IsPosCapture(100) {
 		t.Error("IsPosCapture(100) should return false")
 	}
+}
+
+func TestReleaseMatchesAcceptsReturnedMatches(t *testing.T) {
+	ReleaseMatches(nil)
+
+	matches, err := Find("a", []byte("abc"), 0, 1)
+	if err != nil {
+		t.Fatalf("Find failed: %v", err)
+	}
+	if len(matches) != 1 {
+		ReleaseMatches(matches)
+		t.Fatalf("matches = %d, want 1", len(matches))
+	}
+	ReleaseMatches(matches)
+	ReleaseMatches(matches)
+}
+
+func TestFindOneStreamsOneMatch(t *testing.T) {
+	md, err := FindStringOne(".", "abc", 0)
+	if err != nil {
+		t.Fatalf("FindStringOne failed: %v", err)
+	}
+	if md == nil {
+		t.Fatal("FindStringOne returned nil match")
+	}
+	if got := md.Capture(0); got != 0 {
+		ReleaseMatch(md)
+		t.Fatalf("match start = %d, want 0", got)
+	}
+	if got := md.Capture(1); got != 1 {
+		ReleaseMatch(md)
+		t.Fatalf("match end = %d, want 1", got)
+	}
+	ReleaseMatch(md)
+	ReleaseMatch(md)
+
+	md, err = FindStringOne(".", "abc", 1)
+	if err != nil {
+		t.Fatalf("FindStringOne with offset failed: %v", err)
+	}
+	if md == nil {
+		t.Fatal("FindStringOne with offset returned nil match")
+	}
+	if got := md.Capture(0); got != 1 {
+		ReleaseMatch(md)
+		t.Fatalf("offset match start = %d, want 1", got)
+	}
+	ReleaseMatch(md)
+
+	md, err = FindStringOne("%a+", "hello world", 0)
+	if err != nil {
+		t.Fatalf("FindStringOne word failed: %v", err)
+	}
+	if md == nil {
+		t.Fatal("FindStringOne word returned nil match")
+	}
+	if got := md.CaptureLength(); got != 2 {
+		ReleaseMatch(md)
+		t.Fatalf("word capture length = %d, want 2", got)
+	}
+	if got := "hello world"[md.Capture(0):md.Capture(1)]; got != "hello" {
+		ReleaseMatch(md)
+		t.Fatalf("word match = %q, want hello", got)
+	}
+	ReleaseMatch(md)
+}
+
+func TestFind_ConcurrentAdversarialLimits(t *testing.T) {
+	cases := []struct {
+		pattern string
+		input   string
+		limit   int
+		wantErr bool
+	}{
+		{strings.Repeat("a", MaxPatternBytes+1), "a", 1, true},
+		{strings.Repeat("()", MaxCaptureSlots/2), "", 1, true},
+		{".*b", strings.Repeat("a", MaxBacktrackStack+1), 1, true},
+		{"a*a*a*a*a*a*a*a*a*a*b", strings.Repeat("a", 64), -1, true},
+		{"^b", strings.Repeat("a", 1024), -1, false},
+		{"%b()", strings.Repeat("(", 1024), 1, false},
+	}
+
+	errc := make(chan error, 8)
+	for worker := 0; worker < 8; worker++ {
+		go func() {
+			for i := 0; i < 20; i++ {
+				for _, tc := range cases {
+					_, err := FindString(tc.pattern, tc.input, 0, tc.limit)
+					if tc.wantErr && err == nil {
+						errc <- newError(unknownPos, "expected adversarial limit error for %q", tc.pattern)
+						return
+					}
+					if !tc.wantErr && err != nil {
+						errc <- err
+						return
+					}
+				}
+			}
+			errc <- nil
+		}()
+	}
+
+	for i := 0; i < 8; i++ {
+		if err := <-errc; err != nil {
+			t.Fatalf("concurrent adversarial Find failed: %v", err)
+		}
+	}
+}
+
+func FuzzFindBoundedAdversarial(f *testing.F) {
+	for _, seed := range []struct {
+		pattern string
+		src     string
+		offset  int
+		limit   int
+	}{
+		{"", "", 0, -1},
+		{".*b", strings.Repeat("a", 128), 0, 1},
+		{"a*a*a*a*a*a*a*a*a*a*b", strings.Repeat("a", 64), 0, 1},
+		{"(%a+)%s+%1", "hello hello", 0, 4},
+		{strings.Repeat("()", 16), "", 0, 1},
+		{"[%z-\xff]+", "abc\x00def", -8, 2},
+		{"%b()", strings.Repeat("(", 64), 0, 1},
+	} {
+		f.Add(seed.pattern, seed.src, seed.offset, seed.limit)
+	}
+
+	f.Fuzz(func(t *testing.T, pattern, src string, offset, limit int) {
+		if len(pattern) > 512 || len(src) > 2048 {
+			return
+		}
+		if limit < 0 {
+			limit = -1
+		} else {
+			limit %= 9
+		}
+		if len(src) > 0 {
+			offset %= len(src) * 2
+		} else {
+			offset = 0
+		}
+		_, _ = FindString(pattern, src, offset, limit)
+	})
 }

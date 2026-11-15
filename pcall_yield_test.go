@@ -1080,3 +1080,50 @@ func TestPooledStateYieldedFlagReset_EndToEnd(t *testing.T) {
 		t.Fatalf("expected 'result', got %v", results)
 	}
 }
+
+// A resumed Lua frame that returns through stacked Go continuation frames
+// completes each of them in turn.
+func TestYieldThroughStackedContinuationFrames(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want []LValue
+	}{
+		{"pcall_pcall", `return pcall(pcall, function() return yield(1) + 1 end)`,
+			[]LValue{LTrue, LTrue, LNumber(6)}},
+		{"pcall_pcall_pcall", `return pcall(pcall, pcall, function() return yield(1) + 1 end)`,
+			[]LValue{LTrue, LTrue, LTrue, LNumber(6)}},
+		{"xpcall_lua_pcall", `return xpcall(function() return pcall(function() return yield(1) + 1 end) end, function(e) return e end)`,
+			[]LValue{LTrue, LTrue, LNumber(6)}},
+		{"pcall_tailcall_pcall", `local function f() return pcall(function() return yield(1) + 1 end) end
+return pcall(f)`,
+			[]LValue{LTrue, LTrue, LNumber(6)}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			L := NewState()
+			defer L.Close()
+			L.SetGlobal("yield", L.NewFunction(func(L *LState) int { return L.Yield(L.Get(1)) }))
+			fn, err := L.LoadString(tc.src)
+			if err != nil {
+				t.Fatal(err)
+			}
+			co, _ := L.NewThread()
+			if st, _, err := L.Resume(co, fn); err != nil || st != ResumeYield {
+				t.Fatalf("expected yield, got %v %v", st, err)
+			}
+			st, ret, err := L.Resume(co, fn, LNumber(5))
+			if err != nil || st != ResumeOK {
+				t.Fatalf("expected completion, got %v %v %v", st, ret, err)
+			}
+			if len(ret) != len(tc.want) {
+				t.Fatalf("expected %v, got %v", tc.want, ret)
+			}
+			for i := range tc.want {
+				if ret[i].String() != tc.want[i].String() {
+					t.Fatalf("expected %v, got %v", tc.want, ret)
+				}
+			}
+		})
+	}
+}

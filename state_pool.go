@@ -29,8 +29,7 @@ func resetLState(ls *LState) {
 
 	// Reset call frames
 	if ls.stack != nil {
-		// Different stack implementations handled in FreeAll()
-		ls.stack.SetSp(0)
+		ls.stack.Reset()
 	}
 
 	// Reset state properties
@@ -43,13 +42,20 @@ func resetLState(ls *LState) {
 	ls.G = nil
 	ls.wrapped = false
 	ls.yieldState = yieldNone
-	ls.clearYieldContinuation()
+	ls.yieldCallRB = 0
+	ls.goCalls = 0
+	ls.Panic = panicWithTraceback
+	ls.releaseHold()
+	ls.releaseHeld()
+	ls.ctx = nil
+	ls.ctxDone = nil
+	ls.ctxCancelFn = nil
 
 	// Debug callbacks and their dispatch history belong to the prior owner.
 	ls.clearHook()
 	ls.inHook = false
 
-	// Clear frame extensions to prevent stale continuations from being invoked
+	// Frame extensions hold continuations and handlers keyed by frame index.
 	ls.frameExt = nil
 }
 
@@ -60,6 +66,8 @@ func (ls *LState) Close() {
 	if !atomic.CompareAndSwapInt32(&ls.stop, 0, 1) {
 		return
 	}
+	ls.releaseHold()
+	ls.releaseHeld()
 	// Captures must keep their values before registers are cleared or reused.
 	ls.closeUpvalues(0)
 
@@ -93,12 +101,8 @@ func newLStateWithGlobal(options Options, G *Global, env *LTable) *LState {
 		ls.ctx = nil
 		ls.ctxDone = nil
 
-		// Registry was preserved but might need resetting if options changed
-		if ls.reg != nil && cap(ls.reg.array) != options.RegistrySize {
-			ls.reg = newRegistry(ls, options.RegistrySize, options.RegistryGrowStep, options.RegistryMaxSize)
-		} else if ls.reg != nil {
-			ls.reg.handler = ls
-		}
+		ls.reg = registryFor(ls, options)
+		ls.stack = callStackFor(ls.stack, options)
 
 		return ls
 	}
@@ -118,14 +122,50 @@ func newLStateWithGlobal(options Options, G *Global, env *LTable) *LState {
 		ctx:          nil,
 	}
 
-	if options.MinimizeStackMemory {
-		ls.stack = newAutoGrowingCallFrameStack(options.CallStackSize)
-	} else {
-		ls.stack = newFixedCallFrameStack(options.CallStackSize)
-	}
-
+	ls.stack = newCallStack(options)
 	ls.reg = newRegistry(ls, options.RegistrySize, options.RegistryGrowStep, options.RegistryMaxSize)
 	ls.Env = env
 
 	return ls
+}
+
+// newCallStack creates the call stack options describe.
+func newCallStack(options Options) callFrameStack {
+	if options.MinimizeStackMemory {
+		return newAutoGrowingCallFrameStack(options.CallStackSize)
+	}
+	return newFixedCallFrameStack(options.CallStackSize)
+}
+
+// callStackFor returns an empty call stack for options, reusing a pooled one
+// when its kind and capacity match.
+func callStackFor(pooled callFrameStack, options Options) callFrameStack {
+	switch cs := pooled.(type) {
+	case *fixedCallFrameStack:
+		if !options.MinimizeStackMemory && len(cs.array) == options.CallStackSize {
+			return cs
+		}
+	case *autoGrowingCallFrameStack:
+		if options.MinimizeStackMemory && len(cs.segments) == autoSegmentCount(options.CallStackSize) {
+			return cs
+		}
+	}
+	if pooled != nil {
+		pooled.FreeAll()
+	}
+	return newCallStack(options)
+}
+
+// registryFor returns an empty registry for ls with the sizes options
+// describe, reusing a pooled one whose capacity lies within them.
+func registryFor(ls *LState, options Options) *registry {
+	rg := ls.reg
+	if rg == nil || cap(rg.array) < options.RegistrySize || cap(rg.array) > options.RegistryMaxSize {
+		return newRegistry(ls, options.RegistrySize, options.RegistryGrowStep, options.RegistryMaxSize)
+	}
+	rg.handler = ls
+	rg.top = 0
+	rg.maxSize = options.RegistryMaxSize
+	rg.growBy = options.RegistryGrowStep
+	return rg
 }

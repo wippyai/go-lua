@@ -1792,3 +1792,52 @@ func TestYieldFromLenConcatInsideCoroutineWrap(t *testing.T) {
 		t.Errorf("Expected '3,5,foobar', got %v", results[0])
 	}
 }
+
+// Each frame owns its pending opcode continuation: a yield that passes through
+// nested metamethod frames resumes every enclosing opcode with its own result.
+func TestYieldThroughNestedMetamethods(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+	}{
+		{"index_in_index", `
+local inner = setmetatable({}, {__index = function(t, k) local v = yield(k) return v * 2 end})
+local outer = setmetatable({}, {__index = function(t, k) local v = inner[k] return v + 1 end})
+return outer.x`},
+		{"add_in_index", `
+local num = setmetatable({}, {__add = function(a, b) local v = yield("add") return v * 2 end})
+local outer = setmetatable({}, {__index = function(t, k) local v = num + 1 return v + 1 end})
+return outer.x`},
+		{"index_in_lt_in_index", `
+local leaf = setmetatable({}, {__index = function(t, k) return yield(k) * 2 end})
+local cmp = {}
+local cmt = {__lt = function(a, b) return leaf.v < 100 end}
+setmetatable(cmp, cmt)
+local cmp2 = setmetatable({}, cmt)
+local outer = setmetatable({}, {__index = function(t, k) if cmp < cmp2 then return leaf.w + 1 end return -1 end})
+return outer.x`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			L := NewState()
+			defer L.Close()
+			L.SetGlobal("yield", L.NewFunction(yieldingGoFunc))
+			fn, err := L.LoadString(tc.src)
+			if err != nil {
+				t.Fatal(err)
+			}
+			co, _ := L.NewThread()
+			expectYield(t, L, co, fn)
+			st, ret, err := L.Resume(co, fn, LNumber(10))
+			for err == nil && st == ResumeYield {
+				st, ret, err = L.Resume(co, fn, LNumber(10))
+			}
+			if err != nil {
+				t.Fatalf("resume failed: %v", err)
+			}
+			if st != ResumeOK || len(ret) != 1 || ret[0] != LNumber(21) {
+				t.Fatalf("expected ResumeOK 21, got %v %v", st, ret)
+			}
+		})
+	}
+}
