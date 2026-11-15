@@ -1,6 +1,9 @@
 package lua
 
-import "sort"
+import (
+	"sort"
+	"strings"
+)
 
 var tableFuncs = map[string]LGoFunc{
 	"getn":     tableGetN,
@@ -100,34 +103,27 @@ func tableRemove(L *LState) int {
 
 func tableConcat(L *LState) int {
 	tbl := L.CheckTable(1)
-	sep := LString(L.OptString(2, ""))
+	sep := L.OptString(2, "")
 	i := L.OptInt(3, 1)
-	j := L.OptInt(4, tbl.Len())
-	if L.GetTop() == 3 {
-		if i > tbl.Len() || i < 1 {
-			L.Push(emptyLString)
-			return 1
-		}
+	last := L.OptInt(4, tbl.Len())
+	var b strings.Builder
+	for ; i < last; i++ {
+		concatField(L, &b, tbl, i)
+		b.WriteString(sep)
 	}
-	i = intMax(intMin(i, tbl.Len()), 1)
-	j = intMin(intMin(j, tbl.Len()), tbl.Len())
-	if i > j {
-		L.Push(emptyLString)
-		return 1
+	if i == last {
+		concatField(L, &b, tbl, i)
 	}
-	retbottom := L.GetTop()
-	for ; i <= j; i++ {
-		v := tbl.RawGetInt(i)
-		if !LVCanConvToString(v) {
-			L.RaiseError("invalid value (%s) at index %d in table for concat", v.Type().String(), i)
-		}
-		L.Push(v)
-		if i != j {
-			L.Push(sep)
-		}
-	}
-	L.Push(stringConcat(L, L.GetTop()-retbottom, L.reg.Top()-1))
+	L.Push(LString(b.String()))
 	return 1
+}
+
+func concatField(L *LState, b *strings.Builder, tbl *LTable, i int) {
+	v := tbl.RawGetInt(i)
+	if !LVCanConvToString(v) {
+		L.RaiseError("invalid value (%s) at index %d in table for concat", v.Type().String(), i)
+	}
+	b.WriteString(LVAsString(v))
 }
 
 func tableInsert(L *LState) int {
