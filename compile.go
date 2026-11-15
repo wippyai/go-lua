@@ -148,7 +148,7 @@ func constantNumberValue(expr ast.Expr) LValue {
 	if ex, ok := expr.(*ast.NumberExpr); ok {
 		lv, err := parseNumberValue(ex.Value)
 		if err != nil {
-			return LNumber(math.NaN())
+			return nil
 		}
 		return lv
 	} else if ex, ok := expr.(*constLValueExpr); ok {
@@ -1262,7 +1262,7 @@ func compileExpr(context *funcContext, reg int, expr ast.Expr, ec *expcontext) i
 	case *ast.NumberExpr:
 		num, err := parseNumberValue(ex.Value)
 		if err != nil {
-			num = LNumber(math.NaN())
+			raiseCompileError(context, sline(ex), "malformed number near '%s'", ex.Value)
 		}
 		code.AddABx(OP_LOADK, sreg, context.ConstIndex(num), sline(ex))
 		return sused

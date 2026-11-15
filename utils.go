@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"unsafe"
+
+	"github.com/wippyai/go-lua/types/numparse"
 )
 
 func intMin(a, b int) int {
@@ -106,73 +108,17 @@ func isArrayKey(v LNumber) bool {
 	return iv > 0 && iv < MaxArrayIndex && LNumber(iv) == v
 }
 
-// parseNumber parses a Lua number literal. In Lua 5.3:
-// - Integers: no decimal point, no exponent (123, 0xff)
-// - Floats: has decimal point or exponent (123.0, 1e10, 0x1p10)
-func parseNumber(number string) (LNumber, error) {
-	number = strings.Trim(number, " \t\n")
-	if v, err := strconv.ParseInt(number, 0, LNumberBit); err == nil {
-		return LNumber(v), nil
-	}
-	v2, err2 := strconv.ParseFloat(number, LNumberBit)
-	if err2 != nil {
-		return LNumber(0), err2
-	}
-	return LNumber(v2), nil
-}
-
-// parseNumberValue parses a Lua number literal and returns LInteger or LNumber.
-// Lua 5.3 rules: integers have no decimal point or exponent.
+// parseNumberValue converts a numeral to an LInteger or LNumber following
+// Lua 5.4 string-to-number conversion (see numparse.Parse).
 func parseNumberValue(number string) (LValue, error) {
-	number = strings.Trim(number, " \t\n")
-	if number == "" {
-		return LNil, fmt.Errorf("empty number string")
+	n, ok := numparse.Parse(number)
+	if !ok {
+		return LNil, fmt.Errorf("malformed number: %q", number)
 	}
-
-	isHex := len(number) > 2 && number[0] == '0' && (number[1] == 'x' || number[1] == 'X')
-
-	// Check for float indicators
-	hasFloat := false
-	for i := 0; i < len(number); i++ {
-		c := number[i]
-		if c == '.' {
-			hasFloat = true
-			break
-		}
-		if isHex {
-			// Hex floats use 'p' or 'P' for exponent
-			if c == 'p' || c == 'P' {
-				hasFloat = true
-				break
-			}
-		} else {
-			// Decimal floats use 'e' or 'E' for exponent
-			if c == 'e' || c == 'E' {
-				hasFloat = true
-				break
-			}
-		}
+	if n.IsFloat {
+		return LNumber(n.Float), nil
 	}
-
-	if hasFloat {
-		v, err := strconv.ParseFloat(number, 64)
-		if err != nil {
-			return LNil, err
-		}
-		return LNumber(v), nil
-	}
-
-	// Integer
-	v, err := strconv.ParseInt(number, 0, 64)
-	if err != nil {
-		// Fallback to float if integer parsing fails (e.g., too large)
-		v2, err2 := strconv.ParseFloat(number, 64)
-		if err2 != nil {
-			return LNil, err2
-		}
-		return LNumber(v2), nil
-	}
-	return LInteger(v), nil
+	return LInteger(n.Int), nil
 }
 
 func readBufioLine(reader *bufio.Reader) ([]byte, error, bool) {

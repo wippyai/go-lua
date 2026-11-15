@@ -76,8 +76,9 @@ func LVAsNumber(v LValue) LNumber {
 	case LInteger:
 		return LNumber(lv)
 	case LString:
-		if num, err := parseNumber(string(lv)); err == nil {
-			return num
+		if num, err := parseNumberValue(string(lv)); err == nil {
+			f, _ := toNumber(num)
+			return f
 		}
 	}
 	return LNumber(0)
@@ -112,7 +113,7 @@ func (st LString) Type() LValueType { return LTString }
 func (st LString) Format(f fmt.State, c rune) {
 	switch c {
 	case 'd', 'i':
-		if nm, err := parseNumber(string(st)); err == nil {
+		if nm, err := parseNumberValue(string(st)); err == nil {
 			defaultFormat(nm, f, 'd')
 		} else {
 			defaultFormat(string(st), f, 's')

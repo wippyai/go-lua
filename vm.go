@@ -1044,14 +1044,14 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			RA := int(cf.LocalBase) + A
 			lhs := L.rkValue(int(inst & 0x1ff))
 			rhs := L.rkValue(int(inst>>9) & 0x1ff)
-			if value, ok := floorDivision(lhs, rhs); ok {
+			l, lok := arithOperand(lhs)
+			r, rok := arithOperand(rhs)
+			if !lok || !rok {
+				L.RaiseError("attempt to perform arithmetic on a non-number value")
+			} else if value, ok := floorDivision(l, r); ok {
 				L.reg.Set(RA, value)
 			} else {
-				if _, ok := lhs.(LInteger); ok && rhs == LInteger(0) {
-					L.RaiseError("attempt to divide by zero")
-				} else {
-					L.RaiseError("attempt to perform arithmetic on a non-number value")
-				}
+				L.RaiseError("attempt to divide by zero")
 			}
 
 		case OP_BAND:
@@ -1246,30 +1246,12 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 							rg.top = regi + 1
 						}
 					}
-				} else if str, ok1 := unaryv.(LString); ok1 {
-					if num, err := parseNumber(string(str)); err == nil {
-						// this section is inlined by go-inline
-						// source function is 'func (rg *registry) Set(regi int, vali LValue) ' in '_state.go'
-						{
-							rg := reg
-							regi := RA
-							vali := -num
-							newSize := regi + 1
-							// this section is inlined by go-inline
-							// source function is 'func (rg *registry) checkSize(requiredSize int) ' in '_state.go'
-							{
-								requiredSize := newSize
-								if requiredSize > cap(rg.array) {
-									rg.resize(requiredSize)
-								}
-							}
-							rg.array[regi] = vali
-							if regi >= rg.top {
-								rg.top = regi + 1
-							}
-						}
-					} else {
-						L.RaiseError("__unm undefined")
+				} else if num, ok1 := arithOperand(unaryv); ok1 {
+					switch n := num.(type) {
+					case LInteger:
+						reg.Set(RA, lintegerToValue(-n))
+					case LNumber:
+						reg.Set(RA, lnumberToValue(-n))
 					}
 				} else {
 					L.RaiseError("__unm undefined")
@@ -3175,19 +3157,9 @@ func objectArith(L *LState, opcode int, lhs, rhs LValue) LValue {
 		}
 		return L.reg.Pop()
 	}
-	if str, ok := lhs.(LString); ok {
-		if lnum, err := parseNumber(string(str)); err == nil {
-			lhs = lnum
-		}
-	}
-	if str, ok := rhs.(LString); ok {
-		if rnum, err := parseNumber(string(str)); err == nil {
-			rhs = rnum
-		}
-	}
-	if v1, ok1 := toNumber(lhs); ok1 {
-		if v2, ok2 := toNumber(rhs); ok2 {
-			return numberArith(L, opcode, v1, v2)
+	if l, ok := arithOperand(lhs); ok {
+		if r, ok := arithOperand(rhs); ok {
+			return arithValues(L, opcode, l, r)
 		}
 	}
 	L.RaiseError(fmt.Sprintf("cannot perform %v operation between %v and %v",

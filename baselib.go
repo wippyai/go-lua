@@ -2,8 +2,8 @@ package lua
 
 import (
 	"fmt"
-	"strconv"
-	"strings"
+
+	"github.com/wippyai/go-lua/types/numparse"
 )
 
 // baseFuncs contains stateless Go functions for base library.
@@ -312,33 +312,29 @@ func baseSetMetatable(L *LState) int {
 }
 
 func baseToNumber(L *LState) int {
-	base := L.OptInt(2, 10)
-	noBase := L.Get(2) == LNil
-
-	switch lv := L.CheckAny(1).(type) {
-	case LNumber:
-		L.Push(lv)
-	case LInteger:
-		L.Push(LNumber(lv))
-	case LString:
-		str := strings.Trim(string(lv), " \n\t")
-		if strings.Contains(str, ".") {
-			if v, err := strconv.ParseFloat(str, LNumberBit); err != nil {
-				L.Push(LNil)
+	if L.Get(2) == LNil {
+		switch lv := L.CheckAny(1).(type) {
+		case LNumber, LInteger:
+			L.Push(lv)
+		case LString:
+			if n, err := parseNumberValue(string(lv)); err == nil {
+				L.Push(n)
 			} else {
-				L.Push(LNumber(v))
-			}
-		} else {
-			if noBase && strings.HasPrefix(strings.ToLower(str), "0x") {
-				base, str = 16, str[2:] // Hex number
-			}
-			if v, err := strconv.ParseInt(str, base, LNumberBit); err != nil {
 				L.Push(LNil)
-			} else {
-				L.Push(LNumber(v))
 			}
+		default:
+			L.Push(LNil)
 		}
-	default:
+		return 1
+	}
+	base := L.CheckInt(2)
+	L.CheckType(1, LTString)
+	if base < 2 || base > 36 {
+		L.ArgError(2, "base out of range")
+	}
+	if n, ok := numparse.ParseBase(string(L.Get(1).(LString)), base); ok {
+		L.Push(LInteger(n))
+	} else {
 		L.Push(LNil)
 	}
 	return 1
