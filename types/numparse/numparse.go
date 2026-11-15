@@ -76,7 +76,7 @@ func ParseBase(s string, base int) (int64, bool) {
 	}
 	var n uint64
 	for i := 0; i < len(s); i++ {
-		d := digitValue(s[i])
+		d := DigitValue(s[i])
 		if d >= base {
 			return 0, false
 		}
@@ -102,7 +102,7 @@ func parseInt(s string) (int64, bool) {
 			return 0, false
 		}
 		for i := 0; i < len(digits); i++ {
-			d := digitValue(digits[i])
+			d := DigitValue(digits[i])
 			if d >= 16 {
 				return 0, false
 			}
@@ -112,7 +112,7 @@ func parseInt(s string) (int64, bool) {
 		const maxBy10 = math.MaxInt64 / 10
 		const maxLastDigit = math.MaxInt64 % 10
 		for i := 0; i < len(s); i++ {
-			d := digitValue(s[i])
+			d := DigitValue(s[i])
 			if d >= 10 {
 				return 0, false
 			}
@@ -181,16 +181,17 @@ func parseFloat(s string) (float64, bool) {
 // trimSpace removes the characters C isspace accepts.
 func trimSpace(s string) string {
 	start, end := 0, len(s)
-	for start < end && isSpace(s[start]) {
+	for start < end && IsSpace(s[start]) {
 		start++
 	}
-	for end > start && isSpace(s[end-1]) {
+	for end > start && IsSpace(s[end-1]) {
 		end--
 	}
 	return s[start:end]
 }
 
-func isSpace(c byte) bool {
+// IsSpace reports whether c is a space character in the C locale.
+func IsSpace(c byte) bool {
 	return c == ' ' || (c >= '\t' && c <= '\r')
 }
 
@@ -213,15 +214,15 @@ func hasHexPrefix(s string) bool {
 // scanDigits returns the length of the run of base digits at the start of s.
 func scanDigits(s string, base int) int {
 	n := 0
-	for n < len(s) && digitValue(s[n]) < base {
+	for n < len(s) && DigitValue(s[n]) < base {
 		n++
 	}
 	return n
 }
 
-// digitValue returns the value of an alphanumeric digit, or 36 for any other
+// DigitValue returns the value of an alphanumeric digit, or 36 for any other
 // byte.
-func digitValue(c byte) int {
+func DigitValue(c byte) int {
 	switch {
 	case c >= '0' && c <= '9':
 		return int(c - '0')

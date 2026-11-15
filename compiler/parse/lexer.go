@@ -30,6 +30,7 @@ import (
 	"sync"
 
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/internal"
 	"github.com/wippyai/go-lua/types/numparse"
 )
 
@@ -509,24 +510,67 @@ func (sc *Scanner) scanEscape(_ int, buf *bytes.Buffer) error {
 		buf.WriteByte('\'')
 	case '\n':
 		buf.WriteByte('\n')
-	case '\r':
-		buf.WriteByte('\n')
-		sc.Newline('\r')
-	default:
-		if '0' <= ch && ch <= '9' {
-			digits := []byte{byte(ch)}
-			for i := 0; i < 2 && isDecimal(sc.Peek()); i++ {
-				digits = append(digits, byte(sc.Next()))
-			}
-			val, _ := strconv.ParseInt(string(digits), 10, 32)
-			if val > 255 {
-				return sc.Error(string(digits), "decimal escape too large")
-			}
-			writeChar(buf, int(val))
-		} else {
-			writeChar(buf, ch)
+	case 'x':
+		return sc.scanHexEscape(buf)
+	case 'u':
+		return sc.scanUTF8Escape(buf)
+	case 'z':
+		for ch := sc.Peek(); ch >= 0 && numparse.IsSpace(byte(ch)); ch = sc.Peek() {
+			sc.Next()
 		}
+	case EOF:
+		return sc.Error(buf.String(), "unterminated string")
+	default:
+		if !isDecimal(ch) {
+			return sc.Error("\\"+string(rune(ch)), "invalid escape sequence")
+		}
+		val := ch - '0'
+		for i := 0; i < 2 && isDecimal(sc.Peek()); i++ {
+			val = val*10 + sc.Next() - '0'
+		}
+		if val > 255 {
+			return sc.Error(strconv.Itoa(val), "decimal escape too large")
+		}
+		writeChar(buf, val)
 	}
+	return nil
+}
+
+// scanHexEscape reads the two hexadecimal digits of a \xXX escape.
+func (sc *Scanner) scanHexEscape(buf *bytes.Buffer) error {
+	val := 0
+	for i := 0; i < 2; i++ {
+		ch := sc.Peek()
+		if !isHexDigit(ch) {
+			return sc.Error("\\x", "hexadecimal digit expected")
+		}
+		val = val<<4 | numparse.DigitValue(byte(sc.Next()))
+	}
+	writeChar(buf, val)
+	return nil
+}
+
+// scanUTF8Escape reads a \u{XXX} escape and appends its UTF-8 encoding.
+func (sc *Scanner) scanUTF8Escape(buf *bytes.Buffer) error {
+	if sc.Peek() != '{' {
+		return sc.Error("\\u", "missing '{'")
+	}
+	sc.Next()
+	if !isHexDigit(sc.Peek()) {
+		return sc.Error("\\u{", "hexadecimal digit expected")
+	}
+	var val uint32
+	for isHexDigit(sc.Peek()) {
+		if val > internal.MaxUTF8Esc>>4 {
+			return sc.Error("\\u{", "UTF-8 value too large")
+		}
+		val = val<<4 | uint32(numparse.DigitValue(byte(sc.Next())))
+	}
+	if sc.Peek() != '}' {
+		return sc.Error("\\u{", "missing '}'")
+	}
+	sc.Next()
+	buf.Write(internal.AppendUTF8Esc(buf.AvailableBuffer(), val))
 	return nil
 }
 

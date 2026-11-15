@@ -1,12 +1,14 @@
 package lua
 
+import "github.com/wippyai/go-lua/internal"
+
 // The utf8 library follows lutf8lib.c from Lua 5.4. Strict decoding accepts
 // code points up to U+10FFFF without surrogates; the optional lax argument
 // accepts any sequence of up to six bytes encoding a value up to 0x7FFFFFFF.
 
 const (
 	utf8MaxUnicode = 0x10FFFF
-	utf8MaxUTF     = 0x7FFFFFFF
+	utf8MaxUTF     = internal.MaxUTF8Esc
 	utf8MsgInvalid = "invalid UTF-8 code"
 )
 
@@ -72,29 +74,6 @@ func utf8Decode(s string, i int, strict bool) (code uint32, next int, ok bool) {
 	return code, i + 1, true
 }
 
-// utf8Encode appends the encoding of x (at most 0x7FFFFFFF) using up to six
-// bytes, as luaO_utf8esc does.
-func utf8Encode(buf []byte, x uint32) []byte {
-	if x < 0x80 {
-		return append(buf, byte(x))
-	}
-	var tmp [6]byte
-	n := len(tmp)
-	mfb := uint32(0x3F)
-	for {
-		n--
-		tmp[n] = byte(0x80 | (x & 0x3F))
-		x >>= 6
-		mfb >>= 1
-		if x <= mfb {
-			break
-		}
-	}
-	n--
-	tmp[n] = byte((^mfb << 1) | x)
-	return append(buf, tmp[n:]...)
-}
-
 func utf8Char(L *LState) int {
 	n := L.GetTop()
 	buf := make([]byte, 0, n*4)
@@ -103,7 +82,7 @@ func utf8Char(L *LState) int {
 		if code > utf8MaxUTF {
 			L.ArgError(i, "value out of range")
 		}
-		buf = utf8Encode(buf, uint32(code))
+		buf = internal.AppendUTF8Esc(buf, uint32(code))
 	}
 	L.Push(LString(buf))
 	return 1
