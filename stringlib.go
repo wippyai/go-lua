@@ -57,7 +57,7 @@ func strByte(L *LState) int {
 		if start < 0 || start >= l {
 			return 0
 		}
-		L.Push(LNumber(str[start]))
+		L.Push(LInteger(str[start]))
 		return 1
 	}
 
@@ -68,7 +68,7 @@ func strByte(L *LState) int {
 	}
 
 	for i := start; i < end; i++ {
-		L.Push(LNumber(str[i]))
+		L.Push(LInteger(str[i]))
 	}
 	return end - start
 }
@@ -92,8 +92,8 @@ func strFind(L *LState) int {
 	str := L.CheckString(1)
 	pattern := L.CheckString(2)
 	if len(pattern) == 0 {
-		L.Push(LNumber(1))
-		L.Push(LNumber(0))
+		L.Push(LInteger(1))
+		L.Push(LInteger(0))
 		return 2
 	}
 	init := luaIndex2StringIndex(str, L.OptInt(3, 1), true)
@@ -108,8 +108,8 @@ func strFind(L *LState) int {
 			L.Push(LNil)
 			return 1
 		}
-		L.Push(LNumber(init+pos) + 1)
-		L.Push(LNumber(init + pos + len(pattern)))
+		L.Push(LInteger(init + pos + 1))
+		L.Push(LInteger(init + pos + len(pattern)))
 		return 2
 	}
 
@@ -122,11 +122,11 @@ func strFind(L *LState) int {
 		return 1
 	}
 	md := mds[0]
-	L.Push(LNumber(md.Capture(0) + 1))
-	L.Push(LNumber(md.Capture(1)))
+	L.Push(LInteger(md.Capture(0) + 1))
+	L.Push(LInteger(md.Capture(1)))
 	for i := 2; i < md.CaptureLength(); i += 2 {
 		if md.IsPosCapture(i) {
-			L.Push(LNumber(md.Capture(i)))
+			L.Push(LInteger(md.Capture(i)))
 		} else {
 			L.Push(LString(str[md.Capture(i):md.Capture(i+1)]))
 		}
@@ -147,7 +147,7 @@ func strGsub(L *LState) int {
 	}
 	if len(mds) == 0 {
 		L.SetTop(1)
-		L.Push(LNumber(0))
+		L.Push(LInteger(0))
 		return 2
 	}
 	switch lv := repl.(type) {
@@ -158,7 +158,7 @@ func strGsub(L *LState) int {
 	case *LFunction, LGoFunc:
 		L.Push(LString(strGsubFunc(L, str, lv, mds)))
 	}
-	L.Push(LNumber(len(mds)))
+	L.Push(LInteger(len(mds)))
 	return 2
 }
 
@@ -239,7 +239,7 @@ func strGsubTable(L *LState, str string, repl *LTable, matches []*pm.MatchData) 
 		}
 		var value LValue
 		if match.IsPosCapture(idx) {
-			value = L.GetTable(repl, LNumber(match.Capture(idx)))
+			value = L.GetTable(repl, LInteger(match.Capture(idx)))
 		} else {
 			value = L.GetField(repl, str[match.Capture(idx):match.Capture(idx+1)])
 		}
@@ -259,7 +259,7 @@ func strGsubFunc(L *LState, str string, repl LValue, matches []*pm.MatchData) st
 		if match.CaptureLength() > 2 { // has captures
 			for i := 2; i < match.CaptureLength(); i += 2 {
 				if match.IsPosCapture(i) {
-					L.Push(LNumber(match.Capture(i)))
+					L.Push(LInteger(match.Capture(i)))
 				} else {
 					L.Push(LString(capturedString(L, match, str, i)))
 				}
@@ -307,7 +307,7 @@ func strGmatchIter(L *LState) int {
 
 	for i := 2; i < match.CaptureLength(); i += 2 {
 		if match.IsPosCapture(i) {
-			L.Push(LNumber(match.Capture(i)))
+			L.Push(LInteger(match.Capture(i)))
 		} else {
 			L.Push(LString(str[match.Capture(i):match.Capture(i+1)]))
 		}
@@ -331,7 +331,7 @@ func strGmatch(L *LState) int {
 
 func strLen(L *LState) int {
 	str := L.CheckString(1)
-	L.Push(LNumber(len(str)))
+	L.Push(LInteger(len(str)))
 	return 1
 }
 
@@ -371,7 +371,7 @@ func strMatch(L *LState) int {
 	default:
 		for i := 2; i < md.CaptureLength(); i += 2 {
 			if md.IsPosCapture(i) {
-				L.Push(LNumber(md.Capture(i)))
+				L.Push(LInteger(md.Capture(i)))
 			} else {
 				L.Push(LString(str[md.Capture(i):md.Capture(i+1)]))
 			}
