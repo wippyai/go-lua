@@ -46,6 +46,12 @@ func utf8Codes(L *LState) int {
 func utf8CodesIter(L *LState) int {
 	s := L.CheckString(1)
 	pos := L.CheckInt(2)
+	if pos < 0 {
+		return 0
+	}
+	for pos < len(s) && isContinuation(s[pos]) {
+		pos++
+	}
 
 	if pos >= len(s) {
 		return 0
@@ -140,57 +146,50 @@ func utf8Len(L *LState) int {
 func utf8Offset(L *LState) int {
 	s := L.CheckString(1)
 	n := L.CheckInt(2)
-	i := L.OptInt(3, 1)
-
-	slen := len(s)
+	defaultStart := 1
+	if n < 0 {
+		defaultStart = len(s) + 1
+	}
+	i := L.OptInt(3, defaultStart)
 	if i < 0 {
-		i = slen + i + 2
+		i = len(s) + i + 1
 	}
-	if i < 1 {
-		i = 1
+	if i < 1 || i > len(s)+1 {
+		L.ArgError(3, "position out of bounds")
 	}
-	if i > slen+1 {
-		i = slen + 1
-	}
-
 	pos := i - 1
-
 	if n == 0 {
-		for pos > 0 && isContinuation(s[pos]) {
+		for pos > 0 && pos < len(s) && isContinuation(s[pos]) {
 			pos--
-		}
-		L.Push(LInteger(pos + 1))
-		return 1
-	}
-
-	if n > 0 {
-		n--
-		for n > 0 && pos < slen {
-			pos++
-			for pos < slen && isContinuation(s[pos]) {
-				pos++
-			}
-			n--
-		}
-		if n == 0 {
-			L.Push(LInteger(pos + 1))
-			return 1
 		}
 	} else {
-		for n < 0 && pos > 0 {
-			pos--
-			for pos > 0 && isContinuation(s[pos]) {
-				pos--
-			}
-			n++
+		if pos < len(s) && isContinuation(s[pos]) {
+			L.RaiseError("initial position is a continuation byte")
 		}
-		if n == 0 {
-			L.Push(LInteger(pos + 1))
+		if n < 0 {
+			for n < 0 && pos > 0 {
+				pos--
+				for pos > 0 && isContinuation(s[pos]) {
+					pos--
+				}
+				n++
+			}
+		} else {
+			n--
+			for n > 0 && pos < len(s) {
+				pos++
+				for pos < len(s) && isContinuation(s[pos]) {
+					pos++
+				}
+				n--
+			}
+		}
+		if n != 0 {
+			L.Push(LNil)
 			return 1
 		}
 	}
-
-	L.Push(LNil)
+	L.Push(LInteger(pos + 1))
 	return 1
 }
 
