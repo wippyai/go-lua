@@ -30,6 +30,7 @@ import (
 	"sync"
 
 	"github.com/wippyai/go-lua/compiler/ast"
+	"github.com/wippyai/go-lua/types/numparse"
 )
 
 const EOF = -1
@@ -277,7 +278,7 @@ func isIdent(ch int, pos int) bool {
 	return ch == '_' || 'A' <= ch && ch <= 'Z' || 'a' <= ch && ch <= 'z' || isDecimal(ch) && pos > 0
 }
 
-func isDigit(ch int) bool {
+func isHexDigit(ch int) bool {
 	return '0' <= ch && ch <= '9' || 'a' <= ch && ch <= 'f' || 'A' <= ch && ch <= 'F'
 }
 
@@ -432,46 +433,36 @@ func (sc *Scanner) scanIdent(ch int, buf *bytes.Buffer) {
 	}
 }
 
-func (sc *Scanner) scanDecimal(ch int, buf *bytes.Buffer) {
-	writeChar(buf, ch)
-	for isDecimal(sc.Peek()) {
-		writeChar(buf, sc.Next())
-	}
-}
-
+// scanNumber reads a numeral the way Lua's read_numeral does: hexadecimal
+// digits, dots and exponent marks with an optional sign, plus one touching
+// letter so that "3x" is rejected. The shared string-to-number conversion
+// decides whether the numeral is well formed.
 func (sc *Scanner) scanNumber(ch int, buf *bytes.Buffer) error {
-	if ch == '0' { // octal
-		if sc.Peek() == 'x' || sc.Peek() == 'X' {
-			writeChar(buf, ch)
-			writeChar(buf, sc.Next())
-			hasvalue := false
-			for isDigit(sc.Peek()) {
-				writeChar(buf, sc.Next())
-				hasvalue = true
-			}
-			if !hasvalue {
-				return sc.Error(buf.String(), "illegal hexadecimal number")
-			}
-			return nil
-		} else if sc.Peek() != '.' && isDecimal(sc.Peek()) {
-			ch = sc.Next()
-		}
-	}
-	sc.scanDecimal(ch, buf)
-	if sc.Peek() == '.' {
-		sc.scanDecimal(sc.Next(), buf)
-	}
-	if ch = sc.Peek(); ch == 'e' || ch == 'E' {
+	expo1, expo2 := int('e'), int('E')
+	writeChar(buf, ch)
+	if ch == '0' && (sc.Peek() == 'x' || sc.Peek() == 'X') {
 		writeChar(buf, sc.Next())
-		if ch = sc.Peek(); ch == '-' || ch == '+' {
-			writeChar(buf, sc.Next())
-		}
-		if !isDecimal(sc.Peek()) {
-			return sc.Error(buf.String(), "malformed exponent")
-		}
-		sc.scanDecimal(sc.Next(), buf)
+		expo1, expo2 = 'p', 'P'
 	}
-
+	for {
+		next := sc.Peek()
+		if next == expo1 || next == expo2 {
+			writeChar(buf, sc.Next())
+			if sign := sc.Peek(); sign == '-' || sign == '+' {
+				writeChar(buf, sc.Next())
+			}
+		} else if isHexDigit(next) || next == '.' {
+			writeChar(buf, sc.Next())
+		} else {
+			break
+		}
+	}
+	if isIdent(sc.Peek(), 0) {
+		writeChar(buf, sc.Next())
+	}
+	if _, ok := numparse.Parse(buf.String()); !ok {
+		return sc.Error(buf.String(), "malformed number")
+	}
 	return nil
 }
 

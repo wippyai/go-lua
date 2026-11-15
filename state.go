@@ -1528,31 +1528,23 @@ func (ls *LState) ToBool(n int) bool {
 }
 
 func (ls *LState) ToInt(n int) int {
-	v := ls.Get(n)
-	switch lv := v.(type) {
-	case LNumber:
-		return int(lv)
-	case LInteger:
-		return int(lv)
-	case LString:
-		if num, err := parseNumber(string(lv)); err == nil {
-			return int(num)
-		}
-	}
-	return 0
+	return int(ls.ToInt64(n))
 }
 
 func (ls *LState) ToInt64(n int) int64 {
 	v := ls.Get(n)
+	if s, ok := v.(LString); ok {
+		num, err := parseNumberValue(string(s))
+		if err != nil {
+			return 0
+		}
+		v = num
+	}
 	switch lv := v.(type) {
 	case LNumber:
 		return int64(lv)
 	case LInteger:
 		return int64(lv)
-	case LString:
-		if num, err := parseNumber(string(lv)); err == nil {
-			return int64(num)
-		}
 	}
 	return 0
 }

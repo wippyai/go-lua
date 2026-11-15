@@ -62,6 +62,47 @@ func integerShift(value, count LInteger, left bool) LInteger {
 	return LInteger(uint64(value) >> uint(count))
 }
 
+// arithOperand applies Lua's string-to-number coercion to an arithmetic
+// operand: numbers pass through and numeric strings convert with the
+// integer or float subtype of their numeral.
+func arithOperand(v LValue) (LValue, bool) {
+	switch lv := v.(type) {
+	case LInteger, LNumber:
+		return v, true
+	case LString:
+		if n, err := parseNumberValue(string(lv)); err == nil {
+			return n, true
+		}
+	}
+	return nil, false
+}
+
+// arithValues applies +, -, *, /, % or ^ to two numbers. Integer operands
+// give integer results for +, -, * and %, matching the VM fast paths.
+func arithValues(L *LState, opcode int, lhs, rhs LValue) LValue {
+	if l, ok := lhs.(LInteger); ok {
+		if r, ok := rhs.(LInteger); ok {
+			switch opcode {
+			case OP_ADD:
+				return lintegerToValue(l + r)
+			case OP_SUB:
+				return lintegerToValue(l - r)
+			case OP_MUL:
+				return lintegerToValue(l * r)
+			case OP_MOD:
+				if r == 0 {
+					L.RaiseError("attempt to perform modulo by zero")
+					return LNil
+				}
+				return lintegerToValue(integerModulo(l, r))
+			}
+		}
+	}
+	l, _ := toNumber(lhs)
+	r, _ := toNumber(rhs)
+	return lnumberToValue(numberArith(L, opcode, l, r))
+}
+
 // floorDivision preserves the numeric subtype. A false result defers invalid
 // operations (including integer division by zero) to the VM's error path.
 func floorDivision(lhs, rhs LValue) (LValue, bool) {

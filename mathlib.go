@@ -242,25 +242,11 @@ func mathTanh(L *LState) int {
 }
 
 func mathToInteger(L *LState) int {
-	v := L.Get(1)
-	switch n := v.(type) {
-	case LInteger:
+	if n, ok := exactInteger(L.Get(1)); ok {
 		L.Push(n)
-		return 1
-	case LNumber:
-		if float64(n) == math.Trunc(float64(n)) && !math.IsInf(float64(n), 0) && !math.IsNaN(float64(n)) {
-			L.Push(LInteger(n))
-			return 1
-		}
-	case LString:
-		if num, err := parseNumber(string(n)); err == nil {
-			if float64(num) == math.Trunc(float64(num)) && !math.IsInf(float64(num), 0) {
-				L.Push(LInteger(num))
-				return 1
-			}
-		}
+	} else {
+		L.Push(LNil)
 	}
-	L.Push(LNil)
 	return 1
 }
 

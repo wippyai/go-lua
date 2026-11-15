@@ -2,24 +2,20 @@
 package parse
 
 import (
-  "strconv"
-  "strings"
+  "fmt"
   "github.com/wippyai/go-lua/compiler/ast"
+  "github.com/wippyai/go-lua/types/numparse"
 )
 
 func parseNumber(s string) (interface{}, error) {
-  if strings.HasPrefix(s, "0x") || strings.HasPrefix(s, "0X") {
-    i, err := strconv.ParseInt(s, 0, 64)
-    return i, err
+  n, ok := numparse.Parse(s)
+  if !ok {
+    return nil, fmt.Errorf("malformed number %q", s)
   }
-  f, err := strconv.ParseFloat(s, 64)
-  if err != nil {
-    return f, err
+  if n.IsFloat {
+    return n.Float, nil
   }
-  if f == float64(int64(f)) && !strings.Contains(s, ".") && !strings.ContainsAny(s, "eE") {
-    return int64(f), nil
-  }
-  return f, nil
+  return n.Int, nil
 }
 
 func setLastPosFromExprs(node ast.PositionHolder, exprs []ast.Expr, fallback ast.PositionHolder) {

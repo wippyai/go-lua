@@ -50,8 +50,9 @@ func (ls *LState) CheckNumber(n int) LNumber {
 	case LInteger:
 		return LNumber(lv)
 	case LString:
-		if num, err := parseNumber(string(lv)); err == nil {
-			return num
+		if num, err := parseNumberValue(string(lv)); err == nil {
+			f, _ := toNumber(num)
+			return f
 		}
 	}
 	ls.TypeError(n, LTNumber)
