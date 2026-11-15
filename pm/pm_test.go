@@ -1,6 +1,7 @@
 package pm
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -412,16 +413,35 @@ func TestFind_EdgeCases(t *testing.T) {
 }
 
 func TestFind_MaxBacktracks(t *testing.T) {
-	// Pattern that causes exponential backtracking
+	// Exponential backtracking with no match: the search exceeds the
+	// backtrack budget before it can prove that no match exists.
 	pattern := "a*a*a*a*a*a*a*a*a*a*b"
 	input := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" // 31 a's, no b
 
 	matches, err := Find(pattern, []byte(input), 0, -1)
-	if err != nil {
+	if err == nil {
+		t.Fatalf("expected pattern too complex error, got %d matches", len(matches))
+	}
+	if err.Error() != "pattern too complex" {
 		t.Errorf("unexpected error: %v", err)
 	}
-	if len(matches) != 0 {
-		t.Errorf("expected 0 matches, got %d", len(matches))
+	if matches != nil {
+		t.Errorf("expected no matches with error, got %d", len(matches))
+	}
+}
+
+func TestFind_MaxBacktracksWithExistingMatch(t *testing.T) {
+	// The only match needs every a* to give back its input, which takes more
+	// backtracks than the budget allows. Reference Lua returns 1, 15.
+	pattern := "^" + strings.Repeat("a*", 10) + strings.Repeat("a", 15) + "$"
+	input := strings.Repeat("a", 15)
+
+	matches, err := Find(pattern, []byte(input), 0, 1)
+	if err == nil {
+		t.Fatalf("expected pattern too complex error, got %d matches", len(matches))
+	}
+	if err.Error() != "pattern too complex" {
+		t.Errorf("unexpected error: %v", err)
 	}
 }
 
