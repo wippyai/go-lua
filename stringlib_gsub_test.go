@@ -179,7 +179,7 @@ func TestGsubMatchesPreviousImplementation(t *testing.T) {
 				t.Fatalf("trial %d kind %d: %v", trial, kind, err)
 			}
 			got := string(L.Get(-2).(LString))
-			count := int(L.Get(-1).(LNumber))
+			count := int(L.Get(-1).(LInteger))
 			if got != want || count != len(matches) {
 				t.Fatalf("trial %d kind %d pattern %q limit %d source %q: got (%q, %d), want (%q, %d)", trial, kind, pattern, limit, str, got, count, want, len(matches))
 			}
@@ -207,7 +207,7 @@ func TestGsubSpecialCases(t *testing.T) {
 			if err := L.CallByParam(P{Fn: L.NewFunction(strGsub), NRet: 2, Protect: true}, LString(tc.source), LString(tc.pattern), LString(tc.replacement), LNumber(tc.limit)); err != nil {
 				t.Fatal(err)
 			}
-			if got, count := string(L.Get(-2).(LString)), int(L.Get(-1).(LNumber)); got != tc.want || count != tc.count {
+			if got, count := string(L.Get(-2).(LString)), int(L.Get(-1).(LInteger)); got != tc.want || count != tc.count {
 				t.Fatalf("got (%q, %d), want (%q, %d)", got, count, tc.want, tc.count)
 			}
 		})
