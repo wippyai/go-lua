@@ -51,6 +51,13 @@ var mathFuncs = map[string]LGoFunc{
 }
 
 func mathAbs(L *LState) int {
+	if n, ok := L.Get(1).(LInteger); ok {
+		if n < 0 {
+			n = -n
+		}
+		L.Push(lintegerToValue(n))
+		return 1
+	}
 	L.Push(LNumber(math.Abs(float64(L.CheckNumber(1)))))
 	return 1
 }
@@ -76,7 +83,11 @@ func mathAtan2(L *LState) int {
 }
 
 func mathCeil(L *LState) int {
-	L.Push(LNumber(math.Ceil(float64(L.CheckNumber(1)))))
+	if n, ok := L.Get(1).(LInteger); ok {
+		L.Push(lintegerToValue(n))
+		return 1
+	}
+	L.Push(integralFloatValue(LNumber(math.Ceil(float64(L.CheckNumber(1))))))
 	return 1
 }
 
@@ -101,11 +112,28 @@ func mathExp(L *LState) int {
 }
 
 func mathFloor(L *LState) int {
-	L.Push(LNumber(math.Floor(float64(L.CheckNumber(1)))))
+	if n, ok := L.Get(1).(LInteger); ok {
+		L.Push(lintegerToValue(n))
+		return 1
+	}
+	L.Push(integralFloatValue(LNumber(math.Floor(float64(L.CheckNumber(1))))))
 	return 1
 }
 
 func mathFmod(L *LState) int {
+	if a, ok := L.Get(1).(LInteger); ok {
+		if d, ok := L.Get(2).(LInteger); ok {
+			switch d {
+			case 0:
+				L.ArgError(2, "zero")
+			case -1:
+				L.Push(lintegerToValue(0))
+			default:
+				L.Push(lintegerToValue(a % d))
+			}
+			return 1
+		}
+	}
 	L.Push(LNumber(math.Mod(float64(L.CheckNumber(1)), float64(L.CheckNumber(2)))))
 	return 1
 }
@@ -133,14 +161,13 @@ func mathLog10(L *LState) int {
 }
 
 func mathMax(L *LState) int {
-	if L.GetTop() == 0 {
-		L.RaiseError("wrong number of arguments")
-	}
-	maxVal := L.CheckNumber(1)
 	top := L.GetTop()
+	if top < 1 {
+		L.ArgError(1, "value expected")
+	}
+	maxVal := L.Get(1)
 	for i := 2; i <= top; i++ {
-		v := L.CheckNumber(i)
-		if v > maxVal {
+		if v := L.Get(i); lessThan(L, maxVal, v) {
 			maxVal = v
 		}
 	}
@@ -149,14 +176,13 @@ func mathMax(L *LState) int {
 }
 
 func mathMin(L *LState) int {
-	if L.GetTop() == 0 {
-		L.RaiseError("wrong number of arguments")
-	}
-	minVal := L.CheckNumber(1)
 	top := L.GetTop()
+	if top < 1 {
+		L.ArgError(1, "value expected")
+	}
+	minVal := L.Get(1)
 	for i := 2; i <= top; i++ {
-		v := L.CheckNumber(i)
-		if v < minVal {
+		if v := L.Get(i); lessThan(L, v, minVal) {
 			minVal = v
 		}
 	}
@@ -172,9 +198,19 @@ func mathMod(L *LState) int {
 }
 
 func mathModf(L *LState) int {
-	v1, v2 := math.Modf(float64(L.CheckNumber(1)))
-	L.Push(LNumber(v1))
-	L.Push(LNumber(v2))
+	if n, ok := L.Get(1).(LInteger); ok {
+		L.Push(lintegerToValue(n))
+		L.Push(LNumber(0))
+		return 2
+	}
+	n := float64(L.CheckNumber(1))
+	ip := math.Trunc(n)
+	L.Push(integralFloatValue(LNumber(ip)))
+	if n == ip {
+		L.Push(LNumber(0))
+	} else {
+		L.Push(LNumber(n - ip))
+	}
 	return 2
 }
 
@@ -189,24 +225,44 @@ func mathRad(L *LState) int {
 }
 
 func mathRandom(L *LState) int {
+	var low, up LInteger
 	switch L.GetTop() {
 	case 0:
 		L.Push(LNumber(rand.Float64()))
+		return 1
 	case 1:
-		m := L.CheckInt(1)
-		if m < 1 {
-			L.RaiseError("interval is empty")
+		low, up = 1, checkInteger(L, 1)
+		if up == 0 {
+			L.Push(lintegerToValue(LInteger(rand.Uint64())))
+			return 1
 		}
-		L.Push(LNumber(rand.IntN(m) + 1))
+	case 2:
+		low, up = checkInteger(L, 1), checkInteger(L, 2)
 	default:
-		m := L.CheckInt(1)
-		n := L.CheckInt(2)
-		if m > n {
-			L.RaiseError("interval is empty")
-		}
-		L.Push(LNumber(rand.IntN(n-m+1) + m))
+		L.RaiseError("wrong number of arguments")
 	}
+	if low > up {
+		L.ArgError(1, "interval is empty")
+	}
+	L.Push(lintegerToValue(low + LInteger(randomBelowOrEqual(uint64(up)-uint64(low)))))
 	return 1
+}
+
+// randomBelowOrEqual returns a uniform value in [0, n].
+func randomBelowOrEqual(n uint64) uint64 {
+	if n == math.MaxUint64 {
+		return rand.Uint64()
+	}
+	return rand.Uint64N(n + 1)
+}
+
+// integralFloatValue converts an integral float to an integer when it fits,
+// as pushnumint does in lmathlib.c; other floats stay floats.
+func integralFloatValue(f LNumber) LValue {
+	if n, ok := floatToInteger(f); ok {
+		return lintegerToValue(n)
+	}
+	return f
 }
 
 func mathRandomSeed(L *LState) int {

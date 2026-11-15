@@ -42,6 +42,25 @@ func (ls *LState) CheckInt64(n int) int64 {
 	return 0
 }
 
+// checkInteger is luaL_checkinteger: floats and numeric strings convert only
+// when they have an exact integer value.
+func checkInteger(L *LState, arg int) LInteger {
+	value := L.Get(arg)
+	if n, ok := exactInteger(value); ok {
+		return n
+	}
+	isNumber := value.Type() == LTNumber || value.Type() == LTInteger
+	if s, ok := value.(LString); ok {
+		_, err := parseNumberValue(string(s))
+		isNumber = err == nil
+	}
+	if isNumber {
+		L.ArgError(arg, "number has no integer representation")
+	}
+	L.TypeError(arg, LTNumber)
+	return 0
+}
+
 func (ls *LState) CheckNumber(n int) LNumber {
 	v := ls.Get(n)
 	switch lv := v.(type) {

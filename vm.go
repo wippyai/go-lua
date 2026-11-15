@@ -1338,26 +1338,7 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			B := int(inst & 0x1ff) //GETB
 			switch lv := L.rkValue(B).(type) {
 			case LString:
-				// this section is inlined by go-inline
-				// source function is 'func (rg *registry) SetNumber(regi int, vali LNumber) ' in '_state.go'
-				{
-					rg := reg
-					regi := RA
-					vali := LNumber(len(lv))
-					newSize := regi + 1
-					// this section is inlined by go-inline
-					// source function is 'func (rg *registry) checkSize(requiredSize int) ' in '_state.go'
-					{
-						requiredSize := newSize
-						if requiredSize > cap(rg.array) {
-							rg.resize(requiredSize)
-						}
-					}
-					rg.array[regi] = lnumberToValue(vali)
-					if regi >= rg.top {
-						rg.top = regi + 1
-					}
-				}
+				reg.Set(RA, lintegerToValue(LInteger(len(lv))))
 			default:
 				op := L.metaOp1(lv, "__len")
 				if op.Type() == LTFunction {
@@ -1371,72 +1352,9 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 						cf.Pc--
 						return
 					}
-					ret := reg.Pop()
-					if ret.Type() == LTNumber {
-						v, _ := ret.(LNumber)
-						// this section is inlined by go-inline
-						// source function is 'func (rg *registry) SetNumber(regi int, vali LNumber) ' in '_state.go'
-						{
-							rg := reg
-							regi := RA
-							vali := v
-							newSize := regi + 1
-							// this section is inlined by go-inline
-							// source function is 'func (rg *registry) checkSize(requiredSize int) ' in '_state.go'
-							{
-								requiredSize := newSize
-								if requiredSize > cap(rg.array) {
-									rg.resize(requiredSize)
-								}
-							}
-							rg.array[regi] = lnumberToValue(vali)
-							if regi >= rg.top {
-								rg.top = regi + 1
-							}
-						}
-					} else {
-						// this section is inlined by go-inline
-						// source function is 'func (rg *registry) Set(regi int, vali LValue) ' in '_state.go'
-						{
-							rg := reg
-							regi := RA
-							vali := ret
-							newSize := regi + 1
-							// this section is inlined by go-inline
-							// source function is 'func (rg *registry) checkSize(requiredSize int) ' in '_state.go'
-							{
-								requiredSize := newSize
-								if requiredSize > cap(rg.array) {
-									rg.resize(requiredSize)
-								}
-							}
-							rg.array[regi] = vali
-							if regi >= rg.top {
-								rg.top = regi + 1
-							}
-						}
-					}
+					reg.Set(RA, reg.Pop())
 				} else if lv.Type() == LTTable {
-					// this section is inlined by go-inline
-					// source function is 'func (rg *registry) SetNumber(regi int, vali LNumber) ' in '_state.go'
-					{
-						rg := reg
-						regi := RA
-						vali := LNumber(lv.(*LTable).Len())
-						newSize := regi + 1
-						// this section is inlined by go-inline
-						// source function is 'func (rg *registry) checkSize(requiredSize int) ' in '_state.go'
-						{
-							requiredSize := newSize
-							if requiredSize > cap(rg.array) {
-								rg.resize(requiredSize)
-							}
-						}
-						rg.array[regi] = lnumberToValue(vali)
-						if regi >= rg.top {
-							rg.top = regi + 1
-						}
-					}
+					reg.Set(RA, lintegerToValue(LInteger(lv.(*LTable).Len())))
 				} else {
 					L.RaiseError("__len undefined")
 				}

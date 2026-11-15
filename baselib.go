@@ -288,7 +288,7 @@ func baseSelect(L *LState) int {
 		if string(lv) != "#" {
 			L.ArgError(1, "invalid string '"+string(lv)+"'")
 		}
-		L.Push(LNumber(L.GetTop() - 1))
+		L.Push(lintegerToValue(LInteger(L.GetTop() - 1)))
 		return 1
 	}
 	return 0
