@@ -114,19 +114,19 @@ func isASCIIAlpha(c byte) bool { return c >= 'a' && c <= 'z' || c >= 'A' && c <=
 func formatItem(L *LState, buf *strings.Builder, spec formatSpec, arg int) {
 	switch spec.conv {
 	case 'c':
-		n := formatInteger(L, arg)
+		n := checkInteger(L, arg)
 		checkFormat(L, &spec, formatFlagsChar, false)
 		buf.WriteString(padField(string([]byte{byte(n)}), spec))
 	case 'd', 'i':
-		n := formatInteger(L, arg)
+		n := checkInteger(L, arg)
 		checkFormat(L, &spec, formatFlagsInteger, true)
 		buf.WriteString(formatIntegerValue(spec, n))
 	case 'u':
-		n := formatInteger(L, arg)
+		n := checkInteger(L, arg)
 		checkFormat(L, &spec, formatFlagsUnsigned, true)
 		buf.WriteString(formatIntegerValue(spec, n))
 	case 'o', 'x', 'X':
-		n := formatInteger(L, arg)
+		n := checkInteger(L, arg)
 		checkFormat(L, &spec, formatFlagsHex, true)
 		buf.WriteString(formatIntegerValue(spec, n))
 	case 'a', 'A':
@@ -162,25 +162,6 @@ func formatItem(L *LState, buf *strings.Builder, spec formatSpec, arg int) {
 	default:
 		L.RaiseError("invalid conversion '%%%s' to 'format'", spec.text)
 	}
-}
-
-// formatInteger is luaL_checkinteger: floats and numeric strings convert only
-// when they have an exact integer value.
-func formatInteger(L *LState, arg int) LInteger {
-	value := L.Get(arg)
-	if n, ok := exactInteger(value); ok {
-		return n
-	}
-	isNumber := value.Type() == LTNumber || value.Type() == LTInteger
-	if s, ok := value.(LString); ok {
-		_, err := parseNumberValue(string(s))
-		isNumber = err == nil
-	}
-	if isNumber {
-		L.ArgError(arg, "number has no integer representation")
-	}
-	L.TypeError(arg, LTNumber)
-	return 0
 }
 
 // formatIntegerValue renders d, i, u, o, x and X as C does: u, o and x read
