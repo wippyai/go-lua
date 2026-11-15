@@ -775,8 +775,11 @@ func matchClass(cls charClass, ch int) bool {
 	}
 }
 
-// MaxBacktracks limits backtracking to prevent ReDoS attacks.
+// MaxBacktracks limits backtracking from one start position to prevent ReDoS
+// attacks. A search that exceeds it fails with errPatternTooComplex.
 const MaxBacktracks = 100000
+
+var errPatternTooComplex = newError(unknownPos, "pattern too complex")
 
 type vm struct {
 	src       []byte
@@ -816,7 +819,7 @@ func (v *vm) releaseStack() {
 	v.stack = v.stack[:0]
 }
 
-func (v *vm) run(programCounter, sourcePos int) (bool, int) {
+func (v *vm) run(programCounter, sourcePos int) (bool, int, error) {
 	backtracks := 0
 
 	for {
@@ -824,8 +827,8 @@ func (v *vm) run(programCounter, sourcePos int) (bool, int) {
 		switch inst.op {
 		case opChar:
 			if sourcePos >= len(v.src) || !matchClass(inst.class, int(v.src[sourcePos])) {
-				if !v.backtrack(&programCounter, &sourcePos, &backtracks) {
-					return false, sourcePos
+				if ok, err := v.backtrack(&programCounter, &sourcePos, &backtracks); !ok {
+					return false, sourcePos, err
 				}
 				continue
 			}
@@ -834,15 +837,15 @@ func (v *vm) run(programCounter, sourcePos int) (bool, int) {
 
 		case opMatch:
 			v.releaseStack()
-			return true, sourcePos
+			return true, sourcePos, nil
 
 		case opTailMatch:
 			if sourcePos >= len(v.src) {
 				v.releaseStack()
-				return true, sourcePos
+				return true, sourcePos, nil
 			}
-			if !v.backtrack(&programCounter, &sourcePos, &backtracks) {
-				return false, sourcePos
+			if ok, err := v.backtrack(&programCounter, &sourcePos, &backtracks); !ok {
+				return false, sourcePos, err
 			}
 
 		case opJmp:
@@ -864,8 +867,8 @@ func (v *vm) run(programCounter, sourcePos int) (bool, int) {
 		case opBrace:
 			ok, newPos := v.matchBrace(inst.operand1, inst.operand2, sourcePos)
 			if !ok {
-				if !v.backtrack(&programCounter, &sourcePos, &backtracks) {
-					return false, sourcePos
+				if ok, err := v.backtrack(&programCounter, &sourcePos, &backtracks); !ok {
+					return false, sourcePos, err
 				}
 				continue
 			}
@@ -875,8 +878,8 @@ func (v *vm) run(programCounter, sourcePos int) (bool, int) {
 		case opNumber:
 			ok, newPos := v.matchBackref(inst.operand1, sourcePos)
 			if !ok {
-				if !v.backtrack(&programCounter, &sourcePos, &backtracks) {
-					return false, sourcePos
+				if ok, err := v.backtrack(&programCounter, &sourcePos, &backtracks); !ok {
+					return false, sourcePos, err
 				}
 				continue
 			}
@@ -885,16 +888,19 @@ func (v *vm) run(programCounter, sourcePos int) (bool, int) {
 
 		default:
 			v.releaseStack()
-			return false, sourcePos
+			return false, sourcePos, nil
 		}
 	}
 }
 
-func (v *vm) backtrack(pc, sp, backtracks *int) bool {
+func (v *vm) backtrack(pc, sp, backtracks *int) (bool, error) {
+	if len(v.stack) == 0 {
+		return false, nil
+	}
 	(*backtracks)++
-	if *backtracks > MaxBacktracks || len(v.stack) == 0 {
+	if *backtracks > MaxBacktracks {
 		v.releaseStack()
-		return false
+		return false, errPatternTooComplex
 	}
 	t := v.stack[len(v.stack)-1]
 	v.stack = v.stack[:len(v.stack)-1]
@@ -902,7 +908,7 @@ func (v *vm) backtrack(pc, sp, backtracks *int) bool {
 	*sp = t.sourcePos
 	v.matchData.restoreFrom(t)
 	t.release()
-	return true
+	return true, nil
 }
 
 func (v *vm) matchBrace(open, close, sourcePos int) (bool, int) {
@@ -967,7 +973,14 @@ func Find(pattern string, src []byte, offset, limit int) ([]*MatchData, error) {
 	for sourcePos := offset; sourcePos <= len(src); {
 		md := newMatchData(capSize)
 		v.matchData = md
-		ok, newPos := v.run(0, sourcePos)
+		ok, newPos, err := v.run(0, sourcePos)
+		if err != nil {
+			md.release()
+			for _, m := range matches {
+				m.release()
+			}
+			return nil, err
+		}
 		sourcePos++
 		if ok {
 			if sourcePos < newPos {
