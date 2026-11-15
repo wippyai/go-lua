@@ -436,9 +436,9 @@ func TestScanEscapeSequences(t *testing.T) {
 		{`"\\"`, "\\"},
 		{`"\'"`, "'"},
 		{`"\""`, "\""},
-		{`"\065"`, "A"},   // decimal escape
-		{`"\x41"`, "x41"}, // Lua doesn't have \x, treated as literal
-		{`"\z"`, "z"},     // unknown escape = literal
+		{`"\065"`, "A"}, // decimal escape
+		{`"\x41"`, "A"}, // hexadecimal escape
+		{`"\z"`, ""},    // skips following whitespace
 	}
 
 	for _, tt := range tests {
@@ -793,8 +793,8 @@ func TestScanHexStringEscapes(t *testing.T) {
 		input    string
 		expected string
 	}{
-		{`"\x41"`, "x41"},
-		{`"\x4A"`, "x4A"},
+		{`"\x41"`, "A"},
+		{`"\x4A"`, "J"},
 	}
 	for _, tt := range tests {
 		lexer := &Lexer{NewScanner(strings.NewReader(tt.input), "test"), nil, false, ast.Token{}, TNil, nil}
