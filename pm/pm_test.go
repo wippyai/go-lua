@@ -1,6 +1,8 @@
 package pm
 
 import (
+	"fmt"
+	"math"
 	"strings"
 	"testing"
 )
@@ -442,6 +444,41 @@ func TestFind_MaxBacktracksWithExistingMatch(t *testing.T) {
 	}
 	if err.Error() != "pattern too complex" {
 		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestFind_QuadraticBacktracking(t *testing.T) {
+	// Two overlapping repetitions explore quadratically many partitions of
+	// the subject while searching for a missing b, even from a single start.
+	for _, size := range []int{1024, 128 << 10} {
+		t.Run(fmt.Sprintf("%d", size), func(t *testing.T) {
+			matches, err := Find("^a*a*b$", []byte(strings.Repeat("a", size)), 0, -1)
+			if err != errPatternTooComplex {
+				t.Fatalf("got error %v, want pattern too complex", err)
+			}
+			if matches != nil {
+				t.Fatalf("expected no matches with error, got %d", len(matches))
+			}
+		})
+	}
+}
+
+func TestBacktrackBudget(t *testing.T) {
+	for _, tc := range []struct {
+		subjectLen, want int
+	}{
+		{0, MaxBacktracks},
+		{25000, MaxBacktracks},
+		{25001, 100004},
+		{1 << 20, 4 << 20},
+		{10 << 20, 40 << 20},
+		{math.MaxInt / 4, math.MaxInt / 4 * 4},
+		{math.MaxInt/4 + 1, math.MaxInt},
+		{math.MaxInt, math.MaxInt},
+	} {
+		if got := backtrackBudget(tc.subjectLen); got != tc.want {
+			t.Errorf("backtrackBudget(%d) = %d, want %d", tc.subjectLen, got, tc.want)
+		}
 	}
 }
 
