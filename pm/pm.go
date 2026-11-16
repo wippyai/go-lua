@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"container/list"
 	"fmt"
+	"math"
 	"sync"
 )
 
@@ -775,17 +776,30 @@ func matchClass(cls charClass, ch int) bool {
 	}
 }
 
-// MaxBacktracks limits backtracking from one start position to prevent ReDoS
-// attacks. A search that exceeds it fails with errPatternTooComplex.
+// MaxBacktracks is the minimum backtrack budget from one start position.
+// Longer subjects allow four backtracks per byte so linear matches can finish.
+// A search that exceeds its budget fails with errPatternTooComplex.
 const MaxBacktracks = 100000
+
+func backtrackBudget(subjectLen int) int {
+	const backtracksPerByte = 4
+	if subjectLen <= MaxBacktracks/backtracksPerByte {
+		return MaxBacktracks
+	}
+	if subjectLen > math.MaxInt/backtracksPerByte {
+		return math.MaxInt
+	}
+	return subjectLen * backtracksPerByte
+}
 
 var errPatternTooComplex = newError(unknownPos, "pattern too complex")
 
 type vm struct {
-	src       []byte
-	insts     []instruction
-	matchData *MatchData
-	stack     []*vmThread
+	src            []byte
+	insts          []instruction
+	matchData      *MatchData
+	stack          []*vmThread
+	backtrackLimit int
 }
 
 var vmPool = sync.Pool{
@@ -800,6 +814,7 @@ func newVM(src []byte, insts []instruction) *vm {
 	v.insts = insts
 	v.matchData = nil
 	v.stack = v.stack[:0]
+	v.backtrackLimit = backtrackBudget(len(src))
 	return v
 }
 
@@ -897,11 +912,11 @@ func (v *vm) backtrack(pc, sp, backtracks *int) (bool, error) {
 	if len(v.stack) == 0 {
 		return false, nil
 	}
-	(*backtracks)++
-	if *backtracks > MaxBacktracks {
+	if *backtracks >= v.backtrackLimit {
 		v.releaseStack()
 		return false, errPatternTooComplex
 	}
+	(*backtracks)++
 	t := v.stack[len(v.stack)-1]
 	v.stack = v.stack[:len(v.stack)-1]
 	*pc = t.programCounter

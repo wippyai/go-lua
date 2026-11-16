@@ -1,9 +1,36 @@
 package lua
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
+
+func TestStringGsubTrimLongSubject(t *testing.T) {
+	for _, size := range []int{1 << 20, 10 << 20} {
+		for _, padded := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%dMiB/padded=%t", size>>20, padded), func(t *testing.T) {
+				L := NewState()
+				defer L.Close()
+				want := strings.Repeat("x", size)
+				subject := want
+				if padded {
+					subject = " \t\n" + subject + "\r\n "
+				}
+				L.SetGlobal("subject", LString(subject))
+				if err := L.DoString(`return subject:gsub("^%s*(.-)%s*$", "%1")`); err != nil {
+					t.Fatal(err)
+				}
+				if got := L.Get(-2); got != LString(want) {
+					t.Fatalf("trim returned incorrect content (type %s)", got.Type())
+				}
+				if got := L.Get(-1); got != LInteger(1) {
+					t.Fatalf("got replacement count %v, want 1", got)
+				}
+			})
+		}
+	}
+}
 
 // A pattern whose search exceeds the matcher's backtrack budget raises an
 // error from every pattern function instead of reporting no match.
