@@ -1453,12 +1453,8 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			rhs := L.rkValue(C)
 			ret := false
 
-			if v1, ok1 := toNumber(lhs); ok1 {
-				if v2, ok2 := toNumber(rhs); ok2 {
-					ret = v1 <= v2
-				} else {
-					L.RaiseError("attempt to compare %v with %v", lhs.Type().String(), rhs.Type().String())
-				}
+			if result, numeric := numericOrder(lhs, rhs, true); numeric {
+				ret = result
 			} else {
 				if lhs.Type() != rhs.Type() {
 					L.RaiseError("attempt to compare %v with %v", lhs.Type().String(), rhs.Type().String())
@@ -2159,188 +2155,68 @@ func mainLoopWithContext(L *LState, baseframe *callFrame) {
 			lbase := cf.LocalBase
 			A := int(inst>>18) & 0xff //GETA
 			RA := int(lbase) + A
-			// Fast path: check if all values are integers
 			initVal := reg.Get(RA)
 			limitVal := reg.Get(RA + 1)
 			stepVal := reg.Get(RA + 2)
-			if initI, ok1 := initVal.(LInteger); ok1 {
-				if limitI, ok2 := limitVal.(LInteger); ok2 {
-					if stepI, ok3 := stepVal.(LInteger); ok3 {
-						init := int64(initI) + int64(stepI)
-						limit := int64(limitI)
-						step := int64(stepI)
-						v := lintegerToValue(LInteger(init))
-						newSize := RA + 1
-						if newSize > cap(reg.array) {
-							reg.resize(newSize)
-						}
-						reg.array[RA] = v
-						if RA >= reg.top {
-							reg.top = RA + 1
-						}
-						if (step > 0 && init <= limit) || (step <= 0 && init >= limit) {
-							Sbx := int(inst&0x3ffff) - opMaxArgSbx
-							cf.Pc += int32(Sbx)
-							newSize := RA + 4
-							if newSize > cap(reg.array) {
-								reg.resize(newSize)
-							}
-							reg.array[RA+3] = v
-							if RA+3 >= reg.top {
-								reg.top = RA + 4
-							}
-						} else {
-							topi := RA + 1
-							if topi > cap(reg.array) {
-								reg.resize(topi)
-							}
-							oldtopi := reg.top
-							reg.top = topi
-							for i := oldtopi; i < reg.top; i++ {
-								reg.array[i] = LNil
-							}
-							if reg.top < oldtopi {
-								nilRange := reg.array[reg.top:oldtopi]
-								for i := range nilRange {
-									nilRange[i] = nil
-								}
-							}
-						}
-						continue
-					}
-				}
-			}
-			// Slow path: use LNumber
-			if init, ok1 := toNumber(initVal); ok1 {
-				if limit, ok2 := toNumber(limitVal); ok2 {
-					if step, ok3 := toNumber(stepVal); ok3 {
-						init += step
-						v := LNumber(init)
-						{
-							rg := reg
-							regi := RA
-							vali := v
-							newSize := regi + 1
-							{
-								requiredSize := newSize
-								if requiredSize > cap(rg.array) {
-									rg.resize(requiredSize)
-								}
-							}
-							rg.array[regi] = lnumberToValue(vali)
-							if regi >= rg.top {
-								rg.top = regi + 1
-							}
-						}
-						if (step > 0 && init <= limit) || (step <= 0 && init >= limit) {
-							Sbx := int(inst&0x3ffff) - opMaxArgSbx //GETSBX
-							cf.Pc += int32(Sbx)
-							{
-								rg := reg
-								regi := RA + 3
-								vali := v
-								newSize := regi + 1
-								{
-									requiredSize := newSize
-									if requiredSize > cap(rg.array) {
-										rg.resize(requiredSize)
-									}
-								}
-								rg.array[regi] = lnumberToValue(vali)
-								if regi >= rg.top {
-									rg.top = regi + 1
-								}
-							}
-						} else {
-							// this section is inlined by go-inline
-							// source function is 'func (rg *registry) SetTop(topi int) ' in '_state.go'
-							{
-								rg := reg
-								topi := RA + 1
-								// this section is inlined by go-inline
-								// source function is 'func (rg *registry) checkSize(requiredSize int) ' in '_state.go'
-								{
-									requiredSize := topi
-									if requiredSize > cap(rg.array) {
-										rg.resize(requiredSize)
-									}
-								}
-								oldtopi := rg.top
-								rg.top = topi
-								for i := oldtopi; i < rg.top; i++ {
-									rg.array[i] = LNil
-								}
-								// values beyond top don't need to be valid LValues, so setting them to nil is fine
-								// setting them to nil rather than LNil lets us invoke the golang memclr opto
-								if rg.top < oldtopi {
-									nilRange := rg.array[rg.top:oldtopi]
-									for i := range nilRange {
-										nilRange[i] = nil
-									}
-								}
-								//for i := rg.top; i < oldtop; i++ {
-								//	rg.Array[i] = LNil
-								//}
-							}
-						}
-					} else {
-						L.RaiseError("for statement step must be a number")
-					}
-				} else {
-					L.RaiseError("for statement limit must be a number")
+			current, intIndex := initVal.(LInteger)
+			limit, intLimit := limitVal.(LInteger)
+			step, intStep := stepVal.(LInteger)
+			var nextValue LValue
+			if intIndex && intLimit && intStep {
+				next := current + step
+				// A wrapped addition moves in the opposite direction.
+				if (step > 0 && next > current && next <= limit) ||
+					(step < 0 && next < current && next >= limit) {
+					nextValue = lintegerToValue(next)
 				}
 			} else {
-				L.RaiseError("for statement init must be a number")
+				current, limit, step := floatForValues(L, initVal, limitVal, stepVal)
+				next := current + step
+				if (step > 0 && next <= limit) || (step < 0 && next >= limit) {
+					nextValue = lnumberToValue(next)
+				}
+			}
+			if nextValue == nil {
+				reg.SetTop(RA + 1)
+			} else {
+				reg.Set(RA, nextValue)
+				reg.Set(RA+3, nextValue)
+				cf.Pc += int32(int(inst&0x3ffff) - opMaxArgSbx)
 			}
 
 		case OP_FORPREP:
-			reg := L.reg
-			lbase := cf.LocalBase
-			A := int(inst>>18) & 0xff //GETA
-			RA := int(lbase) + A
-			Sbx := int(inst&0x3ffff) - opMaxArgSbx //GETSBX
-			initVal := reg.Get(RA)
-			stepVal := reg.Get(RA + 2)
-			// Fast path: integer-only for loops
-			if initI, ok1 := initVal.(LInteger); ok1 {
-				if stepI, ok2 := stepVal.(LInteger); ok2 {
-					result := int64(initI) - int64(stepI)
-					v := lintegerToValue(LInteger(result))
-					newSize := RA + 1
-					if newSize > cap(reg.array) {
-						reg.resize(newSize)
-					}
-					reg.array[RA] = v
-					if RA >= reg.top {
-						reg.top = RA + 1
-					}
-					cf.Pc += int32(Sbx)
-					continue
-				}
+			if checkCtx() {
+				return
 			}
-			// Slow path: use LNumber
-			if init, ok1 := toNumber(initVal); ok1 {
-				if step, ok2 := toNumber(stepVal); ok2 {
-					{
-						rg := reg
-						regi := RA
-						vali := LNumber(init - step)
-						newSize := regi + 1
-						if newSize > cap(rg.array) {
-							rg.resize(newSize)
-						}
-						rg.array[regi] = lnumberToValue(vali)
-						if regi >= rg.top {
-							rg.top = regi + 1
-						}
-					}
-				} else {
-					L.RaiseError("for statement step must be a number")
+			reg := L.reg
+			ra := int(cf.LocalBase) + int(inst>>18&0xff)
+			initVal, limitVal, stepVal := reg.Get(ra), reg.Get(ra+1), reg.Get(ra+2)
+			init, intInit := initVal.(LInteger)
+			step, intStep := stepVal.(LInteger)
+			var enter bool
+			if intInit && intStep {
+				if step == 0 {
+					L.RaiseError("for statement step is zero")
+				}
+				limit, reachable := integerForLimit(L, limitVal, step)
+				enter = reachable && ((step > 0 && init <= limit) || (step < 0 && init >= limit))
+				if enter {
+					reg.Set(ra+1, lintegerToValue(limit))
 				}
 			} else {
-				L.RaiseError("for statement init must be a number")
+				first, limit, step := floatForValues(L, initVal, limitVal, stepVal)
+				enter = (step > 0 && first <= limit) || (step < 0 && first >= limit)
+				if enter {
+					initVal = lnumberToValue(first)
+					reg.Set(ra, initVal)
+				}
 			}
-			cf.Pc += int32(Sbx)
+			if enter {
+				reg.Set(ra+3, initVal)
+			} else {
+				reg.SetTop(ra + 1)
+				cf.Pc += int32(int(inst&0x3ffff) - opMaxArgSbx + 1)
+			}
 
 		case OP_TFORLOOP:
 			if checkCtx() {
@@ -3170,12 +3046,8 @@ func stringConcat(L *LState, total, last int) LValue {
 }
 
 func lessThan(L *LState, lhs, rhs LValue) bool {
-	// optimization for numbers
-	if v1, ok1 := toNumber(lhs); ok1 {
-		if v2, ok2 := toNumber(rhs); ok2 {
-			return v1 < v2
-		}
-		L.RaiseError("attempt to compare %v with %v", lhs.Type().String(), rhs.Type().String())
+	if result, numeric := numericOrder(lhs, rhs, false); numeric {
+		return result
 	}
 	if lhs.Type() != rhs.Type() {
 		L.RaiseError("attempt to compare %v with %v", lhs.Type().String(), rhs.Type().String())

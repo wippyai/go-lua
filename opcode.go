@@ -88,7 +88,7 @@ const (
 
 	OP_FORLOOP /*   A sBx   R(A)+=R(A+2);
 	     if R(A) <?= R(A+1) then { pc+=sBx; R(A+3)=R(A) }*/
-	OP_FORPREP /*   A sBx   R(A)-=R(A+2); pc+=sBx                           */
+	OP_FORPREP /*   A sBx   initialize loop; skip past FORLOOP if empty                           */
 
 	OP_TFORLOOP /*  A C     R(A+3) ... R(A+3+C) := R(A)(R(A+1) R(A+2));
 	    if R(A+3) ~= nil then { pc++; R(A+2)=R(A+3); }  */
@@ -373,7 +373,7 @@ func opToString(inst uint32) string {
 	case OP_FORLOOP:
 		buf += fmt.Sprintf("; R(%v)+=R(%v+2); if R(%v) <?= R(%v+1) then { pc+=%v; R(%v+3)=R(%v) }", arga, arga, arga, arga, argsbx, arga, arga)
 	case OP_FORPREP:
-		buf += fmt.Sprintf("; R(%v)-=R(%v+2); pc+=%v", arga, arga, argsbx)
+		buf += fmt.Sprintf("; initialize R(%v+3); if empty then pc+=%v", arga, argsbx+1)
 	case OP_TFORLOOP:
 		buf += fmt.Sprintf("; R(%v+3) ... R(%v+3+%v) := R(%v)(R(%v+1) R(%v+2)); if R(%v+3) ~= nil then { pc++; R(%v+2)=R(%v+3); }", arga, arga, argc, arga, arga, arga, arga, arga, arga)
 	case OP_SETLIST:

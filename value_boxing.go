@@ -28,9 +28,8 @@ func lnumberToValue(v LNumber) LValue {
 }
 
 func lintegerToValue(v LInteger) LValue {
-	iv := int(v)
-	if iv >= -intPreloadLimit && iv < intPreloadLimit {
-		return preloadedIntegers[iv+intPreloadLimit]
+	if v >= -intPreloadLimit && v < intPreloadLimit {
+		return preloadedIntegers[int(v)+intPreloadLimit]
 	}
 	return v
 }
