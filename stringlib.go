@@ -382,11 +382,35 @@ func strMatch(L *LState) int {
 
 func strRep(L *LState) int {
 	str := L.CheckString(1)
-	n := L.CheckInt(2)
-	if n < 0 {
+	n := checkInteger(L, 2)
+	sep := ""
+	if L.Get(3) != LNil {
+		sep = L.CheckString(3)
+	}
+	switch {
+	case n <= 0 || (str == "" && sep == ""):
 		L.Push(emptyLString)
-	} else {
-		L.Push(LString(strings.Repeat(str, n)))
+	case n == 1:
+		L.Push(LString(str))
+	default:
+		unit := uint64(len(str)) + uint64(len(sep))
+		if uint64(n-1) > uint64(math.MaxInt-len(str))/unit {
+			L.RaiseError("resulting string too large")
+		}
+		if sep == "" {
+			L.Push(LString(strings.Repeat(str, int(n))))
+		} else if str == "" {
+			L.Push(LString(strings.Repeat(sep, int(n-1))))
+		} else {
+			var out strings.Builder
+			out.Grow(len(str) + int(uint64(n-1)*unit))
+			out.WriteString(str)
+			for i := LInteger(1); i < n; i++ {
+				out.WriteString(sep)
+				out.WriteString(str)
+			}
+			L.Push(LString(out.String()))
+		}
 	}
 	return 1
 }

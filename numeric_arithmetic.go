@@ -1,6 +1,9 @@
 package lua
 
-import "math"
+import (
+	"cmp"
+	"math"
+)
 
 // exactInteger is the Lua 5.3 float-to-integer conversion: fractional,
 // non-finite and out-of-range values have no integer representation.
@@ -132,4 +135,95 @@ func bitwiseOperand(L *LState, value LValue) LInteger {
 		L.RaiseError("attempt to perform bitwise operation on a %s value", value.Type().String())
 	}
 	return 0
+}
+
+// integerForLimit rounds floating limits toward the interior of the loop range.
+func integerForLimit(L *LState, value LValue, step LInteger) (LInteger, bool) {
+	if limit, ok := value.(LInteger); ok {
+		return limit, true
+	}
+	f, ok := value.(LNumber)
+	if !ok {
+		L.RaiseError("for statement limit must be a number")
+	}
+	limit := float64(f)
+	switch {
+	case limit >= 0x1p63:
+		return math.MaxInt64, step > 0
+	case limit < -0x1p63:
+		return math.MinInt64, step < 0
+	case math.IsNaN(limit):
+		return 0, false
+	case step > 0:
+		return LInteger(math.Floor(limit)), true
+	default:
+		return LInteger(math.Ceil(limit)), true
+	}
+}
+
+// compareIntFloat compares a signed integer with a non-NaN float. Within the
+// integer range, compare whole parts before considering a fractional remainder.
+func compareIntFloat(i LInteger, f LNumber) int {
+	if f >= 0x1p63 {
+		return -1
+	}
+	if f < -0x1p63 {
+		return 1
+	}
+	if order := cmp.Compare(i, LInteger(f)); order != 0 {
+		return order
+	}
+	return cmp.Compare(LNumber(i), f)
+}
+
+func numericOrder(lhs, rhs LValue, inclusive bool) (result, numeric bool) {
+	var order int
+	switch l := lhs.(type) {
+	case LInteger:
+		switch r := rhs.(type) {
+		case LInteger:
+			order = cmp.Compare(l, r)
+		case LNumber:
+			if math.IsNaN(float64(r)) {
+				return false, true
+			}
+			order = compareIntFloat(l, r)
+		default:
+			return false, false
+		}
+	case LNumber:
+		switch r := rhs.(type) {
+		case LInteger:
+			if math.IsNaN(float64(l)) {
+				return false, true
+			}
+			order = -compareIntFloat(r, l)
+		case LNumber:
+			return l < r || (inclusive && l == r), true
+		default:
+			return false, false
+		}
+	default:
+		return false, false
+	}
+	return order < 0 || (inclusive && order == 0), true
+}
+
+func floatForValues(L *LState, initVal, limitVal, stepVal LValue) (init, limit, step LNumber) {
+	init, ok := toNumber(initVal)
+	if !ok {
+		L.RaiseError("for statement init must be a number")
+	}
+	limit, ok = toNumber(limitVal)
+	if !ok {
+		L.RaiseError("for statement limit must be a number")
+	}
+	step, ok = toNumber(stepVal)
+	if !ok {
+		L.RaiseError("for statement step must be a number")
+	}
+	if step == 0 {
+		L.RaiseError("for statement step is zero")
+	}
+	return init, limit, step
 }
